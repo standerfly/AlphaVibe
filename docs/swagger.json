@@ -1,0 +1,5577 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "This is the FVT Value-Added Service API",
+        "title": "FVT VAS API",
+        "contact": {},
+        "version": "1"
+    },
+    "basePath": "/",
+    "paths": {
+        "/admin/api/v1/ecpay/ecpayment/cashier/query-trade": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Query order from ECPay by MerchantTradeNo",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-ecpay"
+                ],
+                "summary": "Query Trade (Admin)",
+                "parameters": [
+                    {
+                        "description": "Query Cashier Trade Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayQueryCashierTradeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayQueryCashierTradeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/ecpay/ecpayment/credit-detail/query-trade": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Query credit card detail record from ECPay by MerchantTradeNo",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-ecpay"
+                ],
+                "summary": "Query Credit Detail Trade (Admin)",
+                "parameters": [
+                    {
+                        "description": "Query Credit Detail Trade Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayQueryCreditDetailTradeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayQueryCreditDetailTradeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/ecpay/ecpg/get-member-bind-card": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Query bound credit cards from ECPay by MerchantMemberID",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-ecpay"
+                ],
+                "summary": "Get Member Bind Card (Admin)",
+                "parameters": [
+                    {
+                        "description": "Get Member Bind Card Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayGetMemberBindCardRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayGetMemberBindCardResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/ecpay/einvoice/check-barcode": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Verify if a mobile barcode exists using ECPay's CheckBarcode API",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-ecpay"
+                ],
+                "summary": "Check Barcode (Admin)",
+                "parameters": [
+                    {
+                        "description": "Check Barcode Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayCheckBarcodeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayCheckBarcodeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/ecpay/einvoice/get-company-name-by-tax-id": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Verify a unified business number and return the company name using ECPay API",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-ecpay"
+                ],
+                "summary": "Get Company Name By Tax ID (Admin)",
+                "parameters": [
+                    {
+                        "description": "Get Company Name By Tax ID Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayGetCompanyNameByTaxIdRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayGetCompanyNameByTaxIdResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/ecpay/einvoice/get-invoice-word-setting": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Query invoice word setting (track numbers) from ECPay",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-ecpay"
+                ],
+                "summary": "Get Invoice Word Setting (Admin)",
+                "parameters": [
+                    {
+                        "description": "Get Invoice Word Setting Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayGetInvoiceWordSettingRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayGetInvoiceWordSettingResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/ecpay/einvoice/get-issue": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Query invoice details from ECPay",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-ecpay"
+                ],
+                "summary": "Get Invoice (Admin)",
+                "parameters": [
+                    {
+                        "description": "Get Invoice Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayGetInvoiceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayGetInvoiceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/ecpay/einvoice/invoice-notify": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Send invoice notification via SMS or Email using ECPay's InvoiceNotify API",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-ecpay"
+                ],
+                "summary": "Invoice Notify (Admin)",
+                "parameters": [
+                    {
+                        "description": "Invoice Notify Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayInvoiceNotifyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayInvoiceNotifyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/invoices/send-issued-email-notification": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Send issued invoice email notification for an invoice",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-invoices"
+                ],
+                "summary": "Send Issued Invoice Email Notification",
+                "parameters": [
+                    {
+                        "description": "Send Issued Invoice Email Notification Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.SendIssuedInvoiceEmailNotificationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SendIssuedInvoiceEmailNotificationResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/invoices/void-reissue-for-email-update": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Void reissue invoice for email update",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-invoices"
+                ],
+                "summary": "Void Reissue Invoice For Email Update",
+                "parameters": [
+                    {
+                        "description": "Void Reissue Invoice For Email Update Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.VoidReissueInvoiceForEmailUpdateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.VoidReissueInvoiceForEmailUpdateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/lxm-cpo/orders": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Query LXM CPO orders with payment and invoice data, with pagination and optional filters",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-lxm-cpo"
+                ],
+                "summary": "Get LXM CPO Orders / Payments / Invoices (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Start time (ISO-8601 format), e.g. 2026-03-01T00:00:00Z",
+                        "name": "from_created_at",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time (ISO-8601 format, must be greater than from_created_at and within 7 days), e.g. 2026-03-05T00:00:00Z",
+                        "name": "to_created_at",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "CPO client ID, e.g. JTHBN30F2100104330",
+                        "name": "client_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Car ID (evccid), e.g. f0fddd00f2fe",
+                        "name": "car_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "CPO request ID, e.g. EVO_Session_2026382",
+                        "name": "request_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "VIN, e.g. RF5D21FH0SS000513",
+                        "name": "vin",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Order status filter, e.g. 6",
+                        "name": "order_status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Payment status filter, e.g. 4",
+                        "name": "payment_status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Invoice status filter, e.g. 3",
+                        "name": "invoice_status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number (default: 1), e.g. 1",
+                        "name": "page",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.AdminGetLxmCpoOrdersResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/lxm-cpo/orders-payments-invoices-statuses": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Query all available statuses for LXM CPO orders, payments, and invoices",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-lxm-cpo"
+                ],
+                "summary": "Get LXM CPO Orders / Payments / Invoices Statuses (Admin)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.AdminGetLxmCpoOrdersPaymentsInvoicesStatusesResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/lxm-cpo/orders/redo-payment-invoice": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Redo payment invoice for LXM CPO order by order_id",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-lxm-cpo"
+                ],
+                "summary": "Redo Payment Invoice for LXM CPO Order",
+                "parameters": [
+                    {
+                        "description": "Redo Payment Invoice Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.RedoPaymentInvoiceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.RedoPaymentInvoiceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/lxm-cpo/orders/sync-from-ecpay-for-timeout": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sync LXM CPO order status from Ecpay by order_id",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-lxm-cpo"
+                ],
+                "summary": "Sync LXM CPO Order Status from Ecpay",
+                "parameters": [
+                    {
+                        "description": "Sync LXM CPO Order From Ecpay Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.SyncLxmCpoOrderFromEcpayRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SyncLxmCpoOrderFromEcpayResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/lxm-cpo/request-logs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Query LXM CPO request logs with pagination and optional filters",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-lxm-cpo"
+                ],
+                "summary": "Get LXM CPO Request Logs (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Start time (ISO-8601 format), e.g. 2026-03-01T00:00:00Z",
+                        "name": "from_created_at",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time (ISO-8601 format, must be greater than from_created_at and within 7 days), e.g. 2026-03-05T00:00:00Z",
+                        "name": "to_created_at",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "CPO client ID, e.g. JTHBN30F2100104330",
+                        "name": "client_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Car ID (evccid), e.g. f0fddd00f2fe",
+                        "name": "car_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "CPO request ID, e.g. EVO_Session_2026382",
+                        "name": "request_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "VIN, e.g. RF5D21FH0SS000513",
+                        "name": "vin",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number (default: 1), e.g. 1",
+                        "name": "page",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.AdminGetLxmCpoRequestLogsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/redo-jobs/cancel-binding-card-authorized-payment": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Redo cancel binding card authorized payment for transactions stuck in \"NeedToCancelAuthorization\" status within the given date range",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-redo-jobs"
+                ],
+                "summary": "Trigger Cancel Binding Card Authorized Payment Redo Job",
+                "parameters": [
+                    {
+                        "description": "Cancel Binding Card Authorized Payment Redo Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.CancelBindingCardAuthorizedPaymentRedoRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CancelBindingCardAuthorizedPaymentRedoResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/redo-jobs/redo-lxm-cpo-order-payment-invoice": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Redo payment flow (re-authorizing payment, re-capturing payment, and re-issuing invoice) for LXM CPO orders within the given date range",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-redo-jobs"
+                ],
+                "summary": "Trigger Redo LXM CPO Order Payment Invoice Redo Job",
+                "parameters": [
+                    {
+                        "description": "Redo LXM CPO Order Payment Invoice Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.RedoLxmCpoOrderPaymentInvoiceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.RedoLxmCpoOrderPaymentInvoiceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/reports/abnormal-autocharge-report": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Send abnormal LXM CPO payment invoice report email",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-reports"
+                ],
+                "summary": "Send abnormal Autocharge email",
+                "parameters": [
+                    {
+                        "description": "Send abnormal Autocharge email request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.SendAbnormalAutochargeEmailRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SendAbnormalAutochargeEmailResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/reports/autocharge-daily-report": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Generate and upload Autocharge report and send email",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-reports"
+                ],
+                "summary": "Generate and upload Autocharge report and send email",
+                "parameters": [
+                    {
+                        "description": "Generate and upload Autocharge report and send email request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.GenerateAndUploadAutochargeReportAndSendEmailRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.GenerateAndUploadAutochargeReportAndSendEmailResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/reports/duplicate-payment-invoice-report": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Send duplicate payment and invoice report email",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-reports"
+                ],
+                "summary": "Send duplicate payment and invoice email",
+                "parameters": [
+                    {
+                        "description": "Send duplicate payment and invoice email request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.SendDuplicatePaymentInvoiceEmailRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SendDuplicatePaymentInvoiceEmailResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/users/bound-cards": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Query bound credit cards by user_id, evccid, vehicle_id, or vin_code (exactly one must be provided)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-users"
+                ],
+                "summary": "Get Bound Cards (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "019b6de2-1ca5-489a-813f-f33bcf50d984",
+                        "description": "User ID (UUID)",
+                        "name": "user_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "example": "f0fddd00f2fe",
+                        "description": "EVCCID",
+                        "name": "evccid",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "example": "b18161e0-d9ac-433d-a55a-79e1a28e79fb",
+                        "description": "Vehicle ID (UUID)",
+                        "name": "vehicle_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "example": "RF5D21FH0SS000513",
+                        "description": "VIN Code",
+                        "name": "vin_code",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.AdminGetBoundCardsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/v1/users/bound-cards-history": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Query bound credit cards history by user_id, evccid, vehicle_id, or vin_code (exactly one must be provided)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-users"
+                ],
+                "summary": "Get Bound Cards History (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "019b6de2-1ca5-489a-813f-f33bcf50d984",
+                        "description": "User ID (UUID)",
+                        "name": "user_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "example": "f0fddd00f2fe",
+                        "description": "EVCCID",
+                        "name": "evccid",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "example": "b18161e0-d9ac-433d-a55a-79e1a28e79fb",
+                        "description": "Vehicle ID (UUID)",
+                        "name": "vehicle_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "example": "RF5D21FH0SS000513",
+                        "description": "VIN Code",
+                        "name": "vin_code",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.AdminGetBoundCardsHistoryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/ext/ecpay/page/v1/binding-cards": {
+            "post": {
+                "description": "Render the ECPay credit card binding page for user to bind their credit card",
+                "consumes": [
+                    "application/x-www-form-urlencoded"
+                ],
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "ecpay-ext-page"
+                ],
+                "summary": "Binding Card Page",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "name": "access_token",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Language: optional, e.g. \"zh-TW\" or \"en-US\"",
+                        "name": "language",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "name": "refresh_token",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid Request",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/ext/ecpay/page/v1/binding-cards-order-result": {
+            "post": {
+                "description": "Handle ECPay 3D Secure callback and render the binding card order result page",
+                "consumes": [
+                    "application/x-www-form-urlencoded"
+                ],
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "ecpay-ext-page"
+                ],
+                "summary": "Binding Card Order Result Page",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "name": "ResultData",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/ext/lxm-cpo/api/v1/checkout": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Process checkout for LXM CPO charging session",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "lxm-cpo-ext-api"
+                ],
+                "summary": "Checkout for LXM CPO",
+                "parameters": [
+                    {
+                        "description": "Checkout Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.LxmCpoCheckoutRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.LxmCpoCheckoutResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.LxmCpoCheckoutResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.LxmCpoCheckoutResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/ext/lxm-cpo/api/v1/validate/car": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Validate if a car is eligible for LXM CPO charging service",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "lxm-cpo-ext-api"
+                ],
+                "summary": "Validate Car for LXM CPO",
+                "parameters": [
+                    {
+                        "description": "Validate Car Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.LxmCpoValidateCarRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.LxmCpoValidateCarResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.LxmCpoValidateCarResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.LxmCpoValidateCarResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vas/api/v1/ecpay/bind-card": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Create ECPay bind card transaction with BindCardPayToken",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ecpay"
+                ],
+                "summary": "Create ECPay Bind Card",
+                "parameters": [
+                    {
+                        "description": "Create Bind Card Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayCreateBindCardRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayCreateBindCardResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vas/api/v1/ecpay/binding-card-token": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get ECPay Binding Card Token for credit card binding",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ecpay"
+                ],
+                "summary": "Get ECPay Binding Card Token",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayGetBindingCardTokenResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vas/api/v1/ecpay/bound-cards": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get all bound credit cards for the authenticated user",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ecpay"
+                ],
+                "summary": "Get ECPay Bound Cards",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayGetBoundCardsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vas/api/v1/ecpay/bound-cards/{uuid}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Delete a specific bound credit card for the authenticated user",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ecpay"
+                ],
+                "summary": "Delete ECPay Bound Card",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bound Card UUID",
+                        "name": "uuid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vas/api/v1/ext/ecpay/api/v1/binding-cards/return": {
+            "post": {
+                "description": "Handle ECPay 3D Secure callback for credit card binding. This endpoint is called by ECPay server after 3D Secure authentication.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "ecpay-ext-api"
+                ],
+                "summary": "Binding Card Return URL",
+                "parameters": [
+                    {
+                        "description": "ECPay API Response with encrypted data",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.EcPayApiResponse"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "1|OK",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/vas/api/v1/lxm-cpo/orders/{order_id}/repay": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retry payment and invoice for an LXM CPO order (only the vehicle owner can repay)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "lxm-cpo"
+                ],
+                "summary": "Repay LXM CPO Order",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Order ID (UUID format)",
+                        "name": "order_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.RepayResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vas/api/v1/lxm-cpo/vehicles/{vehicle_id}/orders": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Query LXM CPO orders by vehicle_id with pagination (10 records per page, ordered by start_time and end_time descending)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "lxm-cpo"
+                ],
+                "summary": "Get LXM CPO Orders by Vehicle ID",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Vehicle ID (UUID format)",
+                        "name": "vehicle_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number (default: 1)",
+                        "name": "page",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.GetLxmCpoOrdersResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vas/api/v1/services/tt-ams-c/cancel-subscriptions": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Cancel The TtAmsC Service Subscriptions",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service_subscriptions"
+                ],
+                "summary": "Cancel The TtAmsC Service Subscriptions",
+                "parameters": [
+                    {
+                        "description": "Cancel TtAmsC Service Subscriptions Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.CancelTtAmsCServiceSubscriptionsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CancelTtAmsCServiceSubscriptionsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vas/api/v1/services/tt-ams-c/plans/all": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get All TT-AMS-C Service Plans",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service_plans"
+                ],
+                "summary": "Get All TT-AMS-C Service Plans",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.GetAllTtAmsCServicePlansResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vas/api/v1/services/tt-ams-c/plans/delivery": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get TT-AMS-C Service Delivery Plans",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service_plans"
+                ],
+                "summary": "Get TT-AMS-C Service Delivery Plans",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.GetTtAmsCServiceDeliveryPlansResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vas/api/v1/services/tt-ams-c/plans/test": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get TT-AMS-C Service Test Plans",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service_plans"
+                ],
+                "summary": "Get TT-AMS-C Service Test Plans",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.GetTtAmsCServiceTestPlansResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vas/api/v1/services/tt-ams-c/subscriptions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get TT-AMS-C Service Subscriptions",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service_subscriptions"
+                ],
+                "summary": "Get TT-AMS-C Service Subscriptions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Vehicle ID",
+                        "name": "vehicle_id",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "enum": [
+                                1,
+                                2,
+                                3
+                            ],
+                            "type": "integer"
+                        },
+                        "collectionFormat": "csv",
+                        "description": "Status: 1=Active, 2=Cancelled, 3=Expired",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "valid_to asc",
+                            "valid_to desc"
+                        ],
+                        "type": "string",
+                        "default": "valid_to desc",
+                        "description": "Sort By",
+                        "name": "sort_by",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.GetTtAmsCServiceSubscriptionsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vas/api/v1/services/tt-ams-c/valid-subscription": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get The Valid TT-AMS-C Service Subscription",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service_subscriptions"
+                ],
+                "summary": "Get The Valid TT-AMS-C Service Subscription",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Vehicle ID",
+                        "name": "vehicle_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.GetValidTtAmsCServiceSubscriptionResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vas/api/v1/subscriptions": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Create A Subscription",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service_subscriptions"
+                ],
+                "summary": "Create A Subscription",
+                "parameters": [
+                    {
+                        "description": "Create Subscription Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.CreateSubscriptionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CreateSubscriptionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vas/api/v1/subscriptions/{subscription_id}/cancel": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Cancel A Subscription",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service_subscriptions"
+                ],
+                "summary": "Cancel A Subscription",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Subscription ID",
+                        "name": "subscription_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CancelSubscriptionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vas/api/v1/users/self/autocharge-settings": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get the current user's autocharge settings",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user"
+                ],
+                "summary": "Get User Autocharge Settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.GetAutochargeSettingsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Update the current user's autocharge settings",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user"
+                ],
+                "summary": "Update User Autocharge Settings",
+                "parameters": [
+                    {
+                        "description": "Update Autocharge Settings Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.UpdateAutochargeSettingsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.UpdateAutochargeSettingsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vas/api/v1/users/self/invoice-settings": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get the current user's invoice settings",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user"
+                ],
+                "summary": "Get User Invoice Settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.GetInvoiceSettingsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Update the current user's invoice settings",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user"
+                ],
+                "summary": "Update User Invoice Settings",
+                "parameters": [
+                    {
+                        "description": "Update Invoice Settings Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.UpdateInvoiceSettingsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.UpdateInvoiceSettingsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vas/api/v1/vehicles": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Create A Vehicle",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "vehicles"
+                ],
+                "summary": "Create A Vehicle",
+                "parameters": [
+                    {
+                        "description": "Create Vehicle Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.CreateVehicleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CreateVehicleResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/vas/api/v1/vehicles/{vehicle_id}/owner": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Update The Vehicle Owner",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "vehicles"
+                ],
+                "summary": "Update The Vehicle Owner",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Vehicle ID",
+                        "name": "vehicle_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Update Vehicle Owner Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.UpdateVehicleOwnerRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.UpdateVehicleOwnerResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BaseResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "dto.AdminBoundCardHistoryItem": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "action_name": {
+                    "type": "string",
+                    "example": "update"
+                },
+                "bind_card_id": {
+                    "type": "string",
+                    "example": "6a26b95b67b44e3896fdc56caa6b791866463769232d45e58c299382b3347544"
+                },
+                "card4_no": {
+                    "type": "string",
+                    "example": "2222"
+                },
+                "card6_no": {
+                    "type": "string",
+                    "example": "431195"
+                },
+                "card_valid_mm": {
+                    "type": "string",
+                    "example": "08"
+                },
+                "card_valid_yy": {
+                    "type": "string",
+                    "example": "2028"
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-03-01T00:00:00Z"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "45d969c2-1882-40c1-b91b-18d6142b9b88"
+                },
+                "merchant_id": {
+                    "type": "string",
+                    "example": "3002607"
+                },
+                "user_id": {
+                    "type": "string",
+                    "example": "019b6de2-1ca5-489a-813f-f33bcf50d984"
+                }
+            }
+        },
+        "dto.AdminBoundCardItem": {
+            "type": "object",
+            "properties": {
+                "bind_card_id": {
+                    "type": "string",
+                    "example": "6a26b95b67b44e3896fdc56caa6b791866463769232d45e58c299382b3347544"
+                },
+                "card4_no": {
+                    "type": "string",
+                    "example": "2222"
+                },
+                "card6_no": {
+                    "type": "string",
+                    "example": "431195"
+                },
+                "card_valid_mm": {
+                    "type": "string",
+                    "example": "08"
+                },
+                "card_valid_yy": {
+                    "type": "string",
+                    "example": "2028"
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-03-01T00:00:00Z"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "45d969c2-1882-40c1-b91b-18d6142b9b88"
+                },
+                "merchant_id": {
+                    "type": "string",
+                    "example": "3002607"
+                },
+                "updated_at": {
+                    "type": "string",
+                    "example": "2026-03-01T00:00:00Z"
+                },
+                "user_id": {
+                    "type": "string",
+                    "example": "019b6de2-1ca5-489a-813f-f33bcf50d984"
+                }
+            }
+        },
+        "dto.AdminGetBoundCardsHistoryResponse": {
+            "type": "object",
+            "properties": {
+                "cards": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.AdminBoundCardHistoryItem"
+                    }
+                },
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.AdminGetBoundCardsResponse": {
+            "type": "object",
+            "properties": {
+                "cards": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.AdminBoundCardItem"
+                    }
+                },
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.AdminGetLxmCpoOrdersPaymentsInvoicesStatusesData": {
+            "type": "object",
+            "properties": {
+                "invoice_statuses": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.StatusItem"
+                    }
+                },
+                "order_statuses": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.StatusItem"
+                    }
+                },
+                "payment_statuses": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.StatusItem"
+                    }
+                }
+            }
+        },
+        "dto.AdminGetLxmCpoOrdersPaymentsInvoicesStatusesResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "data": {
+                    "$ref": "#/definitions/dto.AdminGetLxmCpoOrdersPaymentsInvoicesStatusesData"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.AdminGetLxmCpoOrdersResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "data": {
+                    "$ref": "#/definitions/dto.AdminLxmCpoOrdersData"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.AdminGetLxmCpoRequestLogsResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "data": {
+                    "$ref": "#/definitions/dto.AdminLxmCpoRequestLogsData"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.AdminLxmCpoOrderRow": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer",
+                    "example": 100
+                },
+                "cpo_name": {
+                    "type": "string",
+                    "example": "U-Power(測試)"
+                },
+                "end_time": {
+                    "type": "string",
+                    "example": "2026-03-01T00:00:00Z"
+                },
+                "invoice_carrier_num": {
+                    "type": "string",
+                    "example": "AB12345678"
+                },
+                "invoice_carrier_type": {
+                    "type": "string",
+                    "example": "1"
+                },
+                "invoice_carrier_type_name_en": {
+                    "type": "string",
+                    "example": "Green World E-Invoice Carrier"
+                },
+                "invoice_carrier_type_name_zh": {
+                    "type": "string",
+                    "example": "綠界電子發票載具"
+                },
+                "invoice_comment": {
+                    "type": "string",
+                    "example": "異常發票"
+                },
+                "invoice_created_at": {
+                    "type": "string",
+                    "example": "2026-03-01T00:00:00Z"
+                },
+                "invoice_customer_identifier": {
+                    "type": "string",
+                    "example": "83167722"
+                },
+                "invoice_customer_name": {
+                    "type": "string",
+                    "example": "鴻華先進科技股份有限公司"
+                },
+                "invoice_date": {
+                    "type": "string",
+                    "example": "2026-03-01T00:00:00Z"
+                },
+                "invoice_id": {
+                    "type": "string",
+                    "example": "45d969c2-1882-40c1-b91b-18d6142b9b88"
+                },
+                "invoice_no": {
+                    "type": "string",
+                    "example": "FJ91707232"
+                },
+                "invoice_rtn_code": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "invoice_rtn_msg": {
+                    "type": "string",
+                    "example": "開立發票成功"
+                },
+                "invoice_sales_amount": {
+                    "type": "integer",
+                    "example": 1000
+                },
+                "invoice_status": {
+                    "type": "integer",
+                    "example": 3
+                },
+                "invoice_status_name_en": {
+                    "type": "string",
+                    "example": "Issued"
+                },
+                "invoice_status_name_zh": {
+                    "type": "string",
+                    "example": "已開立"
+                },
+                "invoice_updated_at": {
+                    "type": "string",
+                    "example": "2026-03-01T00:00:00Z"
+                },
+                "license_plate": {
+                    "type": "string",
+                    "example": "ABC123"
+                },
+                "merchant_trade_no": {
+                    "type": "string",
+                    "example": "VASD2026031000SD"
+                },
+                "order_abnormal_type": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "order_abnormal_type_name_en": {
+                    "type": "string",
+                    "example": "Normal"
+                },
+                "order_abnormal_type_name_zh": {
+                    "type": "string",
+                    "example": "正常"
+                },
+                "order_comment": {
+                    "type": "string",
+                    "example": "異常訂單"
+                },
+                "order_created_at": {
+                    "type": "string",
+                    "example": "2026-03-01T00:00:00Z"
+                },
+                "order_id": {
+                    "type": "string",
+                    "example": "45d969c2-1882-40c1-b91b-18d6142b9b88"
+                },
+                "order_status": {
+                    "type": "integer",
+                    "example": 6
+                },
+                "order_status_name_en": {
+                    "type": "string",
+                    "example": "Paid"
+                },
+                "order_status_name_zh": {
+                    "type": "string",
+                    "example": "已付款"
+                },
+                "order_updated_at": {
+                    "type": "string",
+                    "example": "2026-03-01T00:00:00Z"
+                },
+                "owner_user_id": {
+                    "type": "string",
+                    "example": "45d969c2-1882-40c1-b91b-18d6142b9b88"
+                },
+                "payment_amount": {
+                    "type": "integer",
+                    "example": 100
+                },
+                "payment_comment": {
+                    "type": "string",
+                    "example": "異常支付"
+                },
+                "payment_created_at": {
+                    "type": "string",
+                    "example": "2026-03-01T00:00:00Z"
+                },
+                "payment_id": {
+                    "type": "string",
+                    "example": "45d969c2-1882-40c1-b91b-18d6142b9b88"
+                },
+                "payment_rtn_code": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "payment_rtn_msg": {
+                    "type": "string",
+                    "example": "Success!"
+                },
+                "payment_status": {
+                    "type": "integer",
+                    "example": 5
+                },
+                "payment_status_name_en": {
+                    "type": "string",
+                    "example": "Paid"
+                },
+                "payment_status_name_zh": {
+                    "type": "string",
+                    "example": "已付款"
+                },
+                "payment_updated_at": {
+                    "type": "string",
+                    "example": "2026-03-01T00:00:00Z"
+                },
+                "relate_number": {
+                    "type": "string",
+                    "example": "12345678"
+                },
+                "request_id": {
+                    "type": "string",
+                    "example": "EVO_Session_2026382"
+                },
+                "start_time": {
+                    "type": "string",
+                    "example": "2026-03-01T00:00:00Z"
+                },
+                "station_name": {
+                    "type": "string",
+                    "example": "臺北 文山木柵站"
+                },
+                "trade_no": {
+                    "type": "string",
+                    "example": "2603110700056219"
+                },
+                "vin": {
+                    "type": "string",
+                    "example": "RF5D21FH0SS000513"
+                }
+            }
+        },
+        "dto.AdminLxmCpoOrdersData": {
+            "type": "object",
+            "properties": {
+                "current_page": {
+                    "type": "integer"
+                },
+                "orders": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.AdminLxmCpoOrderRow"
+                    }
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "total_count": {
+                    "type": "integer"
+                },
+                "total_pages": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.AdminLxmCpoRequestLogRow": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer",
+                    "example": 100
+                },
+                "api_type": {
+                    "type": "integer",
+                    "example": 202
+                },
+                "bind_card_id": {
+                    "type": "string",
+                    "example": "6a26b95b67b44e3896fdc56caa6b791866463769232d45e58c299382b3347544"
+                },
+                "car_id": {
+                    "type": "string",
+                    "example": "f0fddd00f2fe"
+                },
+                "client_id": {
+                    "type": "string",
+                    "example": "JTHBN30F2100104330"
+                },
+                "cpo_name": {
+                    "type": "string",
+                    "example": "U-Power(測試)"
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-03-01T00:00:00Z"
+                },
+                "device_id": {
+                    "type": "string",
+                    "example": "ac82305b-b5a2-46b4-8a15-5c3a1716e973"
+                },
+                "end_time": {
+                    "type": "string",
+                    "example": "1773192824000"
+                },
+                "evse_uid": {
+                    "type": "string",
+                    "example": "ac82305b-b5a2-46b4-8a15-5c3a1716e973"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "45d969c2-1882-40c1-b91b-18d6142b9b88"
+                },
+                "latitude": {
+                    "type": "string",
+                    "example": "24.9980452"
+                },
+                "license_plate": {
+                    "type": "string",
+                    "example": "ABC-1234"
+                },
+                "longitude": {
+                    "type": "string",
+                    "example": "121.5431234"
+                },
+                "owner_user_id": {
+                    "type": "string",
+                    "example": "019b6de2-1ca5-489a-813f-f33bcf50d984"
+                },
+                "request_id": {
+                    "type": "string",
+                    "example": "EVO_Session_2026382"
+                },
+                "request_time": {
+                    "type": "string",
+                    "example": "1708412454316"
+                },
+                "response_code": {
+                    "type": "string",
+                    "example": "00"
+                },
+                "response_data": {
+                    "type": "string",
+                    "example": "{\"amount\":2}"
+                },
+                "response_http_status_code": {
+                    "type": "integer",
+                    "example": 200
+                },
+                "response_message": {
+                    "type": "string",
+                    "example": "Success"
+                },
+                "start_time": {
+                    "type": "string",
+                    "example": "1773192524000"
+                },
+                "station_id": {
+                    "type": "string",
+                    "example": "123"
+                },
+                "station_name": {
+                    "type": "string",
+                    "example": "臺北 文山木柵站"
+                },
+                "used_energy": {
+                    "type": "string",
+                    "example": "30.787"
+                },
+                "used_time": {
+                    "type": "integer",
+                    "example": 1579
+                },
+                "vehicle_id": {
+                    "type": "string",
+                    "example": "b18161e0-d9ac-433d-a55a-79e1a28e79fb"
+                },
+                "vin": {
+                    "type": "string",
+                    "example": "RF5D21FH0SS000513"
+                }
+            }
+        },
+        "dto.AdminLxmCpoRequestLogsData": {
+            "type": "object",
+            "properties": {
+                "current_page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "request_logs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.AdminLxmCpoRequestLogRow"
+                    }
+                },
+                "total_count": {
+                    "type": "integer"
+                },
+                "total_pages": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.BaseResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CancelBindingCardAuthorizedPaymentRedoRequest": {
+            "type": "object",
+            "properties": {
+                "from_date": {
+                    "type": "string",
+                    "example": "2026-01-25"
+                },
+                "to_date": {
+                    "type": "string",
+                    "example": "2026-02-07"
+                }
+            }
+        },
+        "dto.CancelBindingCardAuthorizedPaymentRedoResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CancelSubscriptionResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CancelTtAmsCServiceSubscriptionsRequest": {
+            "type": "object",
+            "required": [
+                "vehicle_id"
+            ],
+            "properties": {
+                "vehicle_id": {
+                    "type": "string",
+                    "example": "45d969c2-1882-40c1-b91b-18d6142b9b88"
+                }
+            }
+        },
+        "dto.CancelTtAmsCServiceSubscriptionsResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CreateSubscriptionRequest": {
+            "type": "object",
+            "required": [
+                "plan_id",
+                "vehicle_id"
+            ],
+            "properties": {
+                "plan_id": {
+                    "type": "string",
+                    "example": "d63e7eb1-a4ad-47b2-b395-af8d21963e3a"
+                },
+                "valid_from": {
+                    "description": "ISO 8601 UTC format, \"yyyy-MM-dd'T'HH:mm:ss'Z'\"",
+                    "type": "string",
+                    "example": "2024-07-01T00:00:00Z"
+                },
+                "vehicle_id": {
+                    "type": "string",
+                    "example": "45d969c2-1882-40c1-b91b-18d6142b9b88"
+                }
+            }
+        },
+        "dto.CreateSubscriptionResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CreateVehicleRequest": {
+            "type": "object",
+            "required": [
+                "model_code",
+                "vehicle_id",
+                "vin"
+            ],
+            "properties": {
+                "model_code": {
+                    "type": "string",
+                    "minLength": 1,
+                    "example": "D31L"
+                },
+                "owner_user_id": {
+                    "type": "string",
+                    "example": "447b723d-41a0-466a-9e25-51758d29f445"
+                },
+                "vehicle_id": {
+                    "type": "string",
+                    "example": "45d969c2-1882-40c1-b91b-18d6142b9b88"
+                },
+                "vin": {
+                    "type": "string",
+                    "minLength": 1,
+                    "example": "RF5D31FHT00ET9999"
+                }
+            }
+        },
+        "dto.CreateVehicleResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayApiResponse": {
+            "type": "object",
+            "properties": {
+                "Data": {
+                    "description": "Encrypted JSON string",
+                    "type": "string"
+                },
+                "MerchantID": {
+                    "type": "string"
+                },
+                "RpHeader": {
+                    "$ref": "#/definitions/dto.EcPayRpHeader"
+                },
+                "TransCode": {
+                    "type": "integer"
+                },
+                "TransMsg": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayBoundCardItem": {
+            "type": "object",
+            "properties": {
+                "card4_no": {
+                    "type": "string"
+                },
+                "card6_no": {
+                    "type": "string"
+                },
+                "card_valid_mm": {
+                    "type": "string"
+                },
+                "card_valid_yy": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayCheckBarcodeRequest": {
+            "type": "object",
+            "required": [
+                "barcode"
+            ],
+            "properties": {
+                "barcode": {
+                    "description": "手機條碼 (8碼, 第1碼為'/')",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayCheckBarcodeResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "is_exist": {
+                    "description": "手機條碼是否存在",
+                    "type": "boolean"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "rtn_code": {
+                    "description": "回應代碼 (1=成功, 9000001=財政部API失敗)",
+                    "type": "integer"
+                },
+                "rtn_msg": {
+                    "description": "回應訊息",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayCreateBindCardRequest": {
+            "type": "object",
+            "required": [
+                "bind_card_pay_token",
+                "merchant_trade_no"
+            ],
+            "properties": {
+                "bind_card_pay_token": {
+                    "type": "string"
+                },
+                "merchant_trade_no": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayCreateBindCardResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "merchant_trade_no": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "three_d_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayGetBindingCardTokenResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "merchant_trade_no": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                },
+                "token_expire_date": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayGetBoundCardsResponse": {
+            "type": "object",
+            "properties": {
+                "cards": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.EcPayBoundCardItem"
+                    }
+                },
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayGetCompanyNameByTaxIdRequest": {
+            "type": "object",
+            "required": [
+                "unified_business_no"
+            ],
+            "properties": {
+                "unified_business_no": {
+                    "description": "統一編號 (8碼數字)",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayGetCompanyNameByTaxIdResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "company_name": {
+                    "description": "公司名稱 (僅RtnCode=1時有值)",
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "rtn_code": {
+                    "description": "回應代碼 (1=成功, 7=查無資料, 1200125=格式錯誤, 9000001=財政部API失敗)",
+                    "type": "integer"
+                },
+                "rtn_msg": {
+                    "description": "回應訊息",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayGetInvoiceItemResponse": {
+            "type": "object",
+            "properties": {
+                "item_amount": {
+                    "description": "商品合計 (含稅)",
+                    "type": "number"
+                },
+                "item_count": {
+                    "description": "商品數量",
+                    "type": "number"
+                },
+                "item_name": {
+                    "description": "商品名稱",
+                    "type": "string"
+                },
+                "item_price": {
+                    "description": "商品單價 (含稅)",
+                    "type": "number"
+                },
+                "item_remark": {
+                    "description": "商品備註",
+                    "type": "string"
+                },
+                "item_seq": {
+                    "description": "商品序號",
+                    "type": "integer"
+                },
+                "item_tax_type": {
+                    "description": "商品課稅別",
+                    "type": "string"
+                },
+                "item_word": {
+                    "description": "商品單位",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayGetInvoiceRequest": {
+            "type": "object",
+            "properties": {
+                "invoice_date": {
+                    "description": "發票開立日期 (情境二, 格式: yyyy-MM-dd)",
+                    "type": "string"
+                },
+                "invoice_no": {
+                    "description": "發票號碼 (情境二)",
+                    "type": "string"
+                },
+                "relate_number": {
+                    "description": "特店自訂編號 (情境一)",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayGetInvoiceResponse": {
+            "type": "object",
+            "properties": {
+                "award_flag": {
+                    "description": "中獎旗標",
+                    "type": "string"
+                },
+                "award_type": {
+                    "description": "中獎種類",
+                    "type": "string"
+                },
+                "carrier_num": {
+                    "description": "載具編號",
+                    "type": "string"
+                },
+                "carrier_type": {
+                    "description": "載具類別",
+                    "type": "string"
+                },
+                "clearance_mark": {
+                    "description": "通關方式 (1=非經海關出口, 2=經海關出口)",
+                    "type": "string"
+                },
+                "create_date": {
+                    "description": "發票開立時間",
+                    "type": "string"
+                },
+                "customer_addr": {
+                    "description": "客戶地址",
+                    "type": "string"
+                },
+                "customer_email": {
+                    "description": "客戶電子信箱",
+                    "type": "string"
+                },
+                "customer_id": {
+                    "description": "客戶編號",
+                    "type": "string"
+                },
+                "customer_identifier": {
+                    "description": "買方統編",
+                    "type": "string"
+                },
+                "customer_name": {
+                    "description": "客戶名稱",
+                    "type": "string"
+                },
+                "customer_phone": {
+                    "description": "客戶電話",
+                    "type": "string"
+                },
+                "invalid_status": {
+                    "description": "發票作廢狀態",
+                    "type": "string"
+                },
+                "invoice_category": {
+                    "description": "發票類別",
+                    "type": "string"
+                },
+                "invoice_no": {
+                    "description": "發票號碼",
+                    "type": "string"
+                },
+                "invoice_remark": {
+                    "description": "發票備註",
+                    "type": "string"
+                },
+                "invoice_type": {
+                    "description": "發票種類",
+                    "type": "string"
+                },
+                "issue_status": {
+                    "description": "發票開立狀態",
+                    "type": "string"
+                },
+                "items": {
+                    "description": "商品列表",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.EcPayGetInvoiceItemResponse"
+                    }
+                },
+                "love_code": {
+                    "description": "捐贈碼",
+                    "type": "string"
+                },
+                "merchant_id": {
+                    "description": "特店編號",
+                    "type": "string"
+                },
+                "pos_bar_code": {
+                    "description": "電子發票BARCODE",
+                    "type": "string"
+                },
+                "print_flag": {
+                    "description": "列印旗標",
+                    "type": "string"
+                },
+                "qr_code_left": {
+                    "description": "電子發票QRCODE左邊",
+                    "type": "string"
+                },
+                "qr_code_right": {
+                    "description": "電子發票QRCODE右邊",
+                    "type": "string"
+                },
+                "random_number": {
+                    "description": "隨機碼",
+                    "type": "string"
+                },
+                "relate_number": {
+                    "description": "特店自訂編號",
+                    "type": "string"
+                },
+                "remain_allowance_amt": {
+                    "description": "折讓剩餘金額",
+                    "type": "number"
+                },
+                "rtn_code": {
+                    "description": "回應代碼 (1=成功)",
+                    "type": "integer"
+                },
+                "rtn_msg": {
+                    "description": "回應訊息",
+                    "type": "string"
+                },
+                "sales_amount": {
+                    "description": "發票金額",
+                    "type": "integer"
+                },
+                "special_tax_type": {
+                    "description": "特種稅額類別",
+                    "type": "integer"
+                },
+                "tax_amount": {
+                    "description": "稅金",
+                    "type": "integer"
+                },
+                "tax_rate": {
+                    "description": "稅率",
+                    "type": "number"
+                },
+                "tax_type": {
+                    "description": "課稅別",
+                    "type": "string"
+                },
+                "turnkey_status": {
+                    "description": "發票上傳後接收狀態",
+                    "type": "string"
+                },
+                "upload_date": {
+                    "description": "發票上傳時間",
+                    "type": "string"
+                },
+                "upload_status": {
+                    "description": "發票上傳狀態",
+                    "type": "string"
+                },
+                "zero_tax_rate_reason": {
+                    "description": "零稅率原因",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayGetInvoiceWordSettingInvoiceInfoResponse": {
+            "type": "object",
+            "properties": {
+                "inv_type": {
+                    "description": "字軌類別",
+                    "type": "string"
+                },
+                "invoice_category": {
+                    "description": "發票類別",
+                    "type": "integer"
+                },
+                "invoice_end": {
+                    "description": "結束發票編號",
+                    "type": "string"
+                },
+                "invoice_header": {
+                    "description": "字軌名稱",
+                    "type": "string"
+                },
+                "invoice_no": {
+                    "description": "目前已使用號碼",
+                    "type": "string"
+                },
+                "invoice_start": {
+                    "description": "起始發票編號",
+                    "type": "string"
+                },
+                "invoice_term": {
+                    "description": "發票期別",
+                    "type": "integer"
+                },
+                "invoice_year": {
+                    "description": "發票年度",
+                    "type": "string"
+                },
+                "product_service_id": {
+                    "description": "產品服務別代號",
+                    "type": "string"
+                },
+                "track_id": {
+                    "description": "字軌號碼ID",
+                    "type": "string"
+                },
+                "use_status": {
+                    "description": "使用狀態",
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.EcPayGetInvoiceWordSettingRequest": {
+            "type": "object",
+            "required": [
+                "invoice_category",
+                "invoice_term",
+                "invoice_year",
+                "use_status"
+            ],
+            "properties": {
+                "inv_type": {
+                    "description": "字軌類別 (選填, 07=一般稅額發票, 08=特種稅額發票)",
+                    "type": "string",
+                    "enum": [
+                        "07",
+                        "08"
+                    ]
+                },
+                "invoice_category": {
+                    "description": "發票類別 (1=B2C, 請固定填寫為1)",
+                    "type": "integer"
+                },
+                "invoice_header": {
+                    "description": "字軌名稱 (選填, 2碼)",
+                    "type": "string"
+                },
+                "invoice_term": {
+                    "description": "發票期別 (0=全部, 1=1-2月, 2=3-4月, 3=5-6月, 4=7-8月, 5=9-10月, 6=11-12月)",
+                    "type": "integer",
+                    "maximum": 6,
+                    "minimum": 0
+                },
+                "invoice_year": {
+                    "description": "發票年度 (民國年格式, 3碼 ex:109)",
+                    "type": "string"
+                },
+                "product_service_id": {
+                    "description": "產品服務別代號 (選填, 1-10碼英數字)",
+                    "type": "string",
+                    "maxLength": 10
+                },
+                "use_status": {
+                    "description": "字軌使用狀態 (0=全部, 1=未啟用, 2=使用中, 3=已停用, 4=暫停中, 5=待審核, 6=審核不通過)",
+                    "type": "integer",
+                    "maximum": 6,
+                    "minimum": 0
+                }
+            }
+        },
+        "dto.EcPayGetInvoiceWordSettingResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "invoice_info": {
+                    "description": "發票資訊",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.EcPayGetInvoiceWordSettingInvoiceInfoResponse"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                },
+                "rtn_code": {
+                    "description": "回應代碼 (1=成功)",
+                    "type": "integer"
+                },
+                "rtn_msg": {
+                    "description": "回應訊息",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayGetMemberBindCardItem": {
+            "type": "object",
+            "properties": {
+                "bind_card_id": {
+                    "type": "string"
+                },
+                "card4_no": {
+                    "type": "string"
+                },
+                "card6_no": {
+                    "type": "string"
+                },
+                "card_valid_mm": {
+                    "type": "string"
+                },
+                "card_valid_yy": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayGetMemberBindCardRequest": {
+            "type": "object",
+            "required": [
+                "merchant_member_id"
+            ],
+            "properties": {
+                "merchant_member_id": {
+                    "type": "string"
+                },
+                "merchant_trade_no": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayGetMemberBindCardResponse": {
+            "type": "object",
+            "properties": {
+                "bind_card_list": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.EcPayGetMemberBindCardItem"
+                    }
+                },
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayInvoiceNotifyRequest": {
+            "type": "object",
+            "required": [
+                "invoice_no",
+                "invoice_tag",
+                "notified",
+                "notify"
+            ],
+            "properties": {
+                "allowance_no": {
+                    "description": "折讓編號 (16碼, InvoiceTag=A,AI,OA時必填)",
+                    "type": "string"
+                },
+                "invoice_no": {
+                    "description": "發票號碼 (10碼)",
+                    "type": "string"
+                },
+                "invoice_tag": {
+                    "description": "發送內容類型 (I=發票開立, II=發票作廢, A=折讓開立, AI=折讓作廢, AW=發票中獎, OA=線上折讓)",
+                    "type": "string",
+                    "enum": [
+                        "I",
+                        "II",
+                        "A",
+                        "AI",
+                        "AW",
+                        "OA"
+                    ]
+                },
+                "notified": {
+                    "description": "發送對象 (C=客戶, M=特店, A=皆發送)",
+                    "type": "string",
+                    "enum": [
+                        "C",
+                        "M",
+                        "A"
+                    ]
+                },
+                "notify": {
+                    "description": "發送方式 (S=簡訊, E=電子郵件, A=皆通知)",
+                    "type": "string",
+                    "enum": [
+                        "S",
+                        "E",
+                        "A"
+                    ]
+                },
+                "notify_mail": {
+                    "description": "發送電子郵件 (與phone擇一必填, 可多組以;分隔)",
+                    "type": "string"
+                },
+                "phone": {
+                    "description": "發送簡訊號碼 (與notify_mail擇一必填)",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayInvoiceNotifyResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "rtn_code": {
+                    "description": "回應代碼 (1=成功)",
+                    "type": "integer"
+                },
+                "rtn_msg": {
+                    "description": "回應訊息",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayQueryCashierTradeRequest": {
+            "type": "object",
+            "required": [
+                "merchant_trade_no"
+            ],
+            "properties": {
+                "merchant_trade_no": {
+                    "description": "特店交易編號",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayQueryCashierTradeResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "金額",
+                    "type": "integer"
+                },
+                "auth_code": {
+                    "description": "銀行授權碼",
+                    "type": "string"
+                },
+                "card_4_no": {
+                    "description": "信用卡卡號末四碼",
+                    "type": "string"
+                },
+                "card_6_no": {
+                    "description": "信用卡卡號前六碼",
+                    "type": "string"
+                },
+                "charge_fee": {
+                    "description": "金流服務費",
+                    "type": "number"
+                },
+                "gwsr": {
+                    "description": "授權交易單號",
+                    "type": "integer"
+                },
+                "issuing_bank": {
+                    "description": "銀行名稱",
+                    "type": "string"
+                },
+                "issuing_bank_code": {
+                    "description": "銀行代碼",
+                    "type": "string"
+                },
+                "merchant_trade_no": {
+                    "description": "特店交易編號",
+                    "type": "string"
+                },
+                "payment_date": {
+                    "description": "付款時間",
+                    "type": "string"
+                },
+                "payment_type": {
+                    "description": "付款方式",
+                    "type": "string"
+                },
+                "process_date": {
+                    "description": "交易時間",
+                    "type": "string"
+                },
+                "process_fee": {
+                    "description": "交易處理費",
+                    "type": "number"
+                },
+                "rtn_code": {
+                    "description": "回應代碼 (1=成功)",
+                    "type": "integer"
+                },
+                "rtn_msg": {
+                    "description": "回應訊息",
+                    "type": "string"
+                },
+                "staed": {
+                    "description": "各期金額",
+                    "type": "integer"
+                },
+                "stage": {
+                    "description": "分期期數",
+                    "type": "integer"
+                },
+                "stast": {
+                    "description": "首期金額",
+                    "type": "integer"
+                },
+                "trade_amt": {
+                    "description": "交易金額",
+                    "type": "integer"
+                },
+                "trade_date": {
+                    "description": "訂單成立時間",
+                    "type": "string"
+                },
+                "trade_no": {
+                    "description": "綠界交易編號",
+                    "type": "string"
+                },
+                "trade_status": {
+                    "description": "交易狀態",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayQueryCreditDetailTradeCloseDataResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "交易金額",
+                    "type": "integer"
+                },
+                "date_time": {
+                    "description": "關帳時間",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "狀態",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayQueryCreditDetailTradeRequest": {
+            "type": "object",
+            "required": [
+                "merchant_trade_no"
+            ],
+            "properties": {
+                "merchant_trade_no": {
+                    "description": "特店交易編號",
+                    "type": "string"
+                },
+                "trade_no": {
+                    "description": "綠界交易編號 (選填)",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EcPayQueryCreditDetailTradeResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "交易金額",
+                    "type": "integer"
+                },
+                "auth_time": {
+                    "description": "訂單成立時間",
+                    "type": "string"
+                },
+                "close_data": {
+                    "description": "關帳明細交易",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.EcPayQueryCreditDetailTradeCloseDataResponse"
+                    }
+                },
+                "cls_amt": {
+                    "description": "已關帳金額",
+                    "type": "integer"
+                },
+                "rtn_code": {
+                    "description": "回應代碼 失敗才有值",
+                    "type": "integer"
+                },
+                "rtn_msg": {
+                    "description": "回應訊息 (空值=成功)",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "交易狀態",
+                    "type": "string"
+                },
+                "trade_id": {
+                    "description": "授權單號",
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.EcPayRpHeader": {
+            "type": "object",
+            "properties": {
+                "Timestamp": {
+                    "description": "Unix timestamp",
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.GenerateAndUploadAutochargeReportAndSendEmailRequest": {
+            "type": "object",
+            "properties": {
+                "daily_report_date": {
+                    "type": "string",
+                    "example": "2026-02-04"
+                }
+            }
+        },
+        "dto.GenerateAndUploadAutochargeReportAndSendEmailResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.GetAllTtAmsCServicePlansResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.VasTtAmsCPlan"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.GetAutochargeSettings": {
+            "type": "object",
+            "properties": {
+                "autocharge_status": {
+                    "description": "Autocharge Status (0: disabled, 1: enabled)",
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
+        "dto.GetAutochargeSettingsResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "data": {
+                    "$ref": "#/definitions/dto.GetAutochargeSettings"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.GetInvoiceSettingsResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "data": {
+                    "$ref": "#/definitions/dto.InvoiceSettings"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.GetLxmCpoOrdersResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "data": {
+                    "$ref": "#/definitions/dto.LxmCpoOrdersData"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.GetTtAmsCServiceDeliveryPlansResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.VasTtAmsCPlan"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.GetTtAmsCServiceSubscriptionsResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.TtAmsCServiceHasStatusSubscription"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.GetTtAmsCServiceTestPlansResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.VasTtAmsCPlan"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.GetValidTtAmsCServiceSubscriptionResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "data": {
+                    "$ref": "#/definitions/dto.TtAmsCServiceSubscription"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.InvoiceData": {
+            "type": "object",
+            "properties": {
+                "carrier_num": {
+                    "type": "string"
+                },
+                "carrier_num2": {
+                    "type": "string"
+                },
+                "carrier_type": {
+                    "type": "string"
+                },
+                "clearance_mark": {
+                    "type": "string"
+                },
+                "comment": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "customer_addr": {
+                    "type": "string"
+                },
+                "customer_email": {
+                    "type": "string"
+                },
+                "customer_identifier": {
+                    "type": "string"
+                },
+                "customer_name": {
+                    "type": "string"
+                },
+                "customer_phone": {
+                    "type": "string"
+                },
+                "donation_flag": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "45d969c2-1882-40c1-b91b-18d6142b9b88"
+                },
+                "inv_type": {
+                    "type": "string"
+                },
+                "invalidated_at": {
+                    "type": "string"
+                },
+                "invoice_date": {
+                    "type": "string"
+                },
+                "invoice_no": {
+                    "type": "string"
+                },
+                "invoice_remark": {
+                    "type": "string"
+                },
+                "issued_at": {
+                    "type": "string"
+                },
+                "item_amount": {
+                    "type": "number"
+                },
+                "item_count": {
+                    "type": "number"
+                },
+                "item_name": {
+                    "type": "string"
+                },
+                "item_price": {
+                    "type": "number"
+                },
+                "item_remark": {
+                    "type": "string"
+                },
+                "item_tax_type": {
+                    "type": "string"
+                },
+                "item_word": {
+                    "type": "string"
+                },
+                "love_code": {
+                    "type": "string"
+                },
+                "merchant_id": {
+                    "type": "string"
+                },
+                "order_id": {
+                    "type": "string"
+                },
+                "order_type": {
+                    "type": "integer"
+                },
+                "payment_id": {
+                    "type": "string"
+                },
+                "print_flag": {
+                    "type": "integer"
+                },
+                "provider_type": {
+                    "type": "integer"
+                },
+                "random_number": {
+                    "type": "string"
+                },
+                "relate_number": {
+                    "type": "string"
+                },
+                "rtn_code": {
+                    "type": "integer"
+                },
+                "rtn_msg": {
+                    "type": "string"
+                },
+                "sales_amount": {
+                    "type": "integer"
+                },
+                "special_tax_type": {
+                    "type": "integer"
+                },
+                "status": {
+                    "description": "status: -1=Aborted, 1=Sending issue request, 2=Issue failed, 3=Issued, 4=Invalidated",
+                    "type": "integer"
+                },
+                "tax_amount": {
+                    "type": "integer"
+                },
+                "tax_type": {
+                    "type": "integer"
+                },
+                "trans_code": {
+                    "type": "integer"
+                },
+                "trans_msg": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                },
+                "vat_included": {
+                    "type": "integer"
+                },
+                "zero_tax_rate_reason": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.InvoiceSettings": {
+            "type": "object",
+            "properties": {
+                "carrier_num": {
+                    "type": "string",
+                    "example": "/ABC+123"
+                },
+                "company_name": {
+                    "type": "string",
+                    "example": "Foxtron Inc."
+                },
+                "invoice_type": {
+                    "description": "InvoiceType (1: ecpay, 2: mobile barcode, 3: tax id number)",
+                    "type": "integer",
+                    "example": 1
+                },
+                "tax_id_number": {
+                    "type": "string",
+                    "example": "12345678"
+                }
+            }
+        },
+        "dto.LxmCpoCheckoutAmount": {
+            "type": "object",
+            "required": [
+                "amount"
+            ],
+            "properties": {
+                "amount": {
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "dto.LxmCpoCheckoutDevice": {
+            "type": "object",
+            "required": [
+                "deviceId",
+                "evseUid",
+                "latitude",
+                "longitude",
+                "stationName"
+            ],
+            "properties": {
+                "deviceId": {
+                    "type": "string",
+                    "maxLength": 50
+                },
+                "evseUid": {
+                    "type": "string",
+                    "maxLength": 50
+                },
+                "latitude": {
+                    "type": "string",
+                    "maxLength": 50
+                },
+                "longitude": {
+                    "type": "string",
+                    "maxLength": 50
+                },
+                "stationId": {
+                    "type": "string",
+                    "maxLength": 50
+                },
+                "stationName": {
+                    "type": "string",
+                    "maxLength": 50
+                }
+            }
+        },
+        "dto.LxmCpoCheckoutRequest": {
+            "type": "object",
+            "required": [
+                "amount",
+                "carId",
+                "clientId",
+                "device",
+                "endTime",
+                "requestId",
+                "requestTime",
+                "startTime",
+                "usedEnergy",
+                "usedTime"
+            ],
+            "properties": {
+                "amount": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "carId": {
+                    "type": "string",
+                    "maxLength": 50
+                },
+                "clientId": {
+                    "type": "string",
+                    "maxLength": 100
+                },
+                "device": {
+                    "$ref": "#/definitions/dto.LxmCpoCheckoutDevice"
+                },
+                "endTime": {
+                    "type": "string"
+                },
+                "requestId": {
+                    "type": "string",
+                    "maxLength": 50
+                },
+                "requestTime": {
+                    "type": "string"
+                },
+                "startTime": {
+                    "type": "string"
+                },
+                "usedEnergy": {
+                    "type": "string",
+                    "maxLength": 100
+                },
+                "usedTime": {
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "dto.LxmCpoCheckoutResponse": {
+            "type": "object",
+            "required": [
+                "data"
+            ],
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "data": {
+                    "$ref": "#/definitions/dto.LxmCpoCheckoutAmount"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.LxmCpoOrderData": {
+            "type": "object",
+            "properties": {
+                "abnormal_type": {
+                    "description": "abnormal_type: 1=Normal, 2=Unexpected error, 3=Owner not found, 4=No bound cards, 5=Same amount in short time, 6=Inconsistent clientId carId",
+                    "type": "integer",
+                    "example": 1
+                },
+                "amount": {
+                    "type": "integer"
+                },
+                "bind_card_id": {
+                    "type": "string"
+                },
+                "car_id": {
+                    "type": "string"
+                },
+                "client_id": {
+                    "type": "string"
+                },
+                "comment": {
+                    "type": "string"
+                },
+                "cpo_name": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "device_id": {
+                    "type": "string"
+                },
+                "end_time": {
+                    "type": "string"
+                },
+                "evse_uid": {
+                    "type": "string"
+                },
+                "fdc_sn": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "45d969c2-1882-40c1-b91b-18d6142b9b88"
+                },
+                "latitude": {
+                    "type": "number"
+                },
+                "license_plate": {
+                    "type": "string"
+                },
+                "longitude": {
+                    "type": "number"
+                },
+                "owner_user_id": {
+                    "type": "string"
+                },
+                "payment_id": {
+                    "type": "string"
+                },
+                "refund_amount": {
+                    "type": "integer"
+                },
+                "request_id": {
+                    "type": "string"
+                },
+                "request_time": {
+                    "type": "string"
+                },
+                "start_time": {
+                    "type": "string"
+                },
+                "station_id": {
+                    "type": "string"
+                },
+                "station_name": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "status: 1=Unexpected error, 2=Owner not found, 3=No bound cards, 4=Unpaid, 5=Failed to pay, 6=Paid, 7=Refund requested, 8=Refunded, 9=Cancel requested, 10=Canceled, 11=No charge, 12=No charge (Promotion)",
+                    "type": "integer",
+                    "example": 6
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "used_energy": {
+                    "type": "number"
+                },
+                "used_time": {
+                    "type": "integer"
+                },
+                "vehicle_id": {
+                    "type": "string"
+                },
+                "vin": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.LxmCpoOrderDetail": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer",
+                    "example": 100
+                },
+                "end_time": {
+                    "type": "string",
+                    "example": "2025-01-20T11:00:00Z"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "45d969c2-1882-40c1-b91b-18d6142b9b88"
+                },
+                "promotion_comment_en": {
+                    "type": "string",
+                    "example": "(Promotion Applied: NTD $0)"
+                },
+                "promotion_comment_zh": {
+                    "type": "string",
+                    "example": "(符合促銷方案: NTD $0)"
+                },
+                "refund_amount": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "repayable": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "start_time": {
+                    "type": "string",
+                    "example": "2025-01-20T10:00:00Z"
+                },
+                "station_name": {
+                    "type": "string",
+                    "example": "Taipei Station"
+                },
+                "status": {
+                    "description": "status: 1=Unexpected error, 2=Owner not found, 3=No bound cards, 4=Unpaid, 5=Failed to pay, 6=Paid, 7=Refund requested, 8=Refunded, 9=Cancel requested, 10=Canceled, 11=No charge, 12=No charge (Promotion)",
+                    "type": "integer",
+                    "example": 6
+                },
+                "status_name_en": {
+                    "type": "string",
+                    "example": "Paid"
+                },
+                "status_name_zh": {
+                    "type": "string",
+                    "example": "已付款"
+                },
+                "used_energy": {
+                    "type": "number",
+                    "example": 15.5
+                },
+                "used_time": {
+                    "type": "integer",
+                    "example": 3600
+                }
+            }
+        },
+        "dto.LxmCpoOrderFullData": {
+            "type": "object",
+            "properties": {
+                "invoice": {
+                    "$ref": "#/definitions/dto.InvoiceData"
+                },
+                "lxm_cpo_order": {
+                    "$ref": "#/definitions/dto.LxmCpoOrderData"
+                },
+                "payment": {
+                    "$ref": "#/definitions/dto.PaymentData"
+                },
+                "payment_ecpay_info": {
+                    "$ref": "#/definitions/dto.PaymentEcpayInfoData"
+                }
+            }
+        },
+        "dto.LxmCpoOrdersData": {
+            "type": "object",
+            "properties": {
+                "has_next_page": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "orders": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.LxmCpoOrderDetail"
+                    }
+                },
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
+        "dto.LxmCpoValidateCarRequest": {
+            "type": "object",
+            "required": [
+                "carId",
+                "clientId",
+                "requestId",
+                "requestTime"
+            ],
+            "properties": {
+                "carId": {
+                    "type": "string",
+                    "maxLength": 200
+                },
+                "clientId": {
+                    "type": "string",
+                    "maxLength": 100
+                },
+                "requestId": {
+                    "type": "string",
+                    "maxLength": 50
+                },
+                "requestTime": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.LxmCpoValidateCarResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.PaymentData": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer"
+                },
+                "authorized_at": {
+                    "type": "string"
+                },
+                "canceled_at": {
+                    "type": "string"
+                },
+                "captured_at": {
+                    "type": "string"
+                },
+                "comment": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "45d969c2-1882-40c1-b91b-18d6142b9b88"
+                },
+                "invoice_id": {
+                    "type": "string"
+                },
+                "order_id": {
+                    "type": "string"
+                },
+                "order_type": {
+                    "type": "integer"
+                },
+                "payment_provider": {
+                    "type": "integer"
+                },
+                "refunded_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "status: -1=Aborted, 1=Sending authorization request, 2=Authorization failed, 3=Authorized, 4=Authorization reversal, 5=Capture, 6=Refunded",
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.PaymentEcpayInfoData": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer"
+                },
+                "auth_code": {
+                    "type": "string"
+                },
+                "bind_card_id": {
+                    "type": "string"
+                },
+                "card4_no": {
+                    "type": "string"
+                },
+                "card6_no": {
+                    "type": "string"
+                },
+                "charge_fee": {
+                    "type": "number"
+                },
+                "co_branding_code": {
+                    "type": "string"
+                },
+                "comment": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "custom_field": {
+                    "type": "string"
+                },
+                "gwsr": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "45d969c2-1882-40c1-b91b-18d6142b9b88"
+                },
+                "issuing_bank": {
+                    "type": "string"
+                },
+                "issuing_bank_code": {
+                    "type": "string"
+                },
+                "item_name": {
+                    "type": "string"
+                },
+                "merchant_id": {
+                    "type": "string"
+                },
+                "merchant_member_id": {
+                    "type": "string"
+                },
+                "merchant_trade_date": {
+                    "type": "string"
+                },
+                "merchant_trade_no": {
+                    "type": "string"
+                },
+                "payment_date": {
+                    "type": "string"
+                },
+                "payment_id": {
+                    "type": "string"
+                },
+                "payment_type": {
+                    "type": "string"
+                },
+                "process_date": {
+                    "type": "string"
+                },
+                "process_fee": {
+                    "type": "number"
+                },
+                "return_url": {
+                    "type": "string"
+                },
+                "rtn_code": {
+                    "type": "integer"
+                },
+                "rtn_msg": {
+                    "type": "string"
+                },
+                "simulate_paid": {
+                    "type": "integer"
+                },
+                "staed": {
+                    "type": "integer"
+                },
+                "stage": {
+                    "type": "integer"
+                },
+                "stast": {
+                    "type": "integer"
+                },
+                "total_amount": {
+                    "type": "integer"
+                },
+                "trade_amt": {
+                    "type": "integer"
+                },
+                "trade_date": {
+                    "type": "string"
+                },
+                "trade_desc": {
+                    "type": "string"
+                },
+                "trade_no": {
+                    "type": "string"
+                },
+                "trade_status": {
+                    "type": "string"
+                },
+                "trans_code": {
+                    "type": "integer"
+                },
+                "trans_msg": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.RedoLxmCpoOrderPaymentInvoiceRequest": {
+            "type": "object",
+            "properties": {
+                "from_date": {
+                    "type": "string",
+                    "example": "2026-01-25"
+                },
+                "to_date": {
+                    "type": "string",
+                    "example": "2026-02-07"
+                }
+            }
+        },
+        "dto.RedoLxmCpoOrderPaymentInvoiceResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.RedoPaymentInvoiceRequest": {
+            "type": "object",
+            "required": [
+                "order_id",
+                "request_id"
+            ],
+            "properties": {
+                "order_id": {
+                    "type": "string"
+                },
+                "request_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.RedoPaymentInvoiceResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "data": {
+                    "$ref": "#/definitions/dto.LxmCpoOrderFullData"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.RepayResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.SendAbnormalAutochargeEmailRequest": {
+            "type": "object",
+            "properties": {
+                "from_date": {
+                    "type": "string",
+                    "example": "2026-01-25"
+                },
+                "to_date": {
+                    "type": "string",
+                    "example": "2026-02-07"
+                }
+            }
+        },
+        "dto.SendAbnormalAutochargeEmailResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.SendDuplicatePaymentInvoiceEmailRequest": {
+            "type": "object",
+            "properties": {
+                "from_date": {
+                    "type": "string",
+                    "example": "2026-02-23"
+                },
+                "to_date": {
+                    "type": "string",
+                    "example": "2026-03-02"
+                }
+            }
+        },
+        "dto.SendDuplicatePaymentInvoiceEmailResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.SendIssuedInvoiceEmailNotificationRequest": {
+            "type": "object",
+            "required": [
+                "relate_number",
+                "user_id"
+            ],
+            "properties": {
+                "relate_number": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.SendIssuedInvoiceEmailNotificationResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.StatusItem": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "status_name_en": {
+                    "type": "string",
+                    "example": "Unexpected error"
+                },
+                "status_name_zh": {
+                    "type": "string",
+                    "example": "未預期錯誤"
+                }
+            }
+        },
+        "dto.SyncLxmCpoOrderFromEcpayRequest": {
+            "type": "object",
+            "required": [
+                "order_id",
+                "request_id"
+            ],
+            "properties": {
+                "order_id": {
+                    "type": "string"
+                },
+                "request_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.SyncLxmCpoOrderFromEcpayResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "data": {
+                    "$ref": "#/definitions/dto.LxmCpoOrderFullData"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.TtAmsCServiceHasStatusSubscription": {
+            "type": "object",
+            "properties": {
+                "permitted_backends": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                },
+                "subscription_id": {
+                    "type": "string"
+                },
+                "valid_from": {
+                    "type": "string"
+                },
+                "valid_to": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.TtAmsCServiceSubscription": {
+            "type": "object",
+            "properties": {
+                "permitted_backends": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "subscription_id": {
+                    "type": "string"
+                },
+                "valid_from": {
+                    "type": "string"
+                },
+                "valid_to": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.UpdateAutochargeSettingsRequest": {
+            "type": "object",
+            "required": [
+                "autocharge_status"
+            ],
+            "properties": {
+                "autocharge_status": {
+                    "description": "Autocharge Status (0: disabled, 1: enabled)",
+                    "type": "integer",
+                    "enum": [
+                        0,
+                        1
+                    ],
+                    "example": 1
+                }
+            }
+        },
+        "dto.UpdateAutochargeSettingsResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "data": {
+                    "$ref": "#/definitions/dto.GetAutochargeSettings"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.UpdateInvoiceSettingsRequest": {
+            "type": "object",
+            "required": [
+                "invoice_type"
+            ],
+            "properties": {
+                "carrier_num": {
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 8,
+                    "example": "/ABC+123"
+                },
+                "company_name": {
+                    "type": "string",
+                    "maxLength": 60,
+                    "minLength": 1,
+                    "example": "Foxtron Inc."
+                },
+                "invoice_type": {
+                    "description": "InvoiceType (1: ecpay, 2: mobile barcode, 3: tax id number)",
+                    "type": "integer",
+                    "enum": [
+                        1,
+                        2,
+                        3
+                    ],
+                    "example": 1
+                },
+                "tax_id_number": {
+                    "type": "string",
+                    "example": "12345678"
+                }
+            }
+        },
+        "dto.UpdateInvoiceSettingsResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "data": {
+                    "$ref": "#/definitions/dto.InvoiceSettings"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.UpdateVehicleOwnerRequest": {
+            "type": "object",
+            "required": [
+                "owner_user_id"
+            ],
+            "properties": {
+                "owner_user_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "example": "447b723d-41a0-466a-9e25-51758d29f445"
+                }
+            }
+        },
+        "dto.UpdateVehicleOwnerResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.VasTtAmsCPlan": {
+            "type": "object",
+            "properties": {
+                "duration": {
+                    "type": "integer"
+                },
+                "duration_unit": {
+                    "description": "Duration Unit (1: day, 2: month, 3: year)",
+                    "type": "integer"
+                },
+                "permitted_backends": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "plan_id": {
+                    "type": "string"
+                },
+                "plan_name": {
+                    "type": "string"
+                },
+                "plan_type": {
+                    "description": "Plan Type (1: test plan, 2: delivery plan, 3: trial plan, 4: renewal plan)",
+                    "type": "integer"
+                },
+                "service_id": {
+                    "type": "string"
+                },
+                "service_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.VoidReissueInvoiceForEmailUpdateRequest": {
+            "type": "object",
+            "required": [
+                "relate_number",
+                "user_id"
+            ],
+            "properties": {
+                "relate_number": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.VoidReissueInvoiceForEmailUpdateResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "description": "Bearer token (e.g., \"Bearer \u003cjwt-token\u003e\")",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
+    }
+}

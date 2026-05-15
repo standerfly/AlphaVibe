@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pre-Spec"
+  short_description: "Guided pre-Spec product intake workflow"
+  default_prompt: "Use $prespec for <feature-slug>: run guided full flow."

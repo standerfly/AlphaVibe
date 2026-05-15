@@ -1,0 +1,3751 @@
+basePath: /
+definitions:
+  dto.AdminBoundCardHistoryItem:
+    properties:
+      action:
+        example: 1
+        type: integer
+      action_name:
+        example: update
+        type: string
+      bind_card_id:
+        example: 6a26b95b67b44e3896fdc56caa6b791866463769232d45e58c299382b3347544
+        type: string
+      card_valid_mm:
+        example: "08"
+        type: string
+      card_valid_yy:
+        example: "2028"
+        type: string
+      card4_no:
+        example: "2222"
+        type: string
+      card6_no:
+        example: "431195"
+        type: string
+      created_at:
+        example: "2026-03-01T00:00:00Z"
+        type: string
+      id:
+        example: 45d969c2-1882-40c1-b91b-18d6142b9b88
+        type: string
+      merchant_id:
+        example: "3002607"
+        type: string
+      user_id:
+        example: 019b6de2-1ca5-489a-813f-f33bcf50d984
+        type: string
+    type: object
+  dto.AdminBoundCardItem:
+    properties:
+      bind_card_id:
+        example: 6a26b95b67b44e3896fdc56caa6b791866463769232d45e58c299382b3347544
+        type: string
+      card_valid_mm:
+        example: "08"
+        type: string
+      card_valid_yy:
+        example: "2028"
+        type: string
+      card4_no:
+        example: "2222"
+        type: string
+      card6_no:
+        example: "431195"
+        type: string
+      created_at:
+        example: "2026-03-01T00:00:00Z"
+        type: string
+      id:
+        example: 45d969c2-1882-40c1-b91b-18d6142b9b88
+        type: string
+      merchant_id:
+        example: "3002607"
+        type: string
+      updated_at:
+        example: "2026-03-01T00:00:00Z"
+        type: string
+      user_id:
+        example: 019b6de2-1ca5-489a-813f-f33bcf50d984
+        type: string
+    type: object
+  dto.AdminGetBoundCardsHistoryResponse:
+    properties:
+      cards:
+        items:
+          $ref: '#/definitions/dto.AdminBoundCardHistoryItem'
+        type: array
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  dto.AdminGetBoundCardsResponse:
+    properties:
+      cards:
+        items:
+          $ref: '#/definitions/dto.AdminBoundCardItem'
+        type: array
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  dto.AdminGetLxmCpoOrdersPaymentsInvoicesStatusesData:
+    properties:
+      invoice_statuses:
+        items:
+          $ref: '#/definitions/dto.StatusItem'
+        type: array
+      order_statuses:
+        items:
+          $ref: '#/definitions/dto.StatusItem'
+        type: array
+      payment_statuses:
+        items:
+          $ref: '#/definitions/dto.StatusItem'
+        type: array
+    type: object
+  dto.AdminGetLxmCpoOrdersPaymentsInvoicesStatusesResponse:
+    properties:
+      code:
+        type: string
+      data:
+        $ref: '#/definitions/dto.AdminGetLxmCpoOrdersPaymentsInvoicesStatusesData'
+      message:
+        type: string
+    type: object
+  dto.AdminGetLxmCpoOrdersResponse:
+    properties:
+      code:
+        type: string
+      data:
+        $ref: '#/definitions/dto.AdminLxmCpoOrdersData'
+      message:
+        type: string
+    type: object
+  dto.AdminGetLxmCpoRequestLogsResponse:
+    properties:
+      code:
+        type: string
+      data:
+        $ref: '#/definitions/dto.AdminLxmCpoRequestLogsData'
+      message:
+        type: string
+    type: object
+  dto.AdminLxmCpoOrderRow:
+    properties:
+      amount:
+        example: 100
+        type: integer
+      cpo_name:
+        example: U-Power(測試)
+        type: string
+      end_time:
+        example: "2026-03-01T00:00:00Z"
+        type: string
+      invoice_carrier_num:
+        example: AB12345678
+        type: string
+      invoice_carrier_type:
+        example: "1"
+        type: string
+      invoice_carrier_type_name_en:
+        example: Green World E-Invoice Carrier
+        type: string
+      invoice_carrier_type_name_zh:
+        example: 綠界電子發票載具
+        type: string
+      invoice_comment:
+        example: 異常發票
+        type: string
+      invoice_created_at:
+        example: "2026-03-01T00:00:00Z"
+        type: string
+      invoice_customer_identifier:
+        example: "83167722"
+        type: string
+      invoice_customer_name:
+        example: 鴻華先進科技股份有限公司
+        type: string
+      invoice_date:
+        example: "2026-03-01T00:00:00Z"
+        type: string
+      invoice_id:
+        example: 45d969c2-1882-40c1-b91b-18d6142b9b88
+        type: string
+      invoice_no:
+        example: FJ91707232
+        type: string
+      invoice_rtn_code:
+        example: 1
+        type: integer
+      invoice_rtn_msg:
+        example: 開立發票成功
+        type: string
+      invoice_sales_amount:
+        example: 1000
+        type: integer
+      invoice_status:
+        example: 3
+        type: integer
+      invoice_status_name_en:
+        example: Issued
+        type: string
+      invoice_status_name_zh:
+        example: 已開立
+        type: string
+      invoice_updated_at:
+        example: "2026-03-01T00:00:00Z"
+        type: string
+      license_plate:
+        example: ABC123
+        type: string
+      merchant_trade_no:
+        example: VASD2026031000SD
+        type: string
+      order_abnormal_type:
+        example: 1
+        type: integer
+      order_abnormal_type_name_en:
+        example: Normal
+        type: string
+      order_abnormal_type_name_zh:
+        example: 正常
+        type: string
+      order_comment:
+        example: 異常訂單
+        type: string
+      order_created_at:
+        example: "2026-03-01T00:00:00Z"
+        type: string
+      order_id:
+        example: 45d969c2-1882-40c1-b91b-18d6142b9b88
+        type: string
+      order_status:
+        example: 6
+        type: integer
+      order_status_name_en:
+        example: Paid
+        type: string
+      order_status_name_zh:
+        example: 已付款
+        type: string
+      order_updated_at:
+        example: "2026-03-01T00:00:00Z"
+        type: string
+      owner_user_id:
+        example: 45d969c2-1882-40c1-b91b-18d6142b9b88
+        type: string
+      payment_amount:
+        example: 100
+        type: integer
+      payment_comment:
+        example: 異常支付
+        type: string
+      payment_created_at:
+        example: "2026-03-01T00:00:00Z"
+        type: string
+      payment_id:
+        example: 45d969c2-1882-40c1-b91b-18d6142b9b88
+        type: string
+      payment_rtn_code:
+        example: 1
+        type: integer
+      payment_rtn_msg:
+        example: Success!
+        type: string
+      payment_status:
+        example: 5
+        type: integer
+      payment_status_name_en:
+        example: Paid
+        type: string
+      payment_status_name_zh:
+        example: 已付款
+        type: string
+      payment_updated_at:
+        example: "2026-03-01T00:00:00Z"
+        type: string
+      relate_number:
+        example: "12345678"
+        type: string
+      request_id:
+        example: EVO_Session_2026382
+        type: string
+      start_time:
+        example: "2026-03-01T00:00:00Z"
+        type: string
+      station_name:
+        example: 臺北 文山木柵站
+        type: string
+      trade_no:
+        example: "2603110700056219"
+        type: string
+      vin:
+        example: RF5D21FH0SS000513
+        type: string
+    type: object
+  dto.AdminLxmCpoOrdersData:
+    properties:
+      current_page:
+        type: integer
+      orders:
+        items:
+          $ref: '#/definitions/dto.AdminLxmCpoOrderRow'
+        type: array
+      page_size:
+        type: integer
+      total_count:
+        type: integer
+      total_pages:
+        type: integer
+    type: object
+  dto.AdminLxmCpoRequestLogRow:
+    properties:
+      amount:
+        example: 100
+        type: integer
+      api_type:
+        example: 202
+        type: integer
+      bind_card_id:
+        example: 6a26b95b67b44e3896fdc56caa6b791866463769232d45e58c299382b3347544
+        type: string
+      car_id:
+        example: f0fddd00f2fe
+        type: string
+      client_id:
+        example: JTHBN30F2100104330
+        type: string
+      cpo_name:
+        example: U-Power(測試)
+        type: string
+      created_at:
+        example: "2026-03-01T00:00:00Z"
+        type: string
+      device_id:
+        example: ac82305b-b5a2-46b4-8a15-5c3a1716e973
+        type: string
+      end_time:
+        example: "1773192824000"
+        type: string
+      evse_uid:
+        example: ac82305b-b5a2-46b4-8a15-5c3a1716e973
+        type: string
+      id:
+        example: 45d969c2-1882-40c1-b91b-18d6142b9b88
+        type: string
+      latitude:
+        example: "24.9980452"
+        type: string
+      license_plate:
+        example: ABC-1234
+        type: string
+      longitude:
+        example: "121.5431234"
+        type: string
+      owner_user_id:
+        example: 019b6de2-1ca5-489a-813f-f33bcf50d984
+        type: string
+      request_id:
+        example: EVO_Session_2026382
+        type: string
+      request_time:
+        example: "1708412454316"
+        type: string
+      response_code:
+        example: "00"
+        type: string
+      response_data:
+        example: '{"amount":2}'
+        type: string
+      response_http_status_code:
+        example: 200
+        type: integer
+      response_message:
+        example: Success
+        type: string
+      start_time:
+        example: "1773192524000"
+        type: string
+      station_id:
+        example: "123"
+        type: string
+      station_name:
+        example: 臺北 文山木柵站
+        type: string
+      used_energy:
+        example: "30.787"
+        type: string
+      used_time:
+        example: 1579
+        type: integer
+      vehicle_id:
+        example: b18161e0-d9ac-433d-a55a-79e1a28e79fb
+        type: string
+      vin:
+        example: RF5D21FH0SS000513
+        type: string
+    type: object
+  dto.AdminLxmCpoRequestLogsData:
+    properties:
+      current_page:
+        type: integer
+      page_size:
+        type: integer
+      request_logs:
+        items:
+          $ref: '#/definitions/dto.AdminLxmCpoRequestLogRow'
+        type: array
+      total_count:
+        type: integer
+      total_pages:
+        type: integer
+    type: object
+  dto.BaseResponse:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  dto.CancelBindingCardAuthorizedPaymentRedoRequest:
+    properties:
+      from_date:
+        example: "2026-01-25"
+        type: string
+      to_date:
+        example: "2026-02-07"
+        type: string
+    type: object
+  dto.CancelBindingCardAuthorizedPaymentRedoResponse:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  dto.CancelSubscriptionResponse:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  dto.CancelTtAmsCServiceSubscriptionsRequest:
+    properties:
+      vehicle_id:
+        example: 45d969c2-1882-40c1-b91b-18d6142b9b88
+        type: string
+    required:
+    - vehicle_id
+    type: object
+  dto.CancelTtAmsCServiceSubscriptionsResponse:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  dto.CreateSubscriptionRequest:
+    properties:
+      plan_id:
+        example: d63e7eb1-a4ad-47b2-b395-af8d21963e3a
+        type: string
+      valid_from:
+        description: ISO 8601 UTC format, "yyyy-MM-dd'T'HH:mm:ss'Z'"
+        example: "2024-07-01T00:00:00Z"
+        type: string
+      vehicle_id:
+        example: 45d969c2-1882-40c1-b91b-18d6142b9b88
+        type: string
+    required:
+    - plan_id
+    - vehicle_id
+    type: object
+  dto.CreateSubscriptionResponse:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  dto.CreateVehicleRequest:
+    properties:
+      model_code:
+        example: D31L
+        minLength: 1
+        type: string
+      owner_user_id:
+        example: 447b723d-41a0-466a-9e25-51758d29f445
+        type: string
+      vehicle_id:
+        example: 45d969c2-1882-40c1-b91b-18d6142b9b88
+        type: string
+      vin:
+        example: RF5D31FHT00ET9999
+        minLength: 1
+        type: string
+    required:
+    - model_code
+    - vehicle_id
+    - vin
+    type: object
+  dto.CreateVehicleResponse:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  dto.EcPayApiResponse:
+    properties:
+      Data:
+        description: Encrypted JSON string
+        type: string
+      MerchantID:
+        type: string
+      RpHeader:
+        $ref: '#/definitions/dto.EcPayRpHeader'
+      TransCode:
+        type: integer
+      TransMsg:
+        type: string
+    type: object
+  dto.EcPayBoundCardItem:
+    properties:
+      card_valid_mm:
+        type: string
+      card_valid_yy:
+        type: string
+      card4_no:
+        type: string
+      card6_no:
+        type: string
+      id:
+        type: string
+    type: object
+  dto.EcPayCheckBarcodeRequest:
+    properties:
+      barcode:
+        description: 手機條碼 (8碼, 第1碼為'/')
+        type: string
+    required:
+    - barcode
+    type: object
+  dto.EcPayCheckBarcodeResponse:
+    properties:
+      code:
+        type: string
+      is_exist:
+        description: 手機條碼是否存在
+        type: boolean
+      message:
+        type: string
+      rtn_code:
+        description: 回應代碼 (1=成功, 9000001=財政部API失敗)
+        type: integer
+      rtn_msg:
+        description: 回應訊息
+        type: string
+    type: object
+  dto.EcPayCreateBindCardRequest:
+    properties:
+      bind_card_pay_token:
+        type: string
+      merchant_trade_no:
+        type: string
+    required:
+    - bind_card_pay_token
+    - merchant_trade_no
+    type: object
+  dto.EcPayCreateBindCardResponse:
+    properties:
+      code:
+        type: string
+      merchant_trade_no:
+        type: string
+      message:
+        type: string
+      three_d_url:
+        type: string
+    type: object
+  dto.EcPayGetBindingCardTokenResponse:
+    properties:
+      code:
+        type: string
+      merchant_trade_no:
+        type: string
+      message:
+        type: string
+      token:
+        type: string
+      token_expire_date:
+        type: string
+    type: object
+  dto.EcPayGetBoundCardsResponse:
+    properties:
+      cards:
+        items:
+          $ref: '#/definitions/dto.EcPayBoundCardItem'
+        type: array
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  dto.EcPayGetCompanyNameByTaxIdRequest:
+    properties:
+      unified_business_no:
+        description: 統一編號 (8碼數字)
+        type: string
+    required:
+    - unified_business_no
+    type: object
+  dto.EcPayGetCompanyNameByTaxIdResponse:
+    properties:
+      code:
+        type: string
+      company_name:
+        description: 公司名稱 (僅RtnCode=1時有值)
+        type: string
+      message:
+        type: string
+      rtn_code:
+        description: 回應代碼 (1=成功, 7=查無資料, 1200125=格式錯誤, 9000001=財政部API失敗)
+        type: integer
+      rtn_msg:
+        description: 回應訊息
+        type: string
+    type: object
+  dto.EcPayGetInvoiceItemResponse:
+    properties:
+      item_amount:
+        description: 商品合計 (含稅)
+        type: number
+      item_count:
+        description: 商品數量
+        type: number
+      item_name:
+        description: 商品名稱
+        type: string
+      item_price:
+        description: 商品單價 (含稅)
+        type: number
+      item_remark:
+        description: 商品備註
+        type: string
+      item_seq:
+        description: 商品序號
+        type: integer
+      item_tax_type:
+        description: 商品課稅別
+        type: string
+      item_word:
+        description: 商品單位
+        type: string
+    type: object
+  dto.EcPayGetInvoiceRequest:
+    properties:
+      invoice_date:
+        description: '發票開立日期 (情境二, 格式: yyyy-MM-dd)'
+        type: string
+      invoice_no:
+        description: 發票號碼 (情境二)
+        type: string
+      relate_number:
+        description: 特店自訂編號 (情境一)
+        type: string
+    type: object
+  dto.EcPayGetInvoiceResponse:
+    properties:
+      award_flag:
+        description: 中獎旗標
+        type: string
+      award_type:
+        description: 中獎種類
+        type: string
+      carrier_num:
+        description: 載具編號
+        type: string
+      carrier_type:
+        description: 載具類別
+        type: string
+      clearance_mark:
+        description: 通關方式 (1=非經海關出口, 2=經海關出口)
+        type: string
+      create_date:
+        description: 發票開立時間
+        type: string
+      customer_addr:
+        description: 客戶地址
+        type: string
+      customer_email:
+        description: 客戶電子信箱
+        type: string
+      customer_id:
+        description: 客戶編號
+        type: string
+      customer_identifier:
+        description: 買方統編
+        type: string
+      customer_name:
+        description: 客戶名稱
+        type: string
+      customer_phone:
+        description: 客戶電話
+        type: string
+      invalid_status:
+        description: 發票作廢狀態
+        type: string
+      invoice_category:
+        description: 發票類別
+        type: string
+      invoice_no:
+        description: 發票號碼
+        type: string
+      invoice_remark:
+        description: 發票備註
+        type: string
+      invoice_type:
+        description: 發票種類
+        type: string
+      issue_status:
+        description: 發票開立狀態
+        type: string
+      items:
+        description: 商品列表
+        items:
+          $ref: '#/definitions/dto.EcPayGetInvoiceItemResponse'
+        type: array
+      love_code:
+        description: 捐贈碼
+        type: string
+      merchant_id:
+        description: 特店編號
+        type: string
+      pos_bar_code:
+        description: 電子發票BARCODE
+        type: string
+      print_flag:
+        description: 列印旗標
+        type: string
+      qr_code_left:
+        description: 電子發票QRCODE左邊
+        type: string
+      qr_code_right:
+        description: 電子發票QRCODE右邊
+        type: string
+      random_number:
+        description: 隨機碼
+        type: string
+      relate_number:
+        description: 特店自訂編號
+        type: string
+      remain_allowance_amt:
+        description: 折讓剩餘金額
+        type: number
+      rtn_code:
+        description: 回應代碼 (1=成功)
+        type: integer
+      rtn_msg:
+        description: 回應訊息
+        type: string
+      sales_amount:
+        description: 發票金額
+        type: integer
+      special_tax_type:
+        description: 特種稅額類別
+        type: integer
+      tax_amount:
+        description: 稅金
+        type: integer
+      tax_rate:
+        description: 稅率
+        type: number
+      tax_type:
+        description: 課稅別
+        type: string
+      turnkey_status:
+        description: 發票上傳後接收狀態
+        type: string
+      upload_date:
+        description: 發票上傳時間
+        type: string
+      upload_status:
+        description: 發票上傳狀態
+        type: string
+      zero_tax_rate_reason:
+        description: 零稅率原因
+        type: string
+    type: object
+  dto.EcPayGetInvoiceWordSettingInvoiceInfoResponse:
+    properties:
+      inv_type:
+        description: 字軌類別
+        type: string
+      invoice_category:
+        description: 發票類別
+        type: integer
+      invoice_end:
+        description: 結束發票編號
+        type: string
+      invoice_header:
+        description: 字軌名稱
+        type: string
+      invoice_no:
+        description: 目前已使用號碼
+        type: string
+      invoice_start:
+        description: 起始發票編號
+        type: string
+      invoice_term:
+        description: 發票期別
+        type: integer
+      invoice_year:
+        description: 發票年度
+        type: string
+      product_service_id:
+        description: 產品服務別代號
+        type: string
+      track_id:
+        description: 字軌號碼ID
+        type: string
+      use_status:
+        description: 使用狀態
+        type: integer
+    type: object
+  dto.EcPayGetInvoiceWordSettingRequest:
+    properties:
+      inv_type:
+        description: 字軌類別 (選填, 07=一般稅額發票, 08=特種稅額發票)
+        enum:
+        - "07"
+        - "08"
+        type: string
+      invoice_category:
+        description: 發票類別 (1=B2C, 請固定填寫為1)
+        type: integer
+      invoice_header:
+        description: 字軌名稱 (選填, 2碼)
+        type: string
+      invoice_term:
+        description: 發票期別 (0=全部, 1=1-2月, 2=3-4月, 3=5-6月, 4=7-8月, 5=9-10月, 6=11-12月)
+        maximum: 6
+        minimum: 0
+        type: integer
+      invoice_year:
+        description: 發票年度 (民國年格式, 3碼 ex:109)
+        type: string
+      product_service_id:
+        description: 產品服務別代號 (選填, 1-10碼英數字)
+        maxLength: 10
+        type: string
+      use_status:
+        description: 字軌使用狀態 (0=全部, 1=未啟用, 2=使用中, 3=已停用, 4=暫停中, 5=待審核, 6=審核不通過)
+        maximum: 6
+        minimum: 0
+        type: integer
+    required:
+    - invoice_category
+    - invoice_term
+    - invoice_year
+    - use_status
+    type: object
+  dto.EcPayGetInvoiceWordSettingResponse:
+    properties:
+      code:
+        type: string
+      invoice_info:
+        description: 發票資訊
+        items:
+          $ref: '#/definitions/dto.EcPayGetInvoiceWordSettingInvoiceInfoResponse'
+        type: array
+      message:
+        type: string
+      rtn_code:
+        description: 回應代碼 (1=成功)
+        type: integer
+      rtn_msg:
+        description: 回應訊息
+        type: string
+    type: object
+  dto.EcPayGetMemberBindCardItem:
+    properties:
+      bind_card_id:
+        type: string
+      card_valid_mm:
+        type: string
+      card_valid_yy:
+        type: string
+      card4_no:
+        type: string
+      card6_no:
+        type: string
+    type: object
+  dto.EcPayGetMemberBindCardRequest:
+    properties:
+      merchant_member_id:
+        type: string
+      merchant_trade_no:
+        type: string
+    required:
+    - merchant_member_id
+    type: object
+  dto.EcPayGetMemberBindCardResponse:
+    properties:
+      bind_card_list:
+        items:
+          $ref: '#/definitions/dto.EcPayGetMemberBindCardItem'
+        type: array
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  dto.EcPayInvoiceNotifyRequest:
+    properties:
+      allowance_no:
+        description: 折讓編號 (16碼, InvoiceTag=A,AI,OA時必填)
+        type: string
+      invoice_no:
+        description: 發票號碼 (10碼)
+        type: string
+      invoice_tag:
+        description: 發送內容類型 (I=發票開立, II=發票作廢, A=折讓開立, AI=折讓作廢, AW=發票中獎, OA=線上折讓)
+        enum:
+        - I
+        - II
+        - A
+        - AI
+        - AW
+        - OA
+        type: string
+      notified:
+        description: 發送對象 (C=客戶, M=特店, A=皆發送)
+        enum:
+        - C
+        - M
+        - A
+        type: string
+      notify:
+        description: 發送方式 (S=簡訊, E=電子郵件, A=皆通知)
+        enum:
+        - S
+        - E
+        - A
+        type: string
+      notify_mail:
+        description: 發送電子郵件 (與phone擇一必填, 可多組以;分隔)
+        type: string
+      phone:
+        description: 發送簡訊號碼 (與notify_mail擇一必填)
+        type: string
+    required:
+    - invoice_no
+    - invoice_tag
+    - notified
+    - notify
+    type: object
+  dto.EcPayInvoiceNotifyResponse:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+      rtn_code:
+        description: 回應代碼 (1=成功)
+        type: integer
+      rtn_msg:
+        description: 回應訊息
+        type: string
+    type: object
+  dto.EcPayQueryCashierTradeRequest:
+    properties:
+      merchant_trade_no:
+        description: 特店交易編號
+        type: string
+    required:
+    - merchant_trade_no
+    type: object
+  dto.EcPayQueryCashierTradeResponse:
+    properties:
+      amount:
+        description: 金額
+        type: integer
+      auth_code:
+        description: 銀行授權碼
+        type: string
+      card_4_no:
+        description: 信用卡卡號末四碼
+        type: string
+      card_6_no:
+        description: 信用卡卡號前六碼
+        type: string
+      charge_fee:
+        description: 金流服務費
+        type: number
+      gwsr:
+        description: 授權交易單號
+        type: integer
+      issuing_bank:
+        description: 銀行名稱
+        type: string
+      issuing_bank_code:
+        description: 銀行代碼
+        type: string
+      merchant_trade_no:
+        description: 特店交易編號
+        type: string
+      payment_date:
+        description: 付款時間
+        type: string
+      payment_type:
+        description: 付款方式
+        type: string
+      process_date:
+        description: 交易時間
+        type: string
+      process_fee:
+        description: 交易處理費
+        type: number
+      rtn_code:
+        description: 回應代碼 (1=成功)
+        type: integer
+      rtn_msg:
+        description: 回應訊息
+        type: string
+      staed:
+        description: 各期金額
+        type: integer
+      stage:
+        description: 分期期數
+        type: integer
+      stast:
+        description: 首期金額
+        type: integer
+      trade_amt:
+        description: 交易金額
+        type: integer
+      trade_date:
+        description: 訂單成立時間
+        type: string
+      trade_no:
+        description: 綠界交易編號
+        type: string
+      trade_status:
+        description: 交易狀態
+        type: string
+    type: object
+  dto.EcPayQueryCreditDetailTradeCloseDataResponse:
+    properties:
+      amount:
+        description: 交易金額
+        type: integer
+      date_time:
+        description: 關帳時間
+        type: string
+      status:
+        description: 狀態
+        type: string
+    type: object
+  dto.EcPayQueryCreditDetailTradeRequest:
+    properties:
+      merchant_trade_no:
+        description: 特店交易編號
+        type: string
+      trade_no:
+        description: 綠界交易編號 (選填)
+        type: string
+    required:
+    - merchant_trade_no
+    type: object
+  dto.EcPayQueryCreditDetailTradeResponse:
+    properties:
+      amount:
+        description: 交易金額
+        type: integer
+      auth_time:
+        description: 訂單成立時間
+        type: string
+      close_data:
+        description: 關帳明細交易
+        items:
+          $ref: '#/definitions/dto.EcPayQueryCreditDetailTradeCloseDataResponse'
+        type: array
+      cls_amt:
+        description: 已關帳金額
+        type: integer
+      rtn_code:
+        description: 回應代碼 失敗才有值
+        type: integer
+      rtn_msg:
+        description: 回應訊息 (空值=成功)
+        type: string
+      status:
+        description: 交易狀態
+        type: string
+      trade_id:
+        description: 授權單號
+        type: integer
+    type: object
+  dto.EcPayRpHeader:
+    properties:
+      Timestamp:
+        description: Unix timestamp
+        type: integer
+    type: object
+  dto.GenerateAndUploadAutochargeReportAndSendEmailRequest:
+    properties:
+      daily_report_date:
+        example: "2026-02-04"
+        type: string
+    type: object
+  dto.GenerateAndUploadAutochargeReportAndSendEmailResponse:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  dto.GetAllTtAmsCServicePlansResponse:
+    properties:
+      code:
+        type: string
+      data:
+        items:
+          $ref: '#/definitions/dto.VasTtAmsCPlan'
+        type: array
+      message:
+        type: string
+    type: object
+  dto.GetAutochargeSettings:
+    properties:
+      autocharge_status:
+        description: 'Autocharge Status (0: disabled, 1: enabled)'
+        example: 1
+        type: integer
+    type: object
+  dto.GetAutochargeSettingsResponse:
+    properties:
+      code:
+        type: string
+      data:
+        $ref: '#/definitions/dto.GetAutochargeSettings'
+      message:
+        type: string
+    type: object
+  dto.GetInvoiceSettingsResponse:
+    properties:
+      code:
+        type: string
+      data:
+        $ref: '#/definitions/dto.InvoiceSettings'
+      message:
+        type: string
+    type: object
+  dto.GetLxmCpoOrdersResponse:
+    properties:
+      code:
+        type: string
+      data:
+        $ref: '#/definitions/dto.LxmCpoOrdersData'
+      message:
+        type: string
+    type: object
+  dto.GetTtAmsCServiceDeliveryPlansResponse:
+    properties:
+      code:
+        type: string
+      data:
+        items:
+          $ref: '#/definitions/dto.VasTtAmsCPlan'
+        type: array
+      message:
+        type: string
+    type: object
+  dto.GetTtAmsCServiceSubscriptionsResponse:
+    properties:
+      code:
+        type: string
+      data:
+        items:
+          $ref: '#/definitions/dto.TtAmsCServiceHasStatusSubscription'
+        type: array
+      message:
+        type: string
+    type: object
+  dto.GetTtAmsCServiceTestPlansResponse:
+    properties:
+      code:
+        type: string
+      data:
+        items:
+          $ref: '#/definitions/dto.VasTtAmsCPlan'
+        type: array
+      message:
+        type: string
+    type: object
+  dto.GetValidTtAmsCServiceSubscriptionResponse:
+    properties:
+      code:
+        type: string
+      data:
+        $ref: '#/definitions/dto.TtAmsCServiceSubscription'
+      message:
+        type: string
+    type: object
+  dto.InvoiceData:
+    properties:
+      carrier_num:
+        type: string
+      carrier_num2:
+        type: string
+      carrier_type:
+        type: string
+      clearance_mark:
+        type: string
+      comment:
+        type: string
+      created_at:
+        type: string
+      currency:
+        type: string
+      customer_addr:
+        type: string
+      customer_email:
+        type: string
+      customer_identifier:
+        type: string
+      customer_name:
+        type: string
+      customer_phone:
+        type: string
+      donation_flag:
+        type: integer
+      id:
+        example: 45d969c2-1882-40c1-b91b-18d6142b9b88
+        type: string
+      inv_type:
+        type: string
+      invalidated_at:
+        type: string
+      invoice_date:
+        type: string
+      invoice_no:
+        type: string
+      invoice_remark:
+        type: string
+      issued_at:
+        type: string
+      item_amount:
+        type: number
+      item_count:
+        type: number
+      item_name:
+        type: string
+      item_price:
+        type: number
+      item_remark:
+        type: string
+      item_tax_type:
+        type: string
+      item_word:
+        type: string
+      love_code:
+        type: string
+      merchant_id:
+        type: string
+      order_id:
+        type: string
+      order_type:
+        type: integer
+      payment_id:
+        type: string
+      print_flag:
+        type: integer
+      provider_type:
+        type: integer
+      random_number:
+        type: string
+      relate_number:
+        type: string
+      rtn_code:
+        type: integer
+      rtn_msg:
+        type: string
+      sales_amount:
+        type: integer
+      special_tax_type:
+        type: integer
+      status:
+        description: 'status: -1=Aborted, 1=Sending issue request, 2=Issue failed,
+          3=Issued, 4=Invalidated'
+        type: integer
+      tax_amount:
+        type: integer
+      tax_type:
+        type: integer
+      trans_code:
+        type: integer
+      trans_msg:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        type: string
+      vat_included:
+        type: integer
+      zero_tax_rate_reason:
+        type: string
+    type: object
+  dto.InvoiceSettings:
+    properties:
+      carrier_num:
+        example: /ABC+123
+        type: string
+      company_name:
+        example: Foxtron Inc.
+        type: string
+      invoice_type:
+        description: 'InvoiceType (1: ecpay, 2: mobile barcode, 3: tax id number)'
+        example: 1
+        type: integer
+      tax_id_number:
+        example: "12345678"
+        type: string
+    type: object
+  dto.LxmCpoCheckoutAmount:
+    properties:
+      amount:
+        minimum: 0
+        type: integer
+    required:
+    - amount
+    type: object
+  dto.LxmCpoCheckoutDevice:
+    properties:
+      deviceId:
+        maxLength: 50
+        type: string
+      evseUid:
+        maxLength: 50
+        type: string
+      latitude:
+        maxLength: 50
+        type: string
+      longitude:
+        maxLength: 50
+        type: string
+      stationId:
+        maxLength: 50
+        type: string
+      stationName:
+        maxLength: 50
+        type: string
+    required:
+    - deviceId
+    - evseUid
+    - latitude
+    - longitude
+    - stationName
+    type: object
+  dto.LxmCpoCheckoutRequest:
+    properties:
+      amount:
+        minimum: 0
+        type: integer
+      carId:
+        maxLength: 50
+        type: string
+      clientId:
+        maxLength: 100
+        type: string
+      device:
+        $ref: '#/definitions/dto.LxmCpoCheckoutDevice'
+      endTime:
+        type: string
+      requestId:
+        maxLength: 50
+        type: string
+      requestTime:
+        type: string
+      startTime:
+        type: string
+      usedEnergy:
+        maxLength: 100
+        type: string
+      usedTime:
+        minimum: 0
+        type: integer
+    required:
+    - amount
+    - carId
+    - clientId
+    - device
+    - endTime
+    - requestId
+    - requestTime
+    - startTime
+    - usedEnergy
+    - usedTime
+    type: object
+  dto.LxmCpoCheckoutResponse:
+    properties:
+      code:
+        type: string
+      data:
+        $ref: '#/definitions/dto.LxmCpoCheckoutAmount'
+      message:
+        type: string
+    required:
+    - data
+    type: object
+  dto.LxmCpoOrderData:
+    properties:
+      abnormal_type:
+        description: 'abnormal_type: 1=Normal, 2=Unexpected error, 3=Owner not found,
+          4=No bound cards, 5=Same amount in short time, 6=Inconsistent clientId carId'
+        example: 1
+        type: integer
+      amount:
+        type: integer
+      bind_card_id:
+        type: string
+      car_id:
+        type: string
+      client_id:
+        type: string
+      comment:
+        type: string
+      cpo_name:
+        type: string
+      created_at:
+        type: string
+      device_id:
+        type: string
+      end_time:
+        type: string
+      evse_uid:
+        type: string
+      fdc_sn:
+        type: string
+      id:
+        example: 45d969c2-1882-40c1-b91b-18d6142b9b88
+        type: string
+      latitude:
+        type: number
+      license_plate:
+        type: string
+      longitude:
+        type: number
+      owner_user_id:
+        type: string
+      payment_id:
+        type: string
+      refund_amount:
+        type: integer
+      request_id:
+        type: string
+      request_time:
+        type: string
+      start_time:
+        type: string
+      station_id:
+        type: string
+      station_name:
+        type: string
+      status:
+        description: 'status: 1=Unexpected error, 2=Owner not found, 3=No bound cards,
+          4=Unpaid, 5=Failed to pay, 6=Paid, 7=Refund requested, 8=Refunded, 9=Cancel
+          requested, 10=Canceled, 11=No charge, 12=No charge (Promotion)'
+        example: 6
+        type: integer
+      updated_at:
+        type: string
+      used_energy:
+        type: number
+      used_time:
+        type: integer
+      vehicle_id:
+        type: string
+      vin:
+        type: string
+    type: object
+  dto.LxmCpoOrderDetail:
+    properties:
+      amount:
+        example: 100
+        type: integer
+      end_time:
+        example: "2025-01-20T11:00:00Z"
+        type: string
+      id:
+        example: 45d969c2-1882-40c1-b91b-18d6142b9b88
+        type: string
+      promotion_comment_en:
+        example: '(Promotion Applied: NTD $0)'
+        type: string
+      promotion_comment_zh:
+        example: '(符合促銷方案: NTD $0)'
+        type: string
+      refund_amount:
+        example: 20
+        type: integer
+      repayable:
+        example: false
+        type: boolean
+      start_time:
+        example: "2025-01-20T10:00:00Z"
+        type: string
+      station_name:
+        example: Taipei Station
+        type: string
+      status:
+        description: 'status: 1=Unexpected error, 2=Owner not found, 3=No bound cards,
+          4=Unpaid, 5=Failed to pay, 6=Paid, 7=Refund requested, 8=Refunded, 9=Cancel
+          requested, 10=Canceled, 11=No charge, 12=No charge (Promotion)'
+        example: 6
+        type: integer
+      status_name_en:
+        example: Paid
+        type: string
+      status_name_zh:
+        example: 已付款
+        type: string
+      used_energy:
+        example: 15.5
+        type: number
+      used_time:
+        example: 3600
+        type: integer
+    type: object
+  dto.LxmCpoOrderFullData:
+    properties:
+      invoice:
+        $ref: '#/definitions/dto.InvoiceData'
+      lxm_cpo_order:
+        $ref: '#/definitions/dto.LxmCpoOrderData'
+      payment:
+        $ref: '#/definitions/dto.PaymentData'
+      payment_ecpay_info:
+        $ref: '#/definitions/dto.PaymentEcpayInfoData'
+    type: object
+  dto.LxmCpoOrdersData:
+    properties:
+      has_next_page:
+        example: true
+        type: boolean
+      orders:
+        items:
+          $ref: '#/definitions/dto.LxmCpoOrderDetail'
+        type: array
+      page:
+        example: 1
+        type: integer
+    type: object
+  dto.LxmCpoValidateCarRequest:
+    properties:
+      carId:
+        maxLength: 200
+        type: string
+      clientId:
+        maxLength: 100
+        type: string
+      requestId:
+        maxLength: 50
+        type: string
+      requestTime:
+        type: string
+    required:
+    - carId
+    - clientId
+    - requestId
+    - requestTime
+    type: object
+  dto.LxmCpoValidateCarResponse:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  dto.PaymentData:
+    properties:
+      amount:
+        type: integer
+      authorized_at:
+        type: string
+      canceled_at:
+        type: string
+      captured_at:
+        type: string
+      comment:
+        type: string
+      created_at:
+        type: string
+      currency:
+        type: string
+      id:
+        example: 45d969c2-1882-40c1-b91b-18d6142b9b88
+        type: string
+      invoice_id:
+        type: string
+      order_id:
+        type: string
+      order_type:
+        type: integer
+      payment_provider:
+        type: integer
+      refunded_at:
+        type: string
+      status:
+        description: 'status: -1=Aborted, 1=Sending authorization request, 2=Authorization
+          failed, 3=Authorized, 4=Authorization reversal, 5=Capture, 6=Refunded'
+        type: integer
+      updated_at:
+        type: string
+      user_id:
+        type: string
+    type: object
+  dto.PaymentEcpayInfoData:
+    properties:
+      amount:
+        type: integer
+      auth_code:
+        type: string
+      bind_card_id:
+        type: string
+      card4_no:
+        type: string
+      card6_no:
+        type: string
+      charge_fee:
+        type: number
+      co_branding_code:
+        type: string
+      comment:
+        type: string
+      created_at:
+        type: string
+      custom_field:
+        type: string
+      gwsr:
+        type: integer
+      id:
+        example: 45d969c2-1882-40c1-b91b-18d6142b9b88
+        type: string
+      issuing_bank:
+        type: string
+      issuing_bank_code:
+        type: string
+      item_name:
+        type: string
+      merchant_id:
+        type: string
+      merchant_member_id:
+        type: string
+      merchant_trade_date:
+        type: string
+      merchant_trade_no:
+        type: string
+      payment_date:
+        type: string
+      payment_id:
+        type: string
+      payment_type:
+        type: string
+      process_date:
+        type: string
+      process_fee:
+        type: number
+      return_url:
+        type: string
+      rtn_code:
+        type: integer
+      rtn_msg:
+        type: string
+      simulate_paid:
+        type: integer
+      staed:
+        type: integer
+      stage:
+        type: integer
+      stast:
+        type: integer
+      total_amount:
+        type: integer
+      trade_amt:
+        type: integer
+      trade_date:
+        type: string
+      trade_desc:
+        type: string
+      trade_no:
+        type: string
+      trade_status:
+        type: string
+      trans_code:
+        type: integer
+      trans_msg:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        type: string
+    type: object
+  dto.RedoLxmCpoOrderPaymentInvoiceRequest:
+    properties:
+      from_date:
+        example: "2026-01-25"
+        type: string
+      to_date:
+        example: "2026-02-07"
+        type: string
+    type: object
+  dto.RedoLxmCpoOrderPaymentInvoiceResponse:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  dto.RedoPaymentInvoiceRequest:
+    properties:
+      order_id:
+        type: string
+      request_id:
+        type: string
+    required:
+    - order_id
+    - request_id
+    type: object
+  dto.RedoPaymentInvoiceResponse:
+    properties:
+      code:
+        type: string
+      data:
+        $ref: '#/definitions/dto.LxmCpoOrderFullData'
+      message:
+        type: string
+    type: object
+  dto.RepayResponse:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  dto.SendAbnormalAutochargeEmailRequest:
+    properties:
+      from_date:
+        example: "2026-01-25"
+        type: string
+      to_date:
+        example: "2026-02-07"
+        type: string
+    type: object
+  dto.SendAbnormalAutochargeEmailResponse:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  dto.SendDuplicatePaymentInvoiceEmailRequest:
+    properties:
+      from_date:
+        example: "2026-02-23"
+        type: string
+      to_date:
+        example: "2026-03-02"
+        type: string
+    type: object
+  dto.SendDuplicatePaymentInvoiceEmailResponse:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  dto.SendIssuedInvoiceEmailNotificationRequest:
+    properties:
+      relate_number:
+        type: string
+      user_id:
+        type: string
+    required:
+    - relate_number
+    - user_id
+    type: object
+  dto.SendIssuedInvoiceEmailNotificationResponse:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  dto.StatusItem:
+    properties:
+      status:
+        example: 1
+        type: integer
+      status_name_en:
+        example: Unexpected error
+        type: string
+      status_name_zh:
+        example: 未預期錯誤
+        type: string
+    type: object
+  dto.SyncLxmCpoOrderFromEcpayRequest:
+    properties:
+      order_id:
+        type: string
+      request_id:
+        type: string
+    required:
+    - order_id
+    - request_id
+    type: object
+  dto.SyncLxmCpoOrderFromEcpayResponse:
+    properties:
+      code:
+        type: string
+      data:
+        $ref: '#/definitions/dto.LxmCpoOrderFullData'
+      message:
+        type: string
+    type: object
+  dto.TtAmsCServiceHasStatusSubscription:
+    properties:
+      permitted_backends:
+        items:
+          type: string
+        type: array
+      status:
+        type: string
+      subscription_id:
+        type: string
+      valid_from:
+        type: string
+      valid_to:
+        type: string
+    type: object
+  dto.TtAmsCServiceSubscription:
+    properties:
+      permitted_backends:
+        items:
+          type: string
+        type: array
+      subscription_id:
+        type: string
+      valid_from:
+        type: string
+      valid_to:
+        type: string
+    type: object
+  dto.UpdateAutochargeSettingsRequest:
+    properties:
+      autocharge_status:
+        description: 'Autocharge Status (0: disabled, 1: enabled)'
+        enum:
+        - 0
+        - 1
+        example: 1
+        type: integer
+    required:
+    - autocharge_status
+    type: object
+  dto.UpdateAutochargeSettingsResponse:
+    properties:
+      code:
+        type: string
+      data:
+        $ref: '#/definitions/dto.GetAutochargeSettings'
+      message:
+        type: string
+    type: object
+  dto.UpdateInvoiceSettingsRequest:
+    properties:
+      carrier_num:
+        example: /ABC+123
+        maxLength: 64
+        minLength: 8
+        type: string
+      company_name:
+        example: Foxtron Inc.
+        maxLength: 60
+        minLength: 1
+        type: string
+      invoice_type:
+        description: 'InvoiceType (1: ecpay, 2: mobile barcode, 3: tax id number)'
+        enum:
+        - 1
+        - 2
+        - 3
+        example: 1
+        type: integer
+      tax_id_number:
+        example: "12345678"
+        type: string
+    required:
+    - invoice_type
+    type: object
+  dto.UpdateInvoiceSettingsResponse:
+    properties:
+      code:
+        type: string
+      data:
+        $ref: '#/definitions/dto.InvoiceSettings'
+      message:
+        type: string
+    type: object
+  dto.UpdateVehicleOwnerRequest:
+    properties:
+      owner_user_id:
+        example: 447b723d-41a0-466a-9e25-51758d29f445
+        minLength: 1
+        type: string
+    required:
+    - owner_user_id
+    type: object
+  dto.UpdateVehicleOwnerResponse:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  dto.VasTtAmsCPlan:
+    properties:
+      duration:
+        type: integer
+      duration_unit:
+        description: 'Duration Unit (1: day, 2: month, 3: year)'
+        type: integer
+      permitted_backends:
+        items:
+          type: string
+        type: array
+      plan_id:
+        type: string
+      plan_name:
+        type: string
+      plan_type:
+        description: 'Plan Type (1: test plan, 2: delivery plan, 3: trial plan, 4:
+          renewal plan)'
+        type: integer
+      service_id:
+        type: string
+      service_name:
+        type: string
+    type: object
+  dto.VoidReissueInvoiceForEmailUpdateRequest:
+    properties:
+      relate_number:
+        type: string
+      user_id:
+        type: string
+    required:
+    - relate_number
+    - user_id
+    type: object
+  dto.VoidReissueInvoiceForEmailUpdateResponse:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+info:
+  contact: {}
+  description: This is the FVT Value-Added Service API
+  title: FVT VAS API
+  version: "1"
+paths:
+  /admin/api/v1/ecpay/ecpayment/cashier/query-trade:
+    post:
+      consumes:
+      - application/json
+      description: Query order from ECPay by MerchantTradeNo
+      parameters:
+      - description: Query Cashier Trade Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EcPayQueryCashierTradeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.EcPayQueryCashierTradeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Query Trade (Admin)
+      tags:
+      - admin-ecpay
+  /admin/api/v1/ecpay/ecpayment/credit-detail/query-trade:
+    post:
+      consumes:
+      - application/json
+      description: Query credit card detail record from ECPay by MerchantTradeNo
+      parameters:
+      - description: Query Credit Detail Trade Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EcPayQueryCreditDetailTradeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.EcPayQueryCreditDetailTradeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Query Credit Detail Trade (Admin)
+      tags:
+      - admin-ecpay
+  /admin/api/v1/ecpay/ecpg/get-member-bind-card:
+    post:
+      consumes:
+      - application/json
+      description: Query bound credit cards from ECPay by MerchantMemberID
+      parameters:
+      - description: Get Member Bind Card Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EcPayGetMemberBindCardRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.EcPayGetMemberBindCardResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Get Member Bind Card (Admin)
+      tags:
+      - admin-ecpay
+  /admin/api/v1/ecpay/einvoice/check-barcode:
+    post:
+      consumes:
+      - application/json
+      description: Verify if a mobile barcode exists using ECPay's CheckBarcode API
+      parameters:
+      - description: Check Barcode Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EcPayCheckBarcodeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.EcPayCheckBarcodeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Check Barcode (Admin)
+      tags:
+      - admin-ecpay
+  /admin/api/v1/ecpay/einvoice/get-company-name-by-tax-id:
+    post:
+      consumes:
+      - application/json
+      description: Verify a unified business number and return the company name using
+        ECPay API
+      parameters:
+      - description: Get Company Name By Tax ID Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EcPayGetCompanyNameByTaxIdRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.EcPayGetCompanyNameByTaxIdResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Get Company Name By Tax ID (Admin)
+      tags:
+      - admin-ecpay
+  /admin/api/v1/ecpay/einvoice/get-invoice-word-setting:
+    post:
+      consumes:
+      - application/json
+      description: Query invoice word setting (track numbers) from ECPay
+      parameters:
+      - description: Get Invoice Word Setting Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EcPayGetInvoiceWordSettingRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.EcPayGetInvoiceWordSettingResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Get Invoice Word Setting (Admin)
+      tags:
+      - admin-ecpay
+  /admin/api/v1/ecpay/einvoice/get-issue:
+    post:
+      consumes:
+      - application/json
+      description: Query invoice details from ECPay
+      parameters:
+      - description: Get Invoice Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EcPayGetInvoiceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.EcPayGetInvoiceResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Get Invoice (Admin)
+      tags:
+      - admin-ecpay
+  /admin/api/v1/ecpay/einvoice/invoice-notify:
+    post:
+      consumes:
+      - application/json
+      description: Send invoice notification via SMS or Email using ECPay's InvoiceNotify
+        API
+      parameters:
+      - description: Invoice Notify Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EcPayInvoiceNotifyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.EcPayInvoiceNotifyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Invoice Notify (Admin)
+      tags:
+      - admin-ecpay
+  /admin/api/v1/invoices/send-issued-email-notification:
+    post:
+      consumes:
+      - application/json
+      description: Send issued invoice email notification for an invoice
+      parameters:
+      - description: Send Issued Invoice Email Notification Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.SendIssuedInvoiceEmailNotificationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.SendIssuedInvoiceEmailNotificationResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Send Issued Invoice Email Notification
+      tags:
+      - admin-invoices
+  /admin/api/v1/invoices/void-reissue-for-email-update:
+    post:
+      consumes:
+      - application/json
+      description: Void reissue invoice for email update
+      parameters:
+      - description: Void Reissue Invoice For Email Update Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.VoidReissueInvoiceForEmailUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.VoidReissueInvoiceForEmailUpdateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Void Reissue Invoice For Email Update
+      tags:
+      - admin-invoices
+  /admin/api/v1/lxm-cpo/orders:
+    get:
+      consumes:
+      - application/json
+      description: Query LXM CPO orders with payment and invoice data, with pagination
+        and optional filters
+      parameters:
+      - description: Start time (ISO-8601 format), e.g. 2026-03-01T00:00:00Z
+        in: query
+        name: from_created_at
+        required: true
+        type: string
+      - description: End time (ISO-8601 format, must be greater than from_created_at
+          and within 7 days), e.g. 2026-03-05T00:00:00Z
+        in: query
+        name: to_created_at
+        required: true
+        type: string
+      - description: CPO client ID, e.g. JTHBN30F2100104330
+        in: query
+        name: client_id
+        type: string
+      - description: Car ID (evccid), e.g. f0fddd00f2fe
+        in: query
+        name: car_id
+        type: string
+      - description: CPO request ID, e.g. EVO_Session_2026382
+        in: query
+        name: request_id
+        type: string
+      - description: VIN, e.g. RF5D21FH0SS000513
+        in: query
+        name: vin
+        type: string
+      - description: Order status filter, e.g. 6
+        in: query
+        name: order_status
+        type: integer
+      - description: Payment status filter, e.g. 4
+        in: query
+        name: payment_status
+        type: integer
+      - description: Invoice status filter, e.g. 3
+        in: query
+        name: invoice_status
+        type: integer
+      - default: 1
+        description: 'Page number (default: 1), e.g. 1'
+        in: query
+        name: page
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.AdminGetLxmCpoOrdersResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Get LXM CPO Orders / Payments / Invoices (Admin)
+      tags:
+      - admin-lxm-cpo
+  /admin/api/v1/lxm-cpo/orders-payments-invoices-statuses:
+    get:
+      description: Query all available statuses for LXM CPO orders, payments, and
+        invoices
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.AdminGetLxmCpoOrdersPaymentsInvoicesStatusesResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Get LXM CPO Orders / Payments / Invoices Statuses (Admin)
+      tags:
+      - admin-lxm-cpo
+  /admin/api/v1/lxm-cpo/orders/redo-payment-invoice:
+    post:
+      consumes:
+      - application/json
+      description: Redo payment invoice for LXM CPO order by order_id
+      parameters:
+      - description: Redo Payment Invoice Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.RedoPaymentInvoiceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.RedoPaymentInvoiceResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Redo Payment Invoice for LXM CPO Order
+      tags:
+      - admin-lxm-cpo
+  /admin/api/v1/lxm-cpo/orders/sync-from-ecpay-for-timeout:
+    post:
+      consumes:
+      - application/json
+      description: Sync LXM CPO order status from Ecpay by order_id
+      parameters:
+      - description: Sync LXM CPO Order From Ecpay Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.SyncLxmCpoOrderFromEcpayRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.SyncLxmCpoOrderFromEcpayResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Sync LXM CPO Order Status from Ecpay
+      tags:
+      - admin-lxm-cpo
+  /admin/api/v1/lxm-cpo/request-logs:
+    get:
+      consumes:
+      - application/json
+      description: Query LXM CPO request logs with pagination and optional filters
+      parameters:
+      - description: Start time (ISO-8601 format), e.g. 2026-03-01T00:00:00Z
+        in: query
+        name: from_created_at
+        required: true
+        type: string
+      - description: End time (ISO-8601 format, must be greater than from_created_at
+          and within 7 days), e.g. 2026-03-05T00:00:00Z
+        in: query
+        name: to_created_at
+        required: true
+        type: string
+      - description: CPO client ID, e.g. JTHBN30F2100104330
+        in: query
+        name: client_id
+        type: string
+      - description: Car ID (evccid), e.g. f0fddd00f2fe
+        in: query
+        name: car_id
+        type: string
+      - description: CPO request ID, e.g. EVO_Session_2026382
+        in: query
+        name: request_id
+        type: string
+      - description: VIN, e.g. RF5D21FH0SS000513
+        in: query
+        name: vin
+        type: string
+      - default: 1
+        description: 'Page number (default: 1), e.g. 1'
+        in: query
+        name: page
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.AdminGetLxmCpoRequestLogsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Get LXM CPO Request Logs (Admin)
+      tags:
+      - admin-lxm-cpo
+  /admin/api/v1/redo-jobs/cancel-binding-card-authorized-payment:
+    post:
+      consumes:
+      - application/json
+      description: Redo cancel binding card authorized payment for transactions stuck
+        in "NeedToCancelAuthorization" status within the given date range
+      parameters:
+      - description: Cancel Binding Card Authorized Payment Redo Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CancelBindingCardAuthorizedPaymentRedoRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.CancelBindingCardAuthorizedPaymentRedoResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Trigger Cancel Binding Card Authorized Payment Redo Job
+      tags:
+      - admin-redo-jobs
+  /admin/api/v1/redo-jobs/redo-lxm-cpo-order-payment-invoice:
+    post:
+      consumes:
+      - application/json
+      description: Redo payment flow (re-authorizing payment, re-capturing payment,
+        and re-issuing invoice) for LXM CPO orders within the given date range
+      parameters:
+      - description: Redo LXM CPO Order Payment Invoice Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.RedoLxmCpoOrderPaymentInvoiceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.RedoLxmCpoOrderPaymentInvoiceResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Trigger Redo LXM CPO Order Payment Invoice Redo Job
+      tags:
+      - admin-redo-jobs
+  /admin/api/v1/reports/abnormal-autocharge-report:
+    post:
+      consumes:
+      - application/json
+      description: Send abnormal LXM CPO payment invoice report email
+      parameters:
+      - description: Send abnormal Autocharge email request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.SendAbnormalAutochargeEmailRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.SendAbnormalAutochargeEmailResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Send abnormal Autocharge email
+      tags:
+      - admin-reports
+  /admin/api/v1/reports/autocharge-daily-report:
+    post:
+      consumes:
+      - application/json
+      description: Generate and upload Autocharge report and send email
+      parameters:
+      - description: Generate and upload Autocharge report and send email request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.GenerateAndUploadAutochargeReportAndSendEmailRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.GenerateAndUploadAutochargeReportAndSendEmailResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Generate and upload Autocharge report and send email
+      tags:
+      - admin-reports
+  /admin/api/v1/reports/duplicate-payment-invoice-report:
+    post:
+      consumes:
+      - application/json
+      description: Send duplicate payment and invoice report email
+      parameters:
+      - description: Send duplicate payment and invoice email request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.SendDuplicatePaymentInvoiceEmailRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.SendDuplicatePaymentInvoiceEmailResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Send duplicate payment and invoice email
+      tags:
+      - admin-reports
+  /admin/api/v1/users/bound-cards:
+    get:
+      description: Query bound credit cards by user_id, evccid, vehicle_id, or vin_code
+        (exactly one must be provided)
+      parameters:
+      - description: User ID (UUID)
+        example: 019b6de2-1ca5-489a-813f-f33bcf50d984
+        in: query
+        name: user_id
+        type: string
+      - description: EVCCID
+        example: f0fddd00f2fe
+        in: query
+        name: evccid
+        type: string
+      - description: Vehicle ID (UUID)
+        example: b18161e0-d9ac-433d-a55a-79e1a28e79fb
+        in: query
+        name: vehicle_id
+        type: string
+      - description: VIN Code
+        example: RF5D21FH0SS000513
+        in: query
+        name: vin_code
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.AdminGetBoundCardsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Get Bound Cards (Admin)
+      tags:
+      - admin-users
+  /admin/api/v1/users/bound-cards-history:
+    get:
+      description: Query bound credit cards history by user_id, evccid, vehicle_id,
+        or vin_code (exactly one must be provided)
+      parameters:
+      - description: User ID (UUID)
+        example: 019b6de2-1ca5-489a-813f-f33bcf50d984
+        in: query
+        name: user_id
+        type: string
+      - description: EVCCID
+        example: f0fddd00f2fe
+        in: query
+        name: evccid
+        type: string
+      - description: Vehicle ID (UUID)
+        example: b18161e0-d9ac-433d-a55a-79e1a28e79fb
+        in: query
+        name: vehicle_id
+        type: string
+      - description: VIN Code
+        example: RF5D21FH0SS000513
+        in: query
+        name: vin_code
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.AdminGetBoundCardsHistoryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Get Bound Cards History (Admin)
+      tags:
+      - admin-users
+  /ext/ecpay/page/v1/binding-cards:
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      description: Render the ECPay credit card binding page for user to bind their
+        credit card
+      parameters:
+      - in: formData
+        name: access_token
+        required: true
+        type: string
+      - description: 'Language: optional, e.g. "zh-TW" or "en-US"'
+        in: formData
+        name: language
+        type: string
+      - in: formData
+        name: refresh_token
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML page
+          schema:
+            type: string
+        "400":
+          description: Invalid Request
+          schema:
+            type: string
+        "500":
+          description: Internal Server Error
+          schema:
+            type: string
+      summary: Binding Card Page
+      tags:
+      - ecpay-ext-page
+  /ext/ecpay/page/v1/binding-cards-order-result:
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      description: Handle ECPay 3D Secure callback and render the binding card order
+        result page
+      parameters:
+      - in: formData
+        name: ResultData
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML page
+          schema:
+            type: string
+      summary: Binding Card Order Result Page
+      tags:
+      - ecpay-ext-page
+  /ext/lxm-cpo/api/v1/checkout:
+    post:
+      consumes:
+      - application/json
+      description: Process checkout for LXM CPO charging session
+      parameters:
+      - description: Checkout Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.LxmCpoCheckoutRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.LxmCpoCheckoutResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.LxmCpoCheckoutResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.LxmCpoCheckoutResponse'
+      security:
+      - BearerAuth: []
+      summary: Checkout for LXM CPO
+      tags:
+      - lxm-cpo-ext-api
+  /ext/lxm-cpo/api/v1/validate/car:
+    post:
+      consumes:
+      - application/json
+      description: Validate if a car is eligible for LXM CPO charging service
+      parameters:
+      - description: Validate Car Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.LxmCpoValidateCarRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.LxmCpoValidateCarResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.LxmCpoValidateCarResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.LxmCpoValidateCarResponse'
+      security:
+      - BearerAuth: []
+      summary: Validate Car for LXM CPO
+      tags:
+      - lxm-cpo-ext-api
+  /vas/api/v1/ecpay/bind-card:
+    post:
+      consumes:
+      - application/json
+      description: Create ECPay bind card transaction with BindCardPayToken
+      parameters:
+      - description: Create Bind Card Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EcPayCreateBindCardRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.EcPayCreateBindCardResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Create ECPay Bind Card
+      tags:
+      - ecpay
+  /vas/api/v1/ecpay/binding-card-token:
+    post:
+      consumes:
+      - application/json
+      description: Get ECPay Binding Card Token for credit card binding
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.EcPayGetBindingCardTokenResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Get ECPay Binding Card Token
+      tags:
+      - ecpay
+  /vas/api/v1/ecpay/bound-cards:
+    get:
+      consumes:
+      - application/json
+      description: Get all bound credit cards for the authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.EcPayGetBoundCardsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Get ECPay Bound Cards
+      tags:
+      - ecpay
+  /vas/api/v1/ecpay/bound-cards/{uuid}:
+    delete:
+      consumes:
+      - application/json
+      description: Delete a specific bound credit card for the authenticated user
+      parameters:
+      - description: Bound Card UUID
+        in: path
+        name: uuid
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete ECPay Bound Card
+      tags:
+      - ecpay
+  /vas/api/v1/ext/ecpay/api/v1/binding-cards/return:
+    post:
+      consumes:
+      - application/json
+      description: Handle ECPay 3D Secure callback for credit card binding. This endpoint
+        is called by ECPay server after 3D Secure authentication.
+      parameters:
+      - description: ECPay API Response with encrypted data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EcPayApiResponse'
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: 1|OK
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            type: string
+      summary: Binding Card Return URL
+      tags:
+      - ecpay-ext-api
+  /vas/api/v1/lxm-cpo/orders/{order_id}/repay:
+    post:
+      consumes:
+      - application/json
+      description: Retry payment and invoice for an LXM CPO order (only the vehicle
+        owner can repay)
+      parameters:
+      - description: Order ID (UUID format)
+        in: path
+        name: order_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.RepayResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Repay LXM CPO Order
+      tags:
+      - lxm-cpo
+  /vas/api/v1/lxm-cpo/vehicles/{vehicle_id}/orders:
+    get:
+      consumes:
+      - application/json
+      description: Query LXM CPO orders by vehicle_id with pagination (10 records
+        per page, ordered by start_time and end_time descending)
+      parameters:
+      - description: Vehicle ID (UUID format)
+        in: path
+        name: vehicle_id
+        required: true
+        type: string
+      - default: 1
+        description: 'Page number (default: 1)'
+        in: query
+        name: page
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.GetLxmCpoOrdersResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Get LXM CPO Orders by Vehicle ID
+      tags:
+      - lxm-cpo
+  /vas/api/v1/services/tt-ams-c/cancel-subscriptions:
+    patch:
+      consumes:
+      - application/json
+      description: Cancel The TtAmsC Service Subscriptions
+      parameters:
+      - description: Cancel TtAmsC Service Subscriptions Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CancelTtAmsCServiceSubscriptionsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.CancelTtAmsCServiceSubscriptionsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Cancel The TtAmsC Service Subscriptions
+      tags:
+      - service_subscriptions
+  /vas/api/v1/services/tt-ams-c/plans/all:
+    get:
+      consumes:
+      - application/json
+      description: Get All TT-AMS-C Service Plans
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.GetAllTtAmsCServicePlansResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Get All TT-AMS-C Service Plans
+      tags:
+      - service_plans
+  /vas/api/v1/services/tt-ams-c/plans/delivery:
+    get:
+      consumes:
+      - application/json
+      description: Get TT-AMS-C Service Delivery Plans
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.GetTtAmsCServiceDeliveryPlansResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Get TT-AMS-C Service Delivery Plans
+      tags:
+      - service_plans
+  /vas/api/v1/services/tt-ams-c/plans/test:
+    get:
+      consumes:
+      - application/json
+      description: Get TT-AMS-C Service Test Plans
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.GetTtAmsCServiceTestPlansResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Get TT-AMS-C Service Test Plans
+      tags:
+      - service_plans
+  /vas/api/v1/services/tt-ams-c/subscriptions:
+    get:
+      consumes:
+      - application/json
+      description: Get TT-AMS-C Service Subscriptions
+      parameters:
+      - description: Vehicle ID
+        in: query
+        name: vehicle_id
+        required: true
+        type: string
+      - collectionFormat: csv
+        description: 'Status: 1=Active, 2=Cancelled, 3=Expired'
+        in: query
+        items:
+          enum:
+          - 1
+          - 2
+          - 3
+          type: integer
+        name: status
+        type: array
+      - default: valid_to desc
+        description: Sort By
+        enum:
+        - valid_to asc
+        - valid_to desc
+        in: query
+        name: sort_by
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.GetTtAmsCServiceSubscriptionsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Get TT-AMS-C Service Subscriptions
+      tags:
+      - service_subscriptions
+  /vas/api/v1/services/tt-ams-c/valid-subscription:
+    get:
+      consumes:
+      - application/json
+      description: Get The Valid TT-AMS-C Service Subscription
+      parameters:
+      - description: Vehicle ID
+        in: query
+        name: vehicle_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.GetValidTtAmsCServiceSubscriptionResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Get The Valid TT-AMS-C Service Subscription
+      tags:
+      - service_subscriptions
+  /vas/api/v1/subscriptions:
+    post:
+      consumes:
+      - application/json
+      description: Create A Subscription
+      parameters:
+      - description: Create Subscription Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateSubscriptionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.CreateSubscriptionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Create A Subscription
+      tags:
+      - service_subscriptions
+  /vas/api/v1/subscriptions/{subscription_id}/cancel:
+    patch:
+      consumes:
+      - application/json
+      description: Cancel A Subscription
+      parameters:
+      - description: Subscription ID
+        in: path
+        name: subscription_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.CancelSubscriptionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Cancel A Subscription
+      tags:
+      - service_subscriptions
+  /vas/api/v1/users/self/autocharge-settings:
+    get:
+      consumes:
+      - application/json
+      description: Get the current user's autocharge settings
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.GetAutochargeSettingsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Get User Autocharge Settings
+      tags:
+      - user
+    put:
+      consumes:
+      - application/json
+      description: Update the current user's autocharge settings
+      parameters:
+      - description: Update Autocharge Settings Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateAutochargeSettingsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.UpdateAutochargeSettingsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Update User Autocharge Settings
+      tags:
+      - user
+  /vas/api/v1/users/self/invoice-settings:
+    get:
+      consumes:
+      - application/json
+      description: Get the current user's invoice settings
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.GetInvoiceSettingsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Get User Invoice Settings
+      tags:
+      - user
+    put:
+      consumes:
+      - application/json
+      description: Update the current user's invoice settings
+      parameters:
+      - description: Update Invoice Settings Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateInvoiceSettingsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.UpdateInvoiceSettingsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Update User Invoice Settings
+      tags:
+      - user
+  /vas/api/v1/vehicles:
+    post:
+      consumes:
+      - application/json
+      description: Create A Vehicle
+      parameters:
+      - description: Create Vehicle Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateVehicleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.CreateVehicleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Create A Vehicle
+      tags:
+      - vehicles
+  /vas/api/v1/vehicles/{vehicle_id}/owner:
+    patch:
+      consumes:
+      - application/json
+      description: Update The Vehicle Owner
+      parameters:
+      - description: Vehicle ID
+        in: path
+        name: vehicle_id
+        required: true
+        type: string
+      - description: Update Vehicle Owner Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateVehicleOwnerRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.UpdateVehicleOwnerResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.BaseResponse'
+      security:
+      - BearerAuth: []
+      summary: Update The Vehicle Owner
+      tags:
+      - vehicles
+securityDefinitions:
+  BearerAuth:
+    description: Bearer token (e.g., "Bearer <jwt-token>")
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
