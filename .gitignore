@@ -1,0 +1,17 @@
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE settings
+.vscode/
+.idea/
+
+# Local environment/logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Spec Intake Raw Material - Ignore chat logs and temporary text files
+docs/spec-intake/**/raw/*.txt
+docs/spec-intake/**/raw/*.log
