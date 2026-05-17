@@ -13,6 +13,10 @@ This document tracks all questions asked to the PO and the answers received.
 | Q-007 | LINE 聊天中的 [照片] 如何處理？ | 2026-05-16 | Answered | v1 跳過照片，記錄為佔位符；未來視需求加入 Vision LLM | 2026-05-16 |
 | Q-008 | 群組其他成員的發言是否納入知識庫？ | 2026-05-16 | Answered | 否，只抓群主的發言 | 2026-05-16 |
 | Q-009 | 個股立場（Layer 2）如何建立與維護？ | 2026-05-16 | Answered | LLM 自動抽取後人工修正，非全手動 | 2026-05-16 |
+| Q-015 | 知識庫技術架構：RAG / Vector DB 還是其他？ | 2026-05-17 | Answered | 改採 SQLite 為主：Layer1 寫入 system prompt、Layer2 結構化 SQL、Layer3 FTS5 全文搜索；避免 Vector DB 和 embedding API 外部依賴，符合「穩定優先、最小化 LLM requests」原則 | 2026-05-17 |
+| Q-016 | 公開市場 API 的 rate limit 與速度是否有問題？ | 2026-05-17 | Answered | 排程收盤後一次抓取，無 rate limit 問題；主力用 FinMind（台股）+ Alpha Vantage（美股），幾秒內完成 | 2026-05-17 |
+| Q-017 | Facebook 與財經媒體文章的收集方式？ | 2026-05-17 | Answered | FB 手動貼入存 DB；財經媒體為 user-triggered（系統列出連結，使用者確認後才爬取）或手動貼入；需要「待確認連結列表」UI | 2026-05-17 |
+| Q-018 | 圖片文章（截圖、雜誌掃描）如何處理？ | 2026-05-17 | Answered | 使用 Claude Vision API：一次 call 完成 OCR + 內容理解 + 摘要，不引入額外 OCR 服務；使用者可接受外部 API 資源 | 2026-05-17 |
 | Q-010 | 持倉檢視是否納入 v1？ | 2026-05-16 | Answered | 持倉（含成本價/損益）不納入 v1；但自選股（watchlist）納入 v1，欄位為 {code, name, added_date, memo} | 2026-05-16 |
 | Q-011 | 自選股管理 UI 入口為何？ | 2026-05-16 | Answered | 儀表板內可收合面板（右側或底部），不另開設定頁 | 2026-05-16 |
 | Q-012 | Daily report 輸出格式為何？ | 2026-05-16 | Answered | 兩區：① 自選股有新消息（優先）② 今日其他提及股票；加上整體市場方向 + 明日策略 | 2026-05-16 |
