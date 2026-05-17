@@ -270,4 +270,5 @@ Pre-Spec **不執行**以下操作 — 這些由 Spec Kit 或後續流程負責�
 | [ADR-0027](docs/adr/0027-prespec-workflow.md) | 決策依據、完整角色模型與 skill 邊界定義 |
 | [Pre-Spec Runbook](docs/runbooks/pre-spec-workflow.md) | PO/TPM 操作步驟與完整 AI 指令清單 |
 | [SKILL.md (Claude Code)](.claude/skills/prespec/SKILL.md) | Claude Code skill 完整參考 |
+| [SKILL.md (CLINE)](.cline/skills/prespec/SKILL.md) | CLINE skill 完整參考 |
 | [SKILL.md (Codex)](.agents/skills/prespec/SKILL.md) | Codex skill 完整參考 |

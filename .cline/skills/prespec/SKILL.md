@@ -41,20 +41,20 @@ ready.
 
 Available scripts:
 
-- `.claude/skills/prespec/scripts/prespec_init.py [feature-slug] --po "..." --tpm "..." [--title "..."]`
+- `.cline/skills/prespec/scripts/prespec_init.py [feature-slug] --po "..." --tpm "..." [--title "..."]`
   creates `docs/spec-intake/index.md` and the feature `raw/` workspace. When raw
   source material already exists, when any pre-spec artifact already exists, or when
   `--with-artifacts` is passed, it also creates missing artifacts from templates
   without overwriting existing files. If `--title` is omitted, it derives a display
   title from the feature slug.
-- `.claude/skills/prespec/scripts/prespec_sync_index.py [feature-slug]` synchronizes the global
+- `.cline/skills/prespec/scripts/prespec_sync_index.py [feature-slug]` synchronizes the global
   `docs/spec-intake/index.md` from `product-spec.md` and
   `handoff-checklist.md`. Omit `[feature-slug]` to rebuild the registry from all
   feature workspaces.
-- `.claude/skills/prespec/scripts/prespec_status.py [feature-slug]` reports the current ADR-0027 step,
+- `.cline/skills/prespec/scripts/prespec_status.py [feature-slug]` reports the current ADR-0027 step,
   current status, completed items, blockers, risks, and recommended next action.
   Omit `[feature-slug]` to summarize the global pre-spec board.
-- `.claude/skills/prespec/scripts/prespec_validate.py [feature-slug]` checks mechanical readiness:
+- `.cline/skills/prespec/scripts/prespec_validate.py [feature-slug]` checks mechanical readiness:
   skeleton files, global registry entry, raw source listing, accepted-status evidence,
   blocking clarification markers, readiness-check completeness, and handoff checklist
   consistency.
