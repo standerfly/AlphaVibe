@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "alphavibe-kb": {
+      "command": "python3",
+      "args": ["poc/kb-mcp/server.py"]
+    }
+  }
+}
