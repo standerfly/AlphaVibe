@@ -56,3 +56,7 @@ mockup 迭代，不是寫程式。
 ## 教訓紀錄
 
 （依 ~/.claude/rules/40-maintenance.md 的格式在此追加）
+
+- 2026-07-07｜情境：prespec_init.py 用 `Path.write_text(newline=)` 在本機 Python 3.9.6 崩潰（該參數需 ≥3.10）
+  ｜教訓：這台機器（含 AI-stock-km-v1 的 .venv）只有 Python 3.9.6，skill 腳本必須保持 3.9 相容
+  ｜動作：已用 `open(newline="\n")` 寫法修復 init／sync_index 兩腳本並同步三份拷貝

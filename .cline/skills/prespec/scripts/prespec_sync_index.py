@@ -156,7 +156,8 @@ def write_index(intake_root: Path, rows: list[list[str]]) -> None:
         lines.append("| " + " | ".join(row) + " |")
     lines.append("")
     intake_root.mkdir(parents=True, exist_ok=True)
-    (intake_root / "index.md").write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    with (intake_root / "index.md").open("w", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n".join(lines))
 
 
 def main() -> int:

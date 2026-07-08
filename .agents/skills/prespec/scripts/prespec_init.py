@@ -148,7 +148,8 @@ def write_if_missing(path: Path, content: str, created: list[Path], skipped: lis
         skipped.append(path)
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8", newline="\n")
+    with path.open("w", encoding="utf-8", newline="\n") as fh:
+        fh.write(content)
     created.append(path)
 
 
@@ -218,7 +219,8 @@ def update_global_index(index_path: Path, values: dict[str, str]) -> None:
         lines.append("| " + " | ".join(rows[slug]) + " |")
     lines.append("")
     index_path.parent.mkdir(parents=True, exist_ok=True)
-    index_path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    with index_path.open("w", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n".join(lines))
 
 
 def main() -> int:
