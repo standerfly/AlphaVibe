@@ -36,3 +36,4 @@ This document tracks all questions asked to the PO and the answers received.
 | Q-030 | 三種選股方式（名單驅動／全市場條件篩選／哲學驅動）的時序？ | 2026-07-07 | Answered | 三者都要，但 v1 先做名單驅動＋哲學驅動（個股級數據即可）；全市場條件篩選後行（需全市場數據管線，列 Deferred） | 2026-07-07 |
 | Q-031 | 儀表板圖像化的優先序？ | 2026-07-07 | Answered | 總覽名單頁 > 資訊流時間軸 > 個股頁 > 交易覆盤頁 | 2026-07-07 |
 | Q-032 | AI 引擎與部署形態？ | 2026-07-07 | Answered | 不自建內嵌 LLM 的產品：Claude 為主力（聊天思考）＋ Cline 輔助（爬蟲等簡單工作），本地資料庫承載（local-first）；SRC-001 §8 的 Docker 雲端部署與自建前後端假設隨之修訂 | 2026-07-07 |
+| Q-033 | 是否結合 Obsidian（個人使用情境）？ | 2026-07-08 | Answered | 不做整合：瀏覽需求由 1c 儀表板涵蓋（FR-024/025），避免 SQLite↔md 雙真相來源、違反功能最小化原則。Layer 1 哲學庫本為 .md 檔（poc/data/philosophy/），可自行加入 Obsidian vault 取用——格式天生相容，非整合。日後有具體需求（如手機離線瀏覽 L3）再以匯出腳本處理 | 2026-07-08 |

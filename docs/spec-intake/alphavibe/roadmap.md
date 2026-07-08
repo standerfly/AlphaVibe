@@ -23,6 +23,8 @@ Deferred（已定案遞延，見 scope-decision.md）：全市場條件篩選、
 
 ### 1b 試用累積（進行中）
 - 執行者：PO 本人（本機或 VS Code tunnel 遠端），用法見 `poc/kb-mcp/README.md`。
+- 檢視頁：`python3 poc/kb-mcp/report.py` 產靜態快照（2026-07-08 交付）——
+  同時是 OQ-3 儀表板技術形態的「靜態產出」實驗，1c 決策時回收使用心得。
 - 完成訊號：Layer 2 累積出一批真實立場（例如 ≥10 檔）、或 PO 說「做儀表板吧」。
 
 ### 1c 儀表板：總覽名單頁

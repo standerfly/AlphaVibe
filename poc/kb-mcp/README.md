@@ -25,6 +25,17 @@ Claude Code session**，首次會詢問是否啟用 `alphavibe-kb`——允許�
 | save_philosophy / get_philosophy | L1 | 投資哲學模組 md 檔（append/replace） |
 | get_fundamentals | 數據 | FinMind：近期 PER/PBR/殖利率＋近 6 月營收 |
 
+## 檢視頁（靜態快照）
+
+```bash
+python3 poc/kb-mcp/report.py   # 產出 poc/data/report.html
+```
+
+唯讀快照：立場總覽（台股慣例紅多綠空）＋最近 20 則評論＋哲學模組清單。
+用 VS Code Live Preview 或瀏覽器開啟；資料更新後重跑即可。
+這同時是 OQ-3（儀表板技術形態）的「靜態產出」實驗——1c 前的過渡工具，
+刻意不含即時股價與距離目標買價（那是 FR-024 儀表板的事）。
+
 ## 資料位置
 
 `poc/data/`：`alphavibe.db`（SQLite，已 gitignore）＋ `philosophy/*.md`。
