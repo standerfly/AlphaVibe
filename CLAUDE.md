@@ -1,14 +1,21 @@
-# AlphaVibe 專案指南（v1，2026-07-06）
+# AlphaVibe 專案指南（v2，2026-07-08；v2：主軸重塑＋Phase 1 PoC 上線）
 
 ## 這個 repo 是什麼
 
-投資資訊儀表板（Investment Information Dashboard）的**需求工程 repo**，
-目前在 pre-spec 階段。**沒有 production code**——`docs/swagger.yaml`、
-`docs/docs.go` 是模板殘留，不代表有後端；唯一的可視產出是
-`frontend_mockup.html`（純靜態 mockup）。不要假設有可跑的服務或測試。
+**個人投資知識庫與選股估值工作流**（2026-07-07 主軸重塑：基本面選股→
+估值→交易紀錄；引擎＝Claude 聊天思考＋Cline 粗活、local-first，Q-028~032）。
+需求基線 product-spec 已 **Accepted**（2026-07-08）。
 
-使用者 Stander 在此專案的角色是 PO/TPM：工作重心是需求釐清、規格文件、
-mockup 迭代，不是寫程式。
+**code 現況**：唯一可跑的是 `poc/kb-mcp/`（三層知識庫 MCP server，
+Phase 1 PoC，零外部依賴）；**正式 production code 尚未開始**（屬 Phase 2，
+走 speckit）。`docs/swagger.yaml`、`docs/docs.go` 是模板殘留，不代表有後端；
+`frontend_mockup.html` 是純靜態 mockup。
+
+**目前階段：Phase 1b 試用累積**——完整進度與各階段接手指南見
+`docs/spec-intake/alphavibe/roadmap.md`（接手任何開發工作前先讀它）。
+
+使用者 Stander 在此專案的角色是 PO/TPM：需求釐清、規格文件、決策；
+不以寫碼為日常。
 
 ## 工作流（ADR-0027 兩段式）
 
@@ -49,9 +56,12 @@ mockup 迭代，不是寫程式。
 
 ## 常用查證點
 
-- 功能清單與狀態：`docs/spec-intake/index.md`
-- 目前功能的開放問題：`docs/spec-intake/alphavibe/clarification-log.md`
+- **開發路線與進度（接手必讀）**：`docs/spec-intake/alphavibe/roadmap.md`
+- 需求基線：`docs/spec-intake/alphavibe/product-spec.md`（Accepted）
+- 開放問題：`docs/spec-intake/alphavibe/clarification-log.md`
 - 範圍決策：`docs/spec-intake/alphavibe/scope-decision.md`
+- PoC 驗證：`python3 -m unittest discover -s poc/kb-mcp/tests`
+  （2026-07-08 實測 10/10 綠）；用法見 `poc/kb-mcp/README.md`
 
 ## 教訓紀錄
 
