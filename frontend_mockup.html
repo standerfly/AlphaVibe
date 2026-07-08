@@ -3,286 +3,553 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AlphaVibe — 投資資訊儀表板 Mockup</title>
+    <title>AlphaVibe — 專業投資分析儀表板</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Noto+Sans+TC:wght@300;400;700&display=swap');
         body { font-family: 'Inter', 'Noto Sans TC', sans-serif; }
-        .collapsible-content { transition: max-height 0.3s ease-out; overflow: hidden; }
-        .stock-card:hover { transform: translateY(-2px); transition: all 0.2s; }
+        .side-panel { transition: transform 0.3s ease-in-out; }
+        .side-panel.closed { transform: translateX(100%); }
+        .glass-effect { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(12px); }
+        .stock-card:hover { transform: translateY(-4px); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .insight-gradient { background: linear-gradient(135deg, #1e293b 0%, #334155 100%); }
+        .indicator-card { transition: all 0.2s ease; }
+        .indicator-card:hover { background-color: #f8fafc; border-color: #cbd5e1; }
     </style>
 </head>
-<body class="bg-slate-50 text-slate-900">
+<body class="bg-slate-50 text-slate-900 overflow-x-hidden">
 
     <!-- Navigation -->
-    <nav class="bg-slate-900 text-white px-6 py-4 flex justify-between items-center sticky top-0 z-50 shadow-lg">
+    <nav class="bg-slate-900 text-white px-6 py-4 flex justify-between items-center sticky top-0 z-50 shadow-xl">
         <div class="flex items-center space-x-3">
-            <div class="bg-blue-600 p-2 rounded-lg">
+            <div class="bg-blue-600 p-2 rounded-lg shadow-lg shadow-blue-500/30">
                 <i class="fa-solid fa-chart-line text-xl"></i>
             </div>
-            <h1 class="text-xl font-bold tracking-tight">AlphaVibe <span class="text-blue-400 font-normal text-sm ml-2">v1.0 MVP</span></h1>
+            <h1 class="text-xl font-bold tracking-tight">AlphaVibe <span class="text-blue-400 font-normal text-xs ml-2 bg-blue-900/50 px-2 py-0.5 rounded border border-blue-800">v1.1 PRO</span></h1>
         </div>
-        <div class="flex items-center space-x-6 text-sm">
-            <span class="text-slate-400"><i class="fa-regular fa-calendar-days mr-2"></i>2026-05-17</span>
-            <div class="flex items-center space-x-2 bg-slate-800 px-3 py-1 rounded-full border border-slate-700">
+        <div class="flex items-center space-x-4">
+            <div class="hidden md:flex items-center space-x-2 bg-slate-800 px-3 py-1 rounded-full border border-slate-700 text-xs">
                 <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                <span>系統就緒 (收盤後模式)</span>
+                <span class="text-slate-300">系統就緒 (收盤後模式)</span>
             </div>
+            <button onclick="togglePanel()" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center shadow-lg shadow-blue-600/20">
+                <i class="fa-solid fa-plus-circle mr-2"></i>
+                <span>資料輸入</span>
+            </button>
         </div>
     </nav>
 
-    <div class="flex min-h-screen">
+    <!-- Market Ticker Bar -->
+    <div class="bg-slate-800 border-b border-slate-700 px-6 py-2 overflow-x-auto sticky top-[72px] z-40">
+        <div class="flex items-center space-x-8 text-sm min-w-max">
+            <div class="flex items-center space-x-2">
+                <span class="text-slate-400">加權指數</span>
+                <span class="text-green-400 font-bold">22,150</span>
+                <span class="text-green-400 text-xs">▲ 175 (+0.80%)</span>
+            </div>
+            <div class="w-px h-4 bg-slate-600"></div>
+            <div class="flex items-center space-x-2">
+                <span class="text-slate-400">外資</span>
+                <span class="text-green-400 font-bold">+125億</span>
+            </div>
+            <div class="flex items-center space-x-2">
+                <span class="text-slate-400">投信</span>
+                <span class="text-green-400 font-bold">+18億</span>
+            </div>
+            <div class="w-px h-4 bg-slate-600"></div>
+            <div class="flex items-center space-x-2">
+                <span class="text-slate-400">漲/跌比</span>
+                <span class="text-green-400 font-semibold">892</span>
+                <span class="text-slate-500">/</span>
+                <span class="text-red-400 font-semibold">543</span>
+            </div>
+            <div class="w-px h-4 bg-slate-600"></div>
+            <div class="flex items-center space-x-2">
+                <span class="text-slate-400">台幣</span>
+                <span class="text-white font-semibold">31.20</span>
+                <span class="text-red-400 text-xs">▼ 0.05</span>
+            </div>
+            <div class="w-px h-4 bg-slate-600"></div>
+            <div class="flex items-center space-x-2">
+                <span class="text-slate-400">S&P 500</span>
+                <span class="text-green-400 font-bold">5,308 ▲0.5%</span>
+            </div>
+            <div class="flex items-center space-x-2">
+                <span class="text-slate-400">NASDAQ</span>
+                <span class="text-green-400 font-bold">16,780 ▲0.7%</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="flex min-h-screen relative">
         <!-- Main Content -->
-        <main class="flex-1 p-6 lg:p-10 max-w-6xl mx-auto w-full">
+        <main class="flex-1 p-6 lg:p-10 max-w-7xl mx-auto w-full">
             
-            <!-- Input Section -->
+            <!-- Core Insight Hub -->
             <section class="mb-10">
-                <div class="flex items-center space-x-2 mb-4">
-                    <i class="fa-solid fa-circle-info text-blue-600"></i>
-                    <h2 class="text-lg font-semibold">資料輸入 (Data Ingestion)</h2>
-                </div>
-                
-                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                    <!-- Tabs -->
-                    <div class="flex border-b border-slate-200 bg-slate-50">
-                        <button onclick="switchTab('text')" id="tab-text" class="px-6 py-3 text-sm font-medium border-b-2 border-blue-600 text-blue-600 bg-white">文字貼入</button>
-                        <button onclick="switchTab('url')" id="tab-url" class="px-6 py-3 text-sm font-medium text-slate-500 hover:text-slate-700">URL 爬取</button>
-                        <button onclick="switchTab('image')" id="tab-image" class="px-6 py-3 text-sm font-medium text-slate-500 hover:text-slate-700">圖片解析</button>
-                    </div>
+                <div class="insight-gradient rounded-2xl p-6 md:p-8 text-white shadow-2xl relative overflow-hidden">
+                    <!-- Decorative background element -->
+                    <div class="absolute top-0 right-0 w-64 h-64 bg-blue-500/10 rounded-full -mr-32 -mt-32 blur-3xl"></div>
                     
-                    <!-- Tab Contents -->
-                    <div class="p-6">
-                        <div id="content-text" class="tab-content">
-                            <div class="grid grid-cols-1 gap-4">
-                                <div>
-                                    <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">來源標記</label>
-                                    <select class="w-full p-2 rounded border border-slate-300 text-sm bg-slate-50 outline-blue-500">
-                                        <option>LINE 群組</option>
-                                        <option>定錨 Email</option>
-                                        <option>股癌 Facebook</option>
-                                        <option>其他</option>
-                                    </select>
+                    <div class="relative z-10 flex flex-col lg:flex-row gap-8">
+                        <div class="flex-1">
+                            <div class="flex items-center space-x-2 mb-4">
+                                <span class="bg-blue-500 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">Market Pulse</span>
+                                <h2 class="text-lg font-semibold opacity-90">今日市場總體分析</h2>
+                            </div>
+                            <div class="flex items-center space-x-4 mb-4">
+                                <div class="bg-amber-400 text-slate-900 px-4 py-1 rounded-full text-sm font-bold shadow-lg">中性偏多</div>
+                                <span class="text-slate-300 text-sm">最後更新: 2026-05-17 15:30</span>
+                            </div>
+                            <p class="text-slate-200 leading-relaxed text-lg font-light">
+                                今日台股在 <span class="text-white font-semibold">22,000 點</span> 附近震盪，電子權值股表現分化。AI 伺服器概念股持續強勢，但部分消費類股出現獲利了結壓力。整體市場仍維持對下一季財報的樂觀預期，但需注意美債殖利率回升對估值的壓制。
+                            </p>
+                        </div>
+                        <div class="lg:w-80 bg-white/10 backdrop-blur-md rounded-xl p-5 border border-white/10">
+                            <h3 class="text-sm font-bold text-blue-300 uppercase mb-3 tracking-wider">明日操作策略</h3>
+                            <ul class="space-y-3">
+                                <li class="flex items-start space-x-3 text-slate-200 text-sm">
+                                    <i class="fa-solid fa-circle-check text-green-400 mt-1 shrink-0"></i>
+                                    <span><strong>持倉：</strong> 分批止盈，降低漲幅過快個股部位。</span>
+                                </li>
+                                <li class="flex items-start space-x-3 text-slate-200 text-sm">
+                                    <i class="fa-solid fa-circle-check text-green-400 mt-1 shrink-0"></i>
+                                    <span><strong>佈局：</strong> AI 伺服器下游，回測 20 日線分批進場。</span>
+                                </li>
+                                <li class="flex items-start space-x-3 text-amber-200 text-sm">
+                                    <i class="fa-solid fa-triangle-exclamation text-amber-400 mt-1 shrink-0"></i>
+                                    <span><strong>風險：</strong> 密切關注 NVDA 財報引起的波動。</span>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Quantitative Metrics Hub -->
+            <section class="mb-12">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-xl font-bold text-slate-800 flex items-center">
+                        <i class="fa-solid fa-gauge-high mr-3 text-blue-600"></i>量化指標分析
+                    </h2>
+                    <button class="text-xs text-slate-500 hover:text-blue-600 transition-colors"><i class="fa-solid fa-rotate-right mr-1"></i>同步最新數據</button>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <!-- Trend Analysis Group -->
+                    <div class="space-y-4">
+                        <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">趨勢面 (Trend Analysis)</h3>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div class="indicator-card bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+                                <div class="text-[10px] text-slate-400 font-bold uppercase mb-1">RSI (14)</div>
+                                <div class="text-2xl font-bold text-amber-500">58.3</div>
+                                <div class="mt-2 w-full bg-slate-100 rounded-full h-1.5">
+                                    <div class="bg-amber-400 h-1.5 rounded-full" style="width:58.3%"></div>
                                 </div>
-                                <div>
-                                    <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">原始內容</label>
-                                    <textarea class="w-full p-3 rounded border border-slate-300 text-sm h-32 outline-blue-500" placeholder="請貼入訊息內容..."></textarea>
+                                <div class="text-[10px] text-slate-500 mt-2 font-medium">中性偏多</div>
+                            </div>
+                            <div class="indicator-card bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+                                <div class="text-[10px] text-slate-400 font-bold uppercase mb-1">MACD</div>
+                                <div class="text-lg font-bold text-green-600 mt-1">金叉向上</div>
+                                <div class="flex items-center space-x-2 mt-2">
+                                    <span class="text-[10px] text-slate-400">DIF: <span class="text-green-600 font-bold">+12.5</span></span>
+                                    <span class="text-[10px] text-slate-400">DEA: <span class="text-green-500 font-bold">+9.3</span></span>
                                 </div>
-                                <button class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors w-fit">
-                                    <i class="fa-solid fa-cloud-arrow-up mr-2"></i>提交解析
-                                </button>
+                            </div>
+                            <div class="indicator-card bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+                                <div class="text-[10px] text-slate-400 font-bold uppercase mb-1">KD (9,3)</div>
+                                <div class="flex items-baseline space-x-1 mt-1">
+                                    <span class="text-xl font-bold text-blue-600">65</span>
+                                    <span class="text-[10px] text-slate-400">K / 62 D</span>
+                                </div>
+                                <div class="text-[10px] text-green-600 font-bold mt-2 bg-green-50 px-2 py-0.5 rounded w-fit">K 上穿 D</div>
                             </div>
                         </div>
+                    </div>
 
-                        <div id="content-url" class="tab-content hidden">
-                            <div class="flex space-x-3">
-                                <input type="text" class="flex-1 p-2 rounded border border-slate-300 text-sm outline-blue-500" placeholder="https://...">
-                                <button class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-                                    <i class="fa-solid fa-spider mr-2"></i>觸發爬取
-                                </button>
+                    <!-- Sentiment Analysis Group -->
+                    <div class="space-y-4">
+                        <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">籌碼面 (Market Sentiment)</h3>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div class="indicator-card bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+                                <div class="text-[10px] text-slate-400 font-bold uppercase mb-1">外資動向</div>
+                                <div class="text-2xl font-bold text-green-600">+125億</div>
+                                <div class="flex space-x-1 mt-2">
+                                    <div class="w-1 h-3 bg-green-500 rounded-sm"></div>
+                                    <div class="w-1 h-4 bg-green-500 rounded-sm"></div>
+                                    <div class="w-1 h-2 bg-green-500 rounded-sm"></div>
+                                    <div class="w-1 h-5 bg-green-500 rounded-sm"></div>
+                                    <div class="w-1 h-3 bg-green-500 rounded-sm"></div>
+                                </div>
+                                <div class="text-[10px] text-slate-400 mt-1">近 5 日持續買超</div>
                             </div>
-                        </div>
-
-                        <div id="content-image" class="tab-content hidden">
-                            <div class="border-2 border-dashed border-slate-300 rounded-xl p-8 text-center hover:border-blue-400 transition-colors cursor-pointer">
-                                <i class="fa-solid fa-image text-3xl text-slate-400 mb-2"></i>
-                                <p class="text-sm text-slate-500">點擊或拖拽圖片至此上傳 (Vision LLM 解析)</p>
-                                <input type="file" class="hidden" id="file-upload">
+                            <div class="indicator-card bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+                                <div class="text-[10px] text-slate-400 font-bold uppercase mb-1">量能比</div>
+                                <div class="text-2xl font-bold text-slate-800">1.2x</div>
+                                <div class="flex space-x-1 mt-2 items-end">
+                                    <div class="w-1 h-2 bg-slate-200 rounded-sm"></div>
+                                    <div class="w-1 h-3 bg-slate-200 rounded-sm"></div>
+                                    <div class="w-1 h-2 bg-slate-200 rounded-sm"></div>
+                                    <div class="w-1 h-3 bg-slate-200 rounded-sm"></div>
+                                    <div class="w-1 h-5 bg-blue-500 rounded-sm"></div>
+                                </div>
+                                <div class="text-[10px] text-blue-600 font-bold mt-1">量增偏多</div>
+                            </div>
+                            <div class="indicator-card bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+                                <div class="text-[10px] text-slate-400 font-bold uppercase mb-1">漲跌比</div>
+                                <div class="flex items-baseline space-x-1 mt-1">
+                                    <span class="text-xl font-bold text-green-600">892</span>
+                                    <span class="text-slate-300 text-xs">/</span>
+                                    <span class="text-xl font-bold text-red-400">543</span>
+                                </div>
+                                <div class="flex mt-2 rounded-full overflow-hidden h-1.5">
+                                    <div class="bg-green-400" style="width:62%"></div>
+                                    <div class="bg-red-400" style="width:38%"></div>
+                                </div>
+                                <div class="text-[10px] text-green-600 font-bold mt-1.5">多方佔優 62%</div>
                             </div>
                         </div>
                     </div>
                 </div>
             </section>
 
-            <!-- Daily Report Section -->
+            <!-- Stock Focus Section -->
             <section>
                 <div class="flex items-center justify-between mb-6">
-                    <div class="flex items-center space-x-2">
-                        <i class="fa-solid fa-file-contract text-blue-600"></i>
-                        <h2 class="text-lg font-semibold">每日覆盤報告 (Daily Report)</h2>
-                    </div>
-                    <button class="text-sm text-blue-600 hover:underline"><i class="fa-solid fa-rotate-right mr-1"></i>重新生成</button>
+                    <h2 class="text-xl font-bold text-slate-800 flex items-center">
+                        <i class="fa-solid fa-magnifying-glass-chart mr-3 text-blue-600"></i>個股深度更新
+                    </h2>
                 </div>
-
-                <!-- Market Direction -->
-                <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
-                    <h3 class="text-sm font-bold text-slate-400 uppercase mb-3 tracking-wider">市場總體方向</h3>
-                    <div class="flex items-start space-x-4">
-                        <div class="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-xs font-bold">中性偏多</div>
-                        <p class="text-slate-700 leading-relaxed">
-                            今日台股在 22,000 點附近震盪，電子權值股表現分化。AI 伺服器概念股持續強勢，但部分消費類股出現獲利了結壓力。整體市場仍維持對下一季財報的樂觀預期，但需注意美債殖利率回升對估值的壓制。
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    
+                    <!-- Stock Card 1 (High Priority) -->
+                    <div class="stock-card bg-white rounded-2xl shadow-sm border-l-4 border-l-blue-600 border border-slate-200 p-6">
+                        <div class="flex justify-between items-start mb-4">
+                            <div>
+                                <span class="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">自選股</span>
+                                <h4 class="text-xl font-bold mt-1">台積電 <span class="text-slate-400 text-sm font-normal">(2330)</span></h4>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-xl font-bold text-slate-800">966</div>
+                                <div class="text-sm font-bold text-green-600">▲ 11.5 (+1.2%)</div>
+                            </div>
+                        </div>
+                        <div class="flex items-center space-x-3 mb-4 bg-slate-50 p-2 rounded-lg">
+                            <svg width="60" height="30" viewBox="0 0 80 28">
+                                <polyline points="0,22 13,20 26,16 39,18 52,10 65,6 80,4" fill="none" stroke="#22c55e" stroke-width="2" stroke-linejoin="round"/>
+                                <circle cx="80" cy="4" r="3" fill="#22c55e"/>
+                            </svg>
+                            <span class="text-xs text-slate-400 font-medium">近 7 日趨勢強勢</span>
+                        </div>
+                        <p class="text-sm text-slate-600 mb-5 leading-relaxed">
+                            定錨報告指出其 <span class="text-slate-900 font-semibold">2nm 進度超前預期</span>，且 AI 需求依然強勁。今日收盤價格接近 Layer 2 定義的買入區間。
                         </p>
+                        <div class="grid grid-cols-3 gap-3 mb-5">
+                            <div class="bg-slate-50 p-2 rounded-lg text-center border border-slate-100">
+                                <div class="text-[10px] text-slate-400 uppercase font-bold">RSI</div>
+                                <div class="text-sm font-bold text-amber-500">68.2</div>
+                            </div>
+                            <div class="bg-slate-50 p-2 rounded-lg text-center border border-slate-100">
+                                <div class="text-[10px] text-slate-400 uppercase font-bold">MACD</div>
+                                <div class="text-sm font-bold text-green-600">多頭</div>
+                            </div>
+                            <div class="bg-slate-50 p-2 rounded-lg text-center border border-slate-100">
+                                <div class="text-[10px] text-slate-400 uppercase font-bold">KD</div>
+                                <div class="text-sm font-bold text-blue-600">72/68</div>
+                            </div>
+                        </div>
+                        <div class="flex items-center justify-between pt-4 border-t border-slate-100">
+                            <span class="text-xs text-slate-400"><i class="fa-solid fa-link mr-1"></i>定錨週報.txt</span>
+                            <span class="text-xs font-bold text-green-600 bg-green-50 px-3 py-1 rounded-full border border-green-100 shadow-sm">✅ 觸發買入條件</span>
+                        </div>
                     </div>
-                </div>
 
-                <!-- Strategy -->
-                <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
-                    <h3 class="text-sm font-bold text-slate-400 uppercase mb-3 tracking-wider">明日操作策略</h3>
-                    <ul class="space-y-3">
-                        <li class="flex items-start space-x-3 text-slate-700 text-sm">
-                            <i class="fa-solid fa-check-circle text-green-500 mt-1"></i>
-                            <span><strong>持倉個股：</strong> 採取分批止盈策略，針對漲幅過快個股降低部位。</span>
-                        </li>
-                        <li class="flex items-start space-x-3 text-slate-700 text-sm">
-                            <i class="fa-solid fa-check-circle text-green-500 mt-1"></i>
-                            <span><strong>觀察名單：</strong> 關注 AI 伺服器下游組件，若回測 20 日線可分批佈局。</span>
-                        </li>
-                        <li class="flex items-start space-x-3 text-slate-700 text-sm">
-                            <i class="fa-solid fa-circle-exclamation text-amber-500 mt-1"></i>
-                            <span><strong>風險提示：</strong> 密切關注今晚美股 NVDA 財報，可能引發明日開盤劇烈波動。</span>
-                        </li>
-                    </ul>
-                </div>
-
-                <!-- Stock Updates -->
-                <div>
-                    <h3 class="text-sm font-bold text-slate-400 uppercase mb-4 tracking-wider">個股重點更新</h3>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        
-                        <!-- Stock Card 1 (Watchlist Priority) -->
-                        <div class="stock-card bg-white rounded-xl shadow-sm border-l-4 border-l-blue-600 border border-slate-200 p-5">
-                            <div class="flex justify-between items-start mb-3">
-                                <div>
-                                    <span class="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">自選股</span>
-                                    <h4 class="text-lg font-bold mt-1">台積電 (2330)</h4>
-                                </div>
-                                <div class="text-right">
-                                    <span class="text-sm font-semibold text-green-600">+1.2%</span>
-                                </div>
+                    <!-- Stock Card 2 (Conflict Alert) -->
+                    <div class="stock-card bg-white rounded-2xl shadow-sm border-l-4 border-l-amber-500 border border-slate-200 p-6">
+                        <div class="flex justify-between items-start mb-4">
+                            <div>
+                                <span class="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">今日提及</span>
+                                <h4 class="text-xl font-bold mt-1">聯發科 <span class="text-slate-400 text-sm font-normal">(2454)</span></h4>
                             </div>
-                            <p class="text-sm text-slate-600 mb-4 leading-relaxed">
-                                定錨報告指出其 2nm 進度超前預期，且 AI 需求依然強勁。今日收盤價格接近 Layer 2 定義的買入區間。
-                            </p>
-                            <div class="flex items-center justify-between pt-4 border-t border-slate-100">
-                                <span class="text-xs text-slate-400"><i class="fa-solid fa-link mr-1"></i>來源: 定錨週報.txt</span>
-                                <span class="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded">觸發買入條件</span>
+                            <div class="text-right">
+                                <div class="text-xl font-bold text-slate-800">1,245</div>
+                                <div class="text-sm font-bold text-red-600">▼ 10.0 (-0.8%)</div>
                             </div>
                         </div>
-
-                        <!-- Stock Card 2 (Conflict Alert) -->
-                        <div class="stock-card bg-white rounded-xl shadow-sm border-l-4 border-l-amber-500 border border-slate-200 p-5">
-                            <div class="flex justify-between items-start mb-3">
-                                <div>
-                                    <span class="text-xs font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">今日提及</span>
-                                    <h4 class="text-lg font-bold mt-1">聯發科 (2454)</h4>
-                                </div>
-                                <div class="text-right">
-                                    <span class="text-sm font-semibold text-red-600">-0.8%</span>
-                                </div>
+                        <div class="flex items-center space-x-3 mb-4 bg-slate-50 p-2 rounded-lg">
+                            <svg width="60" height="30" viewBox="0 0 80 28">
+                                <polyline points="0,6 13,8 26,10 39,8 52,14 65,18 80,22" fill="none" stroke="#ef4444" stroke-width="2" stroke-linejoin="round"/>
+                                <circle cx="80" cy="22" r="3" fill="#ef4444"/>
+                            </svg>
+                            <span class="text-xs text-slate-400 font-medium">近 7 日走勢疲弱</span>
+                        </div>
+                        <p class="text-sm text-slate-600 mb-5 leading-relaxed">
+                            LINE 群組中出現關於 <span class="text-red-600 font-semibold">車載晶片需求下滑</span> 的討論，與 Layer 2 原本的「看多」立場產生矛盾。
+                        </p>
+                        <div class="grid grid-cols-3 gap-3 mb-5">
+                            <div class="bg-slate-50 p-2 rounded-lg text-center border border-slate-100">
+                                <div class="text-[10px] text-slate-400 uppercase font-bold">RSI</div>
+                                <div class="text-sm font-bold text-red-500">42.1</div>
                             </div>
-                            <p class="text-sm text-slate-600 mb-4 leading-relaxed">
-                                LINE 群組中出現關於車載晶片需求下滑的討論，與 Layer 2 原本的「看多」立場產生矛盾。
-                            </p>
-                            <div class="flex items-center justify-between pt-4 border-t border-slate-100">
-                                <span class="text-xs text-slate-400"><i class="fa-solid fa-link mr-1"></i>來源: LINE群組</span>
-                                <span class="text-xs font-bold text-amber-600 bg-amber-50 px-2 py-1 rounded">⚠️ 立場衝突</span>
+                            <div class="bg-slate-50 p-2 rounded-lg text-center border border-slate-100">
+                                <div class="text-[10px] text-slate-400 uppercase font-bold">MACD</div>
+                                <div class="text-sm font-bold text-red-500">空頭</div>
+                            </div>
+                            <div class="bg-slate-50 p-2 rounded-lg text-center border border-slate-100">
+                                <div class="text-[10px] text-slate-400 uppercase font-bold">KD</div>
+                                <div class="text-sm font-bold text-red-400">38/45</div>
                             </div>
                         </div>
-
-                        <!-- Stock Card 3 -->
-                        <div class="stock-card bg-white rounded-xl shadow-sm border-l-4 border-l-slate-300 border border-slate-200 p-5">
-                            <div class="flex justify-between items-start mb-3">
-                                <div>
-                                    <span class="text-xs font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">今日提及</span>
-                                    <h4 class="text-lg font-bold mt-1">鴻海 (2317)</h4>
-                                </div>
-                                <div class="text-right">
-                                    <span class="text-sm font-semibold text-slate-500">0.0%</span>
-                                </div>
-                            </div>
-                            <p class="text-sm text-slate-600 mb-4 leading-relaxed">
-                                股癌筆記提到其成本驅動分析，認為目前伺服器出貨量已反映在價格中，建議等待回檔。
-                            </p>
-                            <div class="flex items-center justify-between pt-4 border-t border-slate-100">
-                                <span class="text-xs text-slate-400"><i class="fa-solid fa-link mr-1"></i>來源: 股癌筆記.txt</span>
-                                <span class="text-xs font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded">觀察中</span>
-                            </div>
+                        <div class="flex items-center justify-between pt-4 border-t border-slate-100">
+                            <span class="text-xs text-slate-400"><i class="fa-solid fa-link mr-1"></i>LINE群組</span>
+                            <span class="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-1 rounded-full border border-amber-100 shadow-sm">⚠️ 立場衝突</span>
                         </div>
-
                     </div>
+
                 </div>
             </section>
         </main>
 
         <!-- Right Sidebar: Watchlist -->
         <aside class="w-80 bg-slate-100 border-l border-slate-200 flex flex-col sticky top-0 h-screen">
-            <div class="p-4 flex justify-between items-center bg-slate-200 border-b border-slate-300 cursor-pointer" onclick="toggleWatchlist()">
-                <h3 class="font-bold text-slate-700"><i class="fa-solid fa-list-ul mr-2"></i>自選股 Watchlist</h3>
-                <i id="collapse-icon" class="fa-solid fa-chevron-up text-slate-500 transition-transform"></i>
+            <div class="p-6 border-b border-slate-200 bg-white">
+                <h3 class="font-bold text-slate-800 flex items-center">
+                    <i class="fa-solid fa-list-ul mr-3 text-blue-600"></i>自選股 Watchlist
+                </h3>
             </div>
-            
-            <div id="watchlist-content" class="collapsible-content flex-1 p-4 overflow-y-auto">
-                <div class="flex justify-between items-center mb-4">
-                    <span class="text-xs font-semibold text-slate-500 uppercase">我的關注 (3)</span>
+            <div class="flex-1 p-4 overflow-y-auto space-y-4">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="text-[10px] font-bold text-slate-400 uppercase">關注中 (3)</span>
                     <button class="text-xs text-blue-600 hover:text-blue-800 font-bold">+ 新增</button>
                 </div>
                 
-                <div class="space-y-3">
-                    <!-- Watchlist Item -->
-                    <div class="bg-white p-3 rounded-lg border border-slate-300 shadow-sm group hover:border-blue-400 transition-colors">
-                        <div class="flex justify-between items-center mb-1">
-                            <span class="font-bold text-sm">台積電 (2330)</span>
-                            <button class="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash-can text-xs"></i></button>
-                        </div>
-                        <p class="text-xs text-slate-500 truncate">AI 核心之王，關注 2nm 進展</p>
+                <!-- Watchlist Item 1 -->
+                <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm group hover:border-blue-400 transition-all cursor-pointer">
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="font-bold text-sm">台積電 (2330)</span>
+                        <span class="text-xs font-bold text-green-600">+1.2%</span>
                     </div>
-                    <!-- Watchlist Item -->
-                    <div class="bg-white p-3 rounded-lg border border-slate-300 shadow-sm group hover:border-blue-400 transition-colors">
-                        <div class="flex justify-between items-center mb-1">
-                            <span class="font-bold text-sm">聯發科 (2454)</span>
-                            <button class="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash-can text-xs"></i></button>
-                        </div>
-                        <p class="text-xs text-slate-500 truncate">車載晶片滲透率觀察</p>
+                    <div class="flex flex-wrap gap-1 mt-3">
+                        <span class="text-[10px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded font-medium">RSI 68</span>
+                        <span class="text-[10px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded font-medium">外資+</span>
+                        <span class="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold">✅ 觸發</span>
                     </div>
-                    <!-- Watchlist Item -->
-                    <div class="bg-white p-3 rounded-lg border border-slate-300 shadow-sm group hover:border-blue-400 transition-colors">
-                        <div class="flex justify-between items-center mb-1">
-                            <span class="font-bold text-sm">鴻海 (2317)</span>
-                            <button class="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash-can text-xs"></i></button>
-                        </div>
-                        <p class="text-xs text-slate-500 truncate">伺服器出貨量觀察</p>
+                </div>
+
+                <!-- Watchlist Item 2 -->
+                <div class="bg-white p-4 rounded-xl border border-amber-200 shadow-sm group hover:border-amber-400 transition-all cursor-pointer">
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="font-bold text-sm">聯發科 (2454)</span>
+                        <span class="text-xs font-bold text-red-500">-0.8%</span>
+                    </div>
+                    <div class="flex flex-wrap gap-1 mt-3">
+                        <span class="text-[10px] bg-red-50 text-red-500 px-1.5 py-0.5 rounded font-medium">RSI 42</span>
+                        <span class="text-[10px] bg-red-50 text-red-500 px-1.5 py-0.5 rounded font-medium">外資-</span>
+                        <span class="text-[10px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded font-bold">⚠️ 衝突</span>
+                    </div>
+                </div>
+
+                <!-- Watchlist Item 3 -->
+                <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm group hover:border-blue-400 transition-all cursor-pointer">
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="font-bold text-sm">鴻海 (2317)</span>
+                        <span class="text-xs font-bold text-slate-400">0.0%</span>
+                    </div>
+                    <div class="flex flex-wrap gap-1 mt-3">
+                        <span class="text-[10px] bg-slate-50 text-slate-500 px-1.5 py-0.5 rounded font-medium">RSI 53</span>
+                        <span class="text-[10px] bg-slate-50 text-slate-500 px-1.5 py-0.5 rounded font-medium">中性</span>
                     </div>
                 </div>
             </div>
         </aside>
+
+        <!-- Right Side Panel: Data Ingestion -->
+        <div id="data-panel" class="side-panel closed fixed top-0 right-0 w-full max-w-md h-full bg-white shadow-2xl z-[60] border-l border-slate-200">
+            <div class="flex flex-col h-full">
+                <div class="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+                    <h2 class="text-lg font-bold text-slate-800 flex items-center">
+                        <i class="fa-solid fa-cloud-arrow-up mr-3 text-blue-600"></i>資料輸入 (Data Ingestion)
+                    </h2>
+                    <button onclick="togglePanel()" class="text-slate-400 hover:text-slate-600 transition-colors">
+                        <i class="fa-solid fa-xmark text-xl"></i>
+                    </button>
+                </div>
+                
+                <div class="p-6 flex-1 overflow-y-auto">
+                    <div class="flex space-x-1 p-1 bg-slate-100 rounded-xl mb-6">
+                        <button onclick="switchTab('text')" id="tab-text" class="flex-1 py-2 text-xs font-bold rounded-lg transition-all bg-white text-blue-600 shadow-sm">文字貼入</button>
+                        <button onclick="switchTab('url')" id="tab-url" class="flex-1 py-2 text-xs font-bold rounded-lg transition-all text-slate-500 hover:text-slate-700">URL 爬取</button>
+                        <button onclick="switchTab('image')" id="tab-image" class="flex-1 py-2 text-xs font-bold rounded-lg transition-all text-slate-500 hover:text-slate-700">圖片解析</button>
+                        <button onclick="switchTab('ai')" id="tab-ai" class="flex-1 py-2 text-xs font-bold rounded-lg transition-all text-slate-500 hover:text-slate-700">AI 對話</button>
+                    </div>
+
+                    <div id="content-text" class="tab-content space-y-4">
+                        <div>
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1 ml-1">來源標記</label>
+                            <select class="w-full p-3 rounded-xl border border-slate-200 text-sm bg-white outline-blue-500 transition-all">
+                                <option>LINE 群組</option>
+                                <option>定錨 Email</option>
+                                <option>股癌 Facebook</option>
+                                <option>其他</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1 ml-1">原始內容</label>
+                            <textarea class="w-full p-3 rounded-xl border border-slate-200 text-sm h-64 outline-blue-500 transition-all" placeholder="請貼入訊息內容..."></textarea>
+                        </div>
+                        <button class="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl text-sm font-bold transition-all shadow-lg shadow-blue-600/20">
+                            提交解析
+                        </button>
+                    </div>
+
+                    <div id="content-url" class="tab-content hidden space-y-4">
+                        <p class="text-xs text-slate-500 mb-4">輸入分析網頁 URL，系統將自動觸發爬蟲抓取核心資訊。</p>
+                        <div class="flex space-x-2">
+                            <input type="text" class="flex-1 p-3 rounded-xl border border-slate-200 text-sm outline-blue-500" placeholder="https://...">
+                            <button class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all">
+                                觸發爬取
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="content-image" class="tab-content hidden">
+                        <div class="border-2 border-dashed border-slate-200 rounded-2xl p-10 text-center hover:border-blue-400 transition-all cursor-pointer bg-slate-50 group">
+                            <div class="w-16 h-16 bg-white rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm group-hover:scale-110 transition-transform">
+                                <i class="fa-solid fa-image text-2xl text-slate-400"></i>
+                            </div>
+                            <p class="text-sm font-medium text-slate-600">點擊或拖拽圖片至此</p>
+                            <p class="text-xs text-slate-400 mt-1">支援 Vision LLM 自動解析分析</p>
+                            <input type="file" class="hidden" id="file-upload">
+                        </div>
+                    </div>
+
+                    <div id="content-ai" class="tab-content hidden space-y-4">
+                        <p class="text-xs text-slate-500 leading-relaxed">與 AI 對話討論投資想法，AI 會從對話中提議歸檔到對應的知識庫層級，經你確認後才會實際寫入。</p>
+
+                        <div class="space-y-3 max-h-96 overflow-y-auto pr-1">
+                            <!-- Round 1: 個股立場 -> Layer 2 -->
+                            <div class="flex justify-end">
+                                <div class="bg-blue-600 text-white text-sm rounded-2xl rounded-br-sm px-4 py-2.5 max-w-[85%] shadow-sm">
+                                    台積電法說會後我覺得先進封裝需求比市場預期強，明年 CoWoS 產能翻倍應該吃得下，想偏多看待。
+                                </div>
+                            </div>
+                            <div class="flex items-start space-x-2">
+                                <div class="w-7 h-7 rounded-full bg-slate-800 text-white flex items-center justify-center shrink-0 shadow-sm">
+                                    <i class="fa-solid fa-robot text-[11px]"></i>
+                                </div>
+                                <div class="flex-1 space-y-2">
+                                    <div class="bg-slate-100 text-slate-700 text-sm rounded-2xl rounded-bl-sm px-4 py-2.5 inline-block">
+                                        這段對先進封裝需求的判斷蠻具體的，我幫你整理成個股立場提案，請確認是否入庫：
+                                    </div>
+                                    <div class="bg-white rounded-xl border border-blue-200 border-l-4 border-l-blue-600 shadow-sm p-4">
+                                        <div class="flex items-center justify-between mb-2">
+                                            <span class="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">Layer 2 個股立場</span>
+                                            <span class="text-[10px] text-slate-400 font-medium">待確認</span>
+                                        </div>
+                                        <p class="text-sm font-semibold text-slate-800 mb-1">2330 台積電｜偏多</p>
+                                        <p class="text-xs text-slate-500 mb-3">理由：先進封裝 / CoWoS 需求強勁</p>
+                                        <div class="flex space-x-2">
+                                            <button class="flex-1 bg-green-600 hover:bg-green-700 text-white py-1.5 rounded-lg text-[11px] font-bold transition-all">✓ 確認入庫</button>
+                                            <button class="flex-1 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 py-1.5 rounded-lg text-[11px] font-bold transition-all">✎ 修改</button>
+                                            <button class="flex-1 bg-white border border-red-200 hover:bg-red-50 text-red-500 py-1.5 rounded-lg text-[11px] font-bold transition-all">✕ 略過</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Round 2: 盤勢評論 -> Layer 3（已確認入庫示例） -->
+                            <div class="flex justify-end">
+                                <div class="bg-blue-600 text-white text-sm rounded-2xl rounded-br-sm px-4 py-2.5 max-w-[85%] shadow-sm">
+                                    對了，今天大盤量縮整理，大家都在觀望晚上的 FOMC 會議，先不要躁動。
+                                </div>
+                            </div>
+                            <div class="flex items-start space-x-2">
+                                <div class="w-7 h-7 rounded-full bg-slate-800 text-white flex items-center justify-center shrink-0 shadow-sm">
+                                    <i class="fa-solid fa-robot text-[11px]"></i>
+                                </div>
+                                <div class="flex-1 space-y-2">
+                                    <div class="bg-slate-100 text-slate-700 text-sm rounded-2xl rounded-bl-sm px-4 py-2.5 inline-block">
+                                        了解，這比較像是短期盤勢觀察，已經幫你歸檔到盤勢評論：
+                                    </div>
+                                    <div class="bg-white rounded-xl border border-slate-200 border-l-4 border-l-green-500 shadow-sm p-4">
+                                        <div class="flex items-center justify-between mb-2">
+                                            <span class="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded-full border border-green-100">✅ 已入庫 Layer 3</span>
+                                        </div>
+                                        <p class="text-sm font-semibold text-slate-800 mb-1">今日大盤量縮整理，觀望 FOMC</p>
+                                        <p class="text-[10px] text-slate-400"><i class="fa-solid fa-link mr-1"></i>來源：本次對話 #2</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Round 3（加分項）: 投資哲學 -> Layer 1 -->
+                            <div class="flex justify-end">
+                                <div class="bg-blue-600 text-white text-sm rounded-2xl rounded-br-sm px-4 py-2.5 max-w-[85%] shadow-sm">
+                                    其實我一直以來的原則是，只買護城河夠深、現金流穩定的公司，不追短期題材熱度。
+                                </div>
+                            </div>
+                            <div class="flex items-start space-x-2">
+                                <div class="w-7 h-7 rounded-full bg-slate-800 text-white flex items-center justify-center shrink-0 shadow-sm">
+                                    <i class="fa-solid fa-robot text-[11px]"></i>
+                                </div>
+                                <div class="flex-1 space-y-2">
+                                    <div class="bg-slate-100 text-slate-700 text-sm rounded-2xl rounded-bl-sm px-4 py-2.5 inline-block">
+                                        這聽起來比較像是你長期的投資哲學，要不要也存起來？之後所有個股立場都能對照這個原則。
+                                    </div>
+                                    <div class="bg-white rounded-xl border border-indigo-200 border-l-4 border-l-indigo-500 shadow-sm p-4">
+                                        <div class="flex items-center justify-between mb-2">
+                                            <span class="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">Layer 1 投資哲學</span>
+                                            <span class="text-[10px] text-slate-400 font-medium">待確認</span>
+                                        </div>
+                                        <p class="text-sm font-semibold text-slate-800 mb-3">只投資護城河穩固、現金流穩定的公司，不追短期題材熱度</p>
+                                        <div class="flex space-x-2">
+                                            <button class="flex-1 bg-green-600 hover:bg-green-700 text-white py-1.5 rounded-lg text-[11px] font-bold transition-all">✓ 確認入庫</button>
+                                            <button class="flex-1 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 py-1.5 rounded-lg text-[11px] font-bold transition-all">✎ 修改</button>
+                                            <button class="flex-1 bg-white border border-red-200 hover:bg-red-50 text-red-500 py-1.5 rounded-lg text-[11px] font-bold transition-all">✕ 略過</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex space-x-2 pt-2 border-t border-slate-100">
+                            <input type="text" class="flex-1 p-3 rounded-xl border border-slate-200 text-sm outline-blue-500" placeholder="輸入你的投資想法...">
+                            <button class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg shadow-blue-600/20">
+                                送出
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Overlay -->
+        <div id="panel-overlay" onclick="togglePanel()" class="hidden fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[55] transition-opacity"></div>
     </div>
 
     <script>
+        function togglePanel() {
+            const panel = document.getElementById('data-panel');
+            const overlay = document.getElementById('panel-overlay');
+            panel.classList.toggle('closed');
+            overlay.classList.toggle('hidden');
+        }
+
         function switchTab(tab) {
-            // Hide all contents
             document.querySelectorAll('.tab-content').forEach(content => content.classList.add('hidden'));
-            // Show selected content
             document.getElementById('content-' + tab).classList.remove('hidden');
             
-            // Update tab styles
-            const tabs = ['text', 'url', 'image'];
+            const tabs = ['text', 'url', 'image', 'ai'];
             tabs.forEach(t => {
                 const btn = document.getElementById('tab-' + t);
                 if (t === tab) {
-                    btn.classList.add('border-blue-600', 'text-blue-600', 'bg-white');
+                    btn.classList.add('bg-white', 'text-blue-600', 'shadow-sm');
                     btn.classList.remove('text-slate-500');
                 } else {
-                    btn.classList.remove('border-blue-600', 'text-blue-600', 'bg-white');
+                    btn.classList.remove('bg-white', 'text-blue-600', 'shadow-sm');
                     btn.classList.add('text-slate-500');
                 }
             });
-        }
-
-        function toggleWatchlist() {
-            const content = document.getElementById('watchlist-content');
-            const icon = document.getElementById('collapse-icon');
-            if (content.style.maxHeight) {
-                content.style.maxHeight = null;
-                icon.style.transform = 'rotate(0deg)';
-            } else {
-                content.style.maxHeight = content.scrollHeight + "px";
-                icon.style.transform = 'rotate(180deg)';
-            }
-        }
-        
-        // Init watchlist state
-        window.onload = () => {
-            toggleWatchlist();
         }
     </script>
 </body>
