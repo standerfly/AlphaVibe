@@ -112,6 +112,91 @@ TOOLS = [
             "required": ["stock_id"],
         },
     },
+    {
+        "name": "save_snapshot",
+        "description": ("將本次分析結論凍結為快照：當時價格/估值＋三段式結論"
+                        "（驅動因素/下檔風險/後續關注點）＋框架版本，可附引用來源。"
+                        "股市資料會過期，凍結才能日後 diff（FR-026/027）。"
+                        "經使用者確認後才呼叫。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "股票代碼"},
+                "thesis": {"type": "string", "description": "驅動因素（為什麼看好/看壞）"},
+                "risks": {"type": "string", "description": "下檔風險"},
+                "watch_next": {"type": "string", "description": "後續關注點"},
+                "name": {"type": "string", "description": "股票名稱"},
+                "snapshot_date": {"type": "string", "description": "YYYY-MM-DD，預設今天"},
+                "price_at_time": {"type": "number", "description": "當時股價"},
+                "valuation_at_time": {"type": "string", "description": "當時估值，如「PER 18.5、殖利率 2.1%」"},
+                "framework_version": {"type": "string", "description": "使用的篩選框架版本，如 framework_v1"},
+                "model_id": {"type": "string", "description": "產出此結論的模型"},
+                "source_ref": {"type": "string", "description": "對話來源引用"},
+                "sources": {
+                    "type": "array",
+                    "description": "查證來源清單",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "url": {"type": "string"},
+                            "title": {"type": "string"},
+                            "retrieved_at": {"type": "string", "description": "擷取日期，預設今天"},
+                            "quote_summary": {"type": "string", "description": "引用重點摘要"},
+                        },
+                    },
+                },
+            },
+            "required": ["code", "thesis"],
+        },
+    },
+    {
+        "name": "get_snapshots",
+        "description": "列出標的歷次分析快照（由新到舊，含引用來源），供「當時判斷 vs 現在事實」diff 對照（FR-028）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "股票代碼"},
+                "limit": {"type": "integer", "description": "筆數上限，預設 10"},
+            },
+            "required": ["code"],
+        },
+    },
+    {
+        "name": "save_holdings",
+        "description": ("將截圖解析出的持股寫入持股快照（FR-029；只記 {code, name, "
+                        "shares, avg_cost}，不做損益計算——Q-035 邊界）。"
+                        "經使用者確認解析結果後才呼叫。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "rows": {
+                    "type": "array",
+                    "description": "持股清單",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "code": {"type": "string", "description": "股票代碼"},
+                            "name": {"type": "string", "description": "股票名稱"},
+                            "shares": {"type": "number", "description": "股數/張數"},
+                            "avg_cost": {"type": "number", "description": "平均成本"},
+                        },
+                        "required": ["code"],
+                    },
+                },
+                "snapshot_date": {"type": "string", "description": "YYYY-MM-DD，預設今天"},
+                "source_ref": {"type": "string", "description": "來源（如：截圖檔名/對話）"},
+            },
+            "required": ["rows"],
+        },
+    },
+    {
+        "name": "get_holdings",
+        "description": "查最新一次持股快照（不給 code），或單一標的的持股快照歷史（給 code）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"code": {"type": "string", "description": "股票代碼；省略＝最新整體持股"}},
+        },
+    },
 ]
 
 
@@ -174,6 +259,27 @@ class Server:
         if name == "get_fundamentals":
             return finmind_client.get_fundamentals(
                 args["stock_id"], data_dir=self.data_dir)
+        if name == "save_snapshot":
+            return self.store.save_snapshot(
+                code=args["code"], thesis=args["thesis"],
+                name=args.get("name"), snapshot_date=args.get("snapshot_date"),
+                price_at_time=args.get("price_at_time"),
+                valuation_at_time=args.get("valuation_at_time"),
+                risks=args.get("risks"), watch_next=args.get("watch_next"),
+                framework_version=args.get("framework_version"),
+                model_id=args.get("model_id"),
+                source_ref=args.get("source_ref"),
+                sources=args.get("sources"),
+            )
+        if name == "get_snapshots":
+            return self.store.get_snapshots(
+                args["code"], limit=int(args.get("limit") or 10))
+        if name == "save_holdings":
+            return self.store.save_holdings(
+                rows=args["rows"], snapshot_date=args.get("snapshot_date"),
+                source_ref=args.get("source_ref"))
+        if name == "get_holdings":
+            return self.store.get_holdings(code=args.get("code"))
         raise ValueError("未知工具：%s" % name)
 
     # ---- JSON-RPC 處理 ----

@@ -13,3 +13,4 @@ This file tracks all raw source materials collected for the AlphaVibe feature.
 | SRC-007 | raw/股癌筆記.txt | 資料樣本（股癌 FB 筆記） | 未知 | Stander | Indexed | Layer 1 Module B 素材來源樣本（FR-001） |
 | SRC-008 | raw/全方位分析儀表板範例.jpg | UI 參考圖 | 未知 | Stander | Indexed | 儀表板版面參考；現行 mockup 為 repo 根目錄 frontend_mockup.html |
 | SRC-009 | raw/src-009-fundamental-selection-pivot.md | 需求來源（PO 口述＋主軸重塑決策） | 2026-07-07 | Stander | Extracted | 候選 FR-019~025；決策對應 Q-028~Q-032；含引擎架構轉向（Claude+Cline、local-first） |
+| SRC-010 | raw/src-010-claude-app-supplement-brief.md | 補充需求建議書（Claude App 實測流程萃取） | 2026-07-09 | Stander | Extracted | 候選 FR-026~031；裁決見 Q-034~Q-036（引擎維持、持股部分納入、追溯包納入＋擴充 PoC）；服務化架構不採納、Phase 2 前再評估 |

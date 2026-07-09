@@ -37,3 +37,6 @@ This document tracks all questions asked to the PO and the answers received.
 | Q-031 | 儀表板圖像化的優先序？ | 2026-07-07 | Answered | 總覽名單頁 > 資訊流時間軸 > 個股頁 > 交易覆盤頁 | 2026-07-07 |
 | Q-032 | AI 引擎與部署形態？ | 2026-07-07 | Answered | 不自建內嵌 LLM 的產品：Claude 為主力（聊天思考）＋ Cline 輔助（爬蟲等簡單工作），本地資料庫承載（local-first）；SRC-001 §8 的 Docker 雲端部署與自建前後端假設隨之修訂 | 2026-07-07 |
 | Q-033 | 是否結合 Obsidian（個人使用情境）？ | 2026-07-08 | Answered | 不做整合：瀏覽需求由 1c 儀表板涵蓋（FR-024/025），避免 SQLite↔md 雙真相來源、違反功能最小化原則。Layer 1 哲學庫本為 .md 檔（poc/data/philosophy/），可自行加入 Obsidian vault 取用——格式天生相容，非整合。日後有具體需求（如手機離線瀏覽 L3）再以匯出腳本處理 | 2026-07-08 |
+| Q-034 | 引擎架構是否因 SRC-010 建議書重開（FastAPI 服務化＋Agent Router 多供應商＋自建聊天 UI）？ | 2026-07-09 | Answered | 現在維持 local-first（Q-032 不變：Claude+Cline+MCP）；「服務化與多供應商」列為 Phase 2 前的待評估選項，屆時以 1b 實測經驗決定。現階段供應商可換性由 MCP 開放標準（任何支援 MCP 的用戶端可掛同一知識庫）與開放 SQLite 格式提供 | 2026-07-09 |
+| Q-035 | SRC-010 的 holdings（持股入庫）納入程度？（Q-010 曾排除持倉追蹤） | 2026-07-09 | Answered | 部分納入：截圖持股解析（FR-010 Vision 通道）＋持股快照入庫 {code, shares, avg_cost, snapshot_date}，供分析引用與 diff；不做損益追蹤介面。屬 Q-010 的邊界修正而非推翻——損益計算與部位管理仍排除 | 2026-07-09 |
+| Q-036 | SRC-010 追溯性需求包（分析快照＋來源引用＋diff、篩選框架、watchpoints）如何納入？ | 2026-07-09 | Answered | 納入 spec 並立即擴充 MCP PoC（save_snapshot／sources／holdings 工具）；diff 檢視排入 1c 儀表板；watchpoints 後行 Phase 2。附帶採納：查證單檔單次 ≤3 查詢、免責聲明 NFR、快照記錄產出模型與框架版本、查證來源優先序表存為參考 | 2026-07-09 |

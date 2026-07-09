@@ -47,10 +47,21 @@ def esc(value):
     return html.escape(str(value))
 
 
+def clip(value, limit=80):
+    if value is None or value == "":
+        return "—"
+    text = str(value)
+    if len(text) > limit:
+        text = text[:limit] + "…"
+    return html.escape(text)
+
+
 def render(store):
     stances = store.list_stances()
     comments = store.recent_comments(limit=20)["results"]
     modules = store.list_philosophy()["modules"]
+    snapshots = store.list_latest_snapshots()
+    holdings = store.get_holdings()
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
     parts = []
@@ -60,9 +71,12 @@ def render(store):
                  "<title>AlphaVibe 知識庫檢視</title>"
                  "<style>%s</style></head><body>" % CSS)
     parts.append("<h1>AlphaVibe 知識庫檢視</h1>")
-    parts.append("<p class=\"meta\">產出時間 %s ｜ 立場 %d 檔 ｜ 近期評論 %d 則 ｜ "
-                 "哲學模組 %d 個 ｜ 唯讀快照，重跑 report.py 更新</p>"
-                 % (now, len(stances), len(comments), len(modules)))
+    parts.append("<p class=\"meta\">產出時間 %s ｜ 立場 %d 檔 ｜ 分析快照 %d 檔 ｜ "
+                 "持股快照 %d 檔 ｜ 近期評論 %d 則 ｜ 哲學模組 %d 個 ｜ "
+                 "唯讀快照，重跑 report.py 更新</p>"
+                 % (now, len(stances), len(snapshots), holdings["count"],
+                    len(comments), len(modules)))
+    parts.append("<p class=\"meta\">本頁為研究輔助資訊，非投資建議。</p>")
 
     parts.append("<h2>Layer 2 個股立場總覽</h2>")
     if stances:
@@ -82,6 +96,38 @@ def render(store):
     else:
         parts.append("<p class=\"empty\">尚無立場資料——開始跟 Claude 聊，"
                      "確認入庫後這裡就會長出來。</p>")
+
+    parts.append("<h2>分析快照（每檔最新一筆；歷次 diff 用 get_snapshots 或待 1c 儀表板）</h2>")
+    if snapshots:
+        parts.append("<table><tr><th>代碼</th><th>名稱</th><th>日期</th>"
+                     "<th>當時價</th><th>當時估值</th><th>驅動因素</th>"
+                     "<th>下檔風險</th><th>框架</th><th>來源數</th></tr>")
+        for sn in snapshots:
+            parts.append(
+                "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td>"
+                "<td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
+                % (esc(sn["code"]), esc(sn["name"]), esc(sn["snapshot_date"]),
+                   esc(sn["price_at_time"]), esc(sn["valuation_at_time"]),
+                   clip(sn["thesis"]), clip(sn["risks"]),
+                   esc(sn["framework_version"]), sn["source_count"]))
+        parts.append("</table>")
+    else:
+        parts.append("<p class=\"empty\">尚無分析快照。</p>")
+
+    parts.append("<h2>持股快照%s</h2>"
+                 % ("（%s）" % esc(holdings["snapshot_date"])
+                    if holdings["snapshot_date"] else ""))
+    if holdings["holdings"]:
+        parts.append("<table><tr><th>代碼</th><th>名稱</th><th>股數</th>"
+                     "<th>平均成本</th><th>來源</th></tr>")
+        for h in holdings["holdings"]:
+            parts.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td>"
+                         "<td>%s</td></tr>"
+                         % (esc(h["code"]), esc(h["name"]), esc(h["shares"]),
+                            esc(h["avg_cost"]), esc(h["source_ref"])))
+        parts.append("</table>")
+    else:
+        parts.append("<p class=\"empty\">尚無持股快照。</p>")
 
     parts.append("<h2>Layer 3 最近評論（最多 20 則）</h2>")
     if comments:

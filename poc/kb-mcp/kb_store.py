@@ -36,6 +36,42 @@ CREATE VIRTUAL TABLE IF NOT EXISTS comments USING fts5(
     date UNINDEXED, source_ref UNINDEXED, created_at UNINDEXED,
     tokenize='trigram'
 );
+CREATE TABLE IF NOT EXISTS snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL,
+    name TEXT,
+    snapshot_date TEXT NOT NULL,
+    price_at_time REAL,
+    valuation_at_time TEXT,
+    thesis TEXT NOT NULL,
+    risks TEXT,
+    watch_next TEXT,
+    framework_version TEXT,
+    model_id TEXT,
+    source_ref TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_snapshots_code ON snapshots(code, id);
+CREATE TABLE IF NOT EXISTS snapshot_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_id INTEGER NOT NULL,
+    url TEXT,
+    title TEXT,
+    retrieved_at TEXT,
+    quote_summary TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_snapshot_sources ON snapshot_sources(snapshot_id);
+CREATE TABLE IF NOT EXISTS holdings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL,
+    name TEXT,
+    shares REAL,
+    avg_cost REAL,
+    snapshot_date TEXT NOT NULL,
+    source_ref TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_holdings_code ON holdings(code, snapshot_date);
 """
 
 STANCE_FIELDS = (
@@ -153,6 +189,99 @@ class KBStore:
             (limit,),
         ).fetchall()
         return {"count": len(rows), "results": [dict(r) for r in rows]}
+
+    # ---------- 追溯層：分析快照與來源（FR-026/027/028，Q-036） ----------
+
+    def save_snapshot(self, code, thesis, name=None, snapshot_date=None,
+                      price_at_time=None, valuation_at_time=None, risks=None,
+                      watch_next=None, framework_version=None, model_id=None,
+                      source_ref=None, sources=None):
+        snapshot_date = snapshot_date or _today()
+        cur = self.conn.execute(
+            "INSERT INTO snapshots (code, name, snapshot_date, price_at_time,"
+            " valuation_at_time, thesis, risks, watch_next, framework_version,"
+            " model_id, source_ref, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (code, name, snapshot_date, price_at_time, valuation_at_time,
+             thesis, risks, watch_next, framework_version, model_id,
+             source_ref, _now()),
+        )
+        sid = cur.lastrowid
+        saved_sources = 0
+        for src in (sources or []):
+            self.conn.execute(
+                "INSERT INTO snapshot_sources (snapshot_id, url, title,"
+                " retrieved_at, quote_summary) VALUES (?,?,?,?,?)",
+                (sid, src.get("url"), src.get("title"),
+                 src.get("retrieved_at") or _today(),
+                 src.get("quote_summary")),
+            )
+            saved_sources += 1
+        self.conn.commit()
+        return {"saved": True, "snapshot_id": sid, "code": code,
+                "snapshot_date": snapshot_date, "sources_saved": saved_sources}
+
+    def get_snapshots(self, code, limit=10):
+        rows = self.conn.execute(
+            "SELECT * FROM snapshots WHERE code=?"
+            " ORDER BY snapshot_date DESC, id DESC LIMIT ?",
+            (code, limit),
+        ).fetchall()
+        snapshots = []
+        for row in rows:
+            snap = dict(row)
+            snap["sources"] = [dict(s) for s in self.conn.execute(
+                "SELECT url, title, retrieved_at, quote_summary"
+                " FROM snapshot_sources WHERE snapshot_id=?", (row["id"],)
+            ).fetchall()]
+            snapshots.append(snap)
+        return {"code": code, "count": len(snapshots), "snapshots": snapshots}
+
+    def list_latest_snapshots(self):
+        rows = self.conn.execute(
+            "SELECT s.*, (SELECT count(*) FROM snapshot_sources ss"
+            "  WHERE ss.snapshot_id = s.id) AS source_count"
+            " FROM snapshots s WHERE s.id IN"
+            " (SELECT max(id) FROM snapshots GROUP BY code) ORDER BY s.code"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ---------- 持股快照（FR-029，Q-035：不含損益計算） ----------
+
+    def save_holdings(self, rows, snapshot_date=None, source_ref=None):
+        if not rows or not isinstance(rows, list):
+            raise ValueError("rows 必須是非空的持股清單")
+        snapshot_date = snapshot_date or _today()
+        for r in rows:
+            if not r.get("code"):
+                raise ValueError("每筆持股都必須有 code：%r" % r)
+            self.conn.execute(
+                "INSERT INTO holdings (code, name, shares, avg_cost,"
+                " snapshot_date, source_ref, created_at) VALUES (?,?,?,?,?,?,?)",
+                (r["code"], r.get("name"), r.get("shares"), r.get("avg_cost"),
+                 snapshot_date, source_ref, _now()),
+            )
+        self.conn.commit()
+        return {"saved": True, "count": len(rows),
+                "snapshot_date": snapshot_date}
+
+    def get_holdings(self, code=None):
+        if code:
+            rows = self.conn.execute(
+                "SELECT * FROM holdings WHERE code=?"
+                " ORDER BY snapshot_date DESC, id DESC", (code,)
+            ).fetchall()
+            return {"code": code, "count": len(rows),
+                    "history": [dict(r) for r in rows]}
+        latest = self.conn.execute(
+            "SELECT max(snapshot_date) AS d FROM holdings").fetchone()["d"]
+        if latest is None:
+            return {"snapshot_date": None, "count": 0, "holdings": []}
+        rows = self.conn.execute(
+            "SELECT * FROM holdings WHERE snapshot_date=? ORDER BY code",
+            (latest,),
+        ).fetchall()
+        return {"snapshot_date": latest, "count": len(rows),
+                "holdings": [dict(r) for r in rows]}
 
     # ---------- Layer 1：投資哲學 ----------
 

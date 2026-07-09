@@ -22,8 +22,13 @@ Claude Code session**，首次會詢問是否啟用 `alphavibe-kb`——允許�
 |------|-----|------|
 | save_stance / get_stance / list_stances | L2 | 個股立場（含衝突擋下機制，保留歷史） |
 | save_comment / search_comments | L3 | 盤勢評論，FTS5 trigram 全文檢索（**查詢至少 3 個字**） |
-| save_philosophy / get_philosophy | L1 | 投資哲學模組 md 檔（append/replace） |
+| save_philosophy / get_philosophy | L1 | 投資哲學模組 md 檔（append/replace）；篩選框架（如 framework_v1）也存這裡 |
+| save_snapshot / get_snapshots | 追溯 | 分析結論凍結（當時價/估值/三段式結論/框架版本）＋引用來源；歷次快照供 diff（FR-026~028） |
+| save_holdings / get_holdings | 追溯 | 持股快照 {code, shares, avg_cost, date}——不含損益計算（FR-029、Q-035 邊界） |
 | get_fundamentals | 數據 | FinMind：近期 PER/PBR/殖利率＋近 6 月營收 |
+
+追溯性用法示例：「分析完了，幫我把這次結論存成快照，附上剛剛查證的來源」；
+「這是我的持股截圖，解析後存快照」；「列出 6805 的歷次快照，比對我當時的判斷」。
 
 ## 檢視頁（靜態快照）
 
