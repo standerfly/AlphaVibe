@@ -70,3 +70,7 @@ Phase 1 PoC，零外部依賴）；**正式 production code 尚未開始**（屬
 - 2026-07-07｜情境：prespec_init.py 用 `Path.write_text(newline=)` 在本機 Python 3.9.6 崩潰（該參數需 ≥3.10）
   ｜教訓：這台機器（含 AI-stock-km-v1 的 .venv）只有 Python 3.9.6，skill 腳本必須保持 3.9 相容
   ｜動作：已用 `open(newline="\n")` 寫法修復 init／sync_index 兩腳本並同步三份拷貝
+
+- 2026-07-10｜情境：tunnel 遠端看 report.html，Ports 面板空白、手動 Forward 回報「already forwarded」
+  ｜教訓：devtunnels 轉發登記活在 tunnel 層、跨 session 保留——遇到 already forwarded 直接沿用舊轉發網址（PO 的是 `tqgq0cpn-8080.jpe1.devtunnels.ms`），只需確保 8080 有 server 跑著（2026-07-10 起用 `python3 poc/kb-mcp/report_server.py`，即時渲染；取代舊的 `python3 -m http.server 8080`）；Live Preview 的內部 3000 埠在遠端易壞，不要依賴
+  ｜動作：無條文修改，僅記錄工作法

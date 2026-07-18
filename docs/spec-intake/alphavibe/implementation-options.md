@@ -63,6 +63,26 @@
 - 儲存層直接沿用 Phase 1 的 SQLite 模組（同一顆 DB、同一套 schema）
 - 工程模式參考 AI-stock-km-v1（ingest 分層、排程），LLM 層與 schema 新做
 
+## 行動端（iPhone）路線紀錄（2026-07-10，Q-037）
+
+**檢視層（已實作）**：report_server.py 即時渲染＋PWA meta，經 VS Code
+devtunnels 8080 轉發（網址固定＋帳號驗證）；iPhone Safari 加入主畫面。
+
+**對話層（暫不做，路線已查證）**：Claude App「自訂連接器」掛自架遠端
+MCP server——官方支援手機 App 繼承、僅支援 tool calls、由 Anthropic 雲端
+連入（端點須公網可達）。要做時的工程：現有 MCP server 加 streamable HTTP
+閘道（純標準庫可行，重用既有工具邏輯）＋tunnel 公開外露＋存取控制
+（URL secret 或 OAuth）。參考：support.claude.com 文章
+11503834（build custom connectors via remote MCP）與 11175166（get
+started with custom connectors）。
+
+**CH-EN 專案研究結論（2026-07-10 實查 /Users/stander/My_project/CH-EN）**：
+其手機可用機制＝Cloudflare **Quick** Tunnel（`cloudflared tunnel --url
+http://localhost:PORT`，出站連線免開防火牆）；限制＝網址每次重啟改變、
+無存取驗證；repo 內無 Oracle Cloud 設定（PO 原印象不符）、無 PWA 元素。
+評估：檢視層不沿用（devtunnels 較優：網址固定＋驗證）；cloudflared 模式
+記為備援（未來 devtunnels 失效或需分享時，改用 Named Tunnel＋驗證的正規版）。
+
 ## 開放問題與決策狀態
 
 - **OQ-A（產品層）——已決策（2026-07-07，Q-022）**：只維護 AlphaVibe 一個專案。
