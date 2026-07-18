@@ -72,6 +72,34 @@ TOOLS = [
         },
     },
     {
+        "name": "save_comments_batch",
+        "description": ("一次存入多筆 Layer 3 評論，欄位同 save_comment。適合貼一整批"
+                        "交易/評論紀錄時減少逐筆呼叫。個別筆缺必填欄位（body/source_tag）"
+                        "只會該筆失敗，不影響其餘筆數存入——回傳含每筆結果。"
+                        "經使用者確認後才呼叫。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "comments": {
+                    "type": "array",
+                    "description": "評論清單，每筆欄位同 save_comment",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "body": {"type": "string", "description": "評論內容"},
+                            "source_tag": {"type": "string", "description": "來源：conversation/line/youtube/web/anchor/gooaye…"},
+                            "date": {"type": "string", "description": "YYYY-MM-DD，預設今天"},
+                            "symbols": {"type": "string", "description": "相關代碼，空白分隔，如「2330 2454」"},
+                            "source_ref": {"type": "string", "description": "來源引用"},
+                        },
+                        "required": ["body", "source_tag"],
+                    },
+                },
+            },
+            "required": ["comments"],
+        },
+    },
+    {
         "name": "search_comments",
         "description": "全文檢索 Layer 3 評論（中文查詢至少 3 個字）。query 留空改用 recent 模式列最近幾筆。",
         "inputSchema": {
@@ -109,6 +137,50 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {"stock_id": {"type": "string", "description": "台股代碼，如 2330"}},
+            "required": ["stock_id"],
+        },
+    },
+    {
+        "name": "get_stock_info",
+        "description": "查股票基本資料：股票名稱/產業分類/市場別（TWSE/TPEX/興櫃）。不帶 stock_id 查全部。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"stock_id": {"type": "string", "description": "台股代碼；省略＝查全部"}},
+        },
+    },
+    {
+        "name": "get_stock_price_history",
+        "description": "查個股股價歷史（OHLC/成交量）。start_date 預設近 90 天，end_date 預設今天。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "stock_id": {"type": "string", "description": "台股代碼，如 2330"},
+                "start_date": {"type": "string", "description": "YYYY-MM-DD，預設近 90 天"},
+                "end_date": {"type": "string", "description": "YYYY-MM-DD，預設今天"},
+            },
+            "required": ["stock_id"],
+        },
+    },
+    {
+        "name": "get_revenue_yoy",
+        "description": "查個股月營收年增率（FinMind 無此欄位，以去年同月營收自行計算；找不到去年同月資料則標 null）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"stock_id": {"type": "string", "description": "台股代碼，如 2330"}},
+            "required": ["stock_id"],
+        },
+    },
+    {
+        "name": "get_institutional_trading",
+        "description": ("查三大法人買賣超（外資/投信/自營商，長表格式）。start_date 預設近 30 天、"
+                        "end_date 預設今天。額外回傳 foreign_net：外資（含外資自營商）淨買賣超加總。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "stock_id": {"type": "string", "description": "台股代碼，如 2330"},
+                "start_date": {"type": "string", "description": "YYYY-MM-DD，預設近 30 天"},
+                "end_date": {"type": "string", "description": "YYYY-MM-DD，預設今天"},
+            },
             "required": ["stock_id"],
         },
     },
@@ -197,6 +269,31 @@ TOOLS = [
             "properties": {"code": {"type": "string", "description": "股票代碼；省略＝最新整體持股"}},
         },
     },
+    {
+        "name": "save_stock_alias",
+        "description": ("將查證過的股票名稱→代碼對應存入快取，避免下次遇到同一檔"
+                        "又要重新查證（同名再存＝更新既有記錄）。經確認查證結果後呼叫。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "股票常用簡稱，如「環宇KY」"},
+                "code": {"type": "string", "description": "股票代碼，如 4991"},
+                "name_full": {"type": "string", "description": "正式全名"},
+                "market": {"type": "string", "description": "上市/上櫃/興櫃"},
+                "source": {"type": "string", "description": "查證來源摘要"},
+                "verified_date": {"type": "string", "description": "YYYY-MM-DD，預設今天"},
+            },
+            "required": ["name", "code"],
+        },
+    },
+    {
+        "name": "get_stock_alias",
+        "description": "查詢股票名稱→代碼查證快取；不給 name 則列出全部（依查證日期新到舊）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "股票簡稱；省略＝列全部"}},
+        },
+    },
 ]
 
 
@@ -240,6 +337,8 @@ class Server:
                 date=args.get("date"), symbols=args.get("symbols"),
                 source_ref=args.get("source_ref"),
             )
+        if name == "save_comments_batch":
+            return self.store.save_comments_batch(args["comments"])
         if name == "search_comments":
             query = (args.get("query") or "").strip()
             limit = int(args.get("limit") or 10)
@@ -259,6 +358,20 @@ class Server:
         if name == "get_fundamentals":
             return finmind_client.get_fundamentals(
                 args["stock_id"], data_dir=self.data_dir)
+        if name == "get_stock_info":
+            return finmind_client.get_stock_info(
+                stock_id=args.get("stock_id"), data_dir=self.data_dir)
+        if name == "get_stock_price_history":
+            return finmind_client.get_stock_price_history(
+                args["stock_id"], start_date=args.get("start_date"),
+                end_date=args.get("end_date"), data_dir=self.data_dir)
+        if name == "get_revenue_yoy":
+            return finmind_client.get_revenue_yoy(
+                args["stock_id"], data_dir=self.data_dir)
+        if name == "get_institutional_trading":
+            return finmind_client.get_institutional_trading(
+                args["stock_id"], start_date=args.get("start_date"),
+                end_date=args.get("end_date"), data_dir=self.data_dir)
         if name == "save_snapshot":
             return self.store.save_snapshot(
                 code=args["code"], thesis=args["thesis"],
@@ -280,6 +393,14 @@ class Server:
                 source_ref=args.get("source_ref"))
         if name == "get_holdings":
             return self.store.get_holdings(code=args.get("code"))
+        if name == "save_stock_alias":
+            return self.store.save_stock_alias(
+                name=args["name"], code=args["code"],
+                name_full=args.get("name_full"), market=args.get("market"),
+                source=args.get("source"), verified_date=args.get("verified_date"),
+            )
+        if name == "get_stock_alias":
+            return self.store.get_stock_alias(name=args.get("name"))
         raise ValueError("未知工具：%s" % name)
 
     # ---- JSON-RPC 處理 ----

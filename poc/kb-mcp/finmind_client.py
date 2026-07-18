@@ -28,8 +28,14 @@ def _read_token(data_dir):
     return ""
 
 
-def _fetch(dataset, stock_id, start_date, token):
-    params = {"dataset": dataset, "data_id": stock_id, "start_date": start_date}
+def _fetch(dataset, stock_id, start_date, token, end_date=None):
+    params = {"dataset": dataset}
+    if stock_id:
+        params["data_id"] = stock_id
+    if start_date:
+        params["start_date"] = start_date
+    if end_date:
+        params["end_date"] = end_date
     if token:
         params["token"] = token
     url = API_URL + "?" + urllib.parse.urlencode(params)
@@ -83,4 +89,146 @@ def get_fundamentals(stock_id, data_dir=None, token=None):
         result["hint"] = ("完全取不到數據。若為網路/額度問題：註冊 FinMind 免費帳號後，"
                           "把 token 存到環境變數 FINMIND_TOKEN 或 "
                           "poc/data/finmind_token.txt。知識庫功能不受影響。")
+    return result
+
+
+def get_stock_info(stock_id=None, data_dir=None, token=None):
+    """查股票基本資料（產業分類/市場別）。不帶 stock_id 查全部，帶則查單檔。
+
+    TaiwanStockInfo 是靜態參考表，非時間序列，不需要 start_date。
+    """
+    token = token or _read_token(data_dir)
+    result = {"stock_id": stock_id, "token_used": bool(token), "errors": []}
+
+    info = _fetch("TaiwanStockInfo", stock_id, None, token)
+    if "error" in info:
+        result["errors"].append(info["error"])
+    elif info["data"]:
+        result["stocks"] = [
+            {
+                "stock_id": row.get("stock_id"),
+                "stock_name": row.get("stock_name"),
+                "industry_category": row.get("industry_category"),
+                "type": row.get("type"),
+                "date": row.get("date"),
+            }
+            for row in info["data"]
+        ]
+    else:
+        result["errors"].append("TaiwanStockInfo 無資料（代碼是否正確？）")
+    return result
+
+
+def get_stock_price_history(stock_id, start_date=None, end_date=None, data_dir=None, token=None):
+    """查個股股價歷史（OHLC）。start_date 預設近 90 天，end_date 預設今天。"""
+    token = token or _read_token(data_dir)
+    start_date = start_date or _days_ago(90)
+    end_date = end_date or datetime.date.today().isoformat()
+    result = {"stock_id": stock_id, "token_used": bool(token), "errors": []}
+
+    price = _fetch("TaiwanStockPrice", stock_id, start_date, token, end_date=end_date)
+    if "error" in price:
+        result["errors"].append(price["error"])
+    elif price["data"]:
+        result["prices"] = [
+            {
+                "date": row.get("date"),
+                "stock_id": row.get("stock_id"),
+                "Trading_Volume": row.get("Trading_Volume"),
+                "Trading_money": row.get("Trading_money"),
+                "open": row.get("open"),
+                "max": row.get("max"),
+                "min": row.get("min"),
+                "close": row.get("close"),
+                "spread": row.get("spread"),
+                "Trading_turnover": row.get("Trading_turnover"),
+            }
+            for row in price["data"]
+        ]
+    else:
+        result["errors"].append("TaiwanStockPrice 無資料（代碼/日期區間是否正確？）")
+    return result
+
+
+def get_revenue_yoy(stock_id, data_dir=None, token=None):
+    """查個股月營收年增率（FinMind 不提供年增率欄位，自行以去年同月比對計算）。
+
+    抓近 400 天（至少 13 個月）才能算出每個月的年增率；找不到去年同月資料的
+    月份，yoy_growth 標 null，不臆測。
+    """
+    token = token or _read_token(data_dir)
+    result = {"stock_id": stock_id, "token_used": bool(token), "errors": []}
+
+    revenue = _fetch("TaiwanStockMonthRevenue", stock_id, _days_ago(400), token)
+    if "error" in revenue:
+        result["errors"].append(revenue["error"])
+        return result
+    if not revenue["data"]:
+        result["errors"].append("TaiwanStockMonthRevenue 無資料（代碼是否正確？）")
+        return result
+
+    rows = revenue["data"]
+    by_year_month = {}
+    for row in rows:
+        y, m = row.get("revenue_year"), row.get("revenue_month")
+        if y is not None and m is not None:
+            by_year_month[(y, m)] = row.get("revenue")
+
+    yoy_list = []
+    for row in rows:
+        y, m, rev = row.get("revenue_year"), row.get("revenue_month"), row.get("revenue")
+        prev = by_year_month.get((y - 1, m)) if y is not None and m is not None else None
+        yoy = None
+        if prev not in (None, 0) and rev is not None:
+            yoy = (rev - prev) / prev
+        yoy_list.append({
+            "revenue_month": m,
+            "revenue_year": y,
+            "revenue": rev,
+            "yoy_growth": yoy,
+        })
+    result["revenue_yoy"] = yoy_list
+    return result
+
+
+# TaiwanStockInstitutionalInvestorsBuySell 的 name 欄位真實分類值（2026-07-18
+# 對 2330 實測確認，非猜測）：Foreign_Investor（外資及陸資）、
+# Foreign_Dealer_Self（外資自營商）、Investment_Trust（投信）、
+# Dealer_self（自營商自行買賣）、Dealer_Hedging（自營商避險）。
+# 「外資」廣義包含前兩者，foreign_net 加總這兩個分類。
+FOREIGN_INVESTOR_NAMES = ("Foreign_Investor", "Foreign_Dealer_Self")
+
+
+def get_institutional_trading(stock_id, start_date=None, end_date=None, data_dir=None, token=None):
+    """查三大法人買賣超（長表格式：一列一個投資人類別），外加外資淨買賣超加總。"""
+    token = token or _read_token(data_dir)
+    start_date = start_date or _days_ago(30)
+    end_date = end_date or datetime.date.today().isoformat()
+    result = {"stock_id": stock_id, "token_used": bool(token), "errors": []}
+
+    trading = _fetch("TaiwanStockInstitutionalInvestorsBuySell", stock_id,
+                      start_date, token, end_date=end_date)
+    if "error" in trading:
+        result["errors"].append(trading["error"])
+        return result
+    if not trading["data"]:
+        result["errors"].append(
+            "TaiwanStockInstitutionalInvestorsBuySell 無資料（代碼/日期區間是否正確？）")
+        return result
+
+    rows = trading["data"]
+    result["trading"] = [
+        {
+            "date": row.get("date"),
+            "stock_id": row.get("stock_id"),
+            "name": row.get("name"),
+            "buy": row.get("buy"),
+            "sell": row.get("sell"),
+        }
+        for row in rows
+    ]
+    result["foreign_net"] = sum(
+        (row.get("buy") or 0) - (row.get("sell") or 0)
+        for row in rows if row.get("name") in FOREIGN_INVESTOR_NAMES
+    )
     return result

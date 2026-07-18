@@ -82,6 +82,75 @@ class KBStoreTest(unittest.TestCase):
         short = self.store.search_comments("台")
         self.assertIn("error", short)
 
+    def test_comments_batch_all_success(self):
+        out = self.store.save_comments_batch([
+            {"body": "早盤觀察：外資買超金融股", "source_tag": "line"},
+            {"body": "尾盤拉抬電子權值股", "source_tag": "youtube", "symbols": "2330"},
+        ])
+        self.assertEqual(out["total"], 2)
+        self.assertEqual(out["saved_count"], 2)
+        self.assertEqual(out["failed_count"], 0)
+        self.assertTrue(all(r["saved"] for r in out["results"]))
+        self.assertEqual(self.store.recent_comments(10)["count"], 2)
+
+    def test_comments_batch_partial_success_keeps_valid_rows(self):
+        out = self.store.save_comments_batch([
+            {"body": "合法評論一", "source_tag": "line"},
+            {"body": "", "source_tag": "line"},           # 缺 body（空字串）
+            {"body": "合法評論二", "source_tag": "conversation"},
+            {"source_tag": "line"},                        # 缺 body（key 都沒有）
+        ])
+        self.assertEqual(out["total"], 4)
+        self.assertEqual(out["saved_count"], 2)
+        self.assertEqual(out["failed_count"], 2)
+        self.assertTrue(out["results"][0]["saved"])
+        self.assertFalse(out["results"][1]["saved"])
+        self.assertIn("body", out["results"][1]["error"])
+        self.assertTrue(out["results"][2]["saved"])
+        self.assertFalse(out["results"][3]["saved"])
+        # 只有合法的兩筆真的寫入資料庫，非法的兩筆不能讓整批全部失敗
+        self.assertEqual(self.store.recent_comments(10)["count"], 2)
+
+    def test_comments_batch_empty_list(self):
+        out = self.store.save_comments_batch([])
+        self.assertEqual(out["total"], 0)
+        self.assertEqual(out["saved_count"], 0)
+        self.assertEqual(out["failed_count"], 0)
+        self.assertEqual(out["results"], [])
+
+    def test_stock_alias_save_and_get(self):
+        out = self.store.save_stock_alias("環宇KY", "4991", name_full="環宇-KY",
+                                          market="上市", source="公開資訊觀測站")
+        self.assertTrue(out["saved"])
+        self.assertEqual(out["record"]["code"], "4991")
+        got = self.store.get_stock_alias("環宇KY")
+        self.assertTrue(got["found"])
+        self.assertEqual(got["record"]["code"], "4991")
+        self.assertEqual(got["record"]["market"], "上市")
+
+    def test_stock_alias_not_found(self):
+        got = self.store.get_stock_alias("不存在的股票")
+        self.assertFalse(got["found"])
+        self.assertEqual(got["name"], "不存在的股票")
+
+    def test_stock_alias_same_name_overwrites(self):
+        self.store.save_stock_alias("奇鼎", "3722", source="第一次查證")
+        updated = self.store.save_stock_alias("奇鼎", "3722", source="第二次查證",
+                                               market="上櫃")
+        self.assertTrue(updated["saved"])
+        got = self.store.get_stock_alias("奇鼎")
+        self.assertEqual(got["record"]["source"], "第二次查證")
+        self.assertEqual(got["record"]["market"], "上櫃")
+        # 同名再存＝更新，不是新增第二筆
+        self.assertEqual(self.store.get_stock_alias()["count"], 1)
+
+    def test_stock_alias_list_all_sorted_newest_first(self):
+        self.store.save_stock_alias("A股", "1111", verified_date="2026-07-01")
+        self.store.save_stock_alias("B股", "2222", verified_date="2026-07-10")
+        all_aliases = self.store.get_stock_alias()
+        self.assertEqual(all_aliases["count"], 2)
+        self.assertEqual(all_aliases["aliases"][0]["name"], "B股")
+
     def test_philosophy_roundtrip_and_append(self):
         self.store.save_philosophy("yuzhiyu", "# 低 PER 高殖利率")
         self.store.save_philosophy("yuzhiyu", "恐慌分批買入", mode="append")
@@ -122,6 +191,131 @@ class FinMindClientTest(unittest.TestCase):
             out = finmind_client.get_fundamentals("2330")
         self.assertEqual(len(out["errors"]), 2)
         self.assertIn("hint", out)
+
+    def test_get_stock_info_parses_mocked_payload(self):
+        payload = [
+            {"industry_category": "半導體業", "stock_id": "2330",
+             "stock_name": "台積電", "type": "twse", "date": "2026-07-18"},
+        ]
+
+        def fake_fetch(dataset, stock_id, start_date, token, end_date=None):
+            self.assertEqual(dataset, "TaiwanStockInfo")
+            self.assertIsNone(start_date)
+            return {"data": payload}
+
+        with unittest.mock.patch.object(finmind_client, "_fetch", fake_fetch):
+            out = finmind_client.get_stock_info("2330")
+        self.assertEqual(out["errors"], [])
+        self.assertEqual(len(out["stocks"]), 1)
+        self.assertEqual(out["stocks"][0]["industry_category"], "半導體業")
+        self.assertEqual(out["stocks"][0]["stock_name"], "台積電")
+
+    def test_get_stock_info_api_failure(self):
+        def fail(dataset, stock_id, start_date, token, end_date=None):
+            return {"error": "FinMind 呼叫失敗（%s）：模擬斷網" % dataset}
+
+        with unittest.mock.patch.object(finmind_client, "_fetch", fail):
+            out = finmind_client.get_stock_info("2330")
+        self.assertEqual(len(out["errors"]), 1)
+        self.assertNotIn("stocks", out)
+
+    def test_get_stock_price_history_parses_mocked_payload(self):
+        payload = [
+            {"date": "2026-07-08", "stock_id": "2330", "Trading_Volume": 25519599,
+             "Trading_money": 62400639776, "open": 2445.0, "max": 2465.0,
+             "min": 2420.0, "close": 2465.0, "spread": 25.0, "Trading_turnover": 94688},
+        ]
+
+        def fake_fetch(dataset, stock_id, start_date, token, end_date=None):
+            self.assertEqual(dataset, "TaiwanStockPrice")
+            self.assertIsNotNone(start_date)
+            self.assertIsNotNone(end_date)
+            return {"data": payload}
+
+        with unittest.mock.patch.object(finmind_client, "_fetch", fake_fetch):
+            out = finmind_client.get_stock_price_history("2330")
+        self.assertEqual(out["errors"], [])
+        self.assertEqual(len(out["prices"]), 1)
+        self.assertEqual(out["prices"][0]["close"], 2465.0)
+        self.assertEqual(out["prices"][0]["Trading_Volume"], 25519599)
+
+    def test_get_stock_price_history_api_failure(self):
+        def fail(dataset, stock_id, start_date, token, end_date=None):
+            return {"error": "FinMind 呼叫失敗（%s）：模擬斷網" % dataset}
+
+        with unittest.mock.patch.object(finmind_client, "_fetch", fail):
+            out = finmind_client.get_stock_price_history("2330")
+        self.assertEqual(len(out["errors"]), 1)
+        self.assertNotIn("prices", out)
+
+    def test_get_revenue_yoy_calculates_growth(self):
+        payload = [
+            {"date": "2025-06-01", "stock_id": "2330", "revenue": 200000,
+             "revenue_month": 5, "revenue_year": 2025},
+            {"date": "2025-07-01", "stock_id": "2330", "revenue": 100000,
+             "revenue_month": 6, "revenue_year": 2025},
+            {"date": "2026-07-01", "stock_id": "2330", "revenue": 150000,
+             "revenue_month": 6, "revenue_year": 2026},
+        ]
+
+        def fake_fetch(dataset, stock_id, start_date, token, end_date=None):
+            self.assertEqual(dataset, "TaiwanStockMonthRevenue")
+            return {"data": payload}
+
+        with unittest.mock.patch.object(finmind_client, "_fetch", fake_fetch):
+            out = finmind_client.get_revenue_yoy("2330")
+        self.assertEqual(out["errors"], [])
+        by_ym = {(r["revenue_year"], r["revenue_month"]): r for r in out["revenue_yoy"]}
+        # 2026/6 對比 2025/6：(150000-100000)/100000 = 0.5
+        self.assertAlmostEqual(by_ym[(2026, 6)]["yoy_growth"], 0.5)
+        # 2025/5 沒有 2024/5 資料可比對，年增率應為 null
+        self.assertIsNone(by_ym[(2025, 5)]["yoy_growth"])
+        # 2025/6 沒有 2024/6 資料可比對，年增率應為 null
+        self.assertIsNone(by_ym[(2025, 6)]["yoy_growth"])
+
+    def test_get_revenue_yoy_api_failure(self):
+        def fail(dataset, stock_id, start_date, token, end_date=None):
+            return {"error": "FinMind 呼叫失敗（%s）：模擬斷網" % dataset}
+
+        with unittest.mock.patch.object(finmind_client, "_fetch", fail):
+            out = finmind_client.get_revenue_yoy("2330")
+        self.assertEqual(len(out["errors"]), 1)
+        self.assertNotIn("revenue_yoy", out)
+
+    def test_get_institutional_trading_sums_foreign_net(self):
+        # name 值為 2026-07-18 對 2330 實測 FinMind API 確認的真實分類字串
+        payload = [
+            {"date": "2026-07-13", "stock_id": "2330", "name": "Foreign_Investor",
+             "buy": 16267509, "sell": 29016050},
+            {"date": "2026-07-13", "stock_id": "2330", "name": "Foreign_Dealer_Self",
+             "buy": 0, "sell": 0},
+            {"date": "2026-07-13", "stock_id": "2330", "name": "Investment_Trust",
+             "buy": 361457, "sell": 318232},
+            {"date": "2026-07-13", "stock_id": "2330", "name": "Dealer_self",
+             "buy": 392405, "sell": 391500},
+            {"date": "2026-07-13", "stock_id": "2330", "name": "Dealer_Hedging",
+             "buy": 636358, "sell": 547400},
+        ]
+
+        def fake_fetch(dataset, stock_id, start_date, token, end_date=None):
+            self.assertEqual(dataset, "TaiwanStockInstitutionalInvestorsBuySell")
+            return {"data": payload}
+
+        with unittest.mock.patch.object(finmind_client, "_fetch", fake_fetch):
+            out = finmind_client.get_institutional_trading("2330")
+        self.assertEqual(out["errors"], [])
+        self.assertEqual(len(out["trading"]), 5)
+        # foreign_net = Foreign_Investor(16267509-29016050) + Foreign_Dealer_Self(0-0)
+        self.assertEqual(out["foreign_net"], 16267509 - 29016050)
+
+    def test_get_institutional_trading_api_failure(self):
+        def fail(dataset, stock_id, start_date, token, end_date=None):
+            return {"error": "FinMind 呼叫失敗（%s）：模擬斷網" % dataset}
+
+        with unittest.mock.patch.object(finmind_client, "_fetch", fail):
+            out = finmind_client.get_institutional_trading("2330")
+        self.assertEqual(len(out["errors"]), 1)
+        self.assertNotIn("trading", out)
 
 
 class ProtocolE2ETest(unittest.TestCase):

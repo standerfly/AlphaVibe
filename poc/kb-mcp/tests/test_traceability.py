@@ -4,10 +4,12 @@ import shutil
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
+import finmind_client  # noqa: E402
 import report  # noqa: E402
 import server  # noqa: E402
 from kb_store import KBStore  # noqa: E402
@@ -115,11 +117,15 @@ class ServerToolsTest(unittest.TestCase):
         self.server.store.close()
         shutil.rmtree(self.tmp)
 
-    def test_tools_list_has_twelve(self):
+    def test_tools_list_has_nineteen(self):
         names = [t["name"] for t in server.TOOLS]
-        self.assertEqual(len(names), 12)
+        self.assertEqual(len(names), 19)
         for expected in ("save_snapshot", "get_snapshots",
-                         "save_holdings", "get_holdings"):
+                         "save_holdings", "get_holdings",
+                         "save_stock_alias", "get_stock_alias",
+                         "save_comments_batch",
+                         "get_stock_info", "get_stock_price_history",
+                         "get_revenue_yoy", "get_institutional_trading"):
             self.assertIn(expected, names)
 
     def test_traceability_tools_roundtrip(self):
@@ -137,6 +143,53 @@ class ServerToolsTest(unittest.TestCase):
             "rows": [{"code": "2330", "shares": 1000}]})
         latest = self.server.call_tool("get_holdings", {})
         self.assertEqual(latest["count"], 1)
+
+    def test_stock_alias_tools_roundtrip(self):
+        saved = self.server.call_tool("save_stock_alias", {
+            "name": "政美", "code": "4915", "market": "上櫃"})
+        self.assertTrue(saved["saved"])
+        got = self.server.call_tool("get_stock_alias", {"name": "政美"})
+        self.assertTrue(got["found"])
+        self.assertEqual(got["record"]["code"], "4915")
+
+    def test_save_comments_batch_tool_partial_success(self):
+        out = self.server.call_tool("save_comments_batch", {
+            "comments": [
+                {"body": "第一筆", "source_tag": "line"},
+                {"source_tag": "line"},
+            ]})
+        self.assertEqual(out["saved_count"], 1)
+        self.assertEqual(out["failed_count"], 1)
+
+    def test_finmind_tools_dispatch_wires_args(self):
+        """驗證 4 個新 FinMind 工具的 dispatch 正確傳遞參數（不打真實 API）。"""
+        with unittest.mock.patch.object(
+                finmind_client, "get_stock_info",
+                return_value={"stock_id": None, "stocks": []}) as mock_info:
+            self.server.call_tool("get_stock_info", {})
+            mock_info.assert_called_once_with(stock_id=None, data_dir=self.server.data_dir)
+
+        with unittest.mock.patch.object(
+                finmind_client, "get_stock_price_history",
+                return_value={"stock_id": "2330", "prices": []}) as mock_price:
+            self.server.call_tool("get_stock_price_history", {
+                "stock_id": "2330", "start_date": "2026-06-01", "end_date": "2026-07-01"})
+            mock_price.assert_called_once_with(
+                "2330", start_date="2026-06-01", end_date="2026-07-01",
+                data_dir=self.server.data_dir)
+
+        with unittest.mock.patch.object(
+                finmind_client, "get_revenue_yoy",
+                return_value={"stock_id": "2330", "revenue_yoy": []}) as mock_yoy:
+            self.server.call_tool("get_revenue_yoy", {"stock_id": "2330"})
+            mock_yoy.assert_called_once_with("2330", data_dir=self.server.data_dir)
+
+        with unittest.mock.patch.object(
+                finmind_client, "get_institutional_trading",
+                return_value={"stock_id": "2330", "trading": [], "foreign_net": 0}) as mock_inst:
+            self.server.call_tool("get_institutional_trading", {"stock_id": "2330"})
+            mock_inst.assert_called_once_with(
+                "2330", start_date=None, end_date=None, data_dir=self.server.data_dir)
 
 
 class ReportTraceabilityTest(unittest.TestCase):

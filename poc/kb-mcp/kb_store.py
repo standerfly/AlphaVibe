@@ -72,6 +72,14 @@ CREATE TABLE IF NOT EXISTS holdings (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_holdings_code ON holdings(code, snapshot_date);
+CREATE TABLE IF NOT EXISTS stock_aliases (
+    name TEXT PRIMARY KEY,
+    code TEXT NOT NULL,
+    name_full TEXT,
+    market TEXT,
+    source TEXT,
+    verified_date TEXT NOT NULL
+);
 """
 
 STANCE_FIELDS = (
@@ -170,6 +178,39 @@ class KBStore:
         )
         self.conn.commit()
         return {"saved": True, "date": date or _today(), "source_tag": source_tag}
+
+    def save_comments_batch(self, comments):
+        """一次存入多筆評論；個別筆缺必填欄位只該筆失敗，不影響其餘筆數。
+
+        內部重用 save_comment 的實際寫入邏輯（同一份程式碼），避免兩份邏輯
+        日後不同步。
+        """
+        if not isinstance(comments, list):
+            raise ValueError("comments 必須是陣列")
+        results = []
+        saved_count = 0
+        for idx, item in enumerate(comments):
+            if not isinstance(item, dict):
+                results.append({"index": idx, "saved": False,
+                                "error": "每筆評論必須是物件"})
+                continue
+            body = item.get("body")
+            source_tag = item.get("source_tag")
+            missing = [f for f, v in (("body", body), ("source_tag", source_tag)) if not v]
+            if missing:
+                results.append({"index": idx, "saved": False,
+                                "error": "缺少必填欄位：%s" % "、".join(missing)})
+                continue
+            out = self.save_comment(
+                body=body, source_tag=source_tag,
+                date=item.get("date"), symbols=item.get("symbols"),
+                source_ref=item.get("source_ref"),
+            )
+            results.append({"index": idx, "saved": True,
+                            "date": out["date"], "source_tag": out["source_tag"]})
+            saved_count += 1
+        return {"total": len(comments), "saved_count": saved_count,
+                "failed_count": len(comments) - saved_count, "results": results}
 
     def search_comments(self, query, limit=10):
         if len(query.strip()) < 3:
@@ -282,6 +323,38 @@ class KBStore:
         ).fetchall()
         return {"snapshot_date": latest, "count": len(rows),
                 "holdings": [dict(r) for r in rows]}
+
+    # ---------- 輔助：股票名稱→代碼查證快取 ----------
+
+    def save_stock_alias(self, name, code, name_full=None, market=None,
+                         source=None, verified_date=None):
+        if not name or not code:
+            raise ValueError("name 與 code 為必填")
+        verified_date = verified_date or _today()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO stock_aliases"
+            " (name, code, name_full, market, source, verified_date)"
+            " VALUES (?,?,?,?,?,?)",
+            (name, code, name_full, market, source, verified_date),
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT * FROM stock_aliases WHERE name=?", (name,)
+        ).fetchone()
+        return {"saved": True, "record": dict(row)}
+
+    def get_stock_alias(self, name=None):
+        if name:
+            row = self.conn.execute(
+                "SELECT * FROM stock_aliases WHERE name=?", (name,)
+            ).fetchone()
+            if not row:
+                return {"found": False, "name": name}
+            return {"found": True, "record": dict(row)}
+        rows = self.conn.execute(
+            "SELECT * FROM stock_aliases ORDER BY verified_date DESC, name"
+        ).fetchall()
+        return {"count": len(rows), "aliases": [dict(r) for r in rows]}
 
     # ---------- Layer 1：投資哲學 ----------
 
