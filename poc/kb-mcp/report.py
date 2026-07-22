@@ -463,8 +463,11 @@ def render_market_scan_page(selected_id, latest, error=None):
     hit_count = run.get("meets_count", len(hit_rows))
     trigger_text = {"manual": "手動觸發", "scheduled": "排程自動"}.get(
         run.get("trigger_source"), esc(run.get("trigger_source")))
-    parts.append("<p class=\"meta\">最近一次掃描：%s（%s）｜候選 %d 檔，符合框架 %d 檔</p>"
-                 % (esc(run.get("run_at")), trigger_text,
+    total_scanned = run.get("total_scanned")
+    scanned_text = ("本次掃描全市場（上市+上櫃）共 %d 檔，其中" % total_scanned
+                    if total_scanned is not None else "")
+    parts.append("<p class=\"meta\">最近一次掃描：%s（%s）｜%s候選 %d 檔，符合框架 %d 檔</p>"
+                 % (esc(run.get("run_at")), trigger_text, scanned_text,
                     run.get("candidate_count", len(rows)), hit_count))
 
     twse_err = run.get("twse_error")
@@ -477,15 +480,17 @@ def render_market_scan_page(selected_id, latest, error=None):
             parts.append("TPEx 資料源異常：%s" % esc(tpex_err))
         parts.append("（該市場當次候選數會變少，不影響另一邊）</p>")
 
+    run_id = run.get("id")
+
     parts.append("<details class=\"section\" open><summary><h2>符合框架的候選（%d 檔）</h2>"
                  "</summary>" % hit_count)
     if hit_rows:
         parts.append("<div class=\"tablewrap\"><table><thead><tr>"
                      "<th>代碼</th><th>名稱</th><th>市場</th><th>產業別</th>"
                      "<th>PER</th><th>營收年增率</th><th>PEG</th><th>回檔幅度</th>"
-                     "<th>目前價</th></tr></thead><tbody>")
+                     "<th>目前價</th><th>加入追蹤</th></tr></thead><tbody>")
         for r in hit_rows:
-            parts.append(_market_scan_row_html(r, highlight=False))
+            parts.append(_market_scan_row_html(r, highlight=False, run_id=run_id))
         parts.append("</tbody></table></div>")
     else:
         parts.append("<p class=\"empty\">這次沒有候選同時符合 PEG 與回檔門檻，"
@@ -498,9 +503,9 @@ def render_market_scan_page(selected_id, latest, error=None):
         parts.append("<div class=\"tablewrap\"><table><thead><tr>"
                      "<th>代碼</th><th>名稱</th><th>市場</th><th>產業別</th>"
                      "<th>PER</th><th>營收年增率</th><th>PEG</th><th>回檔幅度</th>"
-                     "<th>目前價</th><th>符合框架</th><th>備註</th></tr></thead><tbody>")
+                     "<th>目前價</th><th>加入追蹤</th><th>符合框架</th><th>備註</th></tr></thead><tbody>")
         for r in rows:
-            parts.append(_market_scan_row_html(r, highlight=True))
+            parts.append(_market_scan_row_html(r, highlight=True, run_id=run_id))
         parts.append("</tbody></table></div>")
     else:
         parts.append("<p class=\"empty\">這次掃描沒有候選（可能兩個資料源都異常，"
@@ -511,24 +516,155 @@ def render_market_scan_page(selected_id, latest, error=None):
     return "".join(parts)
 
 
-def _market_scan_row_html(r, highlight):
+# 沿用 /screen 頁面「理由」段落同一套因果說明文字（見 render_screen_form），
+# 加入追蹤時的 reason 要能回答「為什麼這檔當初被篩出來」，不是只有數字。
+_TRACK_FRAMEWORK_RATIONALE = (
+    "股價大幅回檔常代表市場情緒過度悲觀，但只有在營收仍在正成長時，這種"
+    "下跌才比較可能是錯殺、而不是基本面真的變差；PEG（本益成長比）<1"
+    "代表用相對便宜的價格買到相對高成長的公司，是安全邊際的量化代理。"
+)
+_TRACK_DISCLAIMER = (
+    "供應鏈敘事（賣鏟子邏輯／具體新客戶新市場事件）是否具體仍需人工確認，"
+    "這只是篩選候選，不代表可以直接買。"
+)
+
+
+def compose_market_scan_track_reason(row, framework, run_at):
+    """組出「加入追蹤」時存進 stances.reason 的說明文字：這檔的具體數字＋
+    框架因果理由＋是否真的通過完整框架（而不是只通過Stage A初篩）。
+
+    純函式，不查資料庫、不連外部 API——row/framework/run_at 都由呼叫端
+    （POST /market-scan/track）先查好再傳進來。缺值（peg/drawdown為None）
+    時明講「資料不完整」，不可以顯示 None 或亂算。
+    """
+    if row.get("per") is not None and row.get("revenue_yoy") is not None:
+        peg_text = ("PEG %s（PER %.2f ÷ 營收年增率 %.1f%%）"
+                    % (("%.2f" % row["peg"]) if row.get("peg") is not None else "算不出來",
+                       row["per"], row["revenue_yoy"] * 100))
+    else:
+        peg_text = "PEG／PER／營收年增率資料不完整"
+
+    if row.get("drawdown_pct") is not None:
+        drawdown_text = ("股價自 %s 高點 %s 回檔 %.1f%% 至 %s（%s）"
+                         % (row.get("high_date") or "—", row.get("high_price"),
+                            row["drawdown_pct"] * 100, row.get("current_price"),
+                            row.get("current_date") or "—"))
+    else:
+        drawdown_text = "回檔幅度資料不完整（%s）" % (row.get("error") or "查詢失敗原因不明")
+
+    if row.get("meets_framework"):
+        framework_note = ("符合框架完整門檻（PEG<%s 且回檔>=%s%%）。%s"
+                          % (framework.get("peg_max"),
+                             (framework.get("drawdown_min") or 0) * 100,
+                             _TRACK_FRAMEWORK_RATIONALE))
+    else:
+        framework_note = ("只通過第一階段初篩（產業別＋PEG門檻＋營收正成長），"
+                          "回檔幅度未達框架完整門檻，僅供觀察，不是完整符合框架的候選。")
+
+    return ("%s第二層批次篩選候選（%s 掃描）。%s；%s。%s %s"
+            % (framework.get("label", framework.get("id", "")), run_at,
+               peg_text, drawdown_text, framework_note, _TRACK_DISCLAIMER))
+
+
+def _market_scan_track_form_html(run_id, code):
+    """每列的「加入追蹤」小表單：只帶 run_id/code/選的stance，reason 由
+    伺服器端 `POST /market-scan/track` 重新查資料庫現算，不信任表單內容。
+    2026-07-22 使用者要求：全部候選（不限符合框架的）都要有這個選項。"""
+    return (
+        "<form method=\"post\" action=\"/market-scan/track\" "
+        "style=\"display:flex;gap:.3rem;align-items:center;flex-wrap:wrap;\">"
+        "<input type=\"hidden\" name=\"run_id\" value=\"%d\">"
+        "<input type=\"hidden\" name=\"code\" value=\"%s\">"
+        "<select name=\"stance\">"
+        "<option value=\"觀察\" selected>觀察</option>"
+        "<option value=\"偏多\">偏多</option>"
+        "<option value=\"偏空\">偏空</option>"
+        "</select>"
+        "<button type=\"submit\" style=\"font-size:.85rem;padding:.3rem .6rem;\">"
+        "加入追蹤</button></form>"
+        % (run_id, esc(code)))
+
+
+def render_track_conflict_page(code, name, new_stance, new_reason, existing, run_id):
+    """save_stance() 回傳 conflict=True 時顯示：既有立場 vs 準備存入的新
+    立場，需要二次確認才能覆蓋（沿用 FR-013/018 既有的立場衝突精神，
+    適配成網頁一次性表單流程；不是每次都要問——只有立場真的不同才問）。
+    """
+    parts = [_screen_page_head("加入追蹤－確認立場衝突")]
+    parts.append("<p class=\"meta\"><a href=\"/market-scan\">← 返回</a></p>")
+    parts.append("<h1>%s %s 已有立場，要更新嗎？</h1>" % (esc(code), esc(name)))
+    parts.append("<p class=\"empty\" style=\"color:#c92a2a\">新立場「%s」與既有立場「%s」"
+                 "（%s）不同，請確認要不要覆蓋（既有立場不會消失，仍保留在歷史紀錄裡）。</p>"
+                 % (esc(new_stance), esc(existing.get("stance")), esc(existing.get("date"))))
+    parts.append("<h2>既有立場</h2>")
+    parts.append("<div class=\"comment\"><div class=\"head\">%s ｜ %s</div><div>%s</div></div>"
+                 % (esc(existing.get("date")), esc(existing.get("stance")),
+                    esc(existing.get("reason"))))
+    parts.append("<h2>準備存入的新立場</h2>")
+    parts.append("<div class=\"comment\"><div class=\"head\">%s</div><div>%s</div></div>"
+                 % (esc(new_stance), esc(new_reason)))
+    parts.append(
+        "<form method=\"post\" action=\"/market-scan/track\">"
+        "<input type=\"hidden\" name=\"run_id\" value=\"%d\">"
+        "<input type=\"hidden\" name=\"code\" value=\"%s\">"
+        "<input type=\"hidden\" name=\"stance\" value=\"%s\">"
+        "<input type=\"hidden\" name=\"overwrite\" value=\"1\">"
+        "<button type=\"submit\" style=\"background:#c92a2a;color:#fff;border:none;"
+        "padding:.6rem 1.2rem;border-radius:6px;\">確認覆蓋為新立場</button></form>"
+        % (run_id, esc(code), esc(new_stance)))
+    parts.append("<p class=\"meta\"><a href=\"/market-scan\">取消，返回</a></p>")
+    parts.append("</body></html>")
+    return "".join(parts)
+
+
+def render_track_result_page(saved, code, name, stance):
+    """加入追蹤成功後的簡短確認頁（不論是直接存入或覆蓋衝突後存入）。"""
+    parts = [_screen_page_head("加入追蹤－完成")]
+    parts.append("<p class=\"meta\"><a href=\"/market-scan\">← 返回</a></p>")
+    parts.append("<h1>已加入追蹤</h1>")
+    parts.append("<p class=\"meta\">%s %s ｜ 立場：%s ｜ %s</p>"
+                 % (esc(code), esc(name), esc(stance),
+                    "已更新覆蓋既有立場" if saved.get("conflict") else "已存入"))
+    record = saved.get("record") or {}
+    parts.append("<div class=\"comment\"><div class=\"head\">%s</div><div>%s</div></div>"
+                 % (esc(record.get("date")), esc(record.get("reason"))))
+    parts.append("<p class=\"meta\"><a href=\"/market-scan\">回全市場批次篩選</a> ｜ "
+                 "<a href=\"/\">回知識庫檢視</a></p>")
+    parts.append("</body></html>")
+    return "".join(parts)
+
+
+def render_track_error_page(message):
+    """run_id/code 查無對應候選資料（例如掃描紀錄已被新的一批覆蓋）時顯示。"""
+    parts = [_screen_page_head("加入追蹤－發生問題")]
+    parts.append("<p class=\"meta\"><a href=\"/market-scan\">← 返回</a></p>")
+    parts.append("<h1>無法加入追蹤</h1>")
+    parts.append("<p class=\"empty\" style=\"color:#c92a2a\">%s</p>" % esc(message))
+    parts.append("</body></html>")
+    return "".join(parts)
+
+
+def _market_scan_row_html(r, highlight, run_id):
     """/market-scan 結果表格的單一列。highlight=True 才畫黃底（符合框架
     候選區塊裡全部列都符合，畫了反而是雜訊，所以那裡傳 False）。
     highlight=True 時多渲染「符合框架」「備註」兩欄，維持與全部候選表格
     的欄位對齊；highlight=False（符合框架區塊）省略這兩欄，因為值恆為
-    「符合」「—」，不提供資訊。"""
+    「符合」「—」，不提供資訊。每列都有「加入追蹤」表單（兩個區塊都有，
+    不限符合框架的候選）。"""
     peg_text = ("%.2f" % r["peg"]) if r["peg"] is not None else "—"
     yoy_text = ("%.1f%%" % (r["revenue_yoy"] * 100)) if r["revenue_yoy"] is not None else "—"
     drawdown_text = ("%.1f%%" % (r["drawdown_pct"] * 100)) if r["drawdown_pct"] is not None else "—"
     per_text = ("%.2f" % r["per"]) if r["per"] is not None else "—"
+    track_form = _market_scan_track_form_html(run_id, r["code"])
     base = (
         "<td data-label=\"代碼\">%s</td><td data-label=\"名稱\">%s</td>"
         "<td data-label=\"市場\">%s</td><td data-label=\"產業別\">%s</td>"
         "<td data-label=\"PER\">%s</td><td data-label=\"營收年增率\">%s</td>"
         "<td data-label=\"PEG\">%s</td><td data-label=\"回檔幅度\">%s</td>"
-        "<td data-label=\"目前價\">%s</td>"
+        "<td data-label=\"目前價\">%s</td><td data-label=\"加入追蹤\">%s</td>"
         % (esc(r["code"]), esc(r["name"]), esc(r.get("market")), esc(r.get("industry")),
-           per_text, yoy_text, peg_text, drawdown_text, esc(r.get("current_price"))))
+           per_text, yoy_text, peg_text, drawdown_text, esc(r.get("current_price")),
+           track_form))
     if not highlight:
         return "<tr>%s</tr>" % base
     hit = r.get("meets_framework")

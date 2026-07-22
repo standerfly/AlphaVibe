@@ -101,7 +101,8 @@ class ReportHandler(BaseHTTPRequestHandler):
                     store.save_market_scan_run(
                         framework_id, "manual", result["results"],
                         result["candidate_count"],
-                        market_errors=result["market_errors"])
+                        market_errors=result["market_errors"],
+                        total_scanned=result["total_scanned"])
                 latest = store.get_latest_market_scan(framework_id=framework_id)
             finally:
                 store.close()
@@ -109,8 +110,49 @@ class ReportHandler(BaseHTTPRequestHandler):
                 framework_id, latest, error=result.get("error"))
             self._send(200, "text/html; charset=utf-8", page.encode("utf-8"))
             return
+        if path == "/market-scan/track":
+            length = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(length) if length else b""
+            form = urllib.parse.parse_qs(body.decode("utf-8"))
+            code = (form.get("code") or [""])[0]
+            stance = (form.get("stance") or [""])[0]
+            if stance not in ("觀察", "偏多", "偏空"):
+                stance = "觀察"
+            overwrite = (form.get("overwrite") or [""])[0] == "1"
+            try:
+                run_id = int((form.get("run_id") or [""])[0])
+            except ValueError:
+                run_id = None
+
+            store = KBStore(self.data_dir)
+            try:
+                run = store.get_market_scan_run(run_id) if run_id is not None else None
+                result_row = store.get_market_scan_result(run_id, code) if run_id is not None else None
+                if run is None or result_row is None or not code:
+                    page = report.render_track_error_page(
+                        "找不到這筆候選資料，可能掃描紀錄已更新，請回列表重新操作。")
+                    self._send(200, "text/html; charset=utf-8", page.encode("utf-8"))
+                    return
+                framework = frameworks.get_framework(run["framework_id"])
+                reason = report.compose_market_scan_track_reason(
+                    result_row, framework or {"label": run["framework_id"]}, run["run_at"])
+                saved = store.save_stance(
+                    code, stance, name=result_row.get("name"), reason=reason,
+                    source_ref="market_scan/run_%d" % run_id, overwrite=overwrite)
+                if saved.get("conflict") and not saved.get("saved"):
+                    page = report.render_track_conflict_page(
+                        code, result_row.get("name"), stance, reason,
+                        saved["existing"], run_id)
+                else:
+                    page = report.render_track_result_page(
+                        saved, code, result_row.get("name"), stance)
+            finally:
+                store.close()
+            self._send(200, "text/html; charset=utf-8", page.encode("utf-8"))
+            return
         self._send(404, "text/plain; charset=utf-8",
-                   "404：僅支援 POST /screen 或 /market-scan".encode("utf-8"))
+                   "404：僅支援 POST /screen、/market-scan 或 /market-scan/track"
+                   .encode("utf-8"))
 
     def log_message(self, fmt, *args):  # 安靜一點，只留到 stderr
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))

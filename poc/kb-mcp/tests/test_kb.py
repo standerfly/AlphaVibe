@@ -5,6 +5,7 @@
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -201,7 +202,8 @@ class KBStoreTest(unittest.TestCase):
                 self._market_scan_row("2454", peg=None, meets=False, error="非預期錯誤：boom")]
         saved = self.store.save_market_scan_run(
             "peg_deep_dip_concentration", "manual", rows, candidate_count=2,
-            market_errors={"TWSE": None, "TPEx": "TPEx 呼叫失敗：逾時"})
+            market_errors={"TWSE": None, "TPEx": "TPEx 呼叫失敗：逾時"},
+            total_scanned=1973)
         self.assertTrue(saved["run_id"])
         self.assertEqual(saved["meets_count"], 1)
 
@@ -211,10 +213,21 @@ class KBStoreTest(unittest.TestCase):
         self.assertEqual(latest["run"]["meets_count"], 1)
         self.assertEqual(latest["run"]["twse_error"], None)
         self.assertEqual(latest["run"]["tpex_error"], "TPEx 呼叫失敗：逾時")
+        self.assertEqual(latest["run"]["total_scanned"], 1973)
         self.assertEqual(len(latest["results"]), 2)
         codes = [r["code"] for r in latest["results"]]
         self.assertIn("2330", codes)
         self.assertIn("2454", codes)
+
+    def test_market_scan_run_total_scanned_defaults_to_none(self):
+        """呼叫端不傳total_scanned時（例如舊呼叫端還沒更新）要能正常存，
+        存成NULL，不強制要求、不報錯。"""
+        saved = self.store.save_market_scan_run(
+            "peg_deep_dip_concentration", "manual",
+            [self._market_scan_row("2330")], candidate_count=1)
+        self.assertTrue(saved["run_id"])
+        latest = self.store.get_latest_market_scan("peg_deep_dip_concentration")
+        self.assertIsNone(latest["run"]["total_scanned"])
 
     def test_market_scan_get_latest_picks_most_recent_run(self):
         self.store.save_market_scan_run(
@@ -255,6 +268,91 @@ class KBStoreTest(unittest.TestCase):
         latest = self.store.get_latest_market_scan("peg_deep_dip_concentration")
         self.assertEqual(latest["results"], [])
         self.assertEqual(latest["run"]["twse_error"], "TWSE 呼叫失敗")
+
+    def test_get_market_scan_run_found_and_not_found(self):
+        saved = self.store.save_market_scan_run(
+            "peg_deep_dip_concentration", "manual",
+            [self._market_scan_row("3135")], candidate_count=1, total_scanned=1973)
+        run = self.store.get_market_scan_run(saved["run_id"])
+        self.assertIsNotNone(run)
+        self.assertEqual(run["framework_id"], "peg_deep_dip_concentration")
+        self.assertEqual(run["total_scanned"], 1973)
+        self.assertIsNone(self.store.get_market_scan_run(999999))
+
+    def test_get_market_scan_result_found_and_not_found(self):
+        saved = self.store.save_market_scan_run(
+            "peg_deep_dip_concentration", "manual",
+            [self._market_scan_row("3135", peg=0.16), self._market_scan_row("2222", peg=3.0)],
+            candidate_count=2)
+        row = self.store.get_market_scan_result(saved["run_id"], "3135")
+        self.assertIsNotNone(row)
+        self.assertEqual(row["code"], "3135")
+        self.assertAlmostEqual(row["peg"], 0.16)
+        # 查無這個run_id裡的這個代碼
+        self.assertIsNone(self.store.get_market_scan_result(saved["run_id"], "9999"))
+        # 查無這個run_id
+        self.assertIsNone(self.store.get_market_scan_result(999999, "3135"))
+
+    def test_market_scan_runs_migrates_old_schema_without_total_scanned(self):
+        """回歸測試：`CREATE TABLE IF NOT EXISTS` 對已存在的表不會補新欄位。
+        這裡手動模擬「舊版本建的、沒有 total_scanned 欄位的既有資料庫」
+        （這正是正式環境 poc/data/alphavibe.db 這次功能上線後的實際狀況），
+        確認 KBStore 開啟時能安全遷移：既有資料列不消失，新欄位能正常寫入。
+        """
+        tmp = tempfile.mkdtemp(prefix="alphavibe-migration-test-")
+        try:
+            db_path = os.path.join(tmp, "alphavibe.db")
+            conn = sqlite3.connect(db_path)
+            conn.execute("""
+                CREATE TABLE market_scan_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    framework_id TEXT NOT NULL,
+                    trigger_source TEXT NOT NULL,
+                    candidate_count INTEGER NOT NULL,
+                    meets_count INTEGER NOT NULL,
+                    twse_error TEXT,
+                    tpex_error TEXT,
+                    run_at TEXT NOT NULL
+                )
+            """)
+            conn.execute(
+                "INSERT INTO market_scan_runs (framework_id, trigger_source,"
+                " candidate_count, meets_count, run_at)"
+                " VALUES ('peg_deep_dip_concentration', 'scheduled', 5, 1,"
+                " '2026-07-21T02:00:00')")
+            conn.commit()
+            conn.close()
+
+            store = KBStore(tmp)
+            try:
+                cols = {row["name"] for row in
+                        store.conn.execute("PRAGMA table_info(market_scan_runs)")}
+                self.assertIn("total_scanned", cols)
+
+                old_row = store.conn.execute(
+                    "SELECT * FROM market_scan_runs WHERE candidate_count=5"
+                ).fetchone()
+                self.assertIsNotNone(old_row, "舊資料列在遷移後消失了")
+                self.assertEqual(old_row["framework_id"], "peg_deep_dip_concentration")
+                self.assertIsNone(old_row["total_scanned"])
+
+                saved = store.save_market_scan_run(
+                    "peg_deep_dip_concentration", "manual",
+                    [self._market_scan_row("2330")], candidate_count=1,
+                    total_scanned=1973)
+                self.assertTrue(saved["run_id"])
+                new_row = store.conn.execute(
+                    "SELECT total_scanned FROM market_scan_runs WHERE id=?",
+                    (saved["run_id"],)).fetchone()
+                self.assertEqual(new_row["total_scanned"], 1973)
+
+                total_rows = store.conn.execute(
+                    "SELECT COUNT(*) c FROM market_scan_runs").fetchone()["c"]
+                self.assertEqual(total_rows, 2)  # 舊的1筆+新存的1筆，沒有被清空
+            finally:
+                store.close()
+        finally:
+            shutil.rmtree(tmp)
 
     def test_philosophy_roundtrip_and_append(self):
         self.store.save_philosophy("yuzhiyu", "# 低 PER 高殖利率")

@@ -99,7 +99,8 @@ CREATE TABLE IF NOT EXISTS market_scan_runs (
     meets_count INTEGER NOT NULL,
     twse_error TEXT,
     tpex_error TEXT,
-    run_at TEXT NOT NULL
+    run_at TEXT NOT NULL,
+    total_scanned INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_market_scan_runs ON market_scan_runs(framework_id, run_at DESC);
 CREATE TABLE IF NOT EXISTS market_scan_results (
@@ -150,6 +151,18 @@ class KBStore:
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
         self.conn.commit()
+        self._migrate()
+
+    def _migrate(self):
+        """輕量欄位遷移：CREATE TABLE IF NOT EXISTS 只對全新資料庫有效，
+        既有資料庫的表不會自動補新欄位，這裡逐一檢查、缺的才 ALTER TABLE
+        補上。不重建表、不清空既有資料列，舊資料列的新欄位值維持 NULL。"""
+        cols = {row["name"] for row in
+                self.conn.execute("PRAGMA table_info(market_scan_runs)")}
+        if "total_scanned" not in cols:
+            self.conn.execute(
+                "ALTER TABLE market_scan_runs ADD COLUMN total_scanned INTEGER")
+            self.conn.commit()
 
     def close(self):
         self.conn.close()
@@ -444,17 +457,23 @@ class KBStore:
     # ---------- 第二層全市場批次篩選快取（market_scan.py 用） ----------
 
     def save_market_scan_run(self, framework_id, trigger_source, rows,
-                             candidate_count, market_errors=None):
-        """存一次market_scan.run_scan()的完整結果（一筆run + 該批所有result列）。"""
+                             candidate_count, market_errors=None, total_scanned=None):
+        """存一次market_scan.run_scan()的完整結果（一筆run + 該批所有result列）。
+
+        total_scanned＝本次實際掃描的公司總數（TWSE+TPEx月營收批次列數，
+        比candidate_count更大的母體數字）；省略則存NULL（例如舊呼叫端還
+        沒更新，不強制要求，如實反映「這筆資料沒有這項資訊」）。
+        """
         market_errors = market_errors or {}
         run_at = _now()
         meets_count = sum(1 for r in rows if r.get("meets_framework"))
         cur = self.conn.execute(
             "INSERT INTO market_scan_runs (framework_id, trigger_source,"
-            " candidate_count, meets_count, twse_error, tpex_error, run_at)"
-            " VALUES (?,?,?,?,?,?,?)",
+            " candidate_count, meets_count, twse_error, tpex_error, run_at,"
+            " total_scanned) VALUES (?,?,?,?,?,?,?,?)",
             (framework_id, trigger_source, candidate_count, meets_count,
-             market_errors.get("TWSE"), market_errors.get("TPEx"), run_at),
+             market_errors.get("TWSE"), market_errors.get("TPEx"), run_at,
+             total_scanned),
         )
         run_id = cur.lastrowid
         for row in rows:
@@ -495,6 +514,25 @@ class KBStore:
         ).fetchall()
         return {"found": True, "run": dict(run),
                 "results": [dict(r) for r in results]}
+
+    def get_market_scan_run(self, run_id):
+        """依主鍵查單一筆批次篩選run，查無則回傳None。"""
+        row = self.conn.execute(
+            "SELECT * FROM market_scan_runs WHERE id=?", (run_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_market_scan_result(self, run_id, code):
+        """依run_id+code查單一筆候選的完整結果列，查無則回傳None。
+
+        `/market-scan/track`（加入追蹤功能）用這個從資料庫重新取值組
+        追蹤理由，不信任表單裡的隱藏欄位內容。
+        """
+        row = self.conn.execute(
+            "SELECT * FROM market_scan_results WHERE run_id=? AND code=?",
+            (run_id, code),
+        ).fetchone()
+        return dict(row) if row else None
 
     # ---------- Layer 1：投資哲學 ----------
 

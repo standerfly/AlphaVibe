@@ -165,7 +165,7 @@ class ReportServerTest(unittest.TestCase):
         fake_result = {
             "framework_id": "peg_deep_dip_concentration", "trigger_source": "manual",
             "candidate_count": 1, "meets_count": 1,
-            "market_errors": {"TWSE": None, "TPEx": None},
+            "market_errors": {"TWSE": None, "TPEx": None}, "total_scanned": 1973,
             "results": [{"code": "3135", "name": "凌航", "market": "TWSE",
                         "industry": "半導體業", "per": 8.0, "revenue_yoy": 0.5,
                         "revenue_period": "2026-06", "drawdown_pct": 0.45,
@@ -198,7 +198,7 @@ class ReportServerTest(unittest.TestCase):
                 return_value={"framework_id": frameworks.default_framework_id(),
                              "trigger_source": "manual", "candidate_count": 0,
                              "meets_count": 0, "market_errors": {"TWSE": None, "TPEx": None},
-                             "results": []}) as mock_scan:
+                             "total_scanned": 1973, "results": []}) as mock_scan:
             status, _, body = self._post("/market-scan", {"framework": "no_such_framework"})
             mock_scan.assert_called_once_with(
                 frameworks.default_framework_id(), data_dir=self.tmp, trigger_source="manual")
@@ -228,6 +228,113 @@ class ReportServerTest(unittest.TestCase):
         store.close()
         after_run_id = after["run"]["id"] if after["found"] else None
         self.assertEqual(before_run_id, after_run_id)  # 沒有新增任何一筆
+
+    def _seed_scan_result(self, code, meets=True, peg=0.16):
+        """幫/market-scan/track測試準備一筆真實存在的run+result（用獨特代碼
+        前綴避免跟其他測試/其他候選代碼衝突）。"""
+        store = KBStore(self.tmp)
+        try:
+            saved = store.save_market_scan_run(
+                "peg_deep_dip_concentration", "manual",
+                [{"code": code, "name": "測試股%s" % code, "market": "TWSE",
+                  "industry": "半導體業", "per": 8.0, "revenue_yoy": 0.5,
+                  "revenue_period": "2026-06", "drawdown_pct": 0.45,
+                  "high_price": 100.0, "high_date": "2026-06-01",
+                  "current_price": 55.0, "current_date": "2026-07-20",
+                  "peg": peg, "meets_framework": meets, "error": None}],
+                candidate_count=1)
+        finally:
+            store.close()
+        return saved["run_id"]
+
+    def test_track_post_success_no_conflict(self):
+        run_id = self._seed_scan_result("T9101")
+        status, _, body = self._post(
+            "/market-scan/track",
+            {"run_id": str(run_id), "code": "T9101", "stance": "觀察"})
+        self.assertEqual(status, 200)
+        self.assertIn("已加入追蹤", body.decode("utf-8"))
+
+        store = KBStore(self.tmp)
+        latest = store.get_latest_stance("T9101")
+        store.close()
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest["stance"], "觀察")
+        self.assertIn("PEG", latest["reason"])
+        self.assertEqual(latest["source_ref"], "market_scan/run_%d" % run_id)
+
+    def test_track_post_conflict_then_overwrite_confirm(self):
+        run_id = self._seed_scan_result("T9102")
+        status1, _, body1 = self._post(
+            "/market-scan/track",
+            {"run_id": str(run_id), "code": "T9102", "stance": "觀察"})
+        self.assertEqual(status1, 200)
+
+        # 再次加入追蹤，改選不同立場 → 應該觸發衝突確認頁，不是直接存入
+        status2, _, body2 = self._post(
+            "/market-scan/track",
+            {"run_id": str(run_id), "code": "T9102", "stance": "偏多"})
+        page2 = body2.decode("utf-8")
+        self.assertEqual(status2, 200)
+        self.assertIn("已有立場，要更新嗎", page2)
+        self.assertIn("觀察", page2)
+        self.assertIn("偏多", page2)
+
+        store = KBStore(self.tmp)
+        still_old = store.get_latest_stance("T9102")
+        store.close()
+        self.assertEqual(still_old["stance"], "觀察")  # 還沒真的覆蓋
+
+        # 確認覆蓋
+        status3, _, body3 = self._post(
+            "/market-scan/track",
+            {"run_id": str(run_id), "code": "T9102", "stance": "偏多", "overwrite": "1"})
+        self.assertEqual(status3, 200)
+        self.assertIn("已更新覆蓋既有立場", body3.decode("utf-8"))
+
+        store = KBStore(self.tmp)
+        new_latest = store.get_latest_stance("T9102")
+        history = store.get_stance_history("T9102", limit=10)
+        store.close()
+        self.assertEqual(new_latest["stance"], "偏多")
+        self.assertEqual(len(history), 2)  # 舊的「觀察」歷史還在，沒被刪除
+
+    def test_track_post_missing_scan_result_shows_error_page(self):
+        status, _, body = self._post(
+            "/market-scan/track",
+            {"run_id": "999999", "code": "T9103", "stance": "觀察"})
+        self.assertEqual(status, 200)
+        self.assertIn("找不到這筆候選資料", body.decode("utf-8"))
+
+    def test_track_post_invalid_stance_defaults_to_observe(self):
+        run_id = self._seed_scan_result("T9104")
+        status, _, body = self._post(
+            "/market-scan/track",
+            {"run_id": str(run_id), "code": "T9104", "stance": "亂打的值"})
+        self.assertEqual(status, 200)
+        self.assertIn("已加入追蹤", body.decode("utf-8"))
+
+        store = KBStore(self.tmp)
+        latest = store.get_latest_stance("T9104")
+        store.close()
+        self.assertEqual(latest["stance"], "觀察")
+
+    def test_track_post_same_stance_again_appends_no_conflict(self):
+        """疊加情境：立場沒變，再按一次也不該觸發衝突頁，直接多存一筆歷史。"""
+        run_id = self._seed_scan_result("T9105")
+        self._post("/market-scan/track",
+                   {"run_id": str(run_id), "code": "T9105", "stance": "觀察"})
+        status, _, body = self._post(
+            "/market-scan/track",
+            {"run_id": str(run_id), "code": "T9105", "stance": "觀察"})
+        self.assertEqual(status, 200)
+        self.assertIn("已加入追蹤", body.decode("utf-8"))
+        self.assertNotIn("已有立場，要更新嗎", body.decode("utf-8"))
+
+        store = KBStore(self.tmp)
+        history = store.get_stance_history("T9105", limit=10)
+        store.close()
+        self.assertEqual(len(history), 2)
 
 
 class StaticIconTest(unittest.TestCase):

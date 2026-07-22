@@ -9,6 +9,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
+import frameworks  # noqa: E402
 import report  # noqa: E402
 import screener  # noqa: E402
 from kb_store import KBStore  # noqa: E402
@@ -193,19 +194,35 @@ class MarketScanPageTest(unittest.TestCase):
                 "high_date": "2026-06-01", "current_price": 55.0, "current_date": "2026-07-20",
                 "peg": peg, "meets_framework": meets, "error": error}
 
-    def _latest(self, rows, meets_count=None):
+    def _latest(self, rows, meets_count=None, total_scanned=None, run_id=4):
         return {"found": True,
-                "run": {"run_at": "2026-07-22 02:00:00", "trigger_source": "scheduled",
+                "run": {"id": run_id, "run_at": "2026-07-22 02:00:00",
+                        "trigger_source": "scheduled",
                         "candidate_count": len(rows),
                         "meets_count": meets_count if meets_count is not None
                         else sum(1 for r in rows if r["meets_framework"]),
-                        "twse_error": None, "tpex_error": None},
+                        "twse_error": None, "tpex_error": None,
+                        "total_scanned": total_scanned},
                 "results": rows}
 
     def test_empty_state_when_no_scan_yet(self):
         page = report.render_market_scan_page(
             "peg_deep_dip_concentration", {"found": False, "run": None, "results": []})
         self.assertIn("尚無掃描紀錄", page)
+
+    def test_total_scanned_shown_when_present(self):
+        rows = [self._row("3135", meets=True)]
+        page = report.render_market_scan_page(
+            "peg_deep_dip_concentration", self._latest(rows, total_scanned=1973))
+        self.assertIn("本次掃描全市場（上市+上櫃）共 1973 檔", page)
+
+    def test_total_scanned_omitted_when_none(self):
+        """舊資料列（遷移前存的）沒有total_scanned，不該顯示「共None檔」。"""
+        rows = [self._row("3135", meets=True)]
+        page = report.render_market_scan_page(
+            "peg_deep_dip_concentration", self._latest(rows, total_scanned=None))
+        self.assertNotIn("共 None 檔", page)
+        self.assertNotIn("本次掃描全市場", page)
 
     def test_matching_rows_appear_only_in_matches_section(self):
         rows = [self._row("3135", meets=True), self._row("2222", meets=False, peg=3.0)]
@@ -255,6 +272,64 @@ class MarketScanPageTest(unittest.TestCase):
         self.assertIn("<summary>這是什麼？</summary>", page)
         # 說明文字要在收合details裡，不能是開頁就看到的裸段落
         self.assertNotIn('<p class="meta">用 TWSE/TPEx 官方批次資料', page)
+
+    def test_track_form_present_for_matching_and_non_matching_rows(self):
+        """2026-07-22 使用者要求：全部候選（不限符合框架的）都要有加入追蹤選項。"""
+        rows = [self._row("3135", meets=True), self._row("2222", meets=False, peg=3.0)]
+        page = report.render_market_scan_page(
+            "peg_deep_dip_concentration", self._latest(rows, run_id=7))
+        self.assertIn('name="run_id" value="7"', page)
+        self.assertIn('name="code" value="3135"', page)
+        self.assertIn('name="code" value="2222"', page)
+        self.assertIn('action="/market-scan/track"', page)
+        self.assertIn('<option value="觀察" selected>', page)
+
+
+class MarketScanTrackReasonTest(unittest.TestCase):
+    """compose_market_scan_track_reason：加入追蹤時的理由組字。"""
+
+    def setUp(self):
+        self.framework = frameworks.get_framework("peg_deep_dip_concentration")
+
+    def _row(self, **overrides):
+        row = {"code": "3135", "name": "凌航", "per": 8.0, "revenue_yoy": 0.5,
+               "peg": 0.16, "drawdown_pct": 0.45, "high_price": 100.0,
+               "high_date": "2026-06-01", "current_price": 55.0,
+               "current_date": "2026-07-20", "meets_framework": True, "error": None}
+        row.update(overrides)
+        return row
+
+    def test_meets_framework_includes_full_rationale(self):
+        reason = report.compose_market_scan_track_reason(
+            self._row(), self.framework, "2026-07-22 13:58:21")
+        self.assertIn("PEG 0.16", reason)
+        self.assertIn("回檔 45.0%", reason)
+        self.assertIn("符合框架完整門檻", reason)
+        self.assertIn("安全邊際", reason)  # 框架因果理由有帶到
+        self.assertIn("供應鏈敘事", reason)  # 免責提醒有帶到
+
+    def test_not_meets_framework_uses_partial_wording(self):
+        reason = report.compose_market_scan_track_reason(
+            self._row(meets_framework=False, peg=3.0, drawdown_pct=0.1),
+            self.framework, "2026-07-22 13:58:21")
+        self.assertIn("只通過第一階段初篩", reason)
+        self.assertNotIn("符合框架完整門檻", reason)
+
+    def test_missing_peg_data_does_not_leak_none(self):
+        reason = report.compose_market_scan_track_reason(
+            self._row(per=None, revenue_yoy=None, peg=None, meets_framework=False),
+            self.framework, "2026-07-22 13:58:21")
+        self.assertNotIn("None", reason)
+        self.assertIn("資料不完整", reason)
+
+    def test_missing_drawdown_data_does_not_leak_none(self):
+        reason = report.compose_market_scan_track_reason(
+            self._row(drawdown_pct=None, high_price=None, high_date=None,
+                     current_price=None, current_date=None,
+                     error="非預期錯誤：模擬失敗", meets_framework=False),
+            self.framework, "2026-07-22 13:58:21")
+        self.assertNotIn("None", reason)
+        self.assertIn("非預期錯誤：模擬失敗", reason)
 
 
 if __name__ == "__main__":

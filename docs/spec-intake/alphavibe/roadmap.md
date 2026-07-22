@@ -23,6 +23,22 @@ Deferred（已定案遞延，見 scope-decision.md）：全市場條件篩選（
 PO 另外定案）、Docker 雲端部署、多用戶、全域投資助理、n8n、自動通知、
 Feedback Loop。
 
+## 已知限制／待辦（2026-07-22 記錄，PO 確認「這件事得解決」）
+
+- **第二層全市場批次篩選（`market_scan.py`）目前不涵蓋興櫃**：TWSE／TPEx
+  的批次 PER 端點都只有上市/上櫃，興櫃沒有官方批次 PER/PBR 端點（已於
+  2026-07-22 研究確認），所以 Stage A 的候選初篩完全排除興櫃股。
+  **已知的技術解法（尚未實作）**：TPEx 有興櫃月營收批次端點
+  `GET /openapi/v1/t187ap05_R`（354家公司，含產業別、官方年增率欄位，
+  跟現有 `market_scan.py` 用的上市/上櫃營收批次端點同一種資料形狀）——
+  可以先用這個端點依產業別＋營收年增率初篩出興櫃候選（跟現有 Stage A
+  邏輯一致），但這批候選缺 PER（無批次端點），需要對篩出的**小批次**
+  候選逐檔呼叫既有的 `tpex_client.get_emerging_stock_valuation()`
+  （這個專案已經在用的興櫃逐檔估值函式，含完整 caveats 精確度警語）
+  補 PER 估算，才能算出 PEG。實作時要接進 `run_scan()` 的 Stage A→B
+  流程，且要在頁面/回報裡沿用 `get_emerging_stock_valuation()` 既有的
+  caveats 精確度警語（興櫃估值本來就比上市櫃粗略，不能混為一談）。
+
 ## 各階段接手指南
 
 ### 1b 試用累積（進行中）

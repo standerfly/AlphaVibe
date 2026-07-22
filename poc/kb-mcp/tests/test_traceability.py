@@ -236,7 +236,7 @@ class ServerToolsTest(unittest.TestCase):
         fake_result = {
             "framework_id": "peg_deep_dip_concentration", "trigger_source": "manual",
             "candidate_count": 1, "meets_count": 1,
-            "market_errors": {"TWSE": None, "TPEx": None},
+            "market_errors": {"TWSE": None, "TPEx": None}, "total_scanned": 1973,
             "results": [{"code": "2330", "name": "台積電", "market": "TWSE",
                         "industry": "半導體業", "per": 10.0, "revenue_yoy": 0.2,
                         "revenue_period": "2026-06", "drawdown_pct": 0.45,
@@ -254,6 +254,7 @@ class ServerToolsTest(unittest.TestCase):
         latest = self.server.store.get_latest_market_scan("peg_deep_dip_concentration")
         self.assertTrue(latest["found"])
         self.assertEqual(latest["results"][0]["code"], "2330")
+        self.assertEqual(latest["run"]["total_scanned"], 1973)
 
     def test_run_market_scan_tool_dispatch_passes_framework_id(self):
         import market_scan  # noqa: E402

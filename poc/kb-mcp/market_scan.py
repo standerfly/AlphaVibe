@@ -77,11 +77,18 @@ def _revenue_period(roc_yyyymm):
 def _scan_market(market, per_url, revenue_url, per_code_field, per_ratio_field,
                   industries, peg_max, revenue_yoy_min):
     """單一市場（TWSE 或 TPEx）批次初篩。整段包 try/except，任何一步失敗
-    都回傳 {"market":.., "error":.., "candidates": []}，不丟例外。"""
+    都回傳 {"market":.., "error":.., "candidates": [], "total_scanned": 0}，
+    不丟例外。
+
+    total_scanned＝月營收批次的資料列數（迴圈實際跑過、逐列檢查產業別的
+    公司總數），在拿到營收批次資料後立刻記錄，不受後續產業別/PEG篩選
+    影響——這樣就算最後篩不出任何候選，也能如實反映「有查過多少家公司」。
+    """
     try:
         per_resp = _fetch_json(per_url, market)
         if "error" in per_resp:
-            return {"market": market, "error": per_resp["error"], "candidates": []}
+            return {"market": market, "error": per_resp["error"],
+                    "candidates": [], "total_scanned": 0}
         per_map = {}
         for row in per_resp["data"]:
             code = row.get(per_code_field)
@@ -90,7 +97,9 @@ def _scan_market(market, per_url, revenue_url, per_code_field, per_ratio_field,
 
         revenue_resp = _fetch_json(revenue_url, market)
         if "error" in revenue_resp:
-            return {"market": market, "error": revenue_resp["error"], "candidates": []}
+            return {"market": market, "error": revenue_resp["error"],
+                    "candidates": [], "total_scanned": 0}
+        total_scanned = len(revenue_resp["data"])
 
         candidates = []
         for row in revenue_resp["data"]:
@@ -128,9 +137,11 @@ def _scan_market(market, per_url, revenue_url, per_code_field, per_ratio_field,
                 "revenue_period": _revenue_period(row.get("資料年月")),
                 "peg": peg,
             })
-        return {"market": market, "error": None, "candidates": candidates}
+        return {"market": market, "error": None, "candidates": candidates,
+                "total_scanned": total_scanned}
     except Exception as exc:  # 單一市場非預期錯誤不可讓另一市場也篩不出來
-        return {"market": market, "error": "非預期錯誤：%s" % exc, "candidates": []}
+        return {"market": market, "error": "非預期錯誤：%s" % exc,
+                "candidates": [], "total_scanned": 0}
 
 
 def scan_candidates(framework):
@@ -159,6 +170,7 @@ def scan_candidates(framework):
         "candidates": candidates,
         "codes": [c["code"] for c in candidates],
         "market_errors": {"TWSE": twse["error"], "TPEx": tpex["error"]},
+        "total_scanned": twse["total_scanned"] + tpex["total_scanned"],
     }
 
 
@@ -201,6 +213,7 @@ def run_scan(framework_id, data_dir=None, token=None, trigger_source="manual"):
         "candidate_count": len(rows),
         "meets_count": meets_count,
         "market_errors": stage_a["market_errors"],
+        "total_scanned": stage_a["total_scanned"],
         "results": rows,
     }
 
@@ -233,14 +246,15 @@ def main(argv=None):
     try:
         saved = store.save_market_scan_run(
             framework_id, args.trigger, result["results"],
-            result["candidate_count"], market_errors=result["market_errors"])
+            result["candidate_count"], market_errors=result["market_errors"],
+            total_scanned=result["total_scanned"])
     finally:
         store.close()
 
-    print("market_scan完成：framework=%s trigger=%s candidate_count=%d meets_count=%d "
-          "run_id=%d run_at=%s TWSE_error=%s TPEx_error=%s"
-          % (framework_id, args.trigger, result["candidate_count"], result["meets_count"],
-             saved["run_id"], saved["run_at"],
+    print("market_scan完成：framework=%s trigger=%s total_scanned=%d candidate_count=%d "
+          "meets_count=%d run_id=%d run_at=%s TWSE_error=%s TPEx_error=%s"
+          % (framework_id, args.trigger, result["total_scanned"], result["candidate_count"],
+             result["meets_count"], saved["run_id"], saved["run_at"],
              result["market_errors"]["TWSE"], result["market_errors"]["TPEx"]))
     return 0
 

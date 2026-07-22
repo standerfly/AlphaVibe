@@ -75,6 +75,9 @@ class ScanMarketTest(unittest.TestCase):
         self.assertIsNone(out["error"])
         codes = [c["code"] for c in out["candidates"]]
         self.assertEqual(codes, ["2330"])  # 水泥工業(1101)被排除
+        # total_scanned是「營收批次總列數」，不是候選數——2列都要算進去，
+        # 即使1101被產業別篩掉沒有變成候選
+        self.assertEqual(out["total_scanned"], 2)
 
     def test_code_merge_between_per_and_revenue_rows(self):
         per_rows = [{"Code": "2330", "PEratio": "8.0"}]
@@ -135,6 +138,7 @@ class ScanMarketTest(unittest.TestCase):
                 "Code", "PEratio", ("半導體業",), 1.0, 0.0)
         self.assertEqual(out["error"], "TWSE HTTP 500")
         self.assertEqual(out["candidates"], [])
+        self.assertEqual(out["total_scanned"], 0)  # 連營收批次都沒抓到，掃描數是0
 
     def test_unexpected_exception_recorded_not_raised(self):
         def fake(url, market_label):
@@ -162,6 +166,8 @@ class ScanCandidatesTest(unittest.TestCase):
         self.assertIsNotNone(out["market_errors"]["TWSE"])
         self.assertIsNone(out["market_errors"]["TPEx"])
         self.assertEqual([c["code"] for c in out["candidates"]], ["3260"])
+        # TWSE失敗貢獻0，TPEx成功抓到1列營收資料，合計1（不是整批算失敗變0）
+        self.assertEqual(out["total_scanned"], 1)
 
     def test_tpex_failure_does_not_block_twse_candidates(self):
         def fake(url, market_label):
@@ -208,6 +214,7 @@ class RunScanTest(unittest.TestCase):
             ],
             "codes": ["2330"],
             "market_errors": {"TWSE": None, "TPEx": None},
+            "total_scanned": 500,
         }
         with unittest.mock.patch.object(
                 market_scan, "scan_candidates", return_value=stage_a_result), \
@@ -225,6 +232,7 @@ class RunScanTest(unittest.TestCase):
         self.assertAlmostEqual(row["drawdown_pct"], 0.45)
         self.assertTrue(row["meets_framework"])
         self.assertEqual(out["market_errors"], {"TWSE": None, "TPEx": None})
+        self.assertEqual(out["total_scanned"], 500)  # 從 stage_a 傳遞過來，不是重新計算
 
     def test_drawdown_failure_recorded_not_fatal_to_other_candidates(self):
         """回歸測試：某檔算回檔幅度失敗，不能讓其他候選也不見。"""
@@ -239,6 +247,7 @@ class RunScanTest(unittest.TestCase):
             ],
             "codes": ["1111", "2330"],
             "market_errors": {"TWSE": None, "TPEx": None},
+            "total_scanned": 500,
         }
 
         def fake_drawdown(code, data_dir=None, token=None):
@@ -263,7 +272,8 @@ class RunScanTest(unittest.TestCase):
         self.assertTrue(by_code["2330"]["meets_framework"])
 
     def test_trigger_source_passed_through(self):
-        stage_a_result = {"candidates": [], "codes": [], "market_errors": {"TWSE": None, "TPEx": None}}
+        stage_a_result = {"candidates": [], "codes": [],
+                          "market_errors": {"TWSE": None, "TPEx": None}, "total_scanned": 0}
         with unittest.mock.patch.object(market_scan, "scan_candidates", return_value=stage_a_result):
             out = market_scan.run_scan("peg_deep_dip_concentration", trigger_source="scheduled")
         self.assertEqual(out["trigger_source"], "scheduled")
@@ -285,6 +295,7 @@ class MainCliTest(unittest.TestCase):
             "framework_id": "peg_deep_dip_concentration", "trigger_source": "scheduled",
             "candidate_count": 1, "meets_count": 1,
             "market_errors": {"TWSE": None, "TPEx": None},
+            "total_scanned": 500,
             "results": [{"code": "2330", "name": "台積電", "market": "TWSE",
                         "industry": "半導體業", "per": 10.0, "revenue_yoy": 0.2,
                         "revenue_period": "2026-06", "drawdown_pct": 0.45,

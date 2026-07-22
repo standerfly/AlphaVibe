@@ -512,7 +512,8 @@ class Server:
             if "error" not in result:
                 self.store.save_market_scan_run(
                     framework_id, "manual", result["results"],
-                    result["candidate_count"], market_errors=result["market_errors"])
+                    result["candidate_count"], market_errors=result["market_errors"],
+                    total_scanned=result["total_scanned"])
             return result
         if name == "get_market_scan":
             return self.store.get_latest_market_scan(framework_id=args.get("framework_id"))
