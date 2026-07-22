@@ -12,11 +12,13 @@
 import argparse
 import os
 import sys
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import report  # noqa: E402
+import screener  # noqa: E402
 from kb_store import KBStore  # noqa: E402
 
 PAGE_PATHS = ("/", "/report.html", "/poc/data/report.html")  # 末項相容舊書籤
@@ -46,9 +48,31 @@ class ReportHandler(BaseHTTPRequestHandler):
             self._send(200, "image/png", report.make_icon_png())
         elif path == "/healthz":
             self._send(200, "text/plain; charset=utf-8", b"ok")
+        elif path == "/screen":
+            self._send(200, "text/html; charset=utf-8",
+                       report.render_screen_form().encode("utf-8"))
         else:
             self._send(404, "text/plain; charset=utf-8",
                        "404：檢視頁在 /（或 /report.html）".encode("utf-8"))
+
+    def do_POST(self):
+        path = self.path.split("?", 1)[0]
+        if path != "/screen":
+            self._send(404, "text/plain; charset=utf-8",
+                       "404：僅支援 POST /screen".encode("utf-8"))
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length) if length else b""
+        form = urllib.parse.parse_qs(body.decode("utf-8"))
+        codes_text = (form.get("codes") or [""])[0]
+        codes = screener.parse_codes(codes_text)
+        if not codes:
+            page = report.render_screen_form(error="請至少輸入一個股票代碼")
+            self._send(200, "text/html; charset=utf-8", page.encode("utf-8"))
+            return
+        result = screener.screen_stocks(codes, data_dir=self.data_dir)
+        page = report.render_screen_results(result)
+        self._send(200, "text/html; charset=utf-8", page.encode("utf-8"))
 
     def log_message(self, fmt, *args):  # 安靜一點，只留到 stderr
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))

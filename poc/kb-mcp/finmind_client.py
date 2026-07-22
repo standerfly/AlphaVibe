@@ -232,3 +232,31 @@ def get_institutional_trading(stock_id, start_date=None, end_date=None, data_dir
         for row in rows if row.get("name") in FOREIGN_INVESTOR_NAMES
     )
     return result
+
+
+def get_equity_attributable_to_owners(stock_id, data_dir=None, token=None):
+    """查最近一期「歸屬於母公司業主之權益」（淨值），供興櫃股 PBR 粗估用
+    （tpex_client.get_emerging_stock_valuation 呼叫）。
+
+    抓近 730 天（財報為季/半年頻率，確保至少涵蓋到最新一期）。取 date 最大
+    的一筆當最新值；查無資料回傳 equity=None 並在 errors 說明，不臆測。
+    """
+    token = token or _read_token(data_dir)
+    result = {"stock_id": stock_id, "token_used": bool(token), "errors": [],
+              "equity": None, "equity_date": None}
+
+    balance = _fetch("TaiwanStockBalanceSheet", stock_id, _days_ago(730), token)
+    if "error" in balance:
+        result["errors"].append(balance["error"])
+        return result
+    rows = [row for row in balance["data"]
+            if row.get("type") == "EquityAttributableToOwnersOfParent"]
+    if not rows:
+        result["errors"].append(
+            "TaiwanStockBalanceSheet 無 EquityAttributableToOwnersOfParent 資料（代碼是否正確？）")
+        return result
+
+    latest = max(rows, key=lambda row: row.get("date") or "")
+    result["equity"] = latest.get("value")
+    result["equity_date"] = latest.get("date")
+    return result

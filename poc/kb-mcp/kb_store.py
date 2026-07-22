@@ -80,6 +80,17 @@ CREATE TABLE IF NOT EXISTS stock_aliases (
     source TEXT,
     verified_date TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS stock_prices (
+    code TEXT PRIMARY KEY,
+    price REAL NOT NULL,
+    price_date TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS stock_industries (
+    code TEXT PRIMARY KEY,
+    industry_category TEXT,
+    updated_at TEXT NOT NULL
+);
 """
 
 STANCE_FIELDS = (
@@ -355,6 +366,49 @@ class KBStore:
             "SELECT * FROM stock_aliases ORDER BY verified_date DESC, name"
         ).fetchall()
         return {"count": len(rows), "aliases": [dict(r) for r in rows]}
+
+    # ---------- 股價／產業別快取（refresh_holdings_prices 用；手機檢視頁市值/
+    # 持股比例/產業別皆讀這裡，不即時呼叫外部 API） ----------
+
+    def upsert_stock_price(self, code, price, price_date):
+        if not code:
+            raise ValueError("code 為必填")
+        updated_at = _now()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO stock_prices"
+            " (code, price, price_date, updated_at) VALUES (?,?,?,?)",
+            (code, price, price_date, updated_at),
+        )
+        self.conn.commit()
+        return {"saved": True, "code": code, "price": price,
+                "price_date": price_date, "updated_at": updated_at}
+
+    def get_stock_prices(self):
+        rows = self.conn.execute(
+            "SELECT code, price, price_date, updated_at FROM stock_prices"
+        ).fetchall()
+        return {r["code"]: {"price": r["price"], "price_date": r["price_date"],
+                            "updated_at": r["updated_at"]} for r in rows}
+
+    def upsert_stock_industry(self, code, industry_category):
+        if not code:
+            raise ValueError("code 為必填")
+        updated_at = _now()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO stock_industries"
+            " (code, industry_category, updated_at) VALUES (?,?,?)",
+            (code, industry_category, updated_at),
+        )
+        self.conn.commit()
+        return {"saved": True, "code": code,
+                "industry_category": industry_category, "updated_at": updated_at}
+
+    def get_stock_industries(self):
+        rows = self.conn.execute(
+            "SELECT code, industry_category, updated_at FROM stock_industries"
+        ).fetchall()
+        return {r["code"]: {"industry_category": r["industry_category"],
+                            "updated_at": r["updated_at"]} for r in rows}
 
     # ---------- Layer 1：投資哲學 ----------
 

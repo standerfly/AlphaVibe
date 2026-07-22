@@ -15,6 +15,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
 import finmind_client  # noqa: E402
+import holdings_parser  # noqa: E402
+import tpex_client  # noqa: E402
 from kb_store import KBStore  # noqa: E402
 
 SERVER = os.path.join(os.path.dirname(HERE), "server.py")
@@ -150,6 +152,42 @@ class KBStoreTest(unittest.TestCase):
         all_aliases = self.store.get_stock_alias()
         self.assertEqual(all_aliases["count"], 2)
         self.assertEqual(all_aliases["aliases"][0]["name"], "B股")
+
+    def test_stock_price_upsert_and_get(self):
+        out = self.store.upsert_stock_price("2330", 1005.0, "2026-07-18")
+        self.assertTrue(out["saved"])
+        prices = self.store.get_stock_prices()
+        self.assertIn("2330", prices)
+        self.assertEqual(prices["2330"]["price"], 1005.0)
+        self.assertEqual(prices["2330"]["price_date"], "2026-07-18")
+        self.assertTrue(prices["2330"]["updated_at"])
+
+    def test_stock_price_upsert_overwrites_not_duplicates(self):
+        self.store.upsert_stock_price("2330", 1000.0, "2026-07-17")
+        self.store.upsert_stock_price("2330", 1010.0, "2026-07-18")
+        prices = self.store.get_stock_prices()
+        self.assertEqual(len(prices), 1)
+        self.assertEqual(prices["2330"]["price"], 1010.0)
+        self.assertEqual(prices["2330"]["price_date"], "2026-07-18")
+
+    def test_stock_price_get_empty(self):
+        self.assertEqual(self.store.get_stock_prices(), {})
+
+    def test_stock_industry_upsert_and_get(self):
+        out = self.store.upsert_stock_industry("2330", "半導體業")
+        self.assertTrue(out["saved"])
+        industries = self.store.get_stock_industries()
+        self.assertEqual(industries["2330"]["industry_category"], "半導體業")
+
+    def test_stock_industry_upsert_overwrites_not_duplicates(self):
+        self.store.upsert_stock_industry("2330", "舊分類")
+        self.store.upsert_stock_industry("2330", "半導體業")
+        industries = self.store.get_stock_industries()
+        self.assertEqual(len(industries), 1)
+        self.assertEqual(industries["2330"]["industry_category"], "半導體業")
+
+    def test_stock_industry_get_empty(self):
+        self.assertEqual(self.store.get_stock_industries(), {})
 
     def test_philosophy_roundtrip_and_append(self):
         self.store.save_philosophy("yuzhiyu", "# 低 PER 高殖利率")
@@ -316,6 +354,301 @@ class FinMindClientTest(unittest.TestCase):
             out = finmind_client.get_institutional_trading("2330")
         self.assertEqual(len(out["errors"]), 1)
         self.assertNotIn("trading", out)
+
+    def test_get_equity_attributable_to_owners_picks_latest_by_date(self):
+        payload = [
+            {"date": "2025-06-30", "stock_id": "6826",
+             "type": "EquityAttributableToOwnersOfParent", "value": 6003920000.0},
+            {"date": "2025-12-31", "stock_id": "6826",
+             "type": "EquityAttributableToOwnersOfParent", "value": 7505428000.0},
+            {"date": "2025-12-31", "stock_id": "6826",
+             "type": "Equity", "value": 8000000000.0},  # 不同 type，應被濾掉
+        ]
+
+        def fake_fetch(dataset, stock_id, start_date, token, end_date=None):
+            self.assertEqual(dataset, "TaiwanStockBalanceSheet")
+            return {"data": payload}
+
+        with unittest.mock.patch.object(finmind_client, "_fetch", fake_fetch):
+            out = finmind_client.get_equity_attributable_to_owners("6826")
+        self.assertEqual(out["errors"], [])
+        self.assertEqual(out["equity"], 7505428000.0)
+        self.assertEqual(out["equity_date"], "2025-12-31")
+
+    def test_get_equity_attributable_to_owners_no_matching_type(self):
+        payload = [{"date": "2025-12-31", "stock_id": "6826", "type": "Equity", "value": 1.0}]
+
+        def fake_fetch(dataset, stock_id, start_date, token, end_date=None):
+            return {"data": payload}
+
+        with unittest.mock.patch.object(finmind_client, "_fetch", fake_fetch):
+            out = finmind_client.get_equity_attributable_to_owners("6826")
+        self.assertIsNone(out["equity"])
+        self.assertEqual(len(out["errors"]), 1)
+
+    def test_get_equity_attributable_to_owners_api_failure(self):
+        def fail(dataset, stock_id, start_date, token, end_date=None):
+            return {"error": "FinMind 呼叫失敗（%s）：模擬斷網" % dataset}
+
+        with unittest.mock.patch.object(finmind_client, "_fetch", fail):
+            out = finmind_client.get_equity_attributable_to_owners("6826")
+        self.assertIsNone(out["equity"])
+        self.assertEqual(len(out["errors"]), 1)
+
+
+class TPExClientTest(unittest.TestCase):
+    """興櫃股估值粗估：mock TPEx 三端點＋FinMind 淨值，不打真實網路。"""
+
+    LATEST_STATISTICS = [
+        {"Date": "1150717", "SecuritiesCompanyCode": "6826",
+         "CompanyName": "和淞", "LatestPrice": "506"},
+        {"Date": "1150717", "SecuritiesCompanyCode": "1260",
+         "CompanyName": "富味鄉", "LatestPrice": "24.2"},
+    ]
+    EPS_RANK = [
+        {"Date": "1150719", "Rank": "1", "SecuritiesCompanyCode": "6826",
+         "CompanyName": "和淞", "EPS": "27.33"},
+    ]
+    CAPITALS_RANK = [
+        {"Date": "1150719", "Rank": "50", "SecuritiesCompanyCode": "6826",
+         "CompanyName": "和淞", "Capital": "855.4"},
+    ]
+
+    def _mock_endpoints(self, latest=None, eps=None, capitals=None):
+        latest = self.LATEST_STATISTICS if latest is None else latest
+        eps = self.EPS_RANK if eps is None else eps
+        capitals = self.CAPITALS_RANK if capitals is None else capitals
+
+        def fake_fetch(endpoint_key):
+            return {"data": {
+                "latest_statistics": latest,
+                "eps_rank": eps,
+                "capitals_rank": capitals,
+            }[endpoint_key]}
+        return fake_fetch
+
+    def test_roc_date_to_iso_valid(self):
+        self.assertEqual(tpex_client.roc_date_to_iso("1150717"), "2026-07-17")
+        self.assertEqual(tpex_client.roc_date_to_iso("1150719"), "2026-07-19")
+        self.assertEqual(tpex_client.roc_date_to_iso("1000101"), "2011-01-01")
+
+    def test_roc_date_to_iso_invalid_format_returns_none(self):
+        self.assertIsNone(tpex_client.roc_date_to_iso(""))
+        self.assertIsNone(tpex_client.roc_date_to_iso(None))
+        self.assertIsNone(tpex_client.roc_date_to_iso("115071"))    # 少一碼
+        self.assertIsNone(tpex_client.roc_date_to_iso("11507171"))  # 多一碼
+        self.assertIsNone(tpex_client.roc_date_to_iso("abcdefg"))   # 非數字
+        self.assertIsNone(tpex_client.roc_date_to_iso("1150732"))   # 32 日不存在
+        self.assertIsNone(tpex_client.roc_date_to_iso("1150013"))   # 00 月不存在
+
+    def test_normal_calculates_per_and_pbr(self):
+        with unittest.mock.patch.object(tpex_client, "_fetch", self._mock_endpoints()), \
+             unittest.mock.patch.object(
+                 finmind_client, "get_equity_attributable_to_owners",
+                 return_value={"equity": 7505428000.0, "equity_date": "2025-12-31",
+                               "errors": []}):
+            out = tpex_client.get_emerging_stock_valuation("6826")
+
+        self.assertEqual(out["stock_id"], "6826")
+        self.assertEqual(out["name"], "和淞")
+        self.assertEqual(out["price"], 506.0)
+        self.assertEqual(out["price_date"], "2026-07-17")
+        self.assertEqual(out["eps"], 27.33)
+        self.assertEqual(out["eps_period"], "2026-07-19")
+        # PER = 506 / 27.33 ≈ 18.51（對照手動估算 18.5 倍）
+        self.assertAlmostEqual(out["per"], 18.51, places=2)
+        # estimated_shares = 855.4 百萬元 * 1,000,000 / 10 = 85,540,000
+        self.assertAlmostEqual(out["estimated_shares"], 85_540_000)
+        # book_value = 7,505,428,000 / 85,540,000 ≈ 87.75
+        self.assertAlmostEqual(out["book_value"], 87.75, places=1)
+        self.assertIsNotNone(out["pbr"])
+        self.assertEqual(out["errors"], [])
+        self.assertEqual(len(out["caveats"]), 2)
+        self.assertIn("caveats", out)
+
+    def test_eps_missing_per_is_null(self):
+        with unittest.mock.patch.object(
+                tpex_client, "_fetch", self._mock_endpoints(eps=[])), \
+             unittest.mock.patch.object(
+                 finmind_client, "get_equity_attributable_to_owners",
+                 return_value={"equity": None, "equity_date": None,
+                               "errors": ["查無資料"]}):
+            out = tpex_client.get_emerging_stock_valuation("6826")
+
+        self.assertIsNone(out["eps"])
+        self.assertIsNone(out["per"])
+        self.assertTrue(any("EPS" in e for e in out["errors"]))
+
+    def test_eps_zero_or_negative_does_not_calculate_per(self):
+        for bad_eps in ("0", "-5.2"):
+            eps_rank = [{"Date": "1150719", "SecuritiesCompanyCode": "6826",
+                        "CompanyName": "和淞", "EPS": bad_eps}]
+            with unittest.mock.patch.object(
+                    tpex_client, "_fetch", self._mock_endpoints(eps=eps_rank)), \
+                 unittest.mock.patch.object(
+                     finmind_client, "get_equity_attributable_to_owners",
+                     return_value={"equity": None, "equity_date": None, "errors": []}):
+                out = tpex_client.get_emerging_stock_valuation("6826")
+            self.assertIsNone(out["per"], "EPS=%s 不應算出 PER" % bad_eps)
+            self.assertTrue(any("EPS<=0" in e for e in out["errors"]))
+
+    def test_stock_not_found_in_any_endpoint(self):
+        with unittest.mock.patch.object(
+                tpex_client, "_fetch",
+                self._mock_endpoints(latest=[], eps=[], capitals=[])), \
+             unittest.mock.patch.object(
+                 finmind_client, "get_equity_attributable_to_owners",
+                 return_value={"equity": None, "equity_date": None, "errors": []}):
+            out = tpex_client.get_emerging_stock_valuation("9999")
+        self.assertIsNone(out["price"])
+        self.assertIsNone(out["per"])
+        self.assertIsNone(out["pbr"])
+        self.assertTrue(any("查無此代碼" in e for e in out["errors"]))
+
+    def test_capital_missing_pbr_is_null(self):
+        with unittest.mock.patch.object(
+                tpex_client, "_fetch", self._mock_endpoints(capitals=[])), \
+             unittest.mock.patch.object(
+                 finmind_client, "get_equity_attributable_to_owners",
+                 return_value={"equity": 7505428000.0, "equity_date": "2025-12-31",
+                               "errors": []}):
+            out = tpex_client.get_emerging_stock_valuation("6826")
+        self.assertIsNone(out["estimated_shares"])
+        self.assertIsNone(out["book_value"])
+        self.assertIsNone(out["pbr"])
+        # PER 不受影響，仍應算得出來
+        self.assertIsNotNone(out["per"])
+
+    def test_endpoint_error_is_recorded_not_raised(self):
+        def fake_fetch_with_error(endpoint_key):
+            if endpoint_key == "latest_statistics":
+                return {"error": "TPEx 呼叫失敗（latest_statistics）：模擬斷網"}
+            return {"data": {
+                "eps_rank": self.EPS_RANK,
+                "capitals_rank": self.CAPITALS_RANK,
+            }[endpoint_key]}
+
+        with unittest.mock.patch.object(tpex_client, "_fetch", fake_fetch_with_error), \
+             unittest.mock.patch.object(
+                 finmind_client, "get_equity_attributable_to_owners",
+                 return_value={"equity": 7505428000.0, "equity_date": "2025-12-31",
+                               "errors": []}):
+            out = tpex_client.get_emerging_stock_valuation("6826")
+        self.assertIsNone(out["price"])
+        self.assertIn("TPEx 呼叫失敗（latest_statistics）：模擬斷網", out["errors"])
+        # 沒有 price，PER 仍不應計算
+        self.assertIsNone(out["per"])
+
+
+HOLDINGS_REPORT_SAMPLE = """\
+------ ------------------------------集 保------------------------------ ------------------------------融 資------------------------------ ------------------------------融 券------------------------------ 庫 存 ------------------------本日評估----------------------
+
+股票代號 名稱 零股 昨日可用 本日買進 前日買進 本日賣出 本日可用 昨日可用 本日買進 前日買進 本日賣出 本日可用 昨日可用 本日買進 前日買進 本日賣出 本日可用 總 市 值 現股市值 信用市值 總市值 收盤價
+
+庫 存 庫 存 庫 存 庫 存 庫 存 庫 存
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+1785 光洋科 150 16,125 16,125 16,125 107.50
+2308 台達電 10 17,400 17,400 17,400 1,740.00
+2337 旺宏 400 50,000 50,000 50,000 125.00
+2345 智邦 5 10,450 10,450 10,450 2,090.00
+2441 超豐 70 8,855 8,855 8,855 126.50
+2449 京元電子 40 11,460 11,460 11,460 286.50
+3008 大立光 5 20,050 20,050 20,050 4,010.00
+3081 聯亞 8 11,840 11,840 11,840 1,480.00
+3357 臺慶科 50 10,900 10,900 10,900 218.00
+3661 世芯-KY 5 17,400 17,400 17,400 3,480.00
+4749 新應材 5 3,985 3,985 3,985 797.00
+4931 新盛力 350 69,650 69,650 69,650 199.00
+5425 台半 50 4,625 4,625 4,625 92.50
+6196 帆宣 5 2,710 2,710 2,710 542.00
+6257 矽格 100 21,450 21,450 21,450 214.50
+6449 鈺邦 15 3,810 3,810 3,810 254.00
+6725 矽科宏晟 40 12,000 12,000 12,000 300.00
+6757 台灣虎航 1 56 56 56 56.20
+6826 *和淞 270 138,342 83,005 83,005 512.38
+7769 鴻勁 7 42,490 42,490 42,490 6,070.00
+9938 百和 800 36,680 36,680 36,680 45.85
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+總計: 510,278 454,941 454,941
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+註: *:表示興櫃股票、$:表示全額股票、#:表示處置股票、!:表注意 股票
+
+印表日期: 115/07/19 072057
+"""
+
+EXPECTED_HOLDINGS_ROWS = [
+    {"code": "1785", "name": "光洋科", "shares": 150, "is_emerging": False},
+    {"code": "2308", "name": "台達電", "shares": 10, "is_emerging": False},
+    {"code": "2337", "name": "旺宏", "shares": 400, "is_emerging": False},
+    {"code": "2345", "name": "智邦", "shares": 5, "is_emerging": False},
+    {"code": "2441", "name": "超豐", "shares": 70, "is_emerging": False},
+    {"code": "2449", "name": "京元電子", "shares": 40, "is_emerging": False},
+    {"code": "3008", "name": "大立光", "shares": 5, "is_emerging": False},
+    {"code": "3081", "name": "聯亞", "shares": 8, "is_emerging": False},
+    {"code": "3357", "name": "臺慶科", "shares": 50, "is_emerging": False},
+    {"code": "3661", "name": "世芯-KY", "shares": 5, "is_emerging": False},
+    {"code": "4749", "name": "新應材", "shares": 5, "is_emerging": False},
+    {"code": "4931", "name": "新盛力", "shares": 350, "is_emerging": False},
+    {"code": "5425", "name": "台半", "shares": 50, "is_emerging": False},
+    {"code": "6196", "name": "帆宣", "shares": 5, "is_emerging": False},
+    {"code": "6257", "name": "矽格", "shares": 100, "is_emerging": False},
+    {"code": "6449", "name": "鈺邦", "shares": 15, "is_emerging": False},
+    {"code": "6725", "name": "矽科宏晟", "shares": 40, "is_emerging": False},
+    {"code": "6757", "name": "台灣虎航", "shares": 1, "is_emerging": False},
+    {"code": "6826", "name": "和淞", "shares": 270, "is_emerging": True},
+    {"code": "7769", "name": "鴻勁", "shares": 7, "is_emerging": False},
+    {"code": "9938", "name": "百和", "shares": 800, "is_emerging": False},
+]
+
+
+class HoldingsParserTest(unittest.TestCase):
+    def test_parses_real_sample_all_21_rows(self):
+        out = holdings_parser.parse_holdings_report(HOLDINGS_REPORT_SAMPLE)
+        self.assertEqual(out["total_parsed"], 21)
+        self.assertEqual(out["unparsed_lines"], [])
+        self.assertEqual(len(out["rows"]), 21)
+        for got, expected in zip(out["rows"], EXPECTED_HOLDINGS_ROWS):
+            self.assertEqual(got, expected)
+
+    def test_emerging_stock_star_prefix_stripped_and_flagged(self):
+        out = holdings_parser.parse_holdings_report(HOLDINGS_REPORT_SAMPLE)
+        by_code = {r["code"]: r for r in out["rows"]}
+        self.assertEqual(by_code["6826"]["name"], "和淞")
+        self.assertTrue(by_code["6826"]["is_emerging"])
+        self.assertFalse(by_code["1785"]["is_emerging"])
+
+    def test_headers_separators_and_footer_lines_are_skipped(self):
+        text = "\n".join([
+            "股票代號 名稱 零股 昨日可用 總 市 值 收盤價",
+            "庫 存 庫 存",
+            "-" * 20,
+            "總計: 510,278 454,941 454,941",
+            "註: *:表示興櫃股票、$:表示全額股票",
+            "印表日期: 115/07/19 072057",
+            "",
+            "   ",
+        ])
+        out = holdings_parser.parse_holdings_report(text)
+        self.assertEqual(out["rows"], [])
+        self.assertEqual(out["unparsed_lines"], [])
+        self.assertEqual(out["total_parsed"], 0)
+
+    def test_malformed_data_like_line_goes_to_unparsed_not_dropped(self):
+        text = "\n".join([
+            "1785 光洋科 150 16,125 16,125 16,125 107.50",
+            "8888 怪異格式列缺股數欄",
+            "2308 台達電 10 17,400 17,400 17,400 1,740.00",
+        ])
+        out = holdings_parser.parse_holdings_report(text)
+        self.assertEqual(out["total_parsed"], 2)
+        self.assertEqual([r["code"] for r in out["rows"]], ["1785", "2308"])
+        self.assertEqual(out["unparsed_lines"],
+                         ["8888 怪異格式列缺股數欄"])
+
+    def test_empty_text(self):
+        out = holdings_parser.parse_holdings_report("")
+        self.assertEqual(out, {"rows": [], "unparsed_lines": [], "total_parsed": 0})
 
 
 class ProtocolE2ETest(unittest.TestCase):

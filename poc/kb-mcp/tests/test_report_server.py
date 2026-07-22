@@ -5,15 +5,19 @@ import sys
 import tempfile
 import threading
 import unittest
+import unittest.mock
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
+import finmind_client  # noqa: E402
 import report  # noqa: E402
 import report_server  # noqa: E402
+import screener  # noqa: E402
 from kb_store import KBStore  # noqa: E402
 
 
@@ -38,6 +42,13 @@ class ReportServerTest(unittest.TestCase):
     def _get(self, path):
         url = "http://127.0.0.1:%d%s" % (self.port, path)
         with urllib.request.urlopen(url, timeout=5) as resp:
+            return resp.status, resp.headers, resp.read()
+
+    def _post(self, path, form):
+        url = "http://127.0.0.1:%d%s" % (self.port, path)
+        data = urllib.parse.urlencode(form).encode("utf-8")
+        req = urllib.request.Request(url, data=data, method="POST")
+        with urllib.request.urlopen(req, timeout=5) as resp:
             return resp.status, resp.headers, resp.read()
 
     def test_page_ok_and_pwa_meta(self):
@@ -79,6 +90,42 @@ class ReportServerTest(unittest.TestCase):
         self.assertEqual(body, b"ok")
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self._get("/no/such/page")
+        self.assertEqual(ctx.exception.code, 404)
+
+    def test_screen_get_returns_form(self):
+        status, headers, body = self._get("/screen")
+        page = body.decode("utf-8")
+        self.assertEqual(status, 200)
+        self.assertIn("text/html", headers["Content-Type"])
+        self.assertIn("<form method=\"post\" action=\"/screen\">", page)
+
+    def test_screen_post_empty_codes_reshows_form_with_error(self):
+        status, _, body = self._post("/screen", {"codes": "   "})
+        page = body.decode("utf-8")
+        self.assertEqual(status, 200)
+        self.assertIn("請至少輸入一個股票代碼", page)
+
+    def test_screen_post_renders_results_table(self):
+        fake_result = {
+            "results": [{"code": "2330", "name": "台積電", "per": 10.0,
+                        "revenue_yoy": 0.20, "drawdown_pct": 0.40,
+                        "high_price": 100.0, "high_date": "2026-06-01",
+                        "current_price": 60.0, "current_date": "2026-07-01",
+                        "peg": 0.5, "meets_framework": True, "error": None}],
+            "total": 1,
+        }
+        with unittest.mock.patch.object(
+                screener, "screen_stocks", return_value=fake_result) as mock_screen:
+            status, _, body = self._post("/screen", {"codes": "2330"})
+        mock_screen.assert_called_once_with(["2330"], data_dir=self.tmp)
+        page = body.decode("utf-8")
+        self.assertEqual(status, 200)
+        self.assertIn("data-label=\"代碼\">2330", page)
+        self.assertIn("background:#fff3bf", page)
+
+    def test_screen_post_wrong_path_is_404(self):
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self._post("/no/such/post", {"codes": "2330"})
         self.assertEqual(ctx.exception.code, 404)
 
 

@@ -6,6 +6,7 @@ Python 3.9，官方 MCP SDK 需 3.10+，故不引依賴。僅實作 tools 能力
 
 資料目錄：環境變數 ALPHAVIBE_DATA_DIR，預設 <本檔案>/../data。
 """
+import datetime
 import json
 import os
 import sys
@@ -13,6 +14,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import finmind_client  # noqa: E402
+import holdings_parser  # noqa: E402
+import screener  # noqa: E402
+import tpex_client  # noqa: E402
 from kb_store import KBStore  # noqa: E402
 
 SUPPORTED_PROTOCOL_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18")
@@ -270,6 +274,15 @@ TOOLS = [
         },
     },
     {
+        "name": "refresh_holdings_prices",
+        "description": ("批次更新目前庫存（get_holdings）每檔代碼的股價快取（近 7 天最新"
+                        "收盤價）與產業別快取，供手機檢視頁顯示市值/持股比例/產業別——"
+                        "檢視頁本身不即時呼叫外部 API，靠這個工具定期寫入快取。"
+                        "個別代碼查詢失敗或查無資料（如興櫃股無 TaiwanStockPrice）只會"
+                        "該檔記入 failed，不中斷整批。不需參數。"),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "save_stock_alias",
         "description": ("將查證過的股票名稱→代碼對應存入快取，避免下次遇到同一檔"
                         "又要重新查證（同名再存＝更新既有記錄）。經確認查證結果後呼叫。"),
@@ -292,6 +305,52 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {"name": {"type": "string", "description": "股票簡稱；省略＝列全部"}},
+        },
+    },
+    {
+        "name": "get_emerging_stock_valuation",
+        "description": ("查興櫃股估值粗估：PER（TPEx興櫃當日行情÷EPS排名）／PBR"
+                        "（資本額估算股數，搭配FinMind淨值）。FinMind的PER資料集"
+                        "不含興櫃股，故另用此工具。⚠️ 精確度低於正式上市櫃股"
+                        "（EPS非TTM基礎、股數為估算值）——回傳一定含 caveats 欄位，"
+                        "呈現給使用者時務必一併轉達，不可當成嚴謹估值。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"stock_id": {"type": "string", "description": "興櫃股代碼，如 6826"}},
+            "required": ["stock_id"],
+        },
+    },
+    {
+        "name": "parse_holdings_report",
+        "description": ("解析券商零股庫存表原始文字，擷取每列的代碼/名稱/股數"
+                        "（名稱含 * 前綴代表興櫃，另標 is_emerging）。純解析、"
+                        "不寫入資料庫——請先把解析結果念給使用者確認無誤，"
+                        "確認後再呼叫 save_holdings 正式入庫。看起來像資料列但"
+                        "解析不出來的行會列在 unparsed_lines，需人工檢查。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "券商 App/網站匯出的零股庫存表原始文字"},
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "screen_stocks",
+        "description": ("第一層選股篩選：對候選代碼清單逐一計算PEG（本益成長比）"
+                        "與股價回檔幅度（近120天區間高點到最新收盤），依"
+                        "framework_peg_deep_dip_concentration 框架標註是否同時符合"
+                        "「PEG<1 且回檔>=40%」。結果依PEG由小到大排序（算不出來的"
+                        "排最後）。單檔查詢失敗只記錄在該筆的error欄位，不影響其他"
+                        "代碼。一次最多 50 檔，超過會回傳 error 欄位並拒絕執行——"
+                        "請提醒使用者分批。這是候選清單篩選，不是全市場掃描。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "codes": {"type": "string",
+                          "description": "候選股票代碼，逗號或換行分隔，如 3485,6953,6719"},
+            },
+            "required": ["codes"],
         },
     },
 ]
@@ -393,6 +452,8 @@ class Server:
                 source_ref=args.get("source_ref"))
         if name == "get_holdings":
             return self.store.get_holdings(code=args.get("code"))
+        if name == "refresh_holdings_prices":
+            return self.refresh_holdings_prices()
         if name == "save_stock_alias":
             return self.store.save_stock_alias(
                 name=args["name"], code=args["code"],
@@ -401,7 +462,75 @@ class Server:
             )
         if name == "get_stock_alias":
             return self.store.get_stock_alias(name=args.get("name"))
+        if name == "parse_holdings_report":
+            return holdings_parser.parse_holdings_report(args["text"])
+        if name == "get_emerging_stock_valuation":
+            return tpex_client.get_emerging_stock_valuation(
+                args["stock_id"], data_dir=self.data_dir)
+        if name == "screen_stocks":
+            codes = screener.parse_codes(args["codes"])
+            return screener.screen_stocks(codes, data_dir=self.data_dir)
         raise ValueError("未知工具：%s" % name)
+
+    def refresh_holdings_prices(self):
+        """批次更新目前庫存代碼的股價／產業別快取。
+
+        價格：對每檔代碼查近 7 天 TaiwanStockPrice（只是要拿最新收盤價，
+        不需要抓 90 天預設窗口），取日期最新一筆 close 存入 stock_prices。
+        查詢失敗或查無資料（如興櫃股）只讓該檔記入 failed，不中斷整批
+        （外部 API 失敗不阻塞，同 finmind_client 的設計原則）。
+
+        產業別：同一批代碼「順便」用同一次 get_stock_info() 全市場查詢帶出
+        （不為了產業別另外呼叫一次全市場 API），篩出庫存代碼對應的
+        industry_category 存入 stock_industries。
+        """
+        holdings = self.store.get_holdings()["holdings"]
+        codes = []
+        seen = set()
+        for h in holdings:
+            code = h["code"]
+            if code not in seen:
+                seen.add(code)
+                codes.append(code)
+
+        start_date = (datetime.date.today() - datetime.timedelta(days=7)).isoformat()
+        updated = 0
+        failed = []
+        prices = {}
+        for code in codes:
+            try:
+                result = finmind_client.get_stock_price_history(
+                    code, start_date=start_date, data_dir=self.data_dir)
+                price_rows = result.get("prices") or []
+                if not price_rows:
+                    reason = "; ".join(result.get("errors") or ["查無股價資料"])
+                    failed.append({"code": code, "reason": reason})
+                    continue
+                latest = max(price_rows, key=lambda r: r.get("date") or "")
+                close = latest.get("close")
+                if close is None:
+                    failed.append({"code": code, "reason": "最新資料缺收盤價"})
+                    continue
+                saved = self.store.upsert_stock_price(code, close, latest.get("date"))
+                prices[code] = {"price": saved["price"], "price_date": saved["price_date"],
+                                "updated_at": saved["updated_at"]}
+                updated += 1
+            except Exception as exc:  # 單檔非預期錯誤不可讓整批中斷
+                failed.append({"code": code, "reason": "非預期錯誤：%s" % exc})
+
+        if codes:
+            try:
+                info = finmind_client.get_stock_info(data_dir=self.data_dir)
+                code_set = set(codes)
+                for stock in info.get("stocks") or []:
+                    stock_id = stock.get("stock_id")
+                    if stock_id in code_set:
+                        self.store.upsert_stock_industry(
+                            stock_id, stock.get("industry_category"))
+            except Exception:
+                pass  # 產業別是附加資訊，查詢失敗不可讓已完成的股價更新結果遺失
+
+        return {"updated": updated, "failed": failed, "prices": prices}
 
     # ---- JSON-RPC 處理 ----
 
