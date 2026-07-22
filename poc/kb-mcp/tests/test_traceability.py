@@ -119,9 +119,9 @@ class ServerToolsTest(unittest.TestCase):
         self.server.store.close()
         shutil.rmtree(self.tmp)
 
-    def test_tools_list_has_twenty_three(self):
+    def test_tools_list_has_twenty_five(self):
         names = [t["name"] for t in server.TOOLS]
-        self.assertEqual(len(names), 23)
+        self.assertEqual(len(names), 25)
         for expected in ("save_snapshot", "get_snapshots",
                          "save_holdings", "get_holdings",
                          "save_stock_alias", "get_stock_alias",
@@ -131,7 +131,8 @@ class ServerToolsTest(unittest.TestCase):
                          "parse_holdings_report",
                          "get_emerging_stock_valuation",
                          "refresh_holdings_prices",
-                         "screen_stocks"):
+                         "screen_stocks",
+                         "run_market_scan", "get_market_scan"):
             self.assertIn(expected, names)
 
     def test_traceability_tools_roundtrip(self):
@@ -227,6 +228,63 @@ class ServerToolsTest(unittest.TestCase):
             mock_screen.assert_called_once_with(
                 ["3485", "6953", "6719"], data_dir=self.server.data_dir)
             self.assertEqual(out, {"results": [], "total": 0})
+
+    def test_run_market_scan_tool_dispatch_defaults_and_persists(self):
+        """未給framework_id用預設框架；成功時把結果存進DB。"""
+        import frameworks  # noqa: E402
+        import market_scan  # noqa: E402
+        fake_result = {
+            "framework_id": "peg_deep_dip_concentration", "trigger_source": "manual",
+            "candidate_count": 1, "meets_count": 1,
+            "market_errors": {"TWSE": None, "TPEx": None},
+            "results": [{"code": "2330", "name": "台積電", "market": "TWSE",
+                        "industry": "半導體業", "per": 10.0, "revenue_yoy": 0.2,
+                        "revenue_period": "2026-06", "drawdown_pct": 0.45,
+                        "high_price": 100.0, "high_date": "2026-06-01",
+                        "current_price": 55.0, "current_date": "2026-07-20",
+                        "peg": 0.5, "meets_framework": True, "error": None}],
+        }
+        with unittest.mock.patch.object(
+                market_scan, "run_scan", return_value=fake_result) as mock_scan:
+            out = self.server.call_tool("run_market_scan", {})
+            mock_scan.assert_called_once_with(
+                frameworks.default_framework_id(),
+                data_dir=self.server.data_dir, trigger_source="manual")
+        self.assertEqual(out, fake_result)
+        latest = self.server.store.get_latest_market_scan("peg_deep_dip_concentration")
+        self.assertTrue(latest["found"])
+        self.assertEqual(latest["results"][0]["code"], "2330")
+
+    def test_run_market_scan_tool_dispatch_passes_framework_id(self):
+        import market_scan  # noqa: E402
+        with unittest.mock.patch.object(
+                market_scan, "run_scan",
+                return_value={"error": "未知框架：nope"}) as mock_scan:
+            out = self.server.call_tool("run_market_scan", {"framework_id": "nope"})
+            mock_scan.assert_called_once_with(
+                "nope", data_dir=self.server.data_dir, trigger_source="manual")
+        self.assertEqual(out, {"error": "未知框架：nope"})
+
+    def test_run_market_scan_tool_does_not_persist_on_error(self):
+        import market_scan  # noqa: E402
+        with unittest.mock.patch.object(
+                market_scan, "run_scan", return_value={"error": "未知框架：x"}):
+            self.server.call_tool("run_market_scan", {"framework_id": "x"})
+        latest = self.server.store.get_latest_market_scan()
+        self.assertFalse(latest["found"])
+
+    def test_get_market_scan_tool_dispatch_reads_from_db(self):
+        self.server.store.save_market_scan_run(
+            "peg_deep_dip_concentration", "scheduled",
+            [{"code": "2330", "name": "台積電", "market": "TWSE", "industry": "半導體業",
+              "per": 10.0, "revenue_yoy": 0.2, "revenue_period": "2026-06",
+              "drawdown_pct": 0.45, "high_price": 100.0, "high_date": "2026-06-01",
+              "current_price": 55.0, "current_date": "2026-07-20", "peg": 0.5,
+              "meets_framework": True, "error": None}],
+            candidate_count=1)
+        out = self.server.call_tool("get_market_scan", {})
+        self.assertTrue(out["found"])
+        self.assertEqual(out["results"][0]["code"], "2330")
 
     def test_refresh_holdings_prices_no_holdings(self):
         """庫存是空的：不呼叫任何 FinMind API，回傳全空結果，不出錯。"""

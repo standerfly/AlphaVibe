@@ -91,6 +91,37 @@ CREATE TABLE IF NOT EXISTS stock_industries (
     industry_category TEXT,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS market_scan_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    framework_id TEXT NOT NULL,
+    trigger_source TEXT NOT NULL,
+    candidate_count INTEGER NOT NULL,
+    meets_count INTEGER NOT NULL,
+    twse_error TEXT,
+    tpex_error TEXT,
+    run_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_market_scan_runs ON market_scan_runs(framework_id, run_at DESC);
+CREATE TABLE IF NOT EXISTS market_scan_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL,
+    code TEXT NOT NULL,
+    name TEXT,
+    market TEXT,
+    industry TEXT,
+    per REAL,
+    revenue_yoy REAL,
+    revenue_period TEXT,
+    drawdown_pct REAL,
+    high_price REAL,
+    high_date TEXT,
+    current_price REAL,
+    current_date TEXT,
+    peg REAL,
+    meets_framework INTEGER NOT NULL,
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_market_scan_results_run ON market_scan_results(run_id);
 """
 
 STANCE_FIELDS = (
@@ -409,6 +440,61 @@ class KBStore:
         ).fetchall()
         return {r["code"]: {"industry_category": r["industry_category"],
                             "updated_at": r["updated_at"]} for r in rows}
+
+    # ---------- 第二層全市場批次篩選快取（market_scan.py 用） ----------
+
+    def save_market_scan_run(self, framework_id, trigger_source, rows,
+                             candidate_count, market_errors=None):
+        """存一次market_scan.run_scan()的完整結果（一筆run + 該批所有result列）。"""
+        market_errors = market_errors or {}
+        run_at = _now()
+        meets_count = sum(1 for r in rows if r.get("meets_framework"))
+        cur = self.conn.execute(
+            "INSERT INTO market_scan_runs (framework_id, trigger_source,"
+            " candidate_count, meets_count, twse_error, tpex_error, run_at)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (framework_id, trigger_source, candidate_count, meets_count,
+             market_errors.get("TWSE"), market_errors.get("TPEx"), run_at),
+        )
+        run_id = cur.lastrowid
+        for row in rows:
+            self.conn.execute(
+                "INSERT INTO market_scan_results (run_id, code, name, market,"
+                " industry, per, revenue_yoy, revenue_period, drawdown_pct,"
+                " high_price, high_date, current_price, current_date, peg,"
+                " meets_framework, error)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (run_id, row.get("code"), row.get("name"), row.get("market"),
+                 row.get("industry"), row.get("per"), row.get("revenue_yoy"),
+                 row.get("revenue_period"), row.get("drawdown_pct"),
+                 row.get("high_price"), row.get("high_date"), row.get("current_price"),
+                 row.get("current_date"), row.get("peg"),
+                 1 if row.get("meets_framework") else 0, row.get("error")),
+            )
+        self.conn.commit()
+        return {"run_id": run_id, "run_at": run_at, "meets_count": meets_count}
+
+    def get_latest_market_scan(self, framework_id=None):
+        """查最近一次全市場批次篩選結果。不給framework_id則查全部框架中最新一筆。"""
+        if framework_id:
+            run = self.conn.execute(
+                "SELECT * FROM market_scan_runs WHERE framework_id=?"
+                " ORDER BY run_at DESC, id DESC LIMIT 1",
+                (framework_id,),
+            ).fetchone()
+        else:
+            run = self.conn.execute(
+                "SELECT * FROM market_scan_runs ORDER BY run_at DESC, id DESC LIMIT 1"
+            ).fetchone()
+        if run is None:
+            return {"found": False, "run": None, "results": []}
+        results = self.conn.execute(
+            "SELECT * FROM market_scan_results WHERE run_id=?"
+            " ORDER BY (peg IS NULL), peg ASC",
+            (run["id"],),
+        ).fetchall()
+        return {"found": True, "run": dict(run),
+                "results": [dict(r) for r in results]}
 
     # ---------- Layer 1：投資哲學 ----------
 

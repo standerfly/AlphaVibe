@@ -189,6 +189,73 @@ class KBStoreTest(unittest.TestCase):
     def test_stock_industry_get_empty(self):
         self.assertEqual(self.store.get_stock_industries(), {})
 
+    def _market_scan_row(self, code, peg=0.5, meets=True, error=None):
+        return {"code": code, "name": "測試股%s" % code, "market": "TWSE",
+                "industry": "半導體業", "per": 10.0, "revenue_yoy": 0.2,
+                "revenue_period": "2026-06", "drawdown_pct": 0.45, "high_price": 100.0,
+                "high_date": "2026-06-01", "current_price": 55.0, "current_date": "2026-07-20",
+                "peg": peg, "meets_framework": meets, "error": error}
+
+    def test_market_scan_run_roundtrip(self):
+        rows = [self._market_scan_row("2330", peg=0.5, meets=True),
+                self._market_scan_row("2454", peg=None, meets=False, error="非預期錯誤：boom")]
+        saved = self.store.save_market_scan_run(
+            "peg_deep_dip_concentration", "manual", rows, candidate_count=2,
+            market_errors={"TWSE": None, "TPEx": "TPEx 呼叫失敗：逾時"})
+        self.assertTrue(saved["run_id"])
+        self.assertEqual(saved["meets_count"], 1)
+
+        latest = self.store.get_latest_market_scan("peg_deep_dip_concentration")
+        self.assertTrue(latest["found"])
+        self.assertEqual(latest["run"]["candidate_count"], 2)
+        self.assertEqual(latest["run"]["meets_count"], 1)
+        self.assertEqual(latest["run"]["twse_error"], None)
+        self.assertEqual(latest["run"]["tpex_error"], "TPEx 呼叫失敗：逾時")
+        self.assertEqual(len(latest["results"]), 2)
+        codes = [r["code"] for r in latest["results"]]
+        self.assertIn("2330", codes)
+        self.assertIn("2454", codes)
+
+    def test_market_scan_get_latest_picks_most_recent_run(self):
+        self.store.save_market_scan_run(
+            "peg_deep_dip_concentration", "scheduled",
+            [self._market_scan_row("1111")], candidate_count=1)
+        # run_at 精度只到秒，兩筆可能同一秒存入；查詢用 id DESC 當第二排序鍵
+        # 保證仍能正確挑出「後存入」的那筆，不需要真的等待跨秒。
+        self.store.save_market_scan_run(
+            "peg_deep_dip_concentration", "manual",
+            [self._market_scan_row("2222")], candidate_count=1)
+
+        latest = self.store.get_latest_market_scan("peg_deep_dip_concentration")
+        self.assertEqual(latest["results"][0]["code"], "2222")
+        self.assertEqual(latest["run"]["trigger_source"], "manual")
+
+    def test_market_scan_get_latest_filters_by_framework(self):
+        self.store.save_market_scan_run(
+            "framework_a", "manual", [self._market_scan_row("1111")], candidate_count=1)
+        self.store.save_market_scan_run(
+            "framework_b", "manual", [self._market_scan_row("2222")], candidate_count=1)
+
+        latest_a = self.store.get_latest_market_scan("framework_a")
+        self.assertEqual(latest_a["results"][0]["code"], "1111")
+        latest_b = self.store.get_latest_market_scan("framework_b")
+        self.assertEqual(latest_b["results"][0]["code"], "2222")
+
+    def test_market_scan_get_latest_no_runs_yet(self):
+        out = self.store.get_latest_market_scan("peg_deep_dip_concentration")
+        self.assertEqual(out, {"found": False, "run": None, "results": []})
+
+    def test_market_scan_run_with_empty_rows(self):
+        """兩邊資料源都失敗、篩不出任何候選時也要能正常存查，不出錯。"""
+        saved = self.store.save_market_scan_run(
+            "peg_deep_dip_concentration", "scheduled", [], candidate_count=0,
+            market_errors={"TWSE": "TWSE 呼叫失敗", "TPEx": "TPEx 呼叫失敗"})
+        self.assertTrue(saved["run_id"])
+        self.assertEqual(saved["meets_count"], 0)
+        latest = self.store.get_latest_market_scan("peg_deep_dip_concentration")
+        self.assertEqual(latest["results"], [])
+        self.assertEqual(latest["run"]["twse_error"], "TWSE 呼叫失敗")
+
     def test_philosophy_roundtrip_and_append(self):
         self.store.save_philosophy("yuzhiyu", "# 低 PER 高殖利率")
         self.store.save_philosophy("yuzhiyu", "恐慌分批買入", mode="append")

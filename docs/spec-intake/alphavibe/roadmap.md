@@ -12,13 +12,16 @@
 | 0. 需求工程 | product-spec 補完＋主軸重塑（FR-001~025、Q-001~032） | ✅ 完成 | product-spec.md Status: Accepted（2026-07-08） |
 | 1a. PoC：MCP 知識庫 | alphavibe-kb server（8 工具） | ✅ 完成 | commit 2297d45；測試 10/10；fresh agent 驗收 PASS |
 | 1a+. PoC 擴充：追溯快照層 | snapshots/sources/holdings 三表＋4 新工具（共 12），report.py 快照/持股區塊（SRC-010、Q-034~036） | ✅ 完成 | 2026-07-09；測試 21/21 |
+| 1a++. PoC 擴充：選股篩選（第一層＋第二層原型） | 第一層 `screen_stocks`（候選清單手動篩選）＋第二層 `run_market_scan`（TWSE/TPEx批次API全市場初篩＋FinMind補回檔幅度，框架鎖定產業別，每天02:00排程自動跑），手機可用（`/screen`、`/market-scan` 網頁）。第二層是 Q-030 的**原型驗證**，非正式解禁（見下方 Deferred 節） | ✅ 完成 | 2026-07-22；測試 148/148；fresh agent 驗收 PASS |
 | 1b. 試用累積 | PO 日常使用：聊資訊→選股→估值→確認入庫→**存分析快照** | 🔄 進行中 | — |
 | 1c. 儀表板：總覽名單頁 | FR-024（次之 FR-025 資訊流） | ⏳ 待 1b 累積資料 | — |
 | 1d. Cline 粗活 | YouTube 字幕、爬蟲 adapters | ⏳ 隨 1b 需要啟動 | — |
 | 2. 正式產品 | speckit 流程＋交易紀錄 FR-022 | ⏳ Phase 1 驗證後 | — |
 
-Deferred（已定案遞延，見 scope-decision.md）：全市場條件篩選、Docker 雲端
-部署、多用戶、全域投資助理、n8n、自動通知、Feedback Loop。
+Deferred（已定案遞延，見 scope-decision.md）：全市場條件篩選（2026-07-22
+起有原型可用，見上方1a++，但 Q-030 的正式裁決尚未變更——要不要解禁需
+PO 另外定案）、Docker 雲端部署、多用戶、全域投資助理、n8n、自動通知、
+Feedback Loop。
 
 ## 各階段接手指南
 

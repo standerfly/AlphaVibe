@@ -52,6 +52,12 @@ class ReportTest(unittest.TestCase):
         self.assertIn("尚無評論資料", page)
         self.assertIn("立場 0 檔", page)
 
+    def test_main_page_links_to_screen_feature(self):
+        """主檢視頁要有連到 /screen 的入口，不能只有直接打 URL 才進得去
+        （2026-07-22 使用者手機上找不到第一層篩選功能，就是漏了這個入口）。"""
+        page = self._generate()
+        self.assertIn("href=\"/screen\"", page)
+
     def test_toc_and_collapsible_sections(self):
         # 5 個區塊各自的預期狀態：True＝預設展開（有 open 屬性）
         expected_open = {
@@ -169,6 +175,86 @@ class ScreenPageTest(unittest.TestCase):
         page = report.render_screen_results(result)
         self.assertNotIn("<script>alert(1)</script>", page)
         self.assertIn("&lt;script&gt;", page)
+
+
+class MarketScanPageTest(unittest.TestCase):
+    """render_market_scan_page：第二層全市場批次篩選頁面渲染。
+
+    2026-07-22 使用者回饋「目前的畫面沒有UI的考量，就算有價值高的資訊，
+    也是浪費」（127檔候選塞進同一張表格，符合框架的被淹沒）後改版：
+    符合框架的候選拆到獨立區塊、預設展開；全部候選收合。這裡驗證這個
+    資訊架構真的照設計運作，不是只驗證資料算得對。
+    """
+
+    def _row(self, code, meets, peg=0.5, error=None):
+        return {"code": code, "name": "測試股%s" % code, "market": "TWSE",
+                "industry": "半導體業", "per": 10.0, "revenue_yoy": 0.2,
+                "revenue_period": "2026-06", "drawdown_pct": 0.45, "high_price": 100.0,
+                "high_date": "2026-06-01", "current_price": 55.0, "current_date": "2026-07-20",
+                "peg": peg, "meets_framework": meets, "error": error}
+
+    def _latest(self, rows, meets_count=None):
+        return {"found": True,
+                "run": {"run_at": "2026-07-22 02:00:00", "trigger_source": "scheduled",
+                        "candidate_count": len(rows),
+                        "meets_count": meets_count if meets_count is not None
+                        else sum(1 for r in rows if r["meets_framework"]),
+                        "twse_error": None, "tpex_error": None},
+                "results": rows}
+
+    def test_empty_state_when_no_scan_yet(self):
+        page = report.render_market_scan_page(
+            "peg_deep_dip_concentration", {"found": False, "run": None, "results": []})
+        self.assertIn("尚無掃描紀錄", page)
+
+    def test_matching_rows_appear_only_in_matches_section(self):
+        rows = [self._row("3135", meets=True), self._row("2222", meets=False, peg=3.0)]
+        page = report.render_market_scan_page("peg_deep_dip_concentration", self._latest(rows))
+
+        match_section = re.search(
+            r'<details class="section" open><summary><h2>符合框架的候選.*?</details>', page, re.S)
+        self.assertIsNotNone(match_section, "找不到符合框架區塊，或它沒有預設展開")
+        self.assertIn("3135", match_section.group(0))
+        self.assertNotIn("2222", match_section.group(0))
+
+        all_section = re.search(
+            r'<details class="section"><summary><h2>全部候選.*?</details>\s*</body>', page, re.S)
+        self.assertIsNotNone(all_section, "找不到全部候選區塊，或它預設展開了（應該收合）")
+        self.assertIn("3135", all_section.group(0))
+        self.assertIn("2222", all_section.group(0))
+
+    def test_all_candidates_section_defaults_collapsed(self):
+        rows = [self._row("3135", meets=True)]
+        page = report.render_market_scan_page("peg_deep_dip_concentration", self._latest(rows))
+        self.assertIn('<details class="section"><summary><h2>全部候選', page)
+        self.assertNotIn('<details class="section" open><summary><h2>全部候選', page)
+
+    def test_zero_matches_shows_friendly_message_not_empty_table(self):
+        rows = [self._row("2222", meets=False, peg=3.0)]
+        page = report.render_market_scan_page("peg_deep_dip_concentration", self._latest(rows))
+        self.assertIn("這次沒有候選同時符合", page)
+
+    def test_matches_section_has_no_yellow_highlight(self):
+        """符合框架區塊裡全部列都符合，畫黃底是雜訊——不該出現在那個區塊。"""
+        rows = [self._row("3135", meets=True)]
+        page = report.render_market_scan_page("peg_deep_dip_concentration", self._latest(rows))
+        match_section = re.search(
+            r'<details class="section" open><summary><h2>符合框架的候選.*?</details>', page, re.S)
+        self.assertNotIn("background:#fff3bf", match_section.group(0))
+
+    def test_all_candidates_section_still_highlights_matches(self):
+        rows = [self._row("3135", meets=True), self._row("2222", meets=False, peg=3.0)]
+        page = report.render_market_scan_page("peg_deep_dip_concentration", self._latest(rows))
+        all_section = re.search(
+            r'<details class="section"><summary><h2>全部候選.*?</details>\s*</body>', page, re.S)
+        self.assertIn("background:#fff3bf", all_section.group(0))
+
+    def test_explanation_text_moved_into_collapsed_details(self):
+        rows = [self._row("3135", meets=True)]
+        page = report.render_market_scan_page("peg_deep_dip_concentration", self._latest(rows))
+        self.assertIn("<summary>這是什麼？</summary>", page)
+        # 說明文字要在收合details裡，不能是開頁就看到的裸段落
+        self.assertNotIn('<p class="meta">用 TWSE/TPEx 官方批次資料', page)
 
 
 if __name__ == "__main__":

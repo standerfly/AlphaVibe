@@ -21,6 +21,9 @@ Claude Code session**，首次會詢問是否啟用 `alphavibe-kb`——允許�
   下次重新整理就會顯示最新市值/持股比例）
 - 「幫我篩選這幾檔：3485,6953,6719」→ `screen_stocks`（第一層候選清單篩選，
   依 PEG＜1 且回檔≥40% 框架；手機也可直接開 `/screen` 網頁表單篩選，見下）
+- 「幫我掃一次全市場」→ `run_market_scan`（第二層批次篩選，見下；也可開
+  `/market-scan` 網頁按鈕觸發，或等每天 02:00 排程自動跑）
+- 「上次全市場掃描結果是？」→ `get_market_scan`（只查快取，不重新掃描）
 
 ## 工具清單
 
@@ -42,6 +45,8 @@ Claude Code session**，首次會詢問是否啟用 `alphavibe-kb`——允許�
 | get_institutional_trading | 數據 | FinMind：三大法人買賣超，預設近 30 天，額外回傳 foreign_net（外資淨買賣超加總） |
 | get_emerging_stock_valuation | 數據 | 興櫃股估值粗估（PER/PBR，資料源 TPEx OpenAPI 興櫃三端點＋FinMind 淨值）；FinMind 的 PER 資料集不含興櫃股才需要這個工具。**精確度低於正式上市櫃股**（EPS 僅半年報/年報、非 TTM 基礎；PBR 股數為資本額估算值），詳見回傳的 caveats 欄位 |
 | screen_stocks | 篩選 | 第一層選股篩選：對候選代碼清單逐檔計算 PEG（本益成長比）與近 120 天股價回檔幅度，依 `framework_peg_deep_dip_concentration` 框架標註是否符合「PEG<1 且回檔≥40%」；單檔失敗只記入該筆 error，不中斷整批；一次最多 50 檔。純候選清單篩選，不是全市場掃描 |
+| run_market_scan | 篩選 | 第二層全市場批次篩選：Stage A 用 TWSE/TPEx 官方批次 PER＋月營收年增率 API，在框架鎖定的產業別（半導體業/電子零組件業/其他電子業）內快速初篩候選（實測約127檔，幾秒完成）；Stage B 對候選逐檔查 FinMind 補股價回檔幅度（127檔實測約30秒）。TWSE/TPEx 任一資料源失敗不影響另一邊。結果連同時間戳存入資料庫。範圍只有上市＋上櫃，興櫃不在批次掃描範圍（無官方批次PER端點）。**這是 Q-030（scope-decision.md 列為 Deferred）的原型驗證，尚未正式解禁全市場篩選** |
+| get_market_scan | 篩選 | 查詢最近一次 `run_market_scan` 結果，不重新掃描，秒級回應 |
 
 追溯性用法示例：「分析完了，幫我把這次結論存成快照，附上剛剛查證的來源」；
 「這是我的持股截圖，解析後存快照」；「列出 6805 的歷次快照，比對我當時的判斷」。
@@ -74,6 +79,26 @@ python3 poc/kb-mcp/report_server.py        # 佔用 8080，取代 http.server
 的列以黃底標出。全程網頁操作，不經過 Claude 對話，解決手機上 Claude Code
 chat 面板不穩定的問題。靜態模式不支援（表單需要伺服器處理送出的請求）。
 
+**第二層全市場批次篩選（手機可用）**：`/market-scan` 網頁——框架下拉選單
+＋「立即掃描」按鈕（同步執行，實測約30秒）＋最近一次結果表格（含觸發方式
+手動/排程、TWSE/TPEx 異常橫幅）。每天 02:00 由 launchd 排程
+（`com.alphavibe.marketscan`，見下）自動跑一次，不用手動觸發也會有最新
+結果可看。框架清單在 `poc/kb-mcp/frameworks.py`（目前只有一個框架，要新增
+框架用講的，不做資料庫編輯介面）。
+
+**排程服務**：`~/Library/LaunchAgents/com.alphavibe.marketscan.plist`，
+`StartCalendarInterval` 每天 02:00（不是 `RunAtLoad`+`KeepAlive`，跟
+`reportserver` 常駐服務不同——這是跑一次就結束的批次工作）。改排程時間
+要重新載入 plist 才會生效（`launchctl kickstart -k` 只重啟已載入的定義，
+**不會**重讀 plist 內容）：
+```bash
+launchctl bootout gui/501/com.alphavibe.marketscan
+launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.alphavibe.marketscan.plist
+```
+想立刻測試一次不等明天 02:00：`launchctl kickstart -k gui/501/com.alphavibe.marketscan`
+（這種情境不是要重讀時間，用 kickstart 沒問題）。log 在
+`~/Library/Logs/alphavibe-market-scan.log`。
+
 ## 資料位置
 
 `poc/data/`：`alphavibe.db`（SQLite，已 gitignore）＋ `philosophy/*.md`。
@@ -94,4 +119,5 @@ python3 -m unittest discover -s poc/kb-mcp/tests -v
 涵蓋：儲存層（立場衝突流程、中文全文檢索、哲學檔案）、FinMind 解析
 （mock）、MCP 協定端到端（真實子行程握手＋工具呼叫）、screen_stocks 篩選
 邏輯（PEG/回檔計算、單檔失敗不中斷整批、代碼數量上限）、/screen 網頁表單
-（GET/POST，mock）。
+（GET/POST，mock）、market_scan 全市場批次篩選（TWSE/TPEx 各自獨立失敗、
+產業別過濾、代碼合併、CLI 入口）、/market-scan 網頁表單（GET/POST，mock）。

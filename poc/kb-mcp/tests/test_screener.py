@@ -234,5 +234,91 @@ class ScreenStocksTest(unittest.TestCase):
         self.assertEqual([r["code"] for r in out["results"]], ["A", "B", "C"])
 
 
+class ComputeDrawdownTest(unittest.TestCase):
+    """compute_drawdown()：從 screen_stocks() 抽出，第二層 market_scan.py
+    的 Stage B 會重用這個函式，單獨測試確保抽出後行為不變。"""
+
+    def test_normal_case_matches_price_history(self):
+        with unittest.mock.patch.object(
+                finmind_client, "get_stock_price_history",
+                return_value=_prices(high=100.0, current=60.0)):
+            out = screener.compute_drawdown("2330")
+        self.assertAlmostEqual(out["drawdown_pct"], 0.40)
+        self.assertEqual(out["high_price"], 100.0)
+        self.assertEqual(out["current_price"], 60.0)
+        self.assertIsNone(out["error"])
+
+    def test_unexpected_exception_recorded_not_raised(self):
+        with unittest.mock.patch.object(
+                finmind_client, "get_stock_price_history",
+                side_effect=RuntimeError("模擬非預期例外")):
+            out = screener.compute_drawdown("2330")
+        self.assertIsNone(out["drawdown_pct"])
+        self.assertIn("非預期錯誤", out["error"])
+
+
+class MeetsFrameworkThresholdsTest(unittest.TestCase):
+    def test_single_sided_threshold_peg_deep_dip(self):
+        # framework_peg_deep_dip_concentration：PEG<1 且回檔>=40%（單邊，無上限）
+        self.assertTrue(screener.meets_framework_thresholds(0.5, 0.40))
+        self.assertFalse(screener.meets_framework_thresholds(1.0, 0.40))  # peg剛好=門檻，不符合
+        self.assertFalse(screener.meets_framework_thresholds(0.5, 0.39))  # 回檔差一點點
+
+    def test_double_sided_drawdown_window(self):
+        # 模擬 framework_revenue_high_price_dip：回檔15~30%甜蜜區間（雙邊門檻）
+        self.assertTrue(screener.meets_framework_thresholds(
+            None, 0.20, peg_threshold=None, drawdown_min=0.15, drawdown_max=0.30))
+        self.assertFalse(screener.meets_framework_thresholds(
+            None, 0.35, peg_threshold=None, drawdown_min=0.15, drawdown_max=0.30))  # 超過上限
+        self.assertFalse(screener.meets_framework_thresholds(
+            None, 0.10, peg_threshold=None, drawdown_min=0.15, drawdown_max=0.30))  # 不到下限
+
+    def test_none_threshold_skips_that_condition(self):
+        # peg_threshold=None：完全不檢查PEG，只看回檔
+        self.assertTrue(screener.meets_framework_thresholds(
+            None, 0.50, peg_threshold=None, drawdown_min=0.40))
+
+    def test_missing_values_never_satisfy_active_thresholds(self):
+        self.assertFalse(screener.meets_framework_thresholds(None, 0.50))  # peg缺值
+        self.assertFalse(screener.meets_framework_thresholds(0.5, None))   # drawdown缺值
+
+
+class ScreenStocksCustomThresholdsTest(unittest.TestCase):
+    def test_custom_thresholds_change_meets_framework(self):
+        # PER=10,yoy=20% → peg=0.5；drawdown=20%。預設門檻(drawdown>=0.40)不符合，
+        # 但自訂門檻(drawdown_min=0.15,drawdown_max=0.30)應該符合。
+        with unittest.mock.patch.object(
+                finmind_client, "get_stock_info", return_value={"stocks": []}), \
+             unittest.mock.patch.object(
+                finmind_client, "get_fundamentals", return_value=_fund(10.0)), \
+             unittest.mock.patch.object(
+                finmind_client, "get_revenue_yoy", return_value=_revenue_yoy(0.20)), \
+             unittest.mock.patch.object(
+                finmind_client, "get_stock_price_history",
+                return_value=_prices(high=100.0, current=80.0)):
+            default_out = screener.screen_stocks(["2330"])
+            custom_out = screener.screen_stocks(
+                ["2330"], peg_threshold=None, drawdown_min=0.15, drawdown_max=0.30)
+        self.assertFalse(default_out["results"][0]["meets_framework"])
+        self.assertTrue(custom_out["results"][0]["meets_framework"])
+
+    def test_default_call_unchanged_when_new_params_omitted(self):
+        """不傳新參數時，行為必須跟改動前完全一致——這是向後相容的關鍵驗證。"""
+        with unittest.mock.patch.object(
+                finmind_client, "get_stock_info", return_value={"stocks": []}), \
+             unittest.mock.patch.object(
+                finmind_client, "get_fundamentals", return_value=_fund(10.0)), \
+             unittest.mock.patch.object(
+                finmind_client, "get_revenue_yoy", return_value=_revenue_yoy(0.20)), \
+             unittest.mock.patch.object(
+                finmind_client, "get_stock_price_history",
+                return_value=_prices(high=100.0, current=60.0)):
+            out = screener.screen_stocks(["2330"])
+        row = out["results"][0]
+        self.assertAlmostEqual(row["peg"], 0.5)
+        self.assertAlmostEqual(row["drawdown_pct"], 0.40)
+        self.assertTrue(row["meets_framework"])
+
+
 if __name__ == "__main__":
     unittest.main()

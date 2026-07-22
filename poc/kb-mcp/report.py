@@ -19,6 +19,7 @@ import zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from kb_store import KBStore  # noqa: E402
+import frameworks  # noqa: E402
 import screener  # noqa: E402
 
 # 台股慣例：紅漲綠跌 → 偏多紅、偏空綠
@@ -164,6 +165,14 @@ def render(store):
                  % (now, len(stances), len(snapshots), holdings["count"],
                     len(comments), len(modules)))
     parts.append("<p class=\"meta\">本頁為研究輔助資訊，非投資建議。</p>")
+
+    parts.append(
+        "<p><a href=\"/screen\" style=\"display:inline-block;padding:.5rem 1rem;"
+        "background:#1971c2;color:#fff;border-radius:6px;text-decoration:none;"
+        "font-weight:600;margin-right:.6rem;\">第一層選股篩選 →</a>"
+        "<a href=\"/market-scan\" style=\"display:inline-block;padding:.5rem 1rem;"
+        "background:#1971c2;color:#fff;border-radius:6px;text-decoration:none;"
+        "font-weight:600;\">第二層全市場批次篩選 →</a></p>")
 
     parts.append(
         "<nav class=\"toc\">"
@@ -331,9 +340,17 @@ def render_screen_form(error=None):
     parts = [_screen_page_head("選股篩選")]
     parts.append("<p class=\"meta\"><a href=\"/\">← 回知識庫檢視</a></p>")
     parts.append("<h1>第一層選股篩選</h1>")
-    parts.append("<p class=\"meta\">依 framework_peg_deep_dip_concentration 框架："
-                 "PEG（本益成長比）&lt;1 且股價從近 120 天高點回檔 &gt;=40%%。"
-                 "貼入候選股票代碼，逗號或換行分隔，一次最多 %d 檔。</p>"
+    parts.append("<p class=\"meta\">理由：股價從高點大幅回檔（&gt;=40%）常代表市場"
+                 "情緒過度悲觀，但只有在「營收仍在正成長」時，這種下跌才比較可能是"
+                 "錯殺、而不是基本面真的變差。PEG（本益成長比）&lt;1 則是拿本益比"
+                 "對比成長率，找出相對估值便宜、有安全邊際的標的，比單看本益比更準。"
+                 "兩個條件疊在一起，篩的是「跌深但基本面沒有真的變差」的成長股，"
+                 "不是隨便一檔破底股。</p>")
+    parts.append("<p class=\"meta\">篩選條件：PEG（本益成長比）&lt;1 且股價從近 120 天"
+                 "高點回檔 &gt;=40%%。這只是框架裡可量化的兩個條件，供應鏈敘事"
+                 "（賣鏟子邏輯／具體新客戶新市場事件）是否成立仍需人工確認，篩出來"
+                 "的候選不代表可以直接買。貼入候選股票代碼，逗號或換行分隔，"
+                 "一次最多 %d 檔。</p>"
                  % screener.MAX_CODES)
     if error:
         parts.append("<p class=\"empty\" style=\"color:#c92a2a\">%s</p>" % esc(error))
@@ -393,6 +410,134 @@ def render_screen_results(result):
         parts.append("<p class=\"empty\">沒有輸入任何代碼。</p>")
     parts.append("</body></html>")
     return "".join(parts)
+
+
+def render_market_scan_page(selected_id, latest, error=None):
+    """`/market-scan`：第二層全市場批次篩選頁。selected_id 是目前選的框架
+    代號；latest 是 KBStore.get_latest_market_scan() 的回傳值。
+
+    資訊架構原則（2026-07-22 使用者回饋「目前的畫面沒有UI的考量，就算有
+    價值高的資訊，也是浪費」後改版）：符合框架的候選是使用者真正要看的
+    東西，不能被淹沒在上百檔不符合的候選裡——結果拆成「符合框架」（預設
+    展開，放最上面）與「全部候選」（預設收合，給想深入看原始資料的情境）
+    兩個獨立區塊，說明文字也挪到按鈕下方的收合區塊，不擋在最前面。
+    """
+    parts = [_screen_page_head("全市場批次篩選")]
+    parts.append("<p class=\"meta\"><a href=\"/\">← 回知識庫檢視</a></p>")
+    parts.append("<h1>第二層全市場批次篩選</h1>")
+
+    parts.append("<form method=\"get\" action=\"/market-scan\" style=\"margin:.6rem 0;\">"
+                 "<select name=\"framework\">")
+    for fw in frameworks.FRAMEWORKS:
+        selected_attr = " selected" if fw["id"] == selected_id else ""
+        parts.append("<option value=\"%s\"%s>%s</option>"
+                     % (esc(fw["id"]), selected_attr, esc(fw["label"])))
+    parts.append("</select> "
+                 "<button type=\"submit\" style=\"padding:.4rem .8rem;\">切換框架</button>"
+                 "</form>")
+
+    parts.append("<form method=\"post\" action=\"/market-scan\">"
+                 "<input type=\"hidden\" name=\"framework\" value=\"%s\">"
+                 "<button type=\"submit\" style=\"font-size:1rem;padding:.6rem 1.2rem;"
+                 "background:#1971c2;color:#fff;border:none;border-radius:6px;\">"
+                 "立即掃描（約需30秒~數分鐘）</button></form>" % esc(selected_id))
+
+    parts.append("<details class=\"philomod\"><summary>這是什麼？</summary><pre>"
+                 "用 TWSE/TPEx 官方批次資料，在框架鎖定的產業別內自動找候選"
+                 "（不用手動貼代碼），範圍只有上市＋上櫃（興櫃沒有官方批次PER"
+                 "資料，不在這次掃描範圍）。每天 02:00 也會自動掃描一次，"
+                 "這裡永遠顯示最近一次結果。</pre></details>")
+
+    if error:
+        parts.append("<p class=\"empty\" style=\"color:#c92a2a\">%s</p>" % esc(error))
+
+    if not latest.get("found"):
+        parts.append("<p class=\"empty\">尚無掃描紀錄，可按上方「立即掃描」，"
+                     "或等待每天 02:00 排程自動跑一次。</p>")
+        parts.append("</body></html>")
+        return "".join(parts)
+
+    run = latest["run"]
+    rows = latest["results"]
+    hit_rows = [r for r in rows if r.get("meets_framework")]
+    hit_count = run.get("meets_count", len(hit_rows))
+    trigger_text = {"manual": "手動觸發", "scheduled": "排程自動"}.get(
+        run.get("trigger_source"), esc(run.get("trigger_source")))
+    parts.append("<p class=\"meta\">最近一次掃描：%s（%s）｜候選 %d 檔，符合框架 %d 檔</p>"
+                 % (esc(run.get("run_at")), trigger_text,
+                    run.get("candidate_count", len(rows)), hit_count))
+
+    twse_err = run.get("twse_error")
+    tpex_err = run.get("tpex_error")
+    if twse_err or tpex_err:
+        parts.append("<p class=\"empty\" style=\"color:#c92a2a\">")
+        if twse_err:
+            parts.append("TWSE 資料源異常：%s　" % esc(twse_err))
+        if tpex_err:
+            parts.append("TPEx 資料源異常：%s" % esc(tpex_err))
+        parts.append("（該市場當次候選數會變少，不影響另一邊）</p>")
+
+    parts.append("<details class=\"section\" open><summary><h2>符合框架的候選（%d 檔）</h2>"
+                 "</summary>" % hit_count)
+    if hit_rows:
+        parts.append("<div class=\"tablewrap\"><table><thead><tr>"
+                     "<th>代碼</th><th>名稱</th><th>市場</th><th>產業別</th>"
+                     "<th>PER</th><th>營收年增率</th><th>PEG</th><th>回檔幅度</th>"
+                     "<th>目前價</th></tr></thead><tbody>")
+        for r in hit_rows:
+            parts.append(_market_scan_row_html(r, highlight=False))
+        parts.append("</tbody></table></div>")
+    else:
+        parts.append("<p class=\"empty\">這次沒有候選同時符合 PEG 與回檔門檻，"
+                     "可以到下方「全部候選」查看完整清單。</p>")
+    parts.append("</details>")
+
+    parts.append("<details class=\"section\"><summary><h2>全部候選（%d 檔，含未達門檻）</h2>"
+                 "</summary>" % len(rows))
+    if rows:
+        parts.append("<div class=\"tablewrap\"><table><thead><tr>"
+                     "<th>代碼</th><th>名稱</th><th>市場</th><th>產業別</th>"
+                     "<th>PER</th><th>營收年增率</th><th>PEG</th><th>回檔幅度</th>"
+                     "<th>目前價</th><th>符合框架</th><th>備註</th></tr></thead><tbody>")
+        for r in rows:
+            parts.append(_market_scan_row_html(r, highlight=True))
+        parts.append("</tbody></table></div>")
+    else:
+        parts.append("<p class=\"empty\">這次掃描沒有候選（可能兩個資料源都異常，"
+                     "或框架門檻下確實沒有符合的股票）。</p>")
+    parts.append("</details>")
+
+    parts.append("</body></html>")
+    return "".join(parts)
+
+
+def _market_scan_row_html(r, highlight):
+    """/market-scan 結果表格的單一列。highlight=True 才畫黃底（符合框架
+    候選區塊裡全部列都符合，畫了反而是雜訊，所以那裡傳 False）。
+    highlight=True 時多渲染「符合框架」「備註」兩欄，維持與全部候選表格
+    的欄位對齊；highlight=False（符合框架區塊）省略這兩欄，因為值恆為
+    「符合」「—」，不提供資訊。"""
+    peg_text = ("%.2f" % r["peg"]) if r["peg"] is not None else "—"
+    yoy_text = ("%.1f%%" % (r["revenue_yoy"] * 100)) if r["revenue_yoy"] is not None else "—"
+    drawdown_text = ("%.1f%%" % (r["drawdown_pct"] * 100)) if r["drawdown_pct"] is not None else "—"
+    per_text = ("%.2f" % r["per"]) if r["per"] is not None else "—"
+    base = (
+        "<td data-label=\"代碼\">%s</td><td data-label=\"名稱\">%s</td>"
+        "<td data-label=\"市場\">%s</td><td data-label=\"產業別\">%s</td>"
+        "<td data-label=\"PER\">%s</td><td data-label=\"營收年增率\">%s</td>"
+        "<td data-label=\"PEG\">%s</td><td data-label=\"回檔幅度\">%s</td>"
+        "<td data-label=\"目前價\">%s</td>"
+        % (esc(r["code"]), esc(r["name"]), esc(r.get("market")), esc(r.get("industry")),
+           per_text, yoy_text, peg_text, drawdown_text, esc(r.get("current_price"))))
+    if not highlight:
+        return "<tr>%s</tr>" % base
+    hit = r.get("meets_framework")
+    row_style = " style=\"background:#fff3bf\"" if hit else ""
+    hit_text = "符合" if hit else "—"
+    note = esc(r.get("error")) if r.get("error") else "—"
+    return ("<tr%s>%s<td data-label=\"符合框架\" class=\"stance\">%s</td>"
+            "<td data-label=\"備註\">%s</td></tr>"
+            % (row_style, base, hit_text, note))
 
 
 def default_data_dir():

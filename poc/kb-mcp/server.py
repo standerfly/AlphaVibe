@@ -14,7 +14,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import finmind_client  # noqa: E402
+import frameworks  # noqa: E402
 import holdings_parser  # noqa: E402
+import market_scan  # noqa: E402
 import screener  # noqa: E402
 import tpex_client  # noqa: E402
 from kb_store import KBStore  # noqa: E402
@@ -353,6 +355,39 @@ TOOLS = [
             "required": ["codes"],
         },
     },
+    {
+        "name": "run_market_scan",
+        "description": ("第二層全市場批次篩選：Stage A 用 TWSE/TPEx 官方批次 "
+                        "PER＋月營收年增率 API，在框架鎖定的產業別內快速初篩候選"
+                        "（不逐檔查FinMind，比第一層screen_stocks快很多）；Stage B "
+                        "對候選逐檔查FinMind股價區間算回檔幅度，套用框架門檻。"
+                        "TWSE或TPEx任一資料源失敗不影響另一邊（該市場記入"
+                        "market_errors，候選數變少但不中斷）。結果連同執行時間"
+                        "存入資料庫。範圍只有上市＋上櫃，興櫃沒有官方批次PER"
+                        "端點不在這次掃描範圍內。候選數常有數十~一百多檔，"
+                        "逐檔查回檔實測約30秒量級，屬正常。框架裡「供應鏈敘事"
+                        "是否具體」這類條件無法自動判斷，篩出的候選仍需人工/AI"
+                        "事後確認。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "framework_id": {"type": "string",
+                                 "description": "框架代號，見 frameworks.FRAMEWORKS；省略則用預設框架"},
+            },
+        },
+    },
+    {
+        "name": "get_market_scan",
+        "description": ("查詢最近一次全市場批次篩選結果（不重新掃描，速度快）。"
+                        "不給framework_id則查全部框架中最新一次。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "framework_id": {"type": "string",
+                                 "description": "框架代號；省略＝查最新一次（不限框架）"},
+            },
+        },
+    },
 ]
 
 
@@ -470,6 +505,17 @@ class Server:
         if name == "screen_stocks":
             codes = screener.parse_codes(args["codes"])
             return screener.screen_stocks(codes, data_dir=self.data_dir)
+        if name == "run_market_scan":
+            framework_id = args.get("framework_id") or frameworks.default_framework_id()
+            result = market_scan.run_scan(
+                framework_id, data_dir=self.data_dir, trigger_source="manual")
+            if "error" not in result:
+                self.store.save_market_scan_run(
+                    framework_id, "manual", result["results"],
+                    result["candidate_count"], market_errors=result["market_errors"])
+            return result
+        if name == "get_market_scan":
+            return self.store.get_latest_market_scan(framework_id=args.get("framework_id"))
         raise ValueError("未知工具：%s" % name)
 
     def refresh_holdings_prices(self):
