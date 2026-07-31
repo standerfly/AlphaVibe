@@ -1,10 +1,13 @@
 """report.py 測試：有資料／空資料／HTML 跳脫。"""
+import html
+import json
 import os
 import re
 import shutil
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -52,6 +55,26 @@ class ReportTest(unittest.TestCase):
         self.assertIn("尚無立場資料", page)
         self.assertIn("尚無評論資料", page)
         self.assertIn("立場 0 檔", page)
+
+    def test_report_shows_theme_concentration(self):
+        store = KBStore(self.tmp)
+        store.save_holdings([
+            {"code": "3661", "name": "世芯-KY", "shares": 100, "avg_cost": 2000},
+            {"code": "2454", "name": "聯發科", "shares": 100, "avg_cost": 1000},
+        ])
+        store.upsert_stock_price("3661", 3000, "2026-07-24")
+        store.upsert_stock_price("2454", 1000, "2026-07-24")
+        store.save_stock_theme("3661", "AI CAPEX")
+        store.close()
+
+        page = self._generate()
+        self.assertIn("主題集中度", page)
+        self.assertIn("AI CAPEX", page)
+        # 3661 市值 30 萬、2454 市值 10 萬，總市值 40 萬，AI CAPEX 佔 75%
+        self.assertIn("75.0%", page)
+        # 2454 沒標主題，跟其他缺值欄位一樣顯示 —，不計入任何主題小計
+        self.assertIn(
+            '<td data-label="投資主題">—</td>', page)
 
     def test_main_page_links_to_screen_feature(self):
         """主檢視頁要有連到 /screen 的入口，不能只有直接打 URL 才進得去
@@ -157,7 +180,7 @@ class ScreenPageTest(unittest.TestCase):
         }
         page = report.render_screen_results(result)
         self.assertIn("data-label=\"代碼\">2330", page)
-        self.assertIn("background:#fff3bf", page)  # 符合框架的列有標色
+        self.assertIn("class=\"row-highlight\"", page)  # 符合框架的列有標色
         self.assertIn("非預期錯誤：boom", page)
         self.assertIn("符合框架（PEG&lt;1 且回檔&gt;=40%）1 檔", page)
 
@@ -257,14 +280,14 @@ class MarketScanPageTest(unittest.TestCase):
         page = report.render_market_scan_page("peg_deep_dip_concentration", self._latest(rows))
         match_section = re.search(
             r'<details class="section" open><summary><h2>符合框架的候選.*?</details>', page, re.S)
-        self.assertNotIn("background:#fff3bf", match_section.group(0))
+        self.assertNotIn("class=\"row-highlight\"", match_section.group(0))
 
     def test_all_candidates_section_still_highlights_matches(self):
         rows = [self._row("3135", meets=True), self._row("2222", meets=False, peg=3.0)]
         page = report.render_market_scan_page("peg_deep_dip_concentration", self._latest(rows))
         all_section = re.search(
             r'<details class="section"><summary><h2>全部候選.*?</details>\s*</body>', page, re.S)
-        self.assertIn("background:#fff3bf", all_section.group(0))
+        self.assertIn("class=\"row-highlight\"", all_section.group(0))
 
     def test_explanation_text_moved_into_collapsed_details(self):
         rows = [self._row("3135", meets=True)]
@@ -330,6 +353,334 @@ class MarketScanTrackReasonTest(unittest.TestCase):
             self.framework, "2026-07-22 13:58:21")
         self.assertNotIn("None", reason)
         self.assertIn("非預期錯誤：模擬失敗", reason)
+
+
+class DashboardTest(unittest.TestCase):
+    """FR-058 儀表板（方案A單頁式）render_dashboard() 測試。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="alphavibe-dashboard-test-")
+        self.store = KBStore(self.tmp)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp)
+
+    def test_empty_db_does_not_raise(self):
+        page = report.render_dashboard(self.store)
+        self.assertIn("AlphaVibe 儀表板", page)
+        self.assertIn("今日無需特別留意的標的", page)
+        self.assertIn("目前沒有符合任何策略門檻的候選", page)
+        self.assertIn("尚無持股快照", page)
+
+    def test_today_highlights_filters_and_sorts_conflict_first(self):
+        today = report.datetime.date.today().isoformat()
+        self.store.save_module_d_result(
+            "2330", "通用層", "財報兌現度正常，無異常",
+            suggested_action=None, conflict_flag=False,
+            checked_at=today + "T09:00:00")
+        self.store.save_module_d_result(
+            "3661", "策略層", "PEG回升，假說可能失效",
+            suggested_action="建議減碼30%", conflict_flag=False,
+            checked_at=today + "T09:01:00")
+        self.store.save_module_d_result(
+            "2454", "老芋頭動向", "老芋頭賣出但基本面未變差",
+            suggested_action="建議觀察，暫不跟進", conflict_flag=True,
+            checked_at=today + "T09:02:00")
+        page = report.render_dashboard(self.store)
+        # suggested_action=None（沒觸發任何檢視規則的正常記錄）不出現在今日重點
+        self.assertNotIn("財報兌現度正常，無異常", page)
+        self.assertIn("PEG回升，假說可能失效", page)
+        self.assertIn("老芋頭賣出但基本面未變差", page)
+        self.assertIn("⚠️ 立場衝突", page)
+        # conflict_flag=True（2454）排最前面，即使checked_at較晚
+        self.assertLess(page.index("2454"), page.index("3661"))
+
+    def test_no_highlights_today_shows_empty_state(self):
+        page = report.render_dashboard(self.store)
+        self.assertIn("今日無需特別留意的標的", page)
+
+    def test_new_candidates_merges_multiple_frameworks_into_one_row(self):
+        fw_ids = [fw["id"] for fw in frameworks.FRAMEWORKS]
+        self.assertGreaterEqual(len(fw_ids), 2, "測試假設至少2套框架，跟FR-058要求的"
+                                "「同一代碼符合多套框架要合併」情境一致")
+        common_row = {"code": "3661", "name": "世芯-KY", "market": "TWSE",
+                     "industry": "半導體業", "per": 8.0, "revenue_yoy": 0.5,
+                     "revenue_period": "2026-06", "drawdown_pct": 0.45,
+                     "high_price": 100.0, "high_date": "2026-06-01",
+                     "current_price": 55.0, "current_date": "2026-07-20",
+                     "peg": 0.16, "meets_framework": True, "error": None}
+        for fid in fw_ids:
+            self.store.save_market_scan_run(fid, "scheduled", [dict(common_row)],
+                                            candidate_count=1)
+        page = report.render_dashboard(self.store)
+        self.assertEqual(page.count("data-label=\"代碼\">3661"), 1)
+        for fw in frameworks.FRAMEWORKS:
+            self.assertIn(fw["label"], page)
+
+    def test_new_candidates_only_meets_framework_rows_included(self):
+        fid = frameworks.default_framework_id()
+        self.store.save_market_scan_run(
+            fid, "scheduled",
+            [{"code": "9999", "name": "未達門檻股", "market": "TWSE",
+              "industry": "半導體業", "per": 20.0, "revenue_yoy": -0.1,
+              "revenue_period": "2026-06", "drawdown_pct": 0.05,
+              "high_price": 100.0, "high_date": "2026-06-01",
+              "current_price": 95.0, "current_date": "2026-07-20",
+              "peg": None, "meets_framework": False, "error": None}],
+            candidate_count=1)
+        page = report.render_dashboard(self.store)
+        self.assertNotIn("data-label=\"代碼\">9999", page)
+        self.assertIn("目前沒有符合任何策略門檻的候選", page)
+
+    def test_strategy_settings_shows_thresholds_and_invalidation_text(self):
+        page = report.render_dashboard(self.store)
+        self.assertIn("篩選門檻：PEG&lt;1 且營收年增率&gt;=0% 且回檔&gt;=40%", page)
+        self.assertIn("假說失效：PEG回升至&gt;=1，或回檔收斂至&lt;15%", page)
+        self.assertIn("假說失效：回檔收斂至&lt;15%，或營收年增率降至&lt;=0%", page)
+        self.assertIn("＋新增或調整策略", page)
+        self.assertIn("策略不是填表單做出來的", page)
+
+    def test_strategy_settings_handles_missing_invalidation_and_arbitrary_combo(self):
+        """驗證invalidation轉換文字通用於任意策略／任意子條件組合，不是為
+        既有兩套策略寫死的文字；也驗證沒有invalidation欄位時的預設文字。"""
+        fake_frameworks = [
+            {"id": "no_invalidation", "label": "無專屬規則測試框架",
+             "peg_max": 1.5, "revenue_yoy_min": 0.1, "drawdown_min": 0.2,
+             "drawdown_max": None, "excess_drawdown_min": None},
+            {"id": "yoy_only", "label": "僅營收年增率失效測試框架",
+             "peg_max": None, "revenue_yoy_min": None, "drawdown_min": None,
+             "drawdown_max": None, "excess_drawdown_min": None,
+             "invalidation": {"revenue_yoy_max": 0.05}},
+        ]
+        with unittest.mock.patch.object(frameworks, "FRAMEWORKS", fake_frameworks):
+            page = report.render_dashboard(self.store)
+        self.assertIn("尚未定義策略專屬檢視規則", page)
+        self.assertIn("假說失效：營收年增率降至&lt;=5%", page)
+
+    def test_holdings_section_matches_classic_render_exactly(self):
+        """FR-058驗收硬要求：render()（舊版）跟render_dashboard()（新版）的
+        持股比例／主題集中度數字要完全一致——兩者共用_render_holdings_
+        section()，直接比對兩邊輸出的<details id="section-holdings">片段
+        是否逐字元相同，證明沒有分歧。"""
+        self.store.save_holdings([
+            {"code": "3661", "name": "世芯-KY", "shares": 100, "avg_cost": 2000},
+            {"code": "2454", "name": "聯發科", "shares": 100, "avg_cost": 1000},
+        ])
+        self.store.upsert_stock_price("3661", 3000, "2026-07-29")
+        self.store.upsert_stock_price("2454", 1200, "2026-07-29")
+        self.store.save_stock_theme("3661", "ASIC")
+        self.store.save_stock_theme("2454", "手機晶片")
+
+        classic_page = report.render(self.store)
+        dashboard_page = report.render_dashboard(self.store)
+
+        def extract_holdings(page):
+            start = page.index('<details class="section" id="section-holdings"')
+            end = page.index("</details>", start) + len("</details>")
+            return page[start:end]
+
+        holdings_classic = extract_holdings(classic_page)
+        holdings_dashboard = extract_holdings(dashboard_page)
+        self.assertEqual(holdings_classic, holdings_dashboard)
+        self.assertIn("71.4%", holdings_classic)  # 世芯-KY市值300,000／總市值420,000
+        self.assertIn("28.6%", holdings_classic)  # 聯發科市值120,000／總市值420,000
+
+    def test_watchlist_only_section_lists_stance_without_holdings(self):
+        """PO反饋：純觀察性質的立場（研究過但還沒真的買）要出現在儀表板，
+        不能只有切到 /report-classic 才看得到。"""
+        self.store.save_stance("3661", "偏多", name="世芯-KY",
+                               reason="還在觀察，尚未建倉")
+        page = report.render_dashboard(self.store)
+        start = page.index('<details class="section" id="section-watchlist-only"')
+        end = page.index("</details>", start) + len("</details>")
+        section = page[start:end]
+        self.assertIn("data-label=\"代碼\">3661", section)
+        self.assertIn("世芯-KY", section)
+        self.assertIn("偏多", section)
+        self.assertIn("還在觀察，尚未建倉", section)
+        # 純觀察區塊不顯示庫存專屬欄位（沒有庫存資料，顯示沒有意義）
+        self.assertNotIn("市值", section)
+        self.assertNotIn("持股比例", section)
+
+    def test_watchlist_only_section_empty_when_all_stances_have_holdings(self):
+        """有立場的標的都已經有對應庫存時，純觀察區塊要顯示空狀態文字，
+        不能把已經在庫存總覽出現過的標的重複列一次。"""
+        self.store.save_stance("3661", "偏多", name="世芯-KY", reason="估值合理")
+        self.store.save_holdings([
+            {"code": "3661", "name": "世芯-KY", "shares": 100, "avg_cost": 2000},
+        ])
+        page = report.render_dashboard(self.store)
+        start = page.index('<details class="section" id="section-watchlist-only"')
+        end = page.index("</details>", start) + len("</details>")
+        section = page[start:end]
+        self.assertIn("目前沒有純觀察、尚未建倉的標的。", section)
+        self.assertNotIn("data-label=\"代碼\">3661", section)
+
+    def test_watchlist_only_section_empty_when_no_stances_at_all(self):
+        """完全沒有立場資料時（空db）也要顯示空狀態文字，不能出錯或留空白。"""
+        page = report.render_dashboard(self.store)
+        start = page.index('<details class="section" id="section-watchlist-only"')
+        end = page.index("</details>", start) + len("</details>")
+        section = page[start:end]
+        self.assertIn("目前沒有純觀察、尚未建倉的標的。", section)
+
+    def test_watchlist_only_section_excludes_holdings_when_mixed(self):
+        """庫存＋純觀察混合情境：3661有庫存要出現在庫存總覽，2454純觀察
+        要出現在本區塊，兩邊不能重複也不能互相跑錯區塊。"""
+        self.store.save_stance("3661", "偏多", name="世芯-KY", reason="已建倉")
+        self.store.save_holdings([
+            {"code": "3661", "name": "世芯-KY", "shares": 100, "avg_cost": 2000},
+        ])
+        self.store.save_stance("2454", "偏多", name="聯發科", reason="觀察中，尚未買進")
+        page = report.render_dashboard(self.store)
+
+        holdings_start = page.index('<details class="section" id="section-holdings"')
+        holdings_end = page.index("</details>", holdings_start) + len("</details>")
+        holdings_section = page[holdings_start:holdings_end]
+
+        watchlist_start = page.index('<details class="section" id="section-watchlist-only"')
+        watchlist_end = page.index("</details>", watchlist_start) + len("</details>")
+        watchlist_section = page[watchlist_start:watchlist_end]
+
+        self.assertIn("data-label=\"代碼\">3661", holdings_section)
+        self.assertNotIn("data-label=\"代碼\">3661", watchlist_section)
+        self.assertIn("data-label=\"代碼\">2454", watchlist_section)
+        self.assertNotIn("data-label=\"代碼\">2454", holdings_section)
+
+    def test_flash_message_success_and_error_styling(self):
+        success_page = report.render_dashboard(self.store, flash="已加入自選股：2330")
+        self.assertIn("已加入自選股：2330", success_page)
+        self.assertIn("var(--green)", success_page)  # 成功＝綠
+
+        error_page = report.render_dashboard(self.store, flash="⚠️ 加自選股失敗：代碼為必填")
+        self.assertIn("加自選股失敗：代碼為必填", error_page)
+        self.assertIn("#c92a2a", error_page)  # 錯誤＝紅
+
+
+class HoldingsPreviewTest(unittest.TestCase):
+    """report.render_holdings_preview()：貼庫存帳單快速輸入第一步（預覽），
+    見 report_server.py 的 /dashboard/holdings/preview（第二步 /confirm 的
+    端到端流程測試在 test_report_server.py）。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="alphavibe-holdings-preview-test-")
+        self.store = KBStore(self.tmp)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp)
+
+    def test_categorizes_added_removed_changed_and_carries_avg_cost(self):
+        """上次快照：2330(1000股,avg_cost=500)、2454(200股,無avg_cost)、
+        9999(300股)。這次帳單：2330股數變成2000（avg_cost要沿用500）、
+        2454股數不變（沒有avg_cost可沿用，維持None）、9999沒印到（消失）、
+        3661是新代碼（新增）。"""
+        self.store.save_holdings([
+            {"code": "2330", "name": "台積電", "shares": 1000, "avg_cost": 500},
+            {"code": "2454", "name": "聯發科", "shares": 200, "avg_cost": None},
+            {"code": "9999", "name": "舊代碼", "shares": 300, "avg_cost": 10},
+        ])
+        parsed = {
+            "rows": [
+                {"code": "2330", "name": "台積電", "shares": 2000, "is_emerging": False},
+                {"code": "2454", "name": "聯發科", "shares": 200, "is_emerging": False},
+                {"code": "3661", "name": "世芯-KY", "shares": 50, "is_emerging": False},
+            ],
+            "unparsed_lines": [],
+            "total_parsed": 3,
+        }
+        previous = self.store.get_holdings()
+        page = report.render_holdings_preview(parsed, previous)
+
+        # 新增：3661
+        self.assertIn("新增（這次有、上次沒有）", page)
+        self.assertIn("3661", page)
+        self.assertIn("世芯-KY", page)
+        # 消失：9999（不下判斷是否已出清，只講沒印到）
+        self.assertIn("這次帳單沒有這一檔", page)
+        self.assertIn("9999", page)
+        self.assertIn("舊代碼", page)
+        # 股數變化：2330 1000→2000（sqlite REAL 欄位存回來是 1000.0，不是
+        # 純整數——跟其他既有測試對 shares/avg_cost 的實測結果一致）
+        self.assertIn("股數變化", page)
+        self.assertIn("1000.0 股 → 2000 股", page)
+        # avg_cost 沿用：2330要帶著500.0字樣出現在完整清單
+        self.assertIn(
+            "<td data-label=\"平均成本\">500.0</td>", page)
+        # 2454沒有avg_cost可沿用，維持None（顯示—），不能無中生有
+        rows_json_start = page.index("name=\"rows_json\" value=\"") + len(
+            "name=\"rows_json\" value=\"")
+        rows_json_end = page.index("\">", rows_json_start)
+        raw = html.unescape(page[rows_json_start:rows_json_end])
+        restored = json.loads(raw)
+        by_code = {r["code"]: r for r in restored}
+        self.assertEqual(by_code["2330"]["avg_cost"], 500)
+        self.assertIsNone(by_code["2454"]["avg_cost"])
+        self.assertEqual(by_code["2330"]["shares"], 2000)
+        self.assertEqual(by_code["3661"]["name"], "世芯-KY")
+
+    def test_no_changes_shows_neutral_message(self):
+        self.store.save_holdings([
+            {"code": "2330", "name": "台積電", "shares": 1000, "avg_cost": 500},
+        ])
+        parsed = {
+            "rows": [{"code": "2330", "name": "台積電", "shares": 1000,
+                      "is_emerging": False}],
+            "unparsed_lines": [], "total_parsed": 1,
+        }
+        page = report.render_holdings_preview(parsed, self.store.get_holdings())
+        self.assertIn("與上次快照相比沒有變化。", page)
+        self.assertNotIn("新增（這次有、上次沒有）", page)
+        self.assertNotIn("股數變化", page)
+
+    def test_unparsed_lines_shown_clearly(self):
+        parsed = {
+            "rows": [{"code": "2330", "name": "台積電", "shares": 1000,
+                      "is_emerging": False}],
+            "unparsed_lines": ["這一行格式怪怪的無法解析123abc"],
+            "total_parsed": 1,
+        }
+        page = report.render_holdings_preview(parsed, self.store.get_holdings())
+        self.assertIn("1 行無法解析", page)
+        self.assertIn("這一行格式怪怪的無法解析123abc", page)
+
+    def test_empty_rows_shows_no_confirm_form(self):
+        """完全沒解析出任何列時，不能顯示會撞ValueError（save_holdings要求
+        非空清單）的「確認存入」表單，要改顯示明確的空狀態訊息。"""
+        parsed = {"rows": [], "unparsed_lines": ["壞掉的行"], "total_parsed": 0}
+        page = report.render_holdings_preview(parsed, self.store.get_holdings())
+        self.assertIn("沒有解析出任何資料列，無法存入", page)
+        self.assertNotIn("/dashboard/holdings/confirm", page)
+
+    def test_first_time_snapshot_all_rows_are_added(self):
+        """從來沒有存過持股快照（previous_holdings為空）時，全部視為新增，
+        不能因為prev為空而出錯或誤判成「消失」。"""
+        parsed = {
+            "rows": [{"code": "2330", "name": "台積電", "shares": 1000,
+                      "is_emerging": False}],
+            "unparsed_lines": [], "total_parsed": 1,
+        }
+        page = report.render_holdings_preview(parsed, self.store.get_holdings())
+        self.assertIn("新增（這次有、上次沒有）", page)
+        self.assertNotIn("這次帳單沒有這一檔", page)
+
+    def test_rows_json_html_escape_round_trips_dash_ky_name(self):
+        """股票名稱含「-KY」這種常見but非HTML特殊字元，經esc()跳脫進隱藏
+        欄位value屬性後，html.unescape()還原要拿回一模一樣的名稱，不能
+        遺失或變形資料。"""
+        parsed = {
+            "rows": [{"code": "3661", "name": "世芯-KY", "shares": 100,
+                      "is_emerging": False}],
+            "unparsed_lines": [], "total_parsed": 1,
+        }
+        page = report.render_holdings_preview(parsed, self.store.get_holdings())
+        start = page.index("name=\"rows_json\" value=\"") + len(
+            "name=\"rows_json\" value=\"")
+        end = page.index("\">", start)
+        raw = html.unescape(page[start:end])
+        restored = json.loads(raw)
+        self.assertEqual(restored[0]["name"], "世芯-KY")
 
 
 if __name__ == "__main__":

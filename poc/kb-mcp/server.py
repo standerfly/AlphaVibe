@@ -17,8 +17,11 @@ import finmind_client  # noqa: E402
 import frameworks  # noqa: E402
 import holdings_parser  # noqa: E402
 import market_scan  # noqa: E402
+import review_engine  # noqa: E402
 import screener  # noqa: E402
 import tpex_client  # noqa: E402
+import trade_ledger_parser  # noqa: E402
+import trade_text_parser  # noqa: E402
 from kb_store import KBStore  # noqa: E402
 
 SUPPORTED_PROTOCOL_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18")
@@ -310,6 +313,227 @@ TOOLS = [
         },
     },
     {
+        "name": "save_stock_theme",
+        "description": ("記錄一檔股票的投資主題標籤（如「AI CAPEX」），跟官方產業分類是"
+                        "兩回事，供部位管理組合集中度檢查用（單一主題最多50%）。一檔股票"
+                        "只有一個主題，同代碼再存＝覆蓋既有標籤。經使用者確認後呼叫。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "股票代碼"},
+                "theme": {"type": "string", "description": "投資主題，如「AI CAPEX」"},
+            },
+            "required": ["code", "theme"],
+        },
+    },
+    {
+        "name": "get_stock_theme",
+        "description": "查詢所有股票的投資主題標籤（code→theme 對照）。不需參數。",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "save_laoyutou_trade",
+        "description": ("記錄老芋頭（PO信任的資深投資朋友／導師，非系統使用者）的一筆"
+                        "進出。他不一定每次都寫原因，但寫的時候是重要訊號（策略框架本身"
+                        "即從他的原因沉澱而來），reason 可省略。供模組D「老芋頭動向比對」"
+                        "（FR-053）比對他的進出、以及跟PO持股交叉比對用。經使用者確認後"
+                        "呼叫，不要自行猜測他的交易內容。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "股票代碼"},
+                "name": {"type": "string", "description": "股票名稱"},
+                "action": {"type": "string", "description": "買 或 賣"},
+                "shares": {"type": "number", "description": "股數"},
+                "price": {"type": "number", "description": "價格"},
+                "date": {"type": "string", "description": "交易日期 YYYY-MM-DD"},
+                "reason": {"type": "string", "description": "原因，可省略（他不一定每次都寫）"},
+                "source_ref": {"type": "string", "description": "來源引用"},
+            },
+            "required": ["code", "action", "shares", "price", "date"],
+        },
+    },
+    {
+        "name": "get_laoyutou_trades",
+        "description": "查老芋頭交易紀錄；不給 code 列出最近N筆（跨標的，依日期新到舊），給 code 列出該標的的老芋頭交易歷史。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "股票代碼，省略＝跨標的列最近N筆"},
+                "limit": {"type": "integer", "description": "回傳筆數上限，預設 20"},
+            },
+        },
+    },
+    {
+        "name": "save_trade_ledger_entry",
+        "description": ("記錄PO自己的一筆進出到交易流水表（FR-056，跟老芋頭的交易表是"
+                        "兩張不同的表，這張是PO自己的），取代 holdings 快照覆蓋式的限制。"
+                        "add_sequence＝這是第幾次加碼（供FR-054遞減式加碼比例"
+                        "40/25/15/10/10%計算用），只在買入時有意義；賣出時會被忽略、強制"
+                        "存為 NULL。經使用者確認後呼叫。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "股票代碼"},
+                "name": {"type": "string", "description": "股票名稱"},
+                "action": {"type": "string", "description": "買 或 賣"},
+                "add_sequence": {"type": "integer", "description": "第幾次加碼（1起算），僅買入適用，賣出會被忽略"},
+                "shares": {"type": "number", "description": "股數"},
+                "price": {"type": "number", "description": "價格"},
+                "date": {"type": "string", "description": "交易日期 YYYY-MM-DD"},
+                "source_ref": {"type": "string", "description": "來源引用"},
+            },
+            "required": ["code", "action", "shares", "price", "date"],
+        },
+    },
+    {
+        "name": "get_trade_ledger",
+        "description": ("查某標的完整加碼流水（依日期由舊到新），供呼叫端推算「下一次"
+                        "加碼是第幾次」（數 add_sequence 非空的買入筆數＋1）。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"code": {"type": "string", "description": "股票代碼"}},
+            "required": ["code"],
+        },
+    },
+    {
+        "name": "check_general_review",
+        "description": ("FR-051 模組D通用檢視層：不管哪個策略篩進來的標的，每檔都要過的"
+                        "一致性提醒（所有檢查結果都是提醒，不自動裁決，決策權在PO）。"
+                        "這次只自動算2項——成長趨緩（近3個月月營收年增率是否連續下滑，"
+                        "且仍是正成長）、下檔風險（目前PER相對近2年歷史分布是否偏高，"
+                        "偏高時附「PE回歸歷史中位數」的潛在跌幅粗估）。財報兌現度／"
+                        "利多出盡／預期獲利能否持續上修這3項尚未自動化，回傳裡的"
+                        "manual_notes 是留給PO手動填寫的欄位（一律是None，需另外呼叫"
+                        "其他方式記錄，本工具不寫入）。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"code": {"type": "string", "description": "股票代碼，如 2330"}},
+            "required": ["code"],
+        },
+    },
+    {
+        "name": "check_strategy_review",
+        "description": ("FR-052 模組D策略專屬層：這檔標的目前還符不符合當初篩進來那套"
+                        "策略的假說（用該策略自訂的「假說失效」規則，跟FR-050進場篩選"
+                        "門檻是不同方向的判斷——進場門檻要全部符合，失效判斷是任一子"
+                        "條件成立即算失效）。重用screen_stocks()已算好的PEG／回檔幅度／"
+                        "營收年增率數值，不重新查詢。查無此strategy_id或資料不足/查詢"
+                        "失敗時，invalidated一律回False（保守原則，不確定就不誤報失效），"
+                        "reasons附說明。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "股票代碼，如 2330"},
+                "strategy_id": {"type": "string", "description": "策略代號，如 peg_deep_dip_concentration"},
+            },
+            "required": ["code", "strategy_id"],
+        },
+    },
+    {
+        "name": "check_laoyutou_signal",
+        "description": ("FR-053 模組D老芋頭動向比對：獨立訊號來源，不限定策略——查該標的"
+                        "近N天（預設14天，可用lookback_days調整）內是否有老芋頭交易紀錄"
+                        "（store.get_laoyutou_trades），並比對PO目前是否持有此檔"
+                        "（store.get_holdings）。多筆交易時finding以最新一筆為主，"
+                        "recent_trades完整列出視窗內全部交易。⚠️ 純陳述事實（他做了"
+                        "什麼、你現在持有狀態），刻意不做任何基本面判斷或自動建議——"
+                        "解讀交給使用者或後續對話脈絡。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "股票代碼，如 2330"},
+                "lookback_days": {"type": "integer",
+                                  "description": "回顧視窗天數，預設14"},
+            },
+            "required": ["code"],
+        },
+    },
+    {
+        "name": "check_position_control",
+        "description": ("FR-054 模組D部位控制建議（核心功能）：整合信心分級初始部位"
+                        "（普通/很好/非常高→5%/8%/10%，僅「這是這檔第一次建倉」且有給"
+                        "confidence_level時才提供）、遞減式加碼比例（第1~5次"
+                        "40/25/15/10/10%，依store.get_trade_ledger算出下一次加碼序號；"
+                        "超過5次時該欄位查不到值但仍照實回傳實際序號）、集中度上限提醒"
+                        "（單股佔比≥15%或所屬主題佔比≥50%）。⚠️ 遞減式加碼比例"
+                        "（suggested_add_pct）是「這次加碼佔此股加碼計畫總額度的比例」，"
+                        "不是投資組合佔比，兩者量綱不同，本工具不做換算（哲學文件未"
+                        "定義「加碼計畫總額度」怎麼訂）。目前市值佔比（current_"
+                        "position_pct）與主題集中度（theme_concentration_pct）計算"
+                        "邏輯與report.py既有「我的庫存與分析」頁面一致（市值=股數×"
+                        "股價快取，查不到股價的持股不計入分母）。所有結果都是提醒，"
+                        "不自動裁決。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "股票代碼，如 2330"},
+                "confidence_level": {"type": "string",
+                                     "description": "信心等級：普通／很好／非常高；"
+                                                    "省略則不提供初始部位建議"},
+            },
+            "required": ["code"],
+        },
+    },
+    {
+        "name": "record_module_d_findings",
+        "description": ("FR-055 立場自動回寫機制：把FR-051~054（通用檢視層／策略專屬層／"
+                        "老芋頭動向比對／部位控制建議）當天對同一標的批次跑出來的發現，"
+                        "各自新增一筆Layer 2立場記錄（不合併、不覆蓋，沿用該標的目前最新"
+                        "立場的stance值，系統不主動改變決策本身）。查無既有立場（沒有"
+                        "「決策」可以承接）時整批略過不寫入，回傳skipped=true。⚠️ 只偵測"
+                        "「findings裡concern_flag是否一致」這種系統記錄間的分歧，不做"
+                        "「系統發現跟PO既有立場文字語意衝突」的自動判斷（語意判斷留給PO"
+                        "自己讀了決定，已與PO確認此範圍簡化）；有分歧時每筆reason都會"
+                        "附上衝突提示，列出這批裡各trigger_label標記需留意/無異常。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "股票代碼，如 2330"},
+                "findings": {
+                    "type": "array",
+                    "description": "同一天、同一標的的一批發現",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "trigger_label": {"type": "string",
+                                              "description": "觸發來源標籤，如「策略層／peg_deep_dip_concentration」"},
+                            "concern_flag": {"type": "boolean",
+                                             "description": "true=需留意，false=無異常"},
+                            "detail": {"type": "string", "description": "發現內容說明"},
+                        },
+                        "required": ["trigger_label", "concern_flag", "detail"],
+                    },
+                },
+                "date": {"type": "string", "description": "YYYY-MM-DD，預設今天"},
+            },
+            "required": ["code", "findings"],
+        },
+    },
+    {
+        "name": "run_module_d_check",
+        "description": ("FR-057 模組D單檔即時檢視：串接FR-051~055整個流程"
+                        "（通用檢視層／策略專屬層／老芋頭動向比對／部位控制"
+                        "建議／立場自動回寫），供PO貼入老芋頭新動向後即時"
+                        "觸發單一標的重新檢視（不用等隔天02:00排程）。策略"
+                        "專屬層會自動判斷這檔標的最近符合過哪些框架門檻"
+                        "（依market_scan歷史紀錄），沒被market_scan篩中過的"
+                        "標的（PO手動加入觀察名單、或老芋頭訊號帶進來的）"
+                        "只跑通用層與老芋頭層，這是正常情況不是錯誤。只有"
+                        "findings裡concern_flag=True的項目才會寫入stances"
+                        "（Layer 2）；不管有沒有concern，每一項檢視結果"
+                        "（含正常無異常的）都會寫入模組D檢視結果表供未來"
+                        "模組F儀表板讀取。⚠️ 這是單檔查詢，若要批次跑整個"
+                        "觀察名單＋庫存，請用CLI `module_d_scheduler.py`"
+                        "（排程用，不開放成MCP工具，成本較高不適合對話中"
+                        "隨手觸發）。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"code": {"type": "string", "description": "股票代碼，如 2330"}},
+            "required": ["code"],
+        },
+    },
+    {
         "name": "get_emerging_stock_valuation",
         "description": ("查興櫃股估值粗估：PER（TPEx興櫃當日行情÷EPS排名）／PBR"
                         "（資本額估算股數，搭配FinMind淨值）。FinMind的PER資料集"
@@ -340,9 +564,13 @@ TOOLS = [
     {
         "name": "screen_stocks",
         "description": ("第一層選股篩選：對候選代碼清單逐一計算PEG（本益成長比）"
-                        "與股價回檔幅度（近120天區間高點到最新收盤），依"
-                        "framework_peg_deep_dip_concentration 框架標註是否同時符合"
-                        "「PEG<1 且回檔>=40%」。結果依PEG由小到大排序（算不出來的"
+                        "與股價回檔幅度（近120天區間高點到最新收盤），依門檻標註"
+                        "是否符合框架（預設「PEG<1 且回檔>=40%」，即"
+                        "framework_peg_deep_dip_concentration；可用 framework_id 或"
+                        "peg_threshold/drawdown_min/drawdown_max 自訂）。回傳同時附"
+                        "excess_drawdown_pct（超額跌幅＝個股回檔－同期大盤跌幅，"
+                        "大盤區間取「個股高點日→個股最新日」）與 benchmark 區塊"
+                        "（本次查到的大盤基準資料）。結果依PEG由小到大排序（算不出來的"
                         "排最後）。單檔查詢失敗只記錄在該筆的error欄位，不影響其他"
                         "代碼。一次最多 50 檔，超過會回傳 error 欄位並拒絕執行——"
                         "請提醒使用者分批。這是候選清單篩選，不是全市場掃描。"),
@@ -351,6 +579,20 @@ TOOLS = [
             "properties": {
                 "codes": {"type": "string",
                           "description": "候選股票代碼，逗號或換行分隔，如 3485,6953,6719"},
+                "framework_id": {"type": "string",
+                                 "description": ("框架代號，見 frameworks.FRAMEWORKS；給了就用該框架的"
+                                                 "peg_max/drawdown_min/drawdown_max/excess_drawdown_min"
+                                                 "門檻（framework_id 本身不存在時直接回 error，不會呼叫"
+                                                 "任何 API）。省略則用下面的 peg_threshold/drawdown_min/"
+                                                 "drawdown_max 或其預設值。同時給 framework_id 又給"
+                                                 "peg_threshold 等參數時，以後者為準（framework_id 只是"
+                                                 "帶入預設值的捷徑）。")},
+                "peg_threshold": {"type": ["number", "null"],
+                                  "description": "PEG 門檻上限，預設 1.0；傳 null＝不看這項條件"},
+                "drawdown_min": {"type": ["number", "null"],
+                                 "description": "回檔幅度下限，小數（0.4＝40%），預設 0.4；傳 null＝不看"},
+                "drawdown_max": {"type": ["number", "null"],
+                                 "description": "回檔幅度上限，小數；預設不限（null）"},
             },
             "required": ["codes"],
         },
@@ -363,11 +605,14 @@ TOOLS = [
                         "對候選逐檔查FinMind股價區間算回檔幅度，套用框架門檻。"
                         "TWSE或TPEx任一資料源失敗不影響另一邊（該市場記入"
                         "market_errors，候選數變少但不中斷）。結果連同執行時間"
-                        "存入資料庫。範圍只有上市＋上櫃，興櫃沒有官方批次PER"
-                        "端點不在這次掃描範圍內。候選數常有數十~一百多檔，"
-                        "逐檔查回檔實測約30秒量級，屬正常。框架裡「供應鏈敘事"
-                        "是否具體」這類條件無法自動判斷，篩出的候選仍需人工/AI"
-                        "事後確認。"),
+                        "存入資料庫（完整候選清單都會存檔）。範圍只有上市＋上櫃，"
+                        "興櫃沒有官方批次PER端點不在這次掃描範圍內。候選數常有"
+                        "數十~一百多檔，逐檔查回檔實測約30秒量級，屬正常。框架裡"
+                        "「供應鏈敘事是否具體」這類條件無法自動判斷，篩出的候選"
+                        "仍需人工/AI事後確認。⚠️ 這個工具回傳的是精簡摘要"
+                        "（run資訊＋符合框架的候選精簡欄位），不是完整候選清單——"
+                        "要看全部候選（含未達門檻）請改用 get_market_scan 並帶"
+                        "meets_only=false。"),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -379,13 +624,82 @@ TOOLS = [
     {
         "name": "get_market_scan",
         "description": ("查詢最近一次全市場批次篩選結果（不重新掃描，速度快）。"
-                        "不給framework_id則查全部框架中最新一次。"),
+                        "不給framework_id則查全部框架中最新一次。預設只回傳"
+                        "「符合框架」的候選、且欄位精簡過（meets_only=true、"
+                        "limit=50、verbose=false）——回傳一定附 total_results"
+                        "（篩選後總筆數）／returned（實際回傳筆數）／omitted"
+                        "（被截掉幾筆）／filters（本次套用的篩選條件），不要把"
+                        "returned 誤當成全部候選母體。要拿完整資料（含未達門檻、"
+                        "全部欄位）請帶 meets_only=false、limit=0、verbose=true。"),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "framework_id": {"type": "string",
                                  "description": "框架代號；省略＝查最新一次（不限框架）"},
+                "meets_only": {"type": "boolean",
+                               "description": "只回傳符合框架的候選，預設 true"},
+                "limit": {"type": "integer",
+                          "description": "最多回傳幾筆，預設 50；0＝不限"},
+                "verbose": {"type": "boolean",
+                           "description": "true 才回傳每檔完整欄位，預設 false（只回精簡欄位）"},
             },
+        },
+    },
+    {
+        "name": "parse_and_save_laoyutou_trades",
+        "description": ("貼入固定格式的老芋頭（PO信任的資深投資朋友／導師）進出"
+                        "批次文字，自動解析並批次寫入laoyutou_trades，不需要逐行"
+                        "手動理解再一筆筆呼叫save_laoyutou_trade（FR-044，PO明確"
+                        "要求格式固定就該用程式解析，不要透過AI逐行理解）。文字第"
+                        "一行應為8位數日期（YYYYMMDD，如20260729），代表整批交易"
+                        "的日期；之後每行是「原因行」（一段敘述文字，套用到後續"
+                        "交易直到空行或下一個原因行為止）或「交易行」"
+                        "（{價格}{賣出/買進/買回/回補}{股數}{股/張}{名稱}"
+                        "{可選括號註記}，如「365賣出500股聯鈞（出清）」）。股票"
+                        "名稱→代碼解析會先查stock_aliases快取，未命中再用FinMind"
+                        "全市場清單比對（自動存回快取）；兩者都查無代碼的名稱歸入"
+                        "unresolved_names，不會寫入（不可塞假代碼），需人工處理。"
+                        "格式解析失敗的行歸入unparsed_lines，同樣需人工檢查。"
+                        "經使用者確認貼入的文字無誤後才呼叫。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string",
+                         "description": ("老芋頭進出批次原始文字，整段貼入。第一行應為"
+                                         "8位數日期（YYYYMMDD，如20260729）；文字裡若"
+                                         "沒有這行日期，改用 date 參數或今天日期。")},
+                "date": {"type": "string",
+                         "description": ("YYYY-MM-DD，僅在文字裡沒有偵測到8位數日期行時"
+                                         "才會用到；省略則用今天。")},
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "parse_and_save_trade_ledger",
+        "description": ("貼入固定格式的券商「交易明細表」文字，自動解析每筆日期/"
+                        "買賣/股數/價格，並正確計算遞減式加碼序號後批次寫入"
+                        "trade_ledger（FR-056，PO自己的買賣紀錄——注意跟"
+                        "laoyutou_trades〔老芋頭的交易〕是不同表）。每一列格式："
+                        "{日期 民國年115/07/22}{CD 如OT賣/集買，含「買」或「賣」"
+                        "判斷買賣別}{股票名稱}{股數}{單價}{其餘欄位不需要精確解析}"
+                        "，跟老芋頭格式的差異是這裡每一列自己就有完整日期，不需要"
+                        "猜整批共用日期。表頭列／分隔線／「交易日期:...頁次:...」"
+                        "列／「合 計:」列會自動跳過。add_sequence（第幾次加碼）"
+                        "計算：依代碼分組後依日期（同日按原始出現順序）排序，"
+                        "接續該代碼在資料庫裡既有的買進筆數往後遞增；賣出一律為"
+                        "None。股票名稱→代碼解析先查stock_aliases快取，未命中"
+                        "再用FinMind全市場清單比對（自動存回快取）；兩者都查無"
+                        "代碼的名稱歸入unresolved_names，不會寫入（不可塞假"
+                        "代碼），需人工處理。格式解析失敗的行歸入unparsed_lines，"
+                        "同樣需人工檢查。經使用者確認貼入的文字無誤後才呼叫。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string",
+                         "description": "交易明細表原始文字，整段貼入。"},
+            },
+            "required": ["text"],
         },
     },
 ]
@@ -394,6 +708,20 @@ TOOLS = [
 def _default_data_dir():
     here = os.path.dirname(os.path.abspath(__file__))
     return os.environ.get("ALPHAVIBE_DATA_DIR") or os.path.join(here, "..", "data")
+
+
+# get_market_scan／run_market_scan 輸出瘦身共用的精簡欄位集合——只留 AI
+# 使用者判斷「這檔值不值得再深入查」所需的最小欄位，完整欄位（high_price／
+# high_date／revenue_period／pbr／dividend_yield／error 等）要看仍可用
+# get_market_scan(verbose=true) 拿到，資料庫本身永遠存完整版。
+_SIMPLE_MARKET_SCAN_FIELDS = ("code", "name", "market", "industry", "per",
+                              "revenue_yoy", "peg", "drawdown_pct",
+                              "excess_drawdown_pct", "current_price",
+                              "meets_framework")
+
+
+def _simplify_scan_row(row):
+    return {field: row.get(field) for field in _SIMPLE_MARKET_SCAN_FIELDS}
 
 
 class Server:
@@ -497,6 +825,47 @@ class Server:
             )
         if name == "get_stock_alias":
             return self.store.get_stock_alias(name=args.get("name"))
+        if name == "save_stock_theme":
+            return self.store.save_stock_theme(code=args["code"], theme=args["theme"])
+        if name == "get_stock_theme":
+            return self.store.get_stock_theme()
+        if name == "save_laoyutou_trade":
+            return self.store.save_laoyutou_trade(
+                code=args["code"], name=args.get("name"), action=args["action"],
+                shares=args["shares"], price=args["price"], date=args["date"],
+                reason=args.get("reason"), source_ref=args.get("source_ref"),
+            )
+        if name == "get_laoyutou_trades":
+            return self.store.get_laoyutou_trades(
+                code=args.get("code"), limit=int(args.get("limit") or 20))
+        if name == "save_trade_ledger_entry":
+            return self.store.save_trade_ledger_entry(
+                code=args["code"], name=args.get("name"), action=args["action"],
+                shares=args["shares"], price=args["price"], date=args["date"],
+                add_sequence=args.get("add_sequence"), source_ref=args.get("source_ref"),
+            )
+        if name == "get_trade_ledger":
+            return self.store.get_trade_ledger(args["code"])
+        if name == "check_general_review":
+            return review_engine.general_review(args["code"], data_dir=self.data_dir)
+        if name == "check_strategy_review":
+            return review_engine.strategy_specific_review(
+                args["code"], args["strategy_id"], data_dir=self.data_dir)
+        if name == "check_laoyutou_signal":
+            return review_engine.laoyutou_signal_review(
+                args["code"], store=self.store,
+                lookback_days=int(args.get("lookback_days") or 14))
+        if name == "check_position_control":
+            return review_engine.position_control_suggestion(
+                args["code"], store=self.store,
+                confidence_level=args.get("confidence_level"))
+        if name == "record_module_d_findings":
+            return review_engine.auto_record_findings(
+                args["code"], store=self.store, findings=args["findings"],
+                date=args.get("date"))
+        if name == "run_module_d_check":
+            return review_engine.run_module_d_review(
+                args["code"], store=self.store, data_dir=self.data_dir)
         if name == "parse_holdings_report":
             return holdings_parser.parse_holdings_report(args["text"])
         if name == "get_emerging_stock_valuation":
@@ -504,19 +873,100 @@ class Server:
                 args["stock_id"], data_dir=self.data_dir)
         if name == "screen_stocks":
             codes = screener.parse_codes(args["codes"])
-            return screener.screen_stocks(codes, data_dir=self.data_dir)
+            framework_id = args.get("framework_id")
+            kwargs = {"data_dir": self.data_dir}
+            if framework_id:
+                framework = frameworks.get_framework(framework_id)
+                if framework is None:
+                    # 無效框架代號：直接回錯誤，不打任何 FinMind/TWSE/TPEx API。
+                    return {"error": "未知框架：%s" % framework_id}
+                kwargs["framework_id"] = framework_id
+                kwargs["peg_threshold"] = framework.get("peg_max")
+                kwargs["drawdown_min"] = framework.get("drawdown_min")
+                kwargs["drawdown_max"] = framework.get("drawdown_max")
+                kwargs["excess_drawdown_min"] = framework.get("excess_drawdown_min")
+            # 顯式傳入的門檻覆寫框架預設值／screener 內建預設值。用 "in args"
+            # 而不是 args.get()，才能區分「使用者沒給這個參數」（沿用預設）
+            # 跟「使用者顯式傳了 null」（明確關掉這項條件，值要變成 None）——
+            # args.get("peg_threshold") 兩種情況都回傳 None，分不出來。
+            if "peg_threshold" in args:
+                kwargs["peg_threshold"] = args["peg_threshold"]
+            if "drawdown_min" in args:
+                kwargs["drawdown_min"] = args["drawdown_min"]
+            if "drawdown_max" in args:
+                kwargs["drawdown_max"] = args["drawdown_max"]
+            return screener.screen_stocks(codes, **kwargs)
         if name == "run_market_scan":
             framework_id = args.get("framework_id") or frameworks.default_framework_id()
             result = market_scan.run_scan(
                 framework_id, data_dir=self.data_dir, trigger_source="manual")
-            if "error" not in result:
-                self.store.save_market_scan_run(
-                    framework_id, "manual", result["results"],
-                    result["candidate_count"], market_errors=result["market_errors"],
-                    total_scanned=result["total_scanned"])
-            return result
+            if "error" in result:
+                return result
+            saved = self.store.save_market_scan_run(
+                framework_id, "manual", result["results"],
+                result["candidate_count"], market_errors=result["market_errors"],
+                total_scanned=result["total_scanned"],
+                benchmark={"window_drawdown_pct": result.get("benchmark_drawdown_pct"),
+                          "error": result.get("benchmark_error")})
+            # 輸出瘦身：DB 已存完整候選（見上面 save_market_scan_run），這裡
+            # 回給 MCP 呼叫端的只留 run 摘要＋符合框架的候選精簡欄位——現行
+            # 直接吐全部候選全欄位會超過 MCP 回傳上限被截斷（get_market_scan
+            # 同樣問題已實測 63,949 字元／2,486 行）。要完整清單改呼叫
+            # get_market_scan(meets_only=false, limit=0, verbose=true)。
+            meets_rows = [_simplify_scan_row(r) for r in result["results"]
+                         if r.get("meets_framework")]
+            return {
+                "framework_id": framework_id,
+                "trigger_source": result.get("trigger_source"),
+                "run_id": saved["run_id"],
+                "run_at": saved["run_at"],
+                "candidate_count": result["candidate_count"],
+                "meets_count": result["meets_count"],
+                "total_scanned": result["total_scanned"],
+                "market_errors": result["market_errors"],
+                "benchmark_drawdown_pct": result.get("benchmark_drawdown_pct"),
+                "benchmark_error": result.get("benchmark_error"),
+                "meets": meets_rows,
+                "note": ("已存入資料庫（run_id=%d），本回傳只含符合框架的候選"
+                        "（精簡欄位）；要看全部候選（含未達門檻、完整欄位）"
+                        "請呼叫 get_market_scan(framework_id=\"%s\", "
+                        "meets_only=false, limit=0, verbose=true)。"
+                        % (saved["run_id"], framework_id)),
+            }
         if name == "get_market_scan":
-            return self.store.get_latest_market_scan(framework_id=args.get("framework_id"))
+            meets_only = bool(args.get("meets_only", True))
+            limit = args.get("limit", 50)
+            verbose = bool(args.get("verbose", False))
+            result = self.store.get_latest_market_scan(
+                framework_id=args.get("framework_id"), meets_only=meets_only, limit=limit)
+            if not result.get("found"):
+                return result
+            total_results = result.get("total_results", len(result["results"]))
+            returned = result.get("returned", len(result["results"]))
+            rows = (result["results"] if verbose
+                    else [_simplify_scan_row(r) for r in result["results"]])
+            return {
+                "found": True,
+                "run": result["run"],
+                "results": rows,
+                # 帶回篩選條件與計數，避免 AI 使用者把截斷/精簡後的少數幾筆
+                # 誤當成全部候選母體（omitted＝篩選後總筆數 - 這次實際回傳筆數）。
+                "filters": {"framework_id": args.get("framework_id"),
+                           "meets_only": meets_only, "limit": limit, "verbose": verbose},
+                "total_results": total_results,
+                "returned": returned,
+                "omitted": max(total_results - returned, 0),
+                "available_frameworks": [fw["id"] for fw in frameworks.FRAMEWORKS],
+            }
+        if name == "parse_and_save_laoyutou_trades":
+            parsed = trade_text_parser.parse_laoyutou_trade_text(args["text"])
+            return trade_text_parser.resolve_and_save_laoyutou_trades(
+                parsed, store=self.store, date=args.get("date"),
+                data_dir=self.data_dir)
+        if name == "parse_and_save_trade_ledger":
+            parsed = trade_ledger_parser.parse_trade_ledger_text(args["text"])
+            return trade_ledger_parser.resolve_and_save_trade_ledger(
+                parsed, store=self.store, data_dir=self.data_dir)
         raise ValueError("未知工具：%s" % name)
 
     def refresh_holdings_prices(self):

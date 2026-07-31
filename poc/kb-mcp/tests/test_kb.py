@@ -190,6 +190,103 @@ class KBStoreTest(unittest.TestCase):
     def test_stock_industry_get_empty(self):
         self.assertEqual(self.store.get_stock_industries(), {})
 
+    def test_stock_theme_upsert_and_get(self):
+        out = self.store.save_stock_theme("3661", "AI CAPEX")
+        self.assertTrue(out["saved"])
+        themes = self.store.get_stock_theme()
+        self.assertEqual(themes["3661"]["theme"], "AI CAPEX")
+
+    def test_stock_theme_upsert_overwrites_not_duplicates(self):
+        self.store.save_stock_theme("3661", "舊主題")
+        self.store.save_stock_theme("3661", "AI CAPEX")
+        themes = self.store.get_stock_theme()
+        self.assertEqual(len(themes), 1)
+        self.assertEqual(themes["3661"]["theme"], "AI CAPEX")
+
+    def test_stock_theme_get_empty(self):
+        self.assertEqual(self.store.get_stock_theme(), {})
+
+    def test_laoyutou_trade_save_and_get_by_code(self):
+        out = self.store.save_laoyutou_trade(
+            "2330", "台積電", "買", 1000, 900.0, "2026-07-20",
+            reason="清理門戶策略轉向", source_ref="line#1")
+        self.assertTrue(out["saved"])
+        result = self.store.get_laoyutou_trades(code="2330")
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["trades"][0]["reason"], "清理門戶策略轉向")
+        self.assertEqual(result["trades"][0]["action"], "買")
+
+    def test_laoyutou_trade_reason_optional(self):
+        out = self.store.save_laoyutou_trade(
+            "2454", "聯發科", "賣", 500, 1200.0, "2026-07-21")
+        self.assertTrue(out["saved"])
+        result = self.store.get_laoyutou_trades(code="2454")
+        self.assertIsNone(result["trades"][0]["reason"])
+
+    def test_laoyutou_trade_get_by_code_sorted_date_desc(self):
+        self.store.save_laoyutou_trade("2330", "台積電", "買", 1000, 900.0, "2026-07-01")
+        self.store.save_laoyutou_trade("2330", "台積電", "買", 500, 950.0, "2026-07-15")
+        self.store.save_laoyutou_trade("2330", "台積電", "賣", 200, 980.0, "2026-07-10")
+        result = self.store.get_laoyutou_trades(code="2330")
+        dates = [t["date"] for t in result["trades"]]
+        self.assertEqual(dates, ["2026-07-15", "2026-07-10", "2026-07-01"])
+
+    def test_laoyutou_trade_get_without_code_lists_recent_across_stocks(self):
+        self.store.save_laoyutou_trade("2330", "台積電", "買", 1000, 900.0, "2026-07-01")
+        self.store.save_laoyutou_trade("2454", "聯發科", "賣", 500, 1200.0, "2026-07-15")
+        result = self.store.get_laoyutou_trades()
+        self.assertIsNone(result["code"])
+        self.assertEqual(result["count"], 2)
+        self.assertEqual(result["trades"][0]["code"], "2454")
+
+    def test_laoyutou_trade_get_without_code_respects_limit(self):
+        for i in range(5):
+            self.store.save_laoyutou_trade(
+                "2330", "台積電", "買", 100, 900.0, "2026-07-%02d" % (i + 1))
+        result = self.store.get_laoyutou_trades(limit=2)
+        self.assertEqual(result["count"], 2)
+
+    def test_laoyutou_trade_invalid_action_rejected(self):
+        with self.assertRaises(ValueError):
+            self.store.save_laoyutou_trade(
+                "2330", "台積電", "持有", 1000, 900.0, "2026-07-01")
+
+    def test_trade_ledger_save_and_get(self):
+        self.store.save_trade_ledger_entry(
+            "2330", "台積電", "買", 1000, 900.0, "2026-07-01", add_sequence=1)
+        self.store.save_trade_ledger_entry(
+            "2330", "台積電", "買", 500, 950.0, "2026-07-10", add_sequence=2)
+        result = self.store.get_trade_ledger("2330")
+        self.assertEqual(result["count"], 2)
+        sequences = [e["add_sequence"] for e in result["entries"]]
+        self.assertEqual(sequences, [1, 2])
+
+    def test_trade_ledger_sell_forces_add_sequence_null(self):
+        out = self.store.save_trade_ledger_entry(
+            "2330", "台積電", "賣", 300, 980.0, "2026-07-15", add_sequence=3)
+        self.assertIsNone(out["add_sequence"])
+        result = self.store.get_trade_ledger("2330")
+        self.assertIsNone(result["entries"][0]["add_sequence"])
+
+    def test_trade_ledger_buy_without_add_sequence_defaults_none(self):
+        out = self.store.save_trade_ledger_entry(
+            "2330", "台積電", "買", 1000, 900.0, "2026-07-01")
+        self.assertIsNone(out["add_sequence"])
+
+    def test_trade_ledger_ordered_oldest_first(self):
+        self.store.save_trade_ledger_entry(
+            "2330", "台積電", "買", 500, 950.0, "2026-07-10", add_sequence=2)
+        self.store.save_trade_ledger_entry(
+            "2330", "台積電", "買", 1000, 900.0, "2026-07-01", add_sequence=1)
+        result = self.store.get_trade_ledger("2330")
+        dates = [e["date"] for e in result["entries"]]
+        self.assertEqual(dates, ["2026-07-01", "2026-07-10"])
+
+    def test_trade_ledger_invalid_action_rejected(self):
+        with self.assertRaises(ValueError):
+            self.store.save_trade_ledger_entry(
+                "2330", "台積電", "持有", 1000, 900.0, "2026-07-01")
+
     def _market_scan_row(self, code, peg=0.5, meets=True, error=None):
         return {"code": code, "name": "測試股%s" % code, "market": "TWSE",
                 "industry": "半導體業", "per": 10.0, "revenue_yoy": 0.2,
@@ -353,6 +450,109 @@ class KBStoreTest(unittest.TestCase):
                 store.close()
         finally:
             shutil.rmtree(tmp)
+
+    # ---------- 模組D檢視結果表（FR-051~055/057） ----------
+
+    def test_save_and_get_module_d_result_by_code(self):
+        saved = self.store.save_module_d_result(
+            code="2330", trigger_type="通用層", finding="年增率連續3個月下滑：40%→30%→20%")
+        self.assertTrue(saved["saved"])
+        self.assertEqual(saved["trigger_type"], "通用層")
+        self.assertIsNotNone(saved["checked_at"])
+
+        got = self.store.get_module_d_results(code="2330")
+        self.assertEqual(got["code"], "2330")
+        self.assertIsNone(got["date"])
+        self.assertEqual(got["count"], 1)
+        row = got["results"][0]
+        self.assertEqual(row["trigger_type"], "通用層")
+        self.assertIsNone(row["strategy_id"])
+        self.assertIsNone(row["suggested_action"])
+        self.assertEqual(row["conflict_flag"], 0)
+
+    def test_save_module_d_result_with_strategy_and_suggested_action(self):
+        self.store.save_module_d_result(
+            code="2330", trigger_type="策略層", strategy_id="peg_deep_dip_concentration",
+            finding="PEG已回升至1.15（門檻1.0）", suggested_action="建議減碼",
+            conflict_flag=True, checked_at="2026-07-29T02:00:00")
+        row = self.store.get_module_d_results(code="2330")["results"][0]
+        self.assertEqual(row["strategy_id"], "peg_deep_dip_concentration")
+        self.assertEqual(row["suggested_action"], "建議減碼")
+        self.assertEqual(row["conflict_flag"], 1)
+        self.assertEqual(row["checked_at"], "2026-07-29T02:00:00")
+
+    def test_save_module_d_result_rejects_invalid_trigger_type(self):
+        with self.assertRaises(ValueError):
+            self.store.save_module_d_result(
+                code="2330", trigger_type="不存在的類型", finding="x")
+
+    def test_save_module_d_result_requires_code_and_finding(self):
+        with self.assertRaises(ValueError):
+            self.store.save_module_d_result(code="", trigger_type="通用層", finding="x")
+        with self.assertRaises(ValueError):
+            self.store.save_module_d_result(code="2330", trigger_type="通用層", finding="")
+
+    def test_get_module_d_results_by_date_without_code(self):
+        self.store.save_module_d_result(
+            code="2330", trigger_type="通用層", finding="今天檢查A",
+            checked_at="2026-07-29T02:00:00")
+        self.store.save_module_d_result(
+            code="6805", trigger_type="老芋頭動向", finding="今天檢查B",
+            checked_at="2026-07-29T02:05:00")
+        self.store.save_module_d_result(
+            code="2454", trigger_type="通用層", finding="昨天檢查",
+            checked_at="2026-07-28T02:00:00")
+
+        today = self.store.get_module_d_results(date="2026-07-29")
+        self.assertIsNone(today["code"])
+        self.assertEqual(today["date"], "2026-07-29")
+        self.assertEqual(today["count"], 2)
+        codes = {r["code"] for r in today["results"]}
+        self.assertEqual(codes, {"2330", "6805"})
+
+        yesterday = self.store.get_module_d_results(date="2026-07-28")
+        self.assertEqual(yesterday["count"], 1)
+        self.assertEqual(yesterday["results"][0]["code"], "2454")
+
+    def test_get_module_d_results_empty_when_nothing_recorded(self):
+        out = self.store.get_module_d_results(code="9999")
+        self.assertEqual(out["count"], 0)
+        self.assertEqual(out["results"], [])
+
+    def test_get_associated_frameworks_returns_matching_framework_ids(self):
+        self.store.save_market_scan_run(
+            "peg_deep_dip_concentration", "scheduled",
+            [self._market_scan_row("2330", peg=0.5, meets=True)], candidate_count=1)
+        self.store.save_market_scan_run(
+            "revenue_high_price_dip", "scheduled",
+            [self._market_scan_row("2330", peg=None, meets=True)], candidate_count=1)
+        associated = self.store.get_associated_frameworks("2330")
+        self.assertEqual(sorted(associated),
+                         ["peg_deep_dip_concentration", "revenue_high_price_dip"])
+
+    def test_get_associated_frameworks_excludes_non_meeting_rows(self):
+        self.store.save_market_scan_run(
+            "peg_deep_dip_concentration", "scheduled",
+            [self._market_scan_row("2330", peg=3.0, meets=False)], candidate_count=1)
+        self.assertEqual(self.store.get_associated_frameworks("2330"), [])
+
+    def test_get_associated_frameworks_never_scanned_returns_empty_list(self):
+        """從沒被market_scan篩中過的標的（PO手動加入觀察名單、或老芋頭訊號
+        帶進來的）回傳空list，這是正常情況，不是錯誤。"""
+        self.assertEqual(self.store.get_associated_frameworks("9999"), [])
+
+    def test_get_associated_frameworks_keeps_matching_even_after_later_run_drops_it(self):
+        """關鍵行為：即使「最新一次」該框架的run裡這支代碼已經不再符合門檻
+        （策略假說開始失效正是最需要繼續檢查invalidation的時候），仍要保留
+        關聯——不能因為最新run不再meets就讓策略關聯判斷清空。"""
+        self.store.save_market_scan_run(
+            "peg_deep_dip_concentration", "scheduled",
+            [self._market_scan_row("2330", peg=0.5, meets=True)], candidate_count=1)
+        self.store.save_market_scan_run(
+            "peg_deep_dip_concentration", "scheduled",
+            [self._market_scan_row("2330", peg=1.2, meets=False)], candidate_count=1)
+        self.assertEqual(self.store.get_associated_frameworks("2330"),
+                         ["peg_deep_dip_concentration"])
 
     def test_philosophy_roundtrip_and_append(self):
         self.store.save_philosophy("yuzhiyu", "# 低 PER 高殖利率")
@@ -519,6 +719,41 @@ class FinMindClientTest(unittest.TestCase):
             out = finmind_client.get_institutional_trading("2330")
         self.assertEqual(len(out["errors"]), 1)
         self.assertNotIn("trading", out)
+
+    def test_get_per_history_parses_mocked_payload(self):
+        payload = [
+            {"date": "2024-07-01", "PER": 15.0, "PBR": 3.0, "dividend_yield": 2.5},
+            {"date": "2026-07-07", "PER": 18.5, "PBR": 5.1, "dividend_yield": 2.1},
+        ]
+
+        def fake_fetch(dataset, stock_id, start_date, token, end_date=None):
+            self.assertEqual(dataset, "TaiwanStockPER")
+            self.assertIsNotNone(start_date)
+            return {"data": payload}
+
+        with unittest.mock.patch.object(finmind_client, "_fetch", fake_fetch):
+            out = finmind_client.get_per_history("2330")
+        self.assertEqual(out["errors"], [])
+        self.assertEqual(len(out["per_history"]), 2)
+        self.assertEqual(out["per_history"][-1]["PER"], 18.5)
+
+    def test_get_per_history_no_data(self):
+        def fake_fetch(dataset, stock_id, start_date, token, end_date=None):
+            return {"data": []}
+
+        with unittest.mock.patch.object(finmind_client, "_fetch", fake_fetch):
+            out = finmind_client.get_per_history("2330")
+        self.assertEqual(len(out["errors"]), 1)
+        self.assertNotIn("per_history", out)
+
+    def test_get_per_history_api_failure(self):
+        def fail(dataset, stock_id, start_date, token, end_date=None):
+            return {"error": "FinMind 呼叫失敗（%s）：模擬斷網" % dataset}
+
+        with unittest.mock.patch.object(finmind_client, "_fetch", fail):
+            out = finmind_client.get_per_history("2330")
+        self.assertEqual(len(out["errors"]), 1)
+        self.assertNotIn("per_history", out)
 
     def test_get_equity_attributable_to_owners_picks_latest_by_date(self):
         payload = [
@@ -858,7 +1093,8 @@ class ProtocolE2ETest(unittest.TestCase):
         names = [t["name"] for t in tools["result"]["tools"]]
         for expected in ("save_stance", "get_stance", "list_stances",
                          "save_comment", "search_comments",
-                         "save_philosophy", "get_philosophy", "get_fundamentals"):
+                         "save_philosophy", "get_philosophy", "get_fundamentals",
+                         "save_stock_theme", "get_stock_theme"):
             self.assertIn(expected, names)
 
         saved = self._rpc({"jsonrpc": "2.0", "id": 3, "method": "tools/call",

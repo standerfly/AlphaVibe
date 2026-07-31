@@ -67,12 +67,22 @@ def get_fundamentals(stock_id, data_dir=None, token=None):
         result["errors"].append(per["error"])
     elif per["data"]:
         latest = per["data"][-1]
+        raw_per = latest.get("PER")
+        # 2026-07-31 查證：FinMind EPS 為負／無意義時，PER 回傳 0.0（不是
+        # None）當作 sentinel，不是真實的本益比是0。這裡直接透傳會誤導
+        # （見 review_engine._downside_risk 同一次查證的教訓），改標記為
+        # None 並附 per_note 說明；PBR 不受影響（同一批資料裡 PBR 在虧損期
+        # 仍是正常正值，book value 不會因單季虧損就歸零，不需要同樣處理）。
         result["valuation"] = {
             "date": latest.get("date"),
-            "PER": latest.get("PER"),
+            "PER": raw_per if raw_per else None,
             "PBR": latest.get("PBR"),
             "dividend_yield": latest.get("dividend_yield"),
         }
+        if raw_per == 0:
+            result["valuation"]["per_note"] = (
+                "FinMind當期PER原始值為0，通常代表EPS為負或無意義（例如"
+                "虧損期），已改標記為None，不代表股價為0或本益比真的是0")
     else:
         result["errors"].append("TaiwanStockPER 無資料（代碼是否正確？）")
 
@@ -80,8 +90,20 @@ def get_fundamentals(stock_id, data_dir=None, token=None):
     if "error" in revenue:
         result["errors"].append(revenue["error"])
     elif revenue["data"]:
+        # 2026-07-31 查證：FinMind TaiwanStockMonthRevenue 的 `date` 欄位是
+        # 「營收所屬月份+1、當月1號」（例如6月營收的 date 是 "2026-07-01"），
+        # 不是公佈日期也不是營收所屬月份本身——單看 date 容易誤以為是7月
+        # 營收。get_revenue_yoy() 用的是 FinMind 的 revenue_year/revenue_month
+        # 欄位（=營收實際所屬月份），兩個工具口徑不同。這裡把 revenue_year/
+        # revenue_month 也一併帶出，讓兩個工具的輸出可以互相對照，不用只靠
+        # date 猜。保留 date 欄位不動，避免影響既有呼叫端。
         result["monthly_revenue"] = [
-            {"date": row.get("date"), "revenue": row.get("revenue")}
+            {
+                "date": row.get("date"),
+                "revenue_year": row.get("revenue_year"),
+                "revenue_month": row.get("revenue_month"),
+                "revenue": row.get("revenue"),
+            }
             for row in revenue["data"][-6:]
         ]
 
@@ -231,6 +253,36 @@ def get_institutional_trading(stock_id, start_date=None, end_date=None, data_dir
         (row.get("buy") or 0) - (row.get("sell") or 0)
         for row in rows if row.get("name") in FOREIGN_INVESTOR_NAMES
     )
+    return result
+
+
+def get_per_history(stock_id, days=730, data_dir=None, token=None):
+    """查個股較長期歷史 PER（近 `days` 天，預設約 2 年），供 FR-051 下檔風險
+    （PE壓縮模型）建立歷史區間分布用。`get_fundamentals` 的 45 天窗口只夠取
+    最新一筆估值，不足以看出歷史分布，故另立此函式。
+
+    TaiwanStockPER 是逐交易日資料，730 天窗口對長年上市股通常能取回數百筆；
+    近期才掛牌的新股資料點會偏少，由呼叫端（review_engine）自行判斷資料
+    是否足夠評估，本函式不臆測、不補值。
+    """
+    token = token or _read_token(data_dir)
+    result = {"stock_id": stock_id, "token_used": bool(token), "errors": []}
+
+    per = _fetch("TaiwanStockPER", stock_id, _days_ago(days), token)
+    if "error" in per:
+        result["errors"].append(per["error"])
+    elif per["data"]:
+        result["per_history"] = [
+            {
+                "date": row.get("date"),
+                "PER": row.get("PER"),
+                "PBR": row.get("PBR"),
+                "dividend_yield": row.get("dividend_yield"),
+            }
+            for row in per["data"]
+        ]
+    else:
+        result["errors"].append("TaiwanStockPER 無資料（代碼是否正確？）")
     return result
 
 

@@ -11,6 +11,7 @@
 import argparse
 import datetime
 import html
+import json
 import os
 import struct
 import sys
@@ -23,63 +24,172 @@ import frameworks  # noqa: E402
 import screener  # noqa: E402
 
 # 台股慣例：紅漲綠跌 → 偏多紅、偏空綠
-STANCE_COLORS = {"偏多": "#c92a2a", "偏空": "#2b8a3e"}
-DEFAULT_STANCE_COLOR = "#495057"
+STANCE_COLORS = {"偏多": "var(--red)", "偏空": "var(--green)"}
+DEFAULT_STANCE_COLOR = "var(--ink-dim)"
 
 CSS = """
+/* ---- 色彩／排版 token（2026-07-30 導入，取代全檔寫死 hex，支援
+   deep mode）：語意色（red=需留意/警示、green=正向/完成、accent=互動
+   元素）跟中性色分開定義，深色模式只需覆寫這一份 token，其餘規則透過
+   var() 自動套用，不用逐條規則各自處理明暗兩色。 */
+:root {
+  --paper: #ffffff;
+  --paper-raised: #f8f9fa;
+  --paper-sunken: #f1f3f5;
+  --ink: #212529;
+  --ink-dim: #6c757d;
+  --rule: #dee2e6;
+  --rule-strong: #adb5bd;
+  --accent: #1971c2;
+  --accent-soft: #e7f5ff;
+  --red: #c92a2a;
+  --red-soft: #fff5f5;
+  --red-ink: #862e2e;
+  --green: #2b8a3e;
+  --amber: #e8590c;
+  --amber-soft: #fff4e6;
+  --shadow: 0 1px 2px rgba(0,0,0,.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #16181c;
+    --paper-raised: #1d2024;
+    --paper-sunken: #24272c;
+    --ink: #e9ecef;
+    --ink-dim: #9298a0;
+    --rule: #33373d;
+    --rule-strong: #474c53;
+    --accent: #6fb1f0;
+    --accent-soft: #17273a;
+    --red: #ff8a8a;
+    --red-soft: #3a1f20;
+    --red-ink: #ffc2c2;
+    --green: #6fcf87;
+    --amber: #ffa94d;
+    --amber-soft: #3a2a17;
+    --shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+}
+* { box-sizing: border-box; }
 body { font-family: -apple-system, "PingFang TC", "Microsoft JhengHei", sans-serif;
-       margin: 2rem auto; max-width: 960px; padding: 0 1rem; color: #212529; }
-h1 { font-size: 1.4rem; } h2 { font-size: 1.1rem; margin-top: 2rem;
-     border-bottom: 2px solid #dee2e6; padding-bottom: .3rem; }
-.meta { color: #868e96; font-size: .85rem; }
-table { border-collapse: collapse; width: 100%; font-size: .9rem; }
-th, td { border: 1px solid #dee2e6; padding: .45rem .6rem; text-align: left;
+       margin: 0 auto; max-width: 1040px; padding: 1.5rem 1rem 4rem;
+       color: var(--ink); background: var(--paper); line-height: 1.5;
+       transition: background .15s ease, color .15s ease; }
+a { color: var(--accent); }
+h1 { font-size: 1.5rem; font-weight: 700; margin: 0 0 .3rem; }
+h2 { font-size: 1.08rem; font-weight: 700; margin-top: 2rem;
+     border-bottom: 2px solid var(--ink); padding-bottom: .35rem; }
+.meta { color: var(--ink-dim); font-size: .85rem; }
+table { border-collapse: collapse; width: 100%; font-size: .88rem;
+        font-variant-numeric: tabular-nums; }
+th, td { border: 1px solid var(--rule); padding: .5rem .65rem; text-align: left;
          vertical-align: top; overflow-wrap: break-word; }
-th { background: #f1f3f5; white-space: nowrap; }
+th { background: var(--paper-sunken); white-space: nowrap; font-size: .74rem;
+     text-transform: uppercase; letter-spacing: .02em; color: var(--ink-dim);
+     font-weight: 700; }
+tbody tr:hover { background: var(--paper-raised); }
 .stance { font-weight: 700; white-space: nowrap; }
-.empty { color: #868e96; padding: 1rem 0; }
-.comment { border-left: 3px solid #adb5bd; margin: .8rem 0; padding: .2rem .8rem; }
-.comment .head { font-size: .8rem; color: #868e96; margin-bottom: .2rem; }
-.tag { background: #e7f5ff; color: #1971c2; border-radius: 3px;
-       padding: 0 .4rem; font-size: .75rem; margin-right: .4rem; }
+.empty { color: var(--ink-dim); padding: 1rem 0; }
+.comment { border-left: 3px solid var(--rule-strong); margin: .8rem 0;
+           padding: .3rem .9rem; background: var(--paper-raised);
+           border-radius: 0 6px 6px 0; }
+.comment .head { font-size: .8rem; color: var(--ink-dim); font-weight: 700;
+                  margin-bottom: .25rem; }
+.tag { background: var(--accent-soft); color: var(--accent); border-radius: 3px;
+       padding: .1rem .5rem; font-size: .75rem; margin: 0 .3rem .2rem 0;
+       display: inline-block; font-weight: 600; }
+/* 通用小徽章：今日重點的「檢視層」、衝突提醒等短標籤用，跟 .tag（策略
+   標籤）語意不同特意分開命名，避免以後改配色時互相牽動 */
+.badge { display: inline-block; font-size: .7rem; font-weight: 700;
+         padding: .1rem .5rem; border-radius: 3px; letter-spacing: .02em;
+         white-space: nowrap; }
+.badge-danger { background: var(--red-soft); color: var(--red-ink); }
+.badge-neutral { background: var(--paper-sunken); color: var(--ink-dim); }
+/* 今日重點：有衝突的列用左側色條＋淡底標出來，比整列變色更容易一眼
+   掃過去找到真正需要注意的那幾列（純色底在深色模式下太搶眼，改用
+   左側 4px 色條＋輕微淡底） */
+tr.row-alert { background: var(--red-soft); box-shadow: inset 4px 0 0 var(--red); }
+tr.row-highlight { background: var(--amber-soft); box-shadow: inset 4px 0 0 var(--amber); }
+.btn-danger { background: var(--red); color: #fff; border: none;
+              padding: .6rem 1.2rem; border-radius: 6px; font-size: .95rem;
+              cursor: pointer; }
+.btn-danger:hover { filter: brightness(1.08); }
+/* 導覽用的按鈕式連結（首頁跳轉到 /screen、/market-scan 等）：原本每處
+   各自寫一份 inline style 重複 6 次以上，統一成 class 才不用每加一個
+   連結就複製一段 style，深色模式也才不會漏改 */
+.btn, .btn-muted { display: inline-block; padding: .5rem 1rem; border-radius: 6px;
+        text-decoration: none; font-weight: 600; margin: 0 .5rem .5rem 0; }
+.btn { background: var(--accent); color: #fff; }
+.btn:hover { filter: brightness(1.08); }
+.btn-muted { background: var(--ink-dim); color: var(--paper); }
+.btn-muted:hover { filter: brightness(1.1); }
+.btn-primary-action { background: var(--accent); color: #fff; border: none;
+        padding: .6rem 1.2rem; border-radius: 6px; cursor: pointer; }
+.btn-primary-action:hover { filter: brightness(1.08); }
 .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-details.philomod { border: 1px solid #dee2e6; border-radius: 8px;
-                    margin: .6rem 0; padding: .5rem .8rem; }
+details.philomod { border: 1px solid var(--rule); border-radius: 8px;
+                    margin: .6rem 0; padding: .5rem .8rem; background: var(--paper-raised); }
 details.philomod summary { cursor: pointer; font-weight: 600; }
-details.philomod summary::marker { color: #1971c2; }
+details.philomod summary::marker { color: var(--accent); }
 details.philomod pre { white-space: pre-wrap; overflow-wrap: break-word;
                         font-family: inherit; font-size: .88rem;
                         line-height: 1.55; margin: .7rem 0 .1rem; }
 /* 表格「理由」欄位的展開全文（巢狀在 <td> 裡，class 特意跟上面兩個 details
    分開，避免樣式互相污染） */
 details.reason { display: inline-block; max-width: 100%; }
-details.reason summary { cursor: pointer; color: #1971c2; }
-details.reason summary::marker { color: #1971c2; }
+details.reason summary { cursor: pointer; color: var(--accent); }
+details.reason summary::marker { color: var(--accent); }
 details.reason .reason-full { white-space: pre-wrap; overflow-wrap: break-word;
                                 margin-top: .3rem; }
-.toc { margin: .8rem 0 1.2rem; padding: .6rem .9rem; background: #f8f9fa;
-       border: 1px solid #dee2e6; border-radius: 8px; font-size: .95rem;
-       line-height: 1.9; }
-.toc a { color: #1971c2; text-decoration: none; margin-right: 1.1rem;
-         display: inline-block; }
+.toc { margin: .8rem 0 1.2rem; padding: .7rem 1rem; background: var(--paper-raised);
+       border: 1px solid var(--rule); border-radius: 8px; font-size: .92rem;
+       line-height: 2; }
+.toc a { color: var(--accent); text-decoration: none; margin-right: 1.2rem;
+         display: inline-block; font-weight: 600; }
 .toc a:hover { text-decoration: underline; }
-details.section { margin: 1.4rem 0 0; }
+details.section { margin: 1.6rem 0 0; padding-bottom: .2rem; }
 details.section > summary { cursor: pointer; }
-details.section > summary::marker { color: #1971c2; }
+details.section > summary::marker { color: var(--accent); }
 details.section > summary h2 { margin-top: 0; display: inline-block; }
+/* 快速輸入表單：桌機並排、輸入框跟按鈕維持一致的深淺色 token，不再是
+   純表格頁面裡唯一有互動元素的區塊，特別給輸入框/按鈕加可見的邊框與
+   focus 樣式（原本完全沒有這塊的專屬樣式，靠瀏覽器預設值，在深色模式
+   下預設的白底輸入框會刺眼） */
+.section input[type=text], .section input[type=number], .section input[type=date],
+.section textarea, .section select {
+  background: var(--paper); color: var(--ink); border: 1px solid var(--rule-strong);
+  border-radius: 6px; padding: .45rem .6rem; font-size: .9rem; font-family: inherit;
+}
+.section textarea { resize: vertical; }
+.section input:focus, .section textarea:focus { outline: 2px solid var(--accent);
+  outline-offset: 1px; }
+.section button[type=submit] {
+  background: var(--accent); color: #fff; border: none; border-radius: 6px;
+  padding: .5rem 1.1rem; font-size: .9rem; font-weight: 600; cursor: pointer;
+}
+.section button[type=submit]:hover { filter: brightness(1.08); }
 /* 手機（<=640px）：表格改成一張張卡片，橫向捲動改直向堆疊，好讀很多 */
 @media (max-width: 640px) {
-  body { margin: 1rem auto; }
+  body { padding: 1rem 1rem 4rem; }
+  h1 { font-size: 1.3rem; }
   .tablewrap table, .tablewrap tbody, .tablewrap tr,
   .tablewrap th, .tablewrap td { display: block; width: auto; }
   .tablewrap thead { display: none; }
-  .tablewrap tr { border: 1px solid #dee2e6; border-radius: 8px;
-                   margin-bottom: .75rem; overflow: hidden; }
-  .tablewrap td { border: none; border-bottom: 1px solid #f1f3f5; }
+  .tablewrap tr { border: 1px solid var(--rule); border-radius: 8px;
+                   margin-bottom: .75rem; overflow: hidden; box-shadow: var(--shadow); }
+  .tablewrap tr.row-alert, .tablewrap tr.row-highlight { box-shadow: var(--shadow); }
+  .tablewrap td { border: none; border-bottom: 1px solid var(--paper-sunken); }
   .tablewrap td:last-child { border-bottom: none; }
   .tablewrap td::before { content: attr(data-label); display: block;
                             font-size: .72rem; font-weight: 700;
-                            color: #868e96; margin-bottom: .15rem; }
+                            color: var(--ink-dim); margin-bottom: .15rem; }
+}
+/* 桌機（>=1040px 版心以上還有餘裕時）：今日重點/新候選/庫存三個核心
+   表格允許更寬鬆的欄距，閱讀密度跟手機版分開調，避免同一份字級/間距
+   在兩種尺寸各自妥協 */
+@media (min-width: 900px) {
+  th, td { padding: .6rem .8rem; }
+  .toc { font-size: .95rem; }
 }
 """
 
@@ -88,7 +198,9 @@ PWA_META = (
     '<meta name="mobile-web-app-capable" content="yes">'
     '<meta name="apple-mobile-web-app-status-bar-style" content="default">'
     '<meta name="apple-mobile-web-app-title" content="AlphaVibe">'
-    '<meta name="theme-color" content="#1971c2">'
+    '<meta name="color-scheme" content="light dark">'
+    '<meta name="theme-color" content="#f8f9fa" media="(prefers-color-scheme: light)">'
+    '<meta name="theme-color" content="#1d2024" media="(prefers-color-scheme: dark)">'
     '<link rel="apple-touch-icon" href="apple-touch-icon.png">'
 )
 
@@ -138,6 +250,160 @@ def reason_html(value, summary_limit=40):
             "<div class=\"reason-full\">%s</div></details>" % (summary, full))
 
 
+def _render_holdings_section(store):
+    """「我的庫存與分析」／FR-058「觀察名單／庫存總覽」共用同一份市值／
+    持股比例／主題集中度計算邏輯（2026-07-29 從 render() 抽出）：規格明講
+    「兩套邏輯不能算出不同答案」，抽成單一函式讓 render()（舊版全頁）與
+    render_dashboard()（新版方案A首頁）都呼叫同一份計算，不會日後各自
+    改壞而answer分歧。獨立查一次 store，不依賴呼叫端先算好的中間變數。
+
+    回傳完整的 `<details id="section-holdings">...</details>` 字串，呼叫端
+    直接 append 即可。
+    """
+    stances = store.list_stances()
+    stance_by_code = {s["code"]: s for s in stances}
+    holdings = store.get_holdings()
+
+    parts = []
+    parts.append("<details class=\"section\" id=\"section-holdings\" open>"
+                 "<summary><h2>我的庫存與分析%s</h2></summary>"
+                 % ("（%s）" % esc(holdings["snapshot_date"])
+                    if holdings["snapshot_date"] else ""))
+    if holdings["holdings"]:
+        price_map = store.get_stock_prices()
+        industry_map = store.get_stock_industries()
+        theme_map = store.get_stock_theme()
+
+        # 市值：股數 × 快取股價；查不到股價（或無股數）的持股不計入市值，
+        # 也不計入下面持股比例的分母——分母只算「有市值資料」的部分。
+        market_values = {}
+        for h in holdings["holdings"]:
+            price_info = price_map.get(h["code"])
+            if price_info and h.get("shares") is not None:
+                market_values[h["code"]] = h["shares"] * price_info["price"]
+        total_value = sum(market_values.values())
+
+        # 主題集中度：依 stock_themes 標籤把已有市值的持股分組加總，未標記
+        # 主題的持股不計入任何一組（只影響此摘要，不影響上面逐檔顯示）。
+        theme_totals = {}
+        for h in holdings["holdings"]:
+            value = market_values.get(h["code"])
+            if value is None:
+                continue
+            theme = theme_map.get(h["code"], {}).get("theme")
+            if theme:
+                theme_totals[theme] = theme_totals.get(theme, 0) + value
+
+        if price_map:
+            latest_price_update = max(v["updated_at"] for v in price_map.values())
+            price_meta = "價格更新時間：%s" % esc(latest_price_update)
+        else:
+            price_meta = "尚未更新股價，執行 refresh_holdings_prices"
+        parts.append("<p class=\"meta\">%s ｜ 僅計入已更新價格的持股，"
+                     "持股比例可能不含全部庫存</p>" % price_meta)
+
+        parts.append("<div class=\"tablewrap\"><table><thead><tr><th>代碼</th><th>名稱</th>"
+                     "<th>產業別</th><th>投資主題</th><th>股數</th><th>平均成本</th><th>市值</th>"
+                     "<th>持股比例</th><th>立場</th><th>估值依據</th><th>理由</th>"
+                     "<th>更新日期</th></tr></thead><tbody>")
+        for h in holdings["holdings"]:
+            match = stance_by_code.get(h["code"])
+            if match:
+                color = STANCE_COLORS.get(match["stance"], DEFAULT_STANCE_COLOR)
+                stance_text = esc(match["stance"])
+                valuation_text = esc(match["valuation_metric"])
+                reason_text = reason_html(match["reason"])
+                date_text = esc(match["date"])
+            else:
+                color = DEFAULT_STANCE_COLOR
+                stance_text = valuation_text = reason_text = date_text = "尚無分析"
+
+            industry_text = esc(industry_map.get(h["code"], {}).get("industry_category"))
+            theme_text = esc(theme_map.get(h["code"], {}).get("theme"))
+
+            value = market_values.get(h["code"])
+            if value is not None:
+                value_text = "%s 元" % format(value, ",.0f")
+                ratio = (value / total_value * 100) if total_value else None
+                ratio_text = ("%.1f%%" % ratio) if ratio is not None else "—"
+            else:
+                value_text = "未更新價格"
+                ratio_text = "未更新價格"
+
+            parts.append(
+                "<tr><td data-label=\"代碼\">%s</td><td data-label=\"名稱\">%s</td>"
+                "<td data-label=\"產業別\">%s</td><td data-label=\"投資主題\">%s</td>"
+                "<td data-label=\"股數\">%s</td><td data-label=\"平均成本\">%s</td>"
+                "<td data-label=\"市值\">%s</td><td data-label=\"持股比例\">%s</td>"
+                "<td data-label=\"立場\" class=\"stance\" style=\"color:%s\">%s</td>"
+                "<td data-label=\"估值依據\">%s</td><td data-label=\"理由\">%s</td>"
+                "<td data-label=\"更新日期\">%s</td></tr>"
+                % (esc(h["code"]), esc(h["name"]), industry_text, theme_text,
+                   esc(h["shares"]), esc(h["avg_cost"]), value_text, ratio_text,
+                   color, stance_text, valuation_text, reason_text, date_text))
+        parts.append("</tbody></table></div>")
+
+        if theme_totals and total_value:
+            parts.append("<h3>主題集中度</h3>"
+                         "<div class=\"tablewrap\"><table><thead><tr><th>投資主題</th>"
+                         "<th>合計市值</th><th>佔投資組合比例</th></tr></thead><tbody>")
+            for theme, value in sorted(theme_totals.items(), key=lambda kv: -kv[1]):
+                ratio = value / total_value * 100
+                parts.append(
+                    "<tr><td data-label=\"投資主題\">%s</td>"
+                    "<td data-label=\"合計市值\">%s 元</td>"
+                    "<td data-label=\"佔投資組合比例\">%.1f%%</td></tr>"
+                    % (esc(theme), format(value, ",.0f"), ratio))
+            parts.append("</tbody></table></div>")
+            parts.append("<p class=\"meta\">僅計入已標記主題且已更新價格的持股；"
+                         "單一主題參考上限 50%，單一股票參考上限 15%（見上表持股比例）</p>")
+    else:
+        parts.append("<p class=\"empty\">尚無持股快照。</p>")
+    parts.append("</details>")
+    return "".join(parts)
+
+
+def _render_watchlist_only_section(store):
+    """「純觀察標的（無庫存）」（2026-07-30，PO反饋補齊儀表板缺口）：
+    render_dashboard() 的「觀察名單／庫存總覽」重用 _render_holdings_
+    section() 之後，只會顯示有庫存的持股——`stances` 表裡純觀察性質、
+    還沒真的買的立場（例如研究過覺得值得追蹤）完全不會出現在新首頁，
+    只有切到 /report-classic 才看得到。這個函式補上這塊：立場存在但
+    代碼不在目前庫存清單裡的標的，列成一張簡表。刻意不顯示市值／持股
+    比例／主題集中度等庫存專屬欄位——這些標的沒有庫存資料，硬要顯示
+    沒有意義（沿用 render() 舊版「觀察名單立場」區塊的篩選邏輯，但欄位
+    精簡到代碼／名稱／立場／理由／更新日期）。
+
+    回傳完整的 `<details id="section-watchlist-only">...</details>` 字串，
+    呼叫端直接 append 即可。獨立查一次 store，不依賴呼叫端先算好的中間
+    變數（跟 _render_holdings_section 一致的風格）。
+    """
+    stances = store.list_stances()
+    holdings = store.get_holdings()
+    holding_codes = set(h["code"] for h in holdings["holdings"])
+    watchlist_only = [s for s in stances if s["code"] not in holding_codes]
+
+    parts = []
+    parts.append("<details class=\"section\" id=\"section-watchlist-only\" open>"
+                 "<summary><h2>純觀察標的（無庫存）</h2></summary>")
+    if watchlist_only:
+        parts.append("<div class=\"tablewrap\"><table><thead><tr><th>代碼</th><th>名稱</th>"
+                     "<th>立場</th><th>理由</th><th>更新日期</th></tr></thead><tbody>")
+        for s in watchlist_only:
+            color = STANCE_COLORS.get(s["stance"], DEFAULT_STANCE_COLOR)
+            parts.append(
+                "<tr><td data-label=\"代碼\">%s</td><td data-label=\"名稱\">%s</td>"
+                "<td data-label=\"立場\" class=\"stance\" style=\"color:%s\">%s</td>"
+                "<td data-label=\"理由\">%s</td><td data-label=\"更新日期\">%s</td></tr>"
+                % (esc(s["code"]), esc(s["name"]), color, esc(s["stance"]),
+                   reason_html(s["reason"]), esc(s["date"])))
+        parts.append("</tbody></table></div>")
+    else:
+        parts.append("<p class=\"empty\">目前沒有純觀察、尚未建倉的標的。</p>")
+    parts.append("</details>")
+    return "".join(parts)
+
+
 def render(store):
     stances = store.list_stances()
     comments = store.recent_comments(limit=20)["results"]
@@ -147,7 +413,8 @@ def render(store):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
     # 持股與立場依代碼合併：庫存分析要能一眼對應，不用滑動比對兩張表
-    stance_by_code = {s["code"]: s for s in stances}
+    # （stance_by_code 的合併查詢移進 _render_holdings_section 內部自算，
+    # 這裡只需要 holding_codes 篩掉「觀察名單立場」裡已經是持股的部分）
     holding_codes = set(h["code"] for h in holdings["holdings"])
     watchlist_stances = [s for s in stances if s["code"] not in holding_codes]
 
@@ -167,12 +434,8 @@ def render(store):
     parts.append("<p class=\"meta\">本頁為研究輔助資訊，非投資建議。</p>")
 
     parts.append(
-        "<p><a href=\"/screen\" style=\"display:inline-block;padding:.5rem 1rem;"
-        "background:#1971c2;color:#fff;border-radius:6px;text-decoration:none;"
-        "font-weight:600;margin-right:.6rem;\">第一層選股篩選 →</a>"
-        "<a href=\"/market-scan\" style=\"display:inline-block;padding:.5rem 1rem;"
-        "background:#1971c2;color:#fff;border-radius:6px;text-decoration:none;"
-        "font-weight:600;\">第二層全市場批次篩選 →</a></p>")
+        "<p><a href=\"/screen\" class=\"btn\">第一層選股篩選 →</a>"
+        "<a href=\"/market-scan\" class=\"btn\">第二層全市場批次篩選 →</a></p>")
 
     parts.append(
         "<nav class=\"toc\">"
@@ -228,73 +491,7 @@ def render(store):
         parts.append("<p class=\"empty\">尚無分析快照。</p>")
     parts.append("</details>")
 
-    parts.append("<details class=\"section\" id=\"section-holdings\" open>"
-                 "<summary><h2>我的庫存與分析%s</h2></summary>"
-                 % ("（%s）" % esc(holdings["snapshot_date"])
-                    if holdings["snapshot_date"] else ""))
-    if holdings["holdings"]:
-        price_map = store.get_stock_prices()
-        industry_map = store.get_stock_industries()
-
-        # 市值：股數 × 快取股價；查不到股價（或無股數）的持股不計入市值，
-        # 也不計入下面持股比例的分母——分母只算「有市值資料」的部分。
-        market_values = {}
-        for h in holdings["holdings"]:
-            price_info = price_map.get(h["code"])
-            if price_info and h.get("shares") is not None:
-                market_values[h["code"]] = h["shares"] * price_info["price"]
-        total_value = sum(market_values.values())
-
-        if price_map:
-            latest_price_update = max(v["updated_at"] for v in price_map.values())
-            price_meta = "價格更新時間：%s" % esc(latest_price_update)
-        else:
-            price_meta = "尚未更新股價，執行 refresh_holdings_prices"
-        parts.append("<p class=\"meta\">%s ｜ 僅計入已更新價格的持股，"
-                     "持股比例可能不含全部庫存</p>" % price_meta)
-
-        parts.append("<div class=\"tablewrap\"><table><thead><tr><th>代碼</th><th>名稱</th>"
-                     "<th>產業別</th><th>股數</th><th>平均成本</th><th>市值</th>"
-                     "<th>持股比例</th><th>立場</th><th>估值依據</th><th>理由</th>"
-                     "<th>更新日期</th></tr></thead><tbody>")
-        for h in holdings["holdings"]:
-            match = stance_by_code.get(h["code"])
-            if match:
-                color = STANCE_COLORS.get(match["stance"], DEFAULT_STANCE_COLOR)
-                stance_text = esc(match["stance"])
-                valuation_text = esc(match["valuation_metric"])
-                reason_text = reason_html(match["reason"])
-                date_text = esc(match["date"])
-            else:
-                color = DEFAULT_STANCE_COLOR
-                stance_text = valuation_text = reason_text = date_text = "尚無分析"
-
-            industry_text = esc(industry_map.get(h["code"], {}).get("industry_category"))
-
-            value = market_values.get(h["code"])
-            if value is not None:
-                value_text = "%s 元" % format(value, ",.0f")
-                ratio = (value / total_value * 100) if total_value else None
-                ratio_text = ("%.1f%%" % ratio) if ratio is not None else "—"
-            else:
-                value_text = "未更新價格"
-                ratio_text = "未更新價格"
-
-            parts.append(
-                "<tr><td data-label=\"代碼\">%s</td><td data-label=\"名稱\">%s</td>"
-                "<td data-label=\"產業別\">%s</td>"
-                "<td data-label=\"股數\">%s</td><td data-label=\"平均成本\">%s</td>"
-                "<td data-label=\"市值\">%s</td><td data-label=\"持股比例\">%s</td>"
-                "<td data-label=\"立場\" class=\"stance\" style=\"color:%s\">%s</td>"
-                "<td data-label=\"估值依據\">%s</td><td data-label=\"理由\">%s</td>"
-                "<td data-label=\"更新日期\">%s</td></tr>"
-                % (esc(h["code"]), esc(h["name"]), industry_text,
-                   esc(h["shares"]), esc(h["avg_cost"]), value_text, ratio_text,
-                   color, stance_text, valuation_text, reason_text, date_text))
-        parts.append("</tbody></table></div>")
-    else:
-        parts.append("<p class=\"empty\">尚無持股快照。</p>")
-    parts.append("</details>")
+    parts.append(_render_holdings_section(store))
 
     parts.append("<details class=\"section\" id=\"section-comments\">"
                  "<summary><h2>Layer 3 最近評論（最多 20 則）</h2></summary>")
@@ -326,6 +523,411 @@ def render(store):
     return "".join(parts)
 
 
+def _invalidation_text(invalidation):
+    """把 frameworks.py 某個框架的 "invalidation" dict（FR-052 策略專屬層）
+    轉成人話的「假說失效」說明句，供 render_dashboard() 策略設定區塊使用。
+
+    語意方向跟 _format_condition_text() 的 entry 門檻相反：entry 門檻的
+    子句用「且」串接（全部符合才算候選），這裡子句用「，或」串接
+    （任一子條件成立即視為假說失效）——見 frameworks.py 檔頭說明。措辭
+    要能通用轉換任何策略的 invalidation 欄位組合，不寫死特定策略文字。
+
+    invalidation 為 None、空 dict、或全部 key 皆為 None／缺席時，回傳
+    None，交由呼叫端決定顯示什麼預設文字（FR-052 是選配欄位，不是每個
+    框架都要有）。
+    """
+    if not invalidation:
+        return None
+    clauses = []
+    if invalidation.get("peg_min") is not None:
+        clauses.append("PEG回升至&gt;=%s" % _fmt_num(invalidation["peg_min"]))
+    if invalidation.get("drawdown_max") is not None:
+        clauses.append("回檔收斂至&lt;%s%%" % _fmt_pct(invalidation["drawdown_max"]))
+    if invalidation.get("revenue_yoy_max") is not None:
+        clauses.append("營收年增率降至&lt;=%s%%" % _fmt_pct(invalidation["revenue_yoy_max"]))
+    if not clauses:
+        return None
+    return "假說失效：" + "，或".join(clauses)
+
+
+def _render_today_highlights_section(store, date):
+    """FR-058「今日重點」：模組D檢視結果（module_d_results）中 suggested_action
+    不為空的記錄——依 review_engine.run_module_d_batch() 的設計，這代表
+    concern_flag=True 且算得出部位控制建議的項目，才是真正需要PO留意的
+    （沒觸發任何檢視規則的「正常」記錄 suggested_action 恆為 None，不顯示
+    在這裡，避免每天一堆正常結果淹沒真正的重點）。conflict_flag=True
+    （跟既有立場或其他策略衝突）的記錄排最前面。"""
+    results = store.get_module_d_results(date=date)["results"]
+    highlights = [r for r in results if r.get("suggested_action") is not None]
+    highlights.sort(key=lambda r: not r.get("conflict_flag"))
+
+    parts = []
+    parts.append("<details class=\"section\" id=\"section-today-highlights\" open>"
+                 "<summary><h2>今日重點</h2></summary>")
+    if highlights:
+        parts.append("<div class=\"tablewrap\"><table><thead><tr>"
+                     "<th>代碼</th><th>檢視層</th><th>發現</th><th>建議動作</th>"
+                     "<th>提醒</th></tr></thead><tbody>")
+        for r in highlights:
+            conflict = bool(r.get("conflict_flag"))
+            row_style = " class=\"row-alert\"" if conflict else ""
+            conflict_text = "⚠️ 立場衝突" if conflict else "—"
+            parts.append(
+                "<tr%s><td data-label=\"代碼\">%s</td><td data-label=\"檢視層\">%s</td>"
+                "<td data-label=\"發現\">%s</td><td data-label=\"建議動作\">%s</td>"
+                "<td data-label=\"提醒\">%s</td></tr>"
+                % (row_style, esc(r["code"]), esc(r["trigger_type"]),
+                   esc(r["finding"]), esc(r["suggested_action"]), conflict_text))
+        parts.append("</tbody></table></div>")
+    else:
+        parts.append("<p class=\"empty\">今日無需特別留意的標的。</p>")
+    parts.append("</details>")
+    return "".join(parts)
+
+
+def _render_new_candidates_section(store):
+    """FR-058「今日新候選」：合併 frameworks.FRAMEWORKS 每套框架各自最新
+    一次 market_scan 結果裡 meets_framework=1 的候選。同一代碼同時符合
+    多套框架時，合併成一列，「符合策略」欄位用標籤（.tag）並列顯示，
+    不重複列出兩列——沿用各框架各自的 get_latest_market_scan() 最新一次
+    run（跟 /market-scan 頁面同一個「最近一次」概念，不額外限定日期，
+    因為每套框架的排程/手動觸發時間不保證相同）。"""
+    merged = {}
+    order = []
+    for fw in frameworks.FRAMEWORKS:
+        latest = store.get_latest_market_scan(framework_id=fw["id"], meets_only=True)
+        if not latest.get("found"):
+            continue
+        for r in latest["results"]:
+            code = r["code"]
+            if code not in merged:
+                merged[code] = {"row": r, "labels": []}
+                order.append(code)
+            merged[code]["labels"].append(fw["label"])
+
+    parts = []
+    parts.append("<details class=\"section\" id=\"section-new-candidates\" open>"
+                 "<summary><h2>今日新候選</h2></summary>")
+    if order:
+        parts.append("<div class=\"tablewrap\"><table><thead><tr>"
+                     "<th>代碼</th><th>名稱</th><th>市場</th><th>產業別</th>"
+                     "<th>符合策略</th><th>PER</th><th>營收年增率</th><th>PEG</th>"
+                     "<th>回檔幅度</th><th>目前價</th></tr></thead><tbody>")
+        for code in order:
+            r = merged[code]["row"]
+            tags = "".join("<span class=\"tag\">%s</span>" % esc(label)
+                           for label in merged[code]["labels"])
+            peg_text = ("%.2f" % r["peg"]) if r.get("peg") is not None else "—"
+            yoy_text = ("%.1f%%" % (r["revenue_yoy"] * 100)) if r.get("revenue_yoy") is not None else "—"
+            drawdown_text = ("%.1f%%" % (r["drawdown_pct"] * 100)) if r.get("drawdown_pct") is not None else "—"
+            per_text = ("%.2f" % r["per"]) if r.get("per") is not None else "—"
+            parts.append(
+                "<tr><td data-label=\"代碼\">%s</td><td data-label=\"名稱\">%s</td>"
+                "<td data-label=\"市場\">%s</td><td data-label=\"產業別\">%s</td>"
+                "<td data-label=\"符合策略\">%s</td>"
+                "<td data-label=\"PER\">%s</td><td data-label=\"營收年增率\">%s</td>"
+                "<td data-label=\"PEG\">%s</td><td data-label=\"回檔幅度\">%s</td>"
+                "<td data-label=\"目前價\">%s</td></tr>"
+                % (esc(code), esc(r.get("name")), esc(r.get("market")), esc(r.get("industry")),
+                   tags, per_text, yoy_text, peg_text, drawdown_text, esc(r.get("current_price"))))
+        parts.append("</tbody></table></div>")
+    else:
+        parts.append("<p class=\"empty\">目前沒有符合任何策略門檻的候選。</p>")
+    parts.append("</details>")
+    return "".join(parts)
+
+
+def _render_strategy_settings_section():
+    """FR-058「策略設定」：條列 frameworks.FRAMEWORKS 每套策略的篩選門檻
+    （沿用 _format_condition_text，跟 /screen、/market-scan 頁面同一套
+    措辭，不重寫第二份文字邏輯）與策略專屬檢視規則（_invalidation_text
+    轉譯 invalidation 欄位）。最後加一張純文字說明卡——依FR-049設計，
+    策略新增/調整走跟AI對話討論後改 frameworks.py，這裡不做表單/按鈕。"""
+    parts = []
+    parts.append("<details class=\"section\" id=\"section-strategy-settings\">"
+                 "<summary><h2>策略設定</h2></summary>")
+    for fw in frameworks.FRAMEWORKS:
+        condition_text = _format_condition_text(
+            peg_threshold=fw.get("peg_max"), revenue_yoy_min=fw.get("revenue_yoy_min"),
+            drawdown_min=fw.get("drawdown_min"), drawdown_max=fw.get("drawdown_max"),
+            excess_drawdown_min=fw.get("excess_drawdown_min"))
+        invalidation_text = _invalidation_text(fw.get("invalidation")) or "尚未定義策略專屬檢視規則"
+        parts.append(
+            "<div class=\"comment\"><div class=\"head\">%s</div>"
+            "<div>篩選門檻：%s</div><div>%s</div></div>"
+            % (esc(fw["label"]), condition_text, invalidation_text))
+    parts.append(
+        "<div class=\"comment\"><div class=\"head\">＋新增或調整策略</div>"
+        "<div>策略不是填表單做出來的——先跟AI討論你觀察到的操作邏輯，"
+        "定案後由AI把篩選門檻＋專屬檢視規則寫進 frameworks.py，"
+        "你只需要確認結果</div></div>")
+    parts.append("</details>")
+    return "".join(parts)
+
+
+_DASHBOARD_FORM_STYLE = ("display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;"
+                         "margin:.6rem 0 1.2rem;")
+
+
+def _render_quick_input_section():
+    """FR-058「快速輸入」：只做3個有明確欄位結構的真表單（加自選股／記
+    交易／貼老芋頭進出），POST到report_server.py新增的/dashboard/*路徑。
+    刻意不做「貼資訊給AI歸檔」這種需要LLM理解的假表單——那個走Claude
+    Code對話（既有場景3），不是這裡的網頁表單能做的事。"""
+    parts = []
+    parts.append("<details class=\"section\" id=\"section-quick-input\">"
+                 "<summary><h2>快速輸入</h2></summary>")
+    parts.append(
+        "<h3>＋ 加自選股</h3>"
+        "<form method=\"post\" action=\"/dashboard/watchlist\" style=\"%s\">"
+        "<input name=\"code\" placeholder=\"代碼\" required>"
+        "<input name=\"name\" placeholder=\"名稱（可選）\">"
+        "<button type=\"submit\">加入</button></form>" % _DASHBOARD_FORM_STYLE)
+    parts.append(
+        "<h3>＋ 記一筆交易</h3>"
+        "<form method=\"post\" action=\"/dashboard/trade\" style=\"%s\">"
+        "<input name=\"code\" placeholder=\"代碼\" required>"
+        "<input name=\"name\" placeholder=\"名稱（可選）\">"
+        "<select name=\"action\"><option value=\"買\">買</option>"
+        "<option value=\"賣\">賣</option></select>"
+        "<input name=\"shares\" type=\"number\" step=\"1\" placeholder=\"股數\" required>"
+        "<input name=\"price\" type=\"number\" step=\"0.01\" placeholder=\"價格\" required>"
+        "<input name=\"date\" type=\"date\" required>"
+        "<input name=\"add_sequence\" type=\"number\" step=\"1\" placeholder=\"加碼序號（可選）\">"
+        "<button type=\"submit\">記錄</button></form>" % _DASHBOARD_FORM_STYLE)
+    parts.append(
+        "<h3>＋ 貼老芋頭進出</h3>"
+        "<p class=\"meta\">整段貼上，不用逐欄位填。第一行是8位數日期"
+        "（例如20260729），接著可以先寫一行原因、再接交易行（格式："
+        "價格＋買進/賣出/買回/回補＋股數＋股/張＋名稱＋可選括號註記，"
+        "例如「365賣出500股聯鈞（出清）」），空行會清空目前的原因。</p>"
+        "<form method=\"post\" action=\"/dashboard/laoyutou\">"
+        "<textarea name=\"text\" rows=\"8\" placeholder=\"20260729&#10;"
+        "殺估值，獲利跟不上股價，清倉換股&#10;365賣出500股聯鈞（出清）\" "
+        "required style=\"width:100%%;font-family:inherit;font-size:.9rem;"
+        "padding:.5rem .6rem;\"></textarea>"
+        "<div style=\"margin-top:.5rem;\">"
+        "<button type=\"submit\">解析並批次記錄</button></div></form>")
+    parts.append(
+        "<h3>＋ 貼交易明細表</h3>"
+        "<p class=\"meta\">整段貼上券商App/網站匯出的交易明細表文字（PO自己"
+        "的買賣紀錄，跟上面的老芋頭進出是不同的表）。每一列自帶日期，貼了"
+        "送出就直接解析並批次記錄，會自動算好每筆買進的加碼序號，不用像"
+        "貼庫存帳單那樣先預覽確認。</p>"
+        "<form method=\"post\" action=\"/dashboard/tradeledger\">"
+        "<textarea name=\"text\" rows=\"8\" placeholder=\"交易日期: 115/07/22 - "
+        "115/07/29 頁次: 1&#10;115/07/22 OT賣 中美晶 50 242.50 ... "
+        "12,085(付) k-0116-00\" required style=\"width:100%%;"
+        "font-family:inherit;font-size:.9rem;padding:.5rem .6rem;\">"
+        "</textarea>"
+        "<div style=\"margin-top:.5rem;\">"
+        "<button type=\"submit\">解析並批次記錄</button></div></form>")
+    parts.append(
+        "<h3>＋ 貼庫存帳單</h3>"
+        "<p class=\"meta\">整段貼上券商App/網站匯出的零股庫存表文字。解析後"
+        "會先顯示預覽（含與上次快照的差異比對），確認無誤才會真的存入，"
+        "不會貼上就直接寫入資料庫。</p>"
+        "<form method=\"post\" action=\"/dashboard/holdings/preview\">"
+        "<textarea name=\"text\" rows=\"8\" placeholder=\"股票代號 股票名稱 "
+        "庫存股數 ...\" required style=\"width:100%%;font-family:inherit;"
+        "font-size:.9rem;padding:.5rem .6rem;\"></textarea>"
+        "<div style=\"margin-top:.5rem;\">"
+        "<button type=\"submit\">解析並預覽</button></div></form>")
+    parts.append("</details>")
+    return "".join(parts)
+
+
+def render_dashboard(store, flash=None):
+    """FR-058 儀表板（方案A單頁式）：取代 `/` 首頁原本顯示的 render()。
+    由上到下——今日重點／今日新候選／觀察名單庫存總覽／策略設定／快速
+    輸入。舊版完整檢視（觀察名單立場／分析快照／評論／哲學模組）整份
+    保留在 render()，改掛 `/report-classic`（見 report_server.py），不刪除
+    也不重寫其邏輯。
+
+    取捨（2026-07-30）：「觀察名單／庫存總覽」直接重用 _render_holdings_
+    section()，只顯示庫存持股（含市值/持股比例/主題集中度）；純觀察
+    立場（有立場但未持有的標的）另外用 _render_watchlist_only_section()
+    補一個精簡區塊接在庫存總覽之後（2026-07-30 PO反饋：原本這塊完全不
+    在新首頁出現，只能切到 /report-classic 才看得到）。
+
+    flash：3個快速輸入表單送出後，report_server.py 以303轉址帶查詢參數
+    回這裡顯示的一次性訊息（成功或錯誤皆可，開頭「⚠️」視為錯誤樣式，
+    否則視為成功樣式）。
+    """
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    today = datetime.date.today().isoformat()
+
+    parts = []
+    parts.append("<!doctype html><html lang=\"zh-Hant\"><head>"
+                 "<meta charset=\"utf-8\">"
+                 "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+                 + PWA_META +
+                 "<title>AlphaVibe 儀表板</title>"
+                 "<style>%s</style></head><body>" % CSS)
+    parts.append("<h1>AlphaVibe 儀表板</h1>")
+    parts.append("<p class=\"meta\">產出時間 %s ｜ 下拉重新整理更新最新資料</p>" % now)
+    parts.append("<p class=\"meta\">本頁為研究輔助資訊，非投資建議。</p>")
+    if flash:
+        is_error = flash.startswith("⚠️")
+        color = "var(--red)" if is_error else "var(--green)"
+        parts.append("<p class=\"meta\" style=\"color:%s;font-weight:600;\">%s</p>"
+                     % (color, esc(flash)))
+    parts.append(
+        "<p><a href=\"/report-classic\" class=\"btn-muted\">完整舊版檢視 →</a>"
+        "<a href=\"/screen\" class=\"btn\">第一層選股篩選 →</a>"
+        "<a href=\"/market-scan\" class=\"btn\">第二層全市場批次篩選 →</a></p>")
+    parts.append(
+        "<nav class=\"toc\">"
+        "<a href=\"#section-today-highlights\">今日重點</a>"
+        "<a href=\"#section-new-candidates\">今日新候選</a>"
+        "<a href=\"#section-holdings\">觀察名單／庫存總覽</a>"
+        "<a href=\"#section-watchlist-only\">純觀察標的（無庫存）</a>"
+        "<a href=\"#section-strategy-settings\">策略設定</a>"
+        "<a href=\"#section-quick-input\">快速輸入</a>"
+        "</nav>")
+
+    parts.append(_render_today_highlights_section(store, today))
+    parts.append(_render_new_candidates_section(store))
+    parts.append(_render_holdings_section(store))
+    parts.append(_render_watchlist_only_section(store))
+    parts.append(_render_strategy_settings_section())
+    parts.append(_render_quick_input_section())
+
+    parts.append("</body></html>")
+    return "".join(parts)
+
+
+def _carry_over_avg_cost(rows, previous_holdings):
+    """holdings_parser.parse_holdings_report() 的解析結果不含 avg_cost
+    （帳單本來就沒有成本資料）；若上次快照同一代碼有非NULL的avg_cost，
+    沿用帶過去，不讓已知的成本資料在「貼帳單→存新快照」的流程中消失。
+    回傳新的清單（不修改傳入的rows），每筆含code/name/shares/avg_cost/
+    is_emerging，供預覽頁顯示與確認表單的隱藏欄位JSON共用。"""
+    prev_map = {h["code"]: h for h in (previous_holdings.get("holdings") or [])}
+    enriched = []
+    for r in rows:
+        prev = prev_map.get(r["code"])
+        avg_cost = prev.get("avg_cost") if prev else None
+        enriched.append({
+            "code": r["code"],
+            "name": r.get("name"),
+            "shares": r.get("shares"),
+            "avg_cost": avg_cost,
+            "is_emerging": bool(r.get("is_emerging")),
+        })
+    return enriched
+
+
+def _diff_holdings(enriched_rows, previous_holdings):
+    """比對這次解析結果與上次持股快照，分成新增／消失／股數變化三類，
+    供 render_holdings_preview() 顯示。「消失」只代表這次帳單沒有印到
+    這個代碼，不代表使用者已經出清——不在這裡替使用者下判斷。"""
+    prev_map = {h["code"]: h for h in (previous_holdings.get("holdings") or [])}
+    curr_map = {r["code"]: r for r in enriched_rows}
+    added = [r for r in enriched_rows if r["code"] not in prev_map]
+    removed = [h for h in (previous_holdings.get("holdings") or [])
+               if h["code"] not in curr_map]
+    changed = []
+    for r in enriched_rows:
+        prev = prev_map.get(r["code"])
+        if prev is not None and prev.get("shares") != r.get("shares"):
+            changed.append({
+                "code": r["code"], "name": r.get("name"),
+                "prev_shares": prev.get("shares"), "new_shares": r.get("shares"),
+            })
+    return {"added": added, "removed": removed, "changed": changed}
+
+
+def render_holdings_preview(parsed, previous_holdings):
+    """FR-058週邊工具「貼庫存帳單」第一步：預覽頁。
+
+    parsed 是 holdings_parser.parse_holdings_report() 的原始回傳值
+    （{"rows", "unparsed_lines", "total_parsed"}）；previous_holdings 是
+    store.get_holdings() 的回傳值（比對用的「上次快照」，可能是空庫存）。
+
+    人工確認關卡（holdings_parser docstring明講不可省略）：這裡只渲染
+    預覽，不寫入資料庫——「確認存入」表單把完整解析結果（含沿用的
+    avg_cost）序列化進隱藏欄位，POST 到 /dashboard/holdings/confirm 才
+    真的呼叫 save_holdings（見 report_server.py）。
+    """
+    rows = parsed.get("rows") or []
+    unparsed_lines = parsed.get("unparsed_lines") or []
+    enriched_rows = _carry_over_avg_cost(rows, previous_holdings)
+    diff = _diff_holdings(enriched_rows, previous_holdings)
+
+    parts = [_screen_page_head("貼庫存帳單－確認")]
+    parts.append("<p class=\"meta\"><a href=\"/\">← 回知識庫檢視</a></p>")
+    parts.append("<h1>貼庫存帳單－確認解析結果</h1>")
+    parts.append(
+        "<p class=\"meta\">本次解析出 %d 檔 ｜ 上次快照：%s（%s 檔）｜ "
+        "請確認無誤後再存入，存入不會覆蓋歷史紀錄，而是新增一筆最新快照</p>"
+        % (len(enriched_rows),
+           esc(previous_holdings.get("snapshot_date")),
+           previous_holdings.get("count", 0)))
+
+    if unparsed_lines:
+        parts.append(
+            "<div class=\"comment\" style=\"border-left-color:var(--red)\">"
+            "<div class=\"head\" style=\"color:var(--red)\">"
+            "⚠️ %d 行無法解析，請人工核對原始帳單是否有遺漏</div>"
+            % len(unparsed_lines))
+        for line in unparsed_lines:
+            parts.append("<div><code>%s</code></div>" % esc(line))
+        parts.append("</div>")
+
+    parts.append("<h2>與上次快照比對</h2>")
+    if diff["added"]:
+        parts.append("<h3>新增（這次有、上次沒有）</h3>"
+                     "<ul>")
+        for r in diff["added"]:
+            parts.append("<li>%s %s：%s 股</li>"
+                         % (esc(r["code"]), esc(r["name"]), esc(r["shares"])))
+        parts.append("</ul>")
+    if diff["removed"]:
+        parts.append(
+            "<h3>這次帳單沒有這一檔（上次有，這次沒印到——不確定是否已"
+            "出清，請自行核對）</h3><ul>")
+        for h in diff["removed"]:
+            parts.append("<li>%s %s：上次 %s 股</li>"
+                         % (esc(h["code"]), esc(h["name"]), esc(h["shares"])))
+        parts.append("</ul>")
+    if diff["changed"]:
+        parts.append("<h3>股數變化</h3><ul>")
+        for c in diff["changed"]:
+            parts.append("<li>%s %s：%s 股 → %s 股</li>"
+                         % (esc(c["code"]), esc(c["name"]),
+                            esc(c["prev_shares"]), esc(c["new_shares"])))
+        parts.append("</ul>")
+    if not (diff["added"] or diff["removed"] or diff["changed"]):
+        parts.append("<p class=\"meta\">與上次快照相比沒有變化。</p>")
+
+    parts.append("<h2>本次解析完整清單</h2>")
+    if enriched_rows:
+        parts.append(
+            "<div class=\"tablewrap\"><table><thead><tr><th>代碼</th>"
+            "<th>名稱</th><th>股數</th><th>平均成本</th><th>興櫃</th>"
+            "</tr></thead><tbody>")
+        for r in enriched_rows:
+            parts.append(
+                "<tr><td data-label=\"代碼\">%s</td><td data-label=\"名稱\">%s</td>"
+                "<td data-label=\"股數\">%s</td><td data-label=\"平均成本\">%s</td>"
+                "<td data-label=\"興櫃\">%s</td></tr>"
+                % (esc(r["code"]), esc(r["name"]), esc(r["shares"]),
+                   esc(r["avg_cost"]), "是" if r["is_emerging"] else "—"))
+        parts.append("</tbody></table></div>")
+        rows_json = json.dumps(enriched_rows, ensure_ascii=False)
+        parts.append(
+            "<form method=\"post\" action=\"/dashboard/holdings/confirm\">"
+            "<input type=\"hidden\" name=\"rows_json\" value=\"%s\">"
+            "<button type=\"submit\" class=\"btn-primary-action\">"
+            "確認存入</button></form>" % esc(rows_json))
+    else:
+        parts.append("<p class=\"empty\">沒有解析出任何資料列，無法存入。"
+                     "請確認帳單格式，或往回上一頁重貼。</p>")
+    parts.append("</body></html>")
+    return "".join(parts)
+
+
 def _screen_page_head(title):
     return ("<!doctype html><html lang=\"zh-Hant\"><head>"
             "<meta charset=\"utf-8\">"
@@ -353,7 +955,7 @@ def render_screen_form(error=None):
                  "一次最多 %d 檔。</p>"
                  % screener.MAX_CODES)
     if error:
-        parts.append("<p class=\"empty\" style=\"color:#c92a2a\">%s</p>" % esc(error))
+        parts.append("<p class=\"empty\" style=\"color:var(--red)\">%s</p>" % esc(error))
     parts.append(
         "<form method=\"post\" action=\"/screen\">"
         "<textarea name=\"codes\" rows=\"6\" "
@@ -365,6 +967,67 @@ def render_screen_form(error=None):
     return "".join(parts)
 
 
+def _fmt_num(value):
+    """把小數格式化成不帶多餘小數點的字串（1.0→"1"、0.4→"0.4"），供動態組出
+    的門檻說明文字使用，避免「PEG&lt;1.0」這種比手寫版本囉唆的顯示。"""
+    return "%g" % value
+
+
+def _fmt_pct(value):
+    """value 為小數（0.4＝40%），回傳去尾數的百分比字串，如 "40"、"9.5"。"""
+    return _fmt_num(value * 100)
+
+
+def _format_condition_text(peg_threshold=None, drawdown_min=None, drawdown_max=None,
+                           excess_drawdown_min=None, revenue_yoy_min=None):
+    """把框架/篩選門檻組成人看得懂的一句話，取代寫死的「PEG<1 且回檔>=40%」。
+
+    任一參數為 None 代表「這個框架不看這項條件」，直接省略該子句——這樣
+    framework revenue_high_price_dip（peg_threshold=None）才不會被印成
+    「PEG<None」這種假字串。全部為 None 時回傳「不限條件」，理論上不會發生
+    （框架至少會有一項條件），但防呆不可省。
+
+    revenue_yoy_min（2026-07-29 新增，FR-058策略設定畫面用）：既有呼叫端
+    （_thresholds_condition_text／compose_market_scan_track_reason）都沒有
+    這項資料可傳，省略時維持 None、不新增子句，行為與改動前完全一致。
+    """
+    clauses = []
+    if peg_threshold is not None:
+        clauses.append("PEG&lt;%s" % _fmt_num(peg_threshold))
+    if revenue_yoy_min is not None:
+        clauses.append("營收年增率&gt;=%s%%" % _fmt_pct(revenue_yoy_min))
+    if drawdown_min is not None and drawdown_max is not None:
+        clauses.append("回檔%s%%~%s%%" % (_fmt_pct(drawdown_min), _fmt_pct(drawdown_max)))
+    elif drawdown_min is not None:
+        clauses.append("回檔&gt;=%s%%" % _fmt_pct(drawdown_min))
+    elif drawdown_max is not None:
+        clauses.append("回檔&lt;=%s%%" % _fmt_pct(drawdown_max))
+    if excess_drawdown_min is not None:
+        clauses.append("超額跌幅&gt;=%s%%" % _fmt_pct(excess_drawdown_min))
+    if not clauses:
+        return "不限條件"
+    return " 且".join(clauses)
+
+
+def _thresholds_condition_text(result):
+    """從 screener.screen_stocks() 回傳值裡的 "thresholds" 區塊組門檻說明文字。
+
+    "thresholds" 整個 key 缺席時（例如舊呼叫端、或單元測試直接手寫最小
+    result dict）退回 screener 模組原本寫死的預設值（PEG&lt;1 且回檔&gt;=40%），
+    行為與改動前完全一致；"thresholds" 存在但個別欄位是 None，則忠實反映
+    「這個框架不看這項條件」，不套用預設值。
+    """
+    thresholds = result.get("thresholds")
+    if thresholds is None:
+        return _format_condition_text(peg_threshold=screener.PEG_THRESHOLD,
+                                      drawdown_min=screener.DRAWDOWN_THRESHOLD)
+    return _format_condition_text(
+        peg_threshold=thresholds.get("peg_threshold"),
+        drawdown_min=thresholds.get("drawdown_min"),
+        drawdown_max=thresholds.get("drawdown_max"),
+        excess_drawdown_min=thresholds.get("excess_drawdown_min"))
+
+
 def render_screen_results(result):
     """POST /screen 結果頁；result 為 screener.screen_stocks() 的回傳值。"""
     parts = [_screen_page_head("選股篩選結果")]
@@ -373,38 +1036,43 @@ def render_screen_results(result):
     parts.append("<h1>選股篩選結果</h1>")
 
     if result.get("error"):
-        parts.append("<p class=\"empty\" style=\"color:#c92a2a\">%s</p>" % esc(result["error"]))
+        parts.append("<p class=\"empty\" style=\"color:var(--red)\">%s</p>" % esc(result["error"]))
         parts.append("</body></html>")
         return "".join(parts)
 
     rows = result.get("results") or []
     hit_count = sum(1 for r in rows if r.get("meets_framework"))
-    parts.append("<p class=\"meta\">共篩選 %d 檔，符合框架（PEG&lt;1 且回檔&gt;=40%%）"
-                 "%d 檔（表格中以黃底標出）</p>" % (result.get("total", len(rows)), hit_count))
+    parts.append("<p class=\"meta\">共篩選 %d 檔，符合框架（%s）"
+                 "%d 檔（表格中以黃底標出）</p>"
+                 % (result.get("total", len(rows)), _thresholds_condition_text(result), hit_count))
 
     if rows:
         parts.append("<div class=\"tablewrap\"><table><thead><tr>"
                      "<th>代碼</th><th>名稱</th><th>PER</th><th>營收年增率</th>"
-                     "<th>PEG</th><th>回檔幅度</th><th>目前價</th><th>符合框架</th>"
-                     "<th>備註</th></tr></thead><tbody>")
+                     "<th>PEG</th><th>回檔幅度</th><th>超額跌幅</th><th>目前價</th>"
+                     "<th>符合框架</th><th>備註</th></tr></thead><tbody>")
         for r in rows:
             peg_text = ("%.2f" % r["peg"]) if r["peg"] is not None else "—"
             yoy_text = ("%.1f%%" % (r["revenue_yoy"] * 100)) if r["revenue_yoy"] is not None else "—"
             drawdown_text = ("%.1f%%" % (r["drawdown_pct"] * 100)) if r["drawdown_pct"] is not None else "—"
+            excess_drawdown_text = ("%.1f%%" % (r.get("excess_drawdown_pct") * 100)
+                                    if r.get("excess_drawdown_pct") is not None else "—")
             per_text = ("%.2f" % r["per"]) if r["per"] is not None else "—"
             hit = r.get("meets_framework")
-            row_style = " style=\"background:#fff3bf\"" if hit else ""
+            row_style = " class=\"row-highlight\"" if hit else ""
             hit_text = "符合" if hit else "—"
             note = esc(r.get("error")) if r.get("error") else "—"
             parts.append(
                 "<tr%s><td data-label=\"代碼\">%s</td><td data-label=\"名稱\">%s</td>"
                 "<td data-label=\"PER\">%s</td><td data-label=\"營收年增率\">%s</td>"
                 "<td data-label=\"PEG\">%s</td><td data-label=\"回檔幅度\">%s</td>"
+                "<td data-label=\"超額跌幅\">%s</td>"
                 "<td data-label=\"目前價\">%s</td>"
                 "<td data-label=\"符合框架\" class=\"stance\">%s</td>"
                 "<td data-label=\"備註\">%s</td></tr>"
                 % (row_style, esc(r["code"]), esc(r["name"]), per_text, yoy_text,
-                   peg_text, drawdown_text, esc(r["current_price"]), hit_text, note))
+                   peg_text, drawdown_text, excess_drawdown_text, esc(r["current_price"]),
+                   hit_text, note))
         parts.append("</tbody></table></div>")
     else:
         parts.append("<p class=\"empty\">沒有輸入任何代碼。</p>")
@@ -438,8 +1106,8 @@ def render_market_scan_page(selected_id, latest, error=None):
 
     parts.append("<form method=\"post\" action=\"/market-scan\">"
                  "<input type=\"hidden\" name=\"framework\" value=\"%s\">"
-                 "<button type=\"submit\" style=\"font-size:1rem;padding:.6rem 1.2rem;"
-                 "background:#1971c2;color:#fff;border:none;border-radius:6px;\">"
+                 "<button type=\"submit\" style=\"font-size:1rem;\" "
+                 "class=\"btn-primary-action\">"
                  "立即掃描（約需30秒~數分鐘）</button></form>" % esc(selected_id))
 
     parts.append("<details class=\"philomod\"><summary>這是什麼？</summary><pre>"
@@ -448,8 +1116,23 @@ def render_market_scan_page(selected_id, latest, error=None):
                  "資料，不在這次掃描範圍）。每天 02:00 也會自動掃描一次，"
                  "這裡永遠顯示最近一次結果。</pre></details>")
 
+    # 框架若有量化規則做不到的條件（例如 revenue_high_price_dip 的 EPS 上修
+    # ／外資動向／AI營收占比，全部需要人工查證），顯示提醒——不能讓使用者
+    # 誤以為「符合框架」代表框架全部條件都已驗證過。
+    selected_framework = frameworks.get_framework(selected_id) or {}
+    manual_conditions = selected_framework.get("manual_conditions")
+    revenue_note = selected_framework.get("revenue_condition_note")
+    if manual_conditions or revenue_note:
+        parts.append("<details class=\"philomod\">"
+                     "<summary>這個框架有哪些條件是工具查不到、需要人工判斷？</summary><pre>")
+        if revenue_note:
+            parts.append("%s\n" % esc(revenue_note))
+        for cond in (manual_conditions or []):
+            parts.append("• %s\n" % esc(cond))
+        parts.append("</pre></details>")
+
     if error:
-        parts.append("<p class=\"empty\" style=\"color:#c92a2a\">%s</p>" % esc(error))
+        parts.append("<p class=\"empty\" style=\"color:var(--red)\">%s</p>" % esc(error))
 
     if not latest.get("found"):
         parts.append("<p class=\"empty\">尚無掃描紀錄，可按上方「立即掃描」，"
@@ -466,19 +1149,28 @@ def render_market_scan_page(selected_id, latest, error=None):
     total_scanned = run.get("total_scanned")
     scanned_text = ("本次掃描全市場（上市+上櫃）共 %d 檔，其中" % total_scanned
                     if total_scanned is not None else "")
-    parts.append("<p class=\"meta\">最近一次掃描：%s（%s）｜%s候選 %d 檔，符合框架 %d 檔</p>"
+    benchmark_dd = run.get("benchmark_drawdown_pct")
+    benchmark_text = ("｜同期大盤回檔 %s%%" % _fmt_pct(benchmark_dd)
+                      if benchmark_dd is not None else "")
+    parts.append("<p class=\"meta\">最近一次掃描：%s（%s）｜%s候選 %d 檔，符合框架 %d 檔%s</p>"
                  % (esc(run.get("run_at")), trigger_text, scanned_text,
-                    run.get("candidate_count", len(rows)), hit_count))
+                    run.get("candidate_count", len(rows)), hit_count, benchmark_text))
 
     twse_err = run.get("twse_error")
     tpex_err = run.get("tpex_error")
     if twse_err or tpex_err:
-        parts.append("<p class=\"empty\" style=\"color:#c92a2a\">")
+        parts.append("<p class=\"empty\" style=\"color:var(--red)\">")
         if twse_err:
             parts.append("TWSE 資料源異常：%s　" % esc(twse_err))
         if tpex_err:
             parts.append("TPEx 資料源異常：%s" % esc(tpex_err))
         parts.append("（該市場當次候選數會變少，不影響另一邊）</p>")
+
+    benchmark_err = run.get("benchmark_error")
+    if benchmark_err:
+        parts.append("<p class=\"empty\" style=\"color:var(--red)\">大盤基準資料異常：%s"
+                     "（本次「同期大盤回檔」與「超額跌幅」無法計算，不影響其他欄位）</p>"
+                     % esc(benchmark_err))
 
     run_id = run.get("id")
 
@@ -488,6 +1180,7 @@ def render_market_scan_page(selected_id, latest, error=None):
         parts.append("<div class=\"tablewrap\"><table><thead><tr>"
                      "<th>代碼</th><th>名稱</th><th>市場</th><th>產業別</th>"
                      "<th>PER</th><th>營收年增率</th><th>PEG</th><th>回檔幅度</th>"
+                     "<th>超額跌幅</th><th>PBR</th><th>殖利率</th>"
                      "<th>目前價</th><th>加入追蹤</th></tr></thead><tbody>")
         for r in hit_rows:
             parts.append(_market_scan_row_html(r, highlight=False, run_id=run_id))
@@ -503,6 +1196,7 @@ def render_market_scan_page(selected_id, latest, error=None):
         parts.append("<div class=\"tablewrap\"><table><thead><tr>"
                      "<th>代碼</th><th>名稱</th><th>市場</th><th>產業別</th>"
                      "<th>PER</th><th>營收年增率</th><th>PEG</th><th>回檔幅度</th>"
+                     "<th>超額跌幅</th><th>PBR</th><th>殖利率</th>"
                      "<th>目前價</th><th>加入追蹤</th><th>符合框架</th><th>備註</th></tr></thead><tbody>")
         for r in rows:
             parts.append(_market_scan_row_html(r, highlight=True, run_id=run_id))
@@ -552,14 +1246,21 @@ def compose_market_scan_track_reason(row, framework, run_at):
     else:
         drawdown_text = "回檔幅度資料不完整（%s）" % (row.get("error") or "查詢失敗原因不明")
 
+    # 動態組門檻文字，不能寫死「PEG<%s 且回檔>=%s%%」——framework 2
+    # （revenue_high_price_dip）的 peg_max 是 None，寫死版本會印出「PEG<None」
+    # 這種假字串。_format_condition_text 對 None 欄位會直接省略該子句。
+    condition_text = _format_condition_text(
+        peg_threshold=framework.get("peg_max"),
+        drawdown_min=framework.get("drawdown_min"),
+        drawdown_max=framework.get("drawdown_max"),
+        excess_drawdown_min=framework.get("excess_drawdown_min"))
     if row.get("meets_framework"):
-        framework_note = ("符合框架完整門檻（PEG<%s 且回檔>=%s%%）。%s"
-                          % (framework.get("peg_max"),
-                             (framework.get("drawdown_min") or 0) * 100,
-                             _TRACK_FRAMEWORK_RATIONALE))
+        framework_note = ("符合框架完整門檻（%s）。%s"
+                          % (condition_text, _TRACK_FRAMEWORK_RATIONALE))
     else:
         framework_note = ("只通過第一階段初篩（產業別＋PEG門檻＋營收正成長），"
-                          "回檔幅度未達框架完整門檻，僅供觀察，不是完整符合框架的候選。")
+                          "未達框架完整門檻（%s），僅供觀察，不是完整符合框架的候選。"
+                          % condition_text)
 
     return ("%s第二層批次篩選候選（%s 掃描）。%s；%s。%s %s"
             % (framework.get("label", framework.get("id", "")), run_at,
@@ -593,7 +1294,7 @@ def render_track_conflict_page(code, name, new_stance, new_reason, existing, run
     parts = [_screen_page_head("加入追蹤－確認立場衝突")]
     parts.append("<p class=\"meta\"><a href=\"/market-scan\">← 返回</a></p>")
     parts.append("<h1>%s %s 已有立場，要更新嗎？</h1>" % (esc(code), esc(name)))
-    parts.append("<p class=\"empty\" style=\"color:#c92a2a\">新立場「%s」與既有立場「%s」"
+    parts.append("<p class=\"empty\" style=\"color:var(--red)\">新立場「%s」與既有立場「%s」"
                  "（%s）不同，請確認要不要覆蓋（既有立場不會消失，仍保留在歷史紀錄裡）。</p>"
                  % (esc(new_stance), esc(existing.get("stance")), esc(existing.get("date"))))
     parts.append("<h2>既有立場</h2>")
@@ -609,8 +1310,7 @@ def render_track_conflict_page(code, name, new_stance, new_reason, existing, run
         "<input type=\"hidden\" name=\"code\" value=\"%s\">"
         "<input type=\"hidden\" name=\"stance\" value=\"%s\">"
         "<input type=\"hidden\" name=\"overwrite\" value=\"1\">"
-        "<button type=\"submit\" style=\"background:#c92a2a;color:#fff;border:none;"
-        "padding:.6rem 1.2rem;border-radius:6px;\">確認覆蓋為新立場</button></form>"
+        "<button type=\"submit\" class=\"btn-danger\">確認覆蓋為新立場</button></form>"
         % (run_id, esc(code), esc(new_stance)))
     parts.append("<p class=\"meta\"><a href=\"/market-scan\">取消，返回</a></p>")
     parts.append("</body></html>")
@@ -639,7 +1339,7 @@ def render_track_error_page(message):
     parts = [_screen_page_head("加入追蹤－發生問題")]
     parts.append("<p class=\"meta\"><a href=\"/market-scan\">← 返回</a></p>")
     parts.append("<h1>無法加入追蹤</h1>")
-    parts.append("<p class=\"empty\" style=\"color:#c92a2a\">%s</p>" % esc(message))
+    parts.append("<p class=\"empty\" style=\"color:var(--red)\">%s</p>" % esc(message))
     parts.append("</body></html>")
     return "".join(parts)
 
@@ -655,20 +1355,30 @@ def _market_scan_row_html(r, highlight, run_id):
     yoy_text = ("%.1f%%" % (r["revenue_yoy"] * 100)) if r["revenue_yoy"] is not None else "—"
     drawdown_text = ("%.1f%%" % (r["drawdown_pct"] * 100)) if r["drawdown_pct"] is not None else "—"
     per_text = ("%.2f" % r["per"]) if r["per"] is not None else "—"
+    # excess_drawdown_pct／pbr／dividend_yield 是 2026-07-28 新增欄位，歷史列
+    # （遷移前存的 run）沒有這幾欄，一律用 .get() 不可直接索引，否則舊資料
+    # 會讓整頁 KeyError。
+    excess_drawdown_text = ("%.1f%%" % (r.get("excess_drawdown_pct") * 100)
+                            if r.get("excess_drawdown_pct") is not None else "—")
+    pbr_text = ("%.2f" % r.get("pbr")) if r.get("pbr") is not None else "—"
+    dividend_yield_text = ("%.2f%%" % r.get("dividend_yield")
+                           if r.get("dividend_yield") is not None else "—")
     track_form = _market_scan_track_form_html(run_id, r["code"])
     base = (
         "<td data-label=\"代碼\">%s</td><td data-label=\"名稱\">%s</td>"
         "<td data-label=\"市場\">%s</td><td data-label=\"產業別\">%s</td>"
         "<td data-label=\"PER\">%s</td><td data-label=\"營收年增率\">%s</td>"
         "<td data-label=\"PEG\">%s</td><td data-label=\"回檔幅度\">%s</td>"
+        "<td data-label=\"超額跌幅\">%s</td><td data-label=\"PBR\">%s</td>"
+        "<td data-label=\"殖利率\">%s</td>"
         "<td data-label=\"目前價\">%s</td><td data-label=\"加入追蹤\">%s</td>"
         % (esc(r["code"]), esc(r["name"]), esc(r.get("market")), esc(r.get("industry")),
-           per_text, yoy_text, peg_text, drawdown_text, esc(r.get("current_price")),
-           track_form))
+           per_text, yoy_text, peg_text, drawdown_text, excess_drawdown_text,
+           pbr_text, dividend_yield_text, esc(r.get("current_price")), track_form))
     if not highlight:
         return "<tr>%s</tr>" % base
     hit = r.get("meets_framework")
-    row_style = " style=\"background:#fff3bf\"" if hit else ""
+    row_style = " class=\"row-highlight\"" if hit else ""
     hit_text = "符合" if hit else "—"
     note = esc(r.get("error")) if r.get("error") else "—"
     return ("<tr%s>%s<td data-label=\"符合框架\" class=\"stance\">%s</td>"

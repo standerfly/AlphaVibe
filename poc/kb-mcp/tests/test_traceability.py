@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 
 import finmind_client  # noqa: E402
 import report  # noqa: E402
+import review_engine  # noqa: E402
 import server  # noqa: E402
 import tpex_client  # noqa: E402
 from kb_store import KBStore  # noqa: E402
@@ -119,12 +120,13 @@ class ServerToolsTest(unittest.TestCase):
         self.server.store.close()
         shutil.rmtree(self.tmp)
 
-    def test_tools_list_has_twenty_five(self):
+    def test_tools_list_has_thirty_nine(self):
         names = [t["name"] for t in server.TOOLS]
-        self.assertEqual(len(names), 25)
+        self.assertEqual(len(names), 39)
         for expected in ("save_snapshot", "get_snapshots",
                          "save_holdings", "get_holdings",
                          "save_stock_alias", "get_stock_alias",
+                         "save_stock_theme", "get_stock_theme",
                          "save_comments_batch",
                          "get_stock_info", "get_stock_price_history",
                          "get_revenue_yoy", "get_institutional_trading",
@@ -132,8 +134,129 @@ class ServerToolsTest(unittest.TestCase):
                          "get_emerging_stock_valuation",
                          "refresh_holdings_prices",
                          "screen_stocks",
-                         "run_market_scan", "get_market_scan"):
+                         "run_market_scan", "get_market_scan",
+                         "save_laoyutou_trade", "get_laoyutou_trades",
+                         "save_trade_ledger_entry", "get_trade_ledger",
+                         "check_general_review", "check_strategy_review",
+                         "check_laoyutou_signal", "check_position_control",
+                         "record_module_d_findings", "run_module_d_check",
+                         "parse_and_save_laoyutou_trades",
+                         "parse_and_save_trade_ledger"):
             self.assertIn(expected, names)
+
+    def test_check_laoyutou_signal_tool_dispatch_wires_args(self):
+        """驗證 check_laoyutou_signal dispatch 正確傳遞參數＋預設 lookback_days
+        （不打真實資料庫查詢以外的東西，這裡直接 mock review_engine 函式）。"""
+        with unittest.mock.patch.object(
+                review_engine, "laoyutou_signal_review",
+                return_value={"code": "2330", "has_signal": False,
+                              "recent_trades": [], "po_holds": False,
+                              "finding": "近14天無老芋頭相關動向",
+                              "checked_at": "2026-07-29T00:00:00"}) as mock_review:
+            out = self.server.call_tool("check_laoyutou_signal", {"code": "2330"})
+            mock_review.assert_called_once_with(
+                "2330", store=self.server.store, lookback_days=14)
+        self.assertEqual(out["code"], "2330")
+
+        with unittest.mock.patch.object(
+                review_engine, "laoyutou_signal_review",
+                return_value={"code": "2330"}) as mock_review:
+            self.server.call_tool(
+                "check_laoyutou_signal", {"code": "2330", "lookback_days": 30})
+            mock_review.assert_called_once_with(
+                "2330", store=self.server.store, lookback_days=30)
+
+    def test_check_position_control_tool_dispatch_wires_args(self):
+        """驗證 check_position_control dispatch 正確傳遞參數（含省略
+        confidence_level 時傳 None）。"""
+        with unittest.mock.patch.object(
+                review_engine, "position_control_suggestion",
+                return_value={"code": "2330", "current_position_pct": None,
+                              "theme": None, "theme_concentration_pct": None,
+                              "next_add_sequence": 1, "suggested_add_pct": None,
+                              "suggested_initial_position_pct": None,
+                              "concentration_warning": None, "detail": "",
+                              "checked_at": "2026-07-29T00:00:00"}) as mock_review:
+            out = self.server.call_tool("check_position_control", {"code": "2330"})
+            mock_review.assert_called_once_with(
+                "2330", store=self.server.store, confidence_level=None)
+        self.assertEqual(out["code"], "2330")
+
+        with unittest.mock.patch.object(
+                review_engine, "position_control_suggestion",
+                return_value={"code": "2330"}) as mock_review:
+            self.server.call_tool(
+                "check_position_control", {"code": "2330", "confidence_level": "很好"})
+            mock_review.assert_called_once_with(
+                "2330", store=self.server.store, confidence_level="很好")
+
+    def test_record_module_d_findings_tool_dispatch_wires_args(self):
+        """驗證 record_module_d_findings dispatch 正確傳遞參數，含 findings
+        陣列與省略 date 時傳 None（不打真實資料庫查詢以外的東西，這裡直接
+        mock review_engine.auto_record_findings）。"""
+        findings = [
+            {"trigger_label": "策略層／peg_deep_dip_concentration",
+             "concern_flag": True, "detail": "PEG已回升至1.15（門檻1.0）"},
+        ]
+        with unittest.mock.patch.object(
+                review_engine, "auto_record_findings",
+                return_value={"code": "2330", "skipped": False,
+                              "skip_reason": None, "has_conflict": False,
+                              "written": []}) as mock_record:
+            out = self.server.call_tool(
+                "record_module_d_findings", {"code": "2330", "findings": findings})
+            mock_record.assert_called_once_with(
+                "2330", store=self.server.store, findings=findings, date=None)
+        self.assertEqual(out["code"], "2330")
+
+        with unittest.mock.patch.object(
+                review_engine, "auto_record_findings",
+                return_value={"code": "2330"}) as mock_record:
+            self.server.call_tool("record_module_d_findings", {
+                "code": "2330", "findings": findings, "date": "2026-07-29"})
+            mock_record.assert_called_once_with(
+                "2330", store=self.server.store, findings=findings, date="2026-07-29")
+
+    def test_check_general_review_tool_dispatch_wires_args(self):
+        """驗證 check_general_review dispatch 正確傳遞參數（不打真實 API）。"""
+        with unittest.mock.patch.object(
+                review_engine, "general_review",
+                return_value={"code": "2330", "growth_deceleration": {},
+                              "downside_risk": {}, "manual_notes": {},
+                              "checked_at": "2026-07-29T00:00:00"}) as mock_review:
+            out = self.server.call_tool("check_general_review", {"code": "2330"})
+            mock_review.assert_called_once_with("2330", data_dir=self.server.data_dir)
+        self.assertEqual(out["code"], "2330")
+
+    def test_check_strategy_review_tool_dispatch_wires_args(self):
+        """驗證 check_strategy_review dispatch 正確傳遞參數（不打真實 API）。"""
+        with unittest.mock.patch.object(
+                review_engine, "strategy_specific_review",
+                return_value={"code": "2330", "strategy_id": "peg_deep_dip_concentration",
+                              "invalidated": False, "reasons": [],
+                              "current_values": {"peg": None, "drawdown_pct": None,
+                                                 "revenue_yoy": None},
+                              "checked_at": "2026-07-29T00:00:00"}) as mock_review:
+            out = self.server.call_tool("check_strategy_review", {
+                "code": "2330", "strategy_id": "peg_deep_dip_concentration"})
+            mock_review.assert_called_once_with(
+                "2330", "peg_deep_dip_concentration", data_dir=self.server.data_dir)
+        self.assertEqual(out["code"], "2330")
+
+    def test_run_module_d_check_tool_dispatch_wires_args(self):
+        """驗證 run_module_d_check dispatch 正確傳遞參數（不打真實 API／
+        DB，這裡直接 mock review_engine.run_module_d_review）。"""
+        with unittest.mock.patch.object(
+                review_engine, "run_module_d_review",
+                return_value={"code": "2330", "checked_at": "2026-07-29T00:00:00",
+                              "general": None, "strategies": [], "laoyutou": None,
+                              "position_control": None, "findings": [],
+                              "auto_record": None, "module_d_results_saved_count": 0,
+                              "errors": {}}) as mock_review:
+            out = self.server.call_tool("run_module_d_check", {"code": "2330"})
+            mock_review.assert_called_once_with(
+                "2330", store=self.server.store, data_dir=self.server.data_dir)
+        self.assertEqual(out["code"], "2330")
 
     def test_traceability_tools_roundtrip(self):
         saved = self.server.call_tool("save_snapshot", {
@@ -160,6 +283,30 @@ class ServerToolsTest(unittest.TestCase):
         self.assertEqual(out["unparsed_lines"], [])
         # 純解析，不該寫進資料庫
         self.assertEqual(self.server.call_tool("get_holdings", {})["count"], 0)
+
+    def test_laoyutou_trade_tools_roundtrip(self):
+        saved = self.server.call_tool("save_laoyutou_trade", {
+            "code": "2330", "name": "台積電", "action": "買",
+            "shares": 1000, "price": 900.0, "date": "2026-07-20",
+            "reason": "清理門戶策略轉向"})
+        self.assertTrue(saved["saved"])
+        got = self.server.call_tool("get_laoyutou_trades", {"code": "2330"})
+        self.assertEqual(got["count"], 1)
+        self.assertEqual(got["trades"][0]["reason"], "清理門戶策略轉向")
+
+    def test_trade_ledger_tools_roundtrip(self):
+        saved = self.server.call_tool("save_trade_ledger_entry", {
+            "code": "2330", "name": "台積電", "action": "買",
+            "shares": 1000, "price": 900.0, "date": "2026-07-01",
+            "add_sequence": 1})
+        self.assertTrue(saved["saved"])
+        self.server.call_tool("save_trade_ledger_entry", {
+            "code": "2330", "name": "台積電", "action": "賣",
+            "shares": 300, "price": 980.0, "date": "2026-07-15",
+            "add_sequence": 3})
+        got = self.server.call_tool("get_trade_ledger", {"code": "2330"})
+        self.assertEqual(got["count"], 2)
+        self.assertIsNone(got["entries"][1]["add_sequence"])
 
     def test_stock_alias_tools_roundtrip(self):
         saved = self.server.call_tool("save_stock_alias", {
@@ -219,7 +366,8 @@ class ServerToolsTest(unittest.TestCase):
 
     def test_screen_stocks_tool_dispatch_parses_codes_and_wires_args(self):
         """驗證 dispatch 把逗號/換行分隔的 codes 字串正確解析成清單再轉呼叫
-        screener.screen_stocks（不打真實 FinMind API）。"""
+        screener.screen_stocks（不打真實 FinMind API）。沒給 framework_id／
+        門檻參數時，kwargs 跟改動前完全一樣（只有 data_dir），維持向下相容。"""
         import screener  # noqa: E402  (延後匯入，避免污染檔案頂層 import 順序)
         with unittest.mock.patch.object(
                 screener, "screen_stocks",
@@ -229,20 +377,64 @@ class ServerToolsTest(unittest.TestCase):
                 ["3485", "6953", "6719"], data_dir=self.server.data_dir)
             self.assertEqual(out, {"results": [], "total": 0})
 
+    def test_screen_stocks_tool_rejects_unknown_framework_without_calling_api(self):
+        """framework_id 無效時直接回 error，且完全不呼叫 screener.screen_stocks
+        （不打任何 FinMind API）——這是計畫明訂的硬性要求。"""
+        import screener  # noqa: E402
+        with unittest.mock.patch.object(screener, "screen_stocks") as mock_screen:
+            out = self.server.call_tool(
+                "screen_stocks", {"codes": "3485", "framework_id": "no_such_framework"})
+            mock_screen.assert_not_called()
+        self.assertEqual(out, {"error": "未知框架：no_such_framework"})
+
+    def test_screen_stocks_tool_dispatch_applies_framework_thresholds(self):
+        """給有效 framework_id 時，帶入該框架的 peg_max/drawdown_min/drawdown_max/
+        excess_drawdown_min 當作門檻（revenue_high_price_dip 的 peg_max 是 None，
+        驗證 None 會被如實傳遞，不會被 args.get() 的預設值蓋掉）。"""
+        import screener  # noqa: E402
+        with unittest.mock.patch.object(
+                screener, "screen_stocks",
+                return_value={"results": [], "total": 0}) as mock_screen:
+            self.server.call_tool(
+                "screen_stocks", {"codes": "3485", "framework_id": "revenue_high_price_dip"})
+            mock_screen.assert_called_once_with(
+                ["3485"], data_dir=self.server.data_dir,
+                framework_id="revenue_high_price_dip",
+                peg_threshold=None, drawdown_min=0.15, drawdown_max=0.40,
+                excess_drawdown_min=None)
+
+    def test_screen_stocks_tool_dispatch_distinguishes_omitted_from_explicit_null(self):
+        """核心語意：`"peg_threshold" in args` 判斷——顯式傳 null 要變成
+        None（關掉這項條件），沒給這個參數則完全不出現在 kwargs 裡（沿用
+        screener 的內建預設值）。用 args.get() 分不出這兩種情況，是這次
+        設計特別要求避開的坑。"""
+        import screener  # noqa: E402
+        with unittest.mock.patch.object(
+                screener, "screen_stocks",
+                return_value={"results": [], "total": 0}) as mock_screen:
+            self.server.call_tool(
+                "screen_stocks", {"codes": "3485", "peg_threshold": None, "drawdown_min": 0.2})
+            mock_screen.assert_called_once_with(
+                ["3485"], data_dir=self.server.data_dir,
+                peg_threshold=None, drawdown_min=0.2)
+
     def test_run_market_scan_tool_dispatch_defaults_and_persists(self):
-        """未給framework_id用預設框架；成功時把結果存進DB。"""
+        """未給framework_id用預設框架；成功時把結果存進DB，且回傳給MCP呼叫端
+        的內容是瘦身過的摘要（DB仍存完整資料，這裡只驗證瘦身後的形狀）。"""
         import frameworks  # noqa: E402
         import market_scan  # noqa: E402
         fake_result = {
             "framework_id": "peg_deep_dip_concentration", "trigger_source": "manual",
             "candidate_count": 1, "meets_count": 1,
             "market_errors": {"TWSE": None, "TPEx": None}, "total_scanned": 1973,
+            "benchmark_drawdown_pct": 0.095, "benchmark_error": None,
             "results": [{"code": "2330", "name": "台積電", "market": "TWSE",
                         "industry": "半導體業", "per": 10.0, "revenue_yoy": 0.2,
                         "revenue_period": "2026-06", "drawdown_pct": 0.45,
                         "high_price": 100.0, "high_date": "2026-06-01",
                         "current_price": 55.0, "current_date": "2026-07-20",
-                        "peg": 0.5, "meets_framework": True, "error": None}],
+                        "peg": 0.5, "meets_framework": True, "error": None,
+                        "market_drawdown_pct": 0.1, "excess_drawdown_pct": 0.35}],
         }
         with unittest.mock.patch.object(
                 market_scan, "run_scan", return_value=fake_result) as mock_scan:
@@ -250,7 +442,17 @@ class ServerToolsTest(unittest.TestCase):
             mock_scan.assert_called_once_with(
                 frameworks.default_framework_id(),
                 data_dir=self.server.data_dir, trigger_source="manual")
-        self.assertEqual(out, fake_result)
+        # 回傳是瘦身摘要：run 層統計數字都在，但 results 換成 meets（只留符合
+        # 框架的候選，且只有精簡欄位），不是原始 fake_result 的 results 整包。
+        self.assertEqual(out["framework_id"], "peg_deep_dip_concentration")
+        self.assertEqual(out["candidate_count"], 1)
+        self.assertEqual(out["meets_count"], 1)
+        self.assertEqual(out["total_scanned"], 1973)
+        self.assertNotIn("results", out)
+        self.assertEqual(len(out["meets"]), 1)
+        self.assertEqual(out["meets"][0]["code"], "2330")
+        self.assertNotIn("high_price", out["meets"][0])  # 精簡欄位，不含完整細節
+        self.assertIn("get_market_scan", out["note"])  # 提示如何取完整清單
         latest = self.server.store.get_latest_market_scan("peg_deep_dip_concentration")
         self.assertTrue(latest["found"])
         self.assertEqual(latest["results"][0]["code"], "2330")
@@ -286,6 +488,60 @@ class ServerToolsTest(unittest.TestCase):
         out = self.server.call_tool("get_market_scan", {})
         self.assertTrue(out["found"])
         self.assertEqual(out["results"][0]["code"], "2330")
+
+    def test_get_market_scan_tool_default_shrinks_output_and_reports_counts(self):
+        """預設 meets_only=true/limit=50/verbose=false：只回符合框架的候選、
+        欄位精簡過，且一定附 total_results/returned/omitted/filters/
+        available_frameworks，讓 AI 使用者不會把截斷後的少數幾筆誤當成
+        全部候選母體。"""
+        rows = [{"code": "2330", "name": "台積電", "market": "TWSE", "industry": "半導體業",
+                "per": 10.0, "revenue_yoy": 0.2, "revenue_period": "2026-06",
+                "drawdown_pct": 0.45, "high_price": 100.0, "high_date": "2026-06-01",
+                "current_price": 55.0, "current_date": "2026-07-20", "peg": 0.5,
+                "meets_framework": True, "error": None,
+                "market_drawdown_pct": 0.1, "excess_drawdown_pct": 0.35},
+               {"code": "2454", "name": "聯發科", "market": "TWSE", "industry": "半導體業",
+                "per": 20.0, "revenue_yoy": 0.1, "revenue_period": "2026-06",
+                "drawdown_pct": 0.1, "high_price": 100.0, "high_date": "2026-06-01",
+                "current_price": 90.0, "current_date": "2026-07-20", "peg": 2.0,
+                "meets_framework": False, "error": None}]
+        self.server.store.save_market_scan_run(
+            "peg_deep_dip_concentration", "scheduled", rows, candidate_count=2)
+        out = self.server.call_tool("get_market_scan", {})
+        self.assertTrue(out["found"])
+        self.assertEqual(out["returned"], 1)  # 只有 2330 meets_framework=True
+        self.assertEqual(out["total_results"], 1)
+        self.assertEqual(out["omitted"], 0)
+        self.assertEqual(out["filters"],
+                         {"framework_id": None, "meets_only": True, "limit": 50, "verbose": False})
+        self.assertIn("revenue_high_price_dip", out["available_frameworks"])
+        row = out["results"][0]
+        self.assertEqual(row["code"], "2330")
+        self.assertNotIn("high_price", row)  # 精簡欄位，不含完整細節
+        self.assertIn("excess_drawdown_pct", row)
+
+    def test_get_market_scan_tool_verbose_meets_only_false_returns_full_rows(self):
+        """meets_only=false, limit=0, verbose=true 要能拿回完整候選（含未達
+        門檻的列）與完整欄位（不被精簡）。"""
+        rows = [{"code": "2330", "name": "台積電", "market": "TWSE", "industry": "半導體業",
+                "per": 10.0, "revenue_yoy": 0.2, "revenue_period": "2026-06",
+                "drawdown_pct": 0.45, "high_price": 100.0, "high_date": "2026-06-01",
+                "current_price": 55.0, "current_date": "2026-07-20", "peg": 0.5,
+                "meets_framework": True, "error": None},
+               {"code": "2454", "name": "聯發科", "market": "TWSE", "industry": "半導體業",
+                "per": 20.0, "revenue_yoy": 0.1, "revenue_period": "2026-06",
+                "drawdown_pct": 0.1, "high_price": 100.0, "high_date": "2026-06-01",
+                "current_price": 90.0, "current_date": "2026-07-20", "peg": 2.0,
+                "meets_framework": False, "error": None}]
+        self.server.store.save_market_scan_run(
+            "peg_deep_dip_concentration", "scheduled", rows, candidate_count=2)
+        out = self.server.call_tool(
+            "get_market_scan", {"meets_only": False, "limit": 0, "verbose": True})
+        self.assertEqual(out["returned"], 2)
+        self.assertEqual(out["total_results"], 2)
+        self.assertIn("high_price", out["results"][0])  # verbose=true，完整欄位
+        codes = {r["code"] for r in out["results"]}
+        self.assertEqual(codes, {"2330", "2454"})
 
     def test_refresh_holdings_prices_no_holdings(self):
         """庫存是空的：不呼叫任何 FinMind API，回傳全空結果，不出錯。"""
@@ -479,21 +735,21 @@ class ReportTraceabilityTest(unittest.TestCase):
         row_2330 = row_for("2330", holdings_section)
         self.assertIn('data-label="股數">1000.0<', row_2330)
         self.assertIn('data-label="平均成本">900.0<', row_2330)
-        self.assertIn('style="color:#c92a2a">偏多<', row_2330)
+        self.assertIn('style="color:var(--red)">偏多<', row_2330)
         self.assertIn('data-label="估值依據">PER 20 以下<', row_2330)
         self.assertIn('data-label="理由">基本面穩健<', row_2330)
 
         row_2454 = row_for("2454", holdings_section)
         self.assertIn('data-label="股數">500.0<', row_2454)
         self.assertIn('data-label="平均成本">1200.0<', row_2454)
-        self.assertIn('style="color:#2b8a3e">偏空<', row_2454)
+        self.assertIn('style="color:var(--green)">偏空<', row_2454)
         self.assertIn('data-label="估值依據">PER 25 以上偏貴<', row_2454)
         self.assertIn('data-label="理由">庫存去化中<', row_2454)
 
         row_3661 = row_for("3661", holdings_section)
         self.assertIn('data-label="股數">5.0<', row_3661)
         self.assertIn('data-label="平均成本">3700.0<', row_3661)
-        self.assertIn('style="color:#495057">尚無分析<', row_3661)
+        self.assertIn('style="color:var(--ink-dim)">尚無分析<', row_3661)
         self.assertIn('data-label="估值依據">尚無分析<', row_3661)
         self.assertIn('data-label="理由">尚無分析<', row_3661)
         self.assertIn('data-label="更新日期">尚無分析<', row_3661)
