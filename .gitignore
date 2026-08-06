@@ -2,6 +2,9 @@
 .DS_Store
 Thumbs.db
 
+# Python 編譯快取
+__pycache__/
+*.pyc
 
 # PoC 本地資料（知識庫內容不進版控）
 poc/data/
