@@ -799,7 +799,10 @@ def refresh_price_and_valuation(code, store, data_dir=None, token=None):
       一套新的股價來源選用規則）。取回的價格序列依日期升冪排列，最後
       一筆是最新收盤、倒數第二筆是前一交易日收盤，兩者一起存入
       stock_prices（prev_close有值時，清單頁/詳情頁才能算「今天漲跌幅」；
-      只有一筆資料時 prev_close 存 None，不臆測）。
+      只有一筆資料時 prev_close 存 None，不臆測）；完整序列另外「順便」
+      存進 stock_price_history（2026-08-09新增，庫存買賣圖表用，見
+      KBStore.save_price_history_points docstring——同一次查詢結果多存
+      一份，不是多打一次API）。
     - 估值：fundamentals_client.get_valuation()／get_revenue_yoy_latest()
       （官方優先＋FinMind備援，2026-08-01已建好的模組，見該模組docstring
       的稽核修正說明），存入 stock_valuation_snapshots。
@@ -821,6 +824,7 @@ def refresh_price_and_valuation(code, store, data_dir=None, token=None):
             price_saved = store.upsert_stock_price(
                 code, latest.get("close"), latest.get("date"),
                 prev_close=(prev.get("close") if prev else None))
+            store.save_price_history_points(code, prices)
         else:
             errors["price"] = "查無股價資料（來源：%s）" % price_data_source
     except Exception as exc:  # 絕不丟例外中斷呼叫端

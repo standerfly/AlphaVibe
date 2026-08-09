@@ -785,8 +785,12 @@ class ReportTraceabilityTest(unittest.TestCase):
         watchlist_section = section_html("section-stance")
 
         def row_for(code, section):
+            # 庫存總覽的代碼欄位是個股詳情頁連結（2026-08-09），格式變成
+            # data-label="代碼"><a href="...">CODE</a>；純觀察區塊沒有
+            # 交易/庫存資料可畫圖，仍是純文字——正則同時相容兩種格式。
             m = re.search(
-                r'data-label="代碼">%s<.*?</tr>' % re.escape(code), section, re.S)
+                r'data-label="代碼">(?:<a[^>]*>)?%s(?:</a>)?<.*?</tr>' % re.escape(code),
+                section, re.S)
             self.assertIsNotNone(m, "找不到代碼 %s 的表格列" % code)
             return m.group(0)
 

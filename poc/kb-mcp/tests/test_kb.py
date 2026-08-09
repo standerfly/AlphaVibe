@@ -2,6 +2,7 @@
 
 執行：python3 -m unittest discover -s poc/kb-mcp/tests -v
 """
+import datetime
 import json
 import os
 import shutil
@@ -217,6 +218,56 @@ class KBStoreTest(unittest.TestCase):
     def test_stock_valuation_requires_code(self):
         with self.assertRaises(ValueError):
             self.store.upsert_stock_valuation("")
+
+    # ---------- 股價歷史快取（2026-08-09新增，庫存買賣圖表用）----------
+
+    def test_price_history_save_and_get(self):
+        out = self.store.save_price_history_points("2330", [
+            {"date": "2026-07-01", "close": 1000.0},
+            {"date": "2026-07-02", "close": 1010.0},
+            {"date": "2026-07-03", "close": 1005.0},
+        ])
+        self.assertEqual(out["count"], 3)
+        history = self.store.get_cached_price_history("2330", limit_days=3650)
+        self.assertEqual(len(history), 3)
+        self.assertEqual(history[0], {"date": "2026-07-01", "close": 1000.0})
+        self.assertEqual(history[-1], {"date": "2026-07-03", "close": 1005.0})
+
+    def test_price_history_upsert_overwrites_same_date(self):
+        self.store.save_price_history_points("2330", [{"date": "2026-07-01", "close": 1000.0}])
+        self.store.save_price_history_points("2330", [{"date": "2026-07-01", "close": 1050.0}])
+        history = self.store.get_cached_price_history("2330", limit_days=3650)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["close"], 1050.0)
+
+    def test_price_history_skips_points_missing_date_or_close(self):
+        out = self.store.save_price_history_points("2330", [
+            {"date": "2026-07-01", "close": 1000.0},
+            {"date": None, "close": 999.0},
+            {"date": "2026-07-02", "close": None},
+        ])
+        self.assertEqual(out["count"], 1)
+        self.assertEqual(len(self.store.get_cached_price_history("2330", limit_days=3650)), 1)
+
+    def test_price_history_empty_input_is_noop(self):
+        out = self.store.save_price_history_points("2330", [])
+        self.assertEqual(out["count"], 0)
+        self.assertEqual(self.store.get_cached_price_history("2330"), [])
+
+    def test_price_history_get_missing_code_returns_empty(self):
+        self.assertEqual(self.store.get_cached_price_history("9999"), [])
+
+    def test_price_history_limit_days_excludes_old_points(self):
+        today = datetime.date.today()
+        old_date = (today - datetime.timedelta(days=400)).isoformat()
+        recent_date = (today - datetime.timedelta(days=5)).isoformat()
+        self.store.save_price_history_points("2330", [
+            {"date": old_date, "close": 900.0},
+            {"date": recent_date, "close": 1000.0},
+        ])
+        history = self.store.get_cached_price_history("2330", limit_days=180)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["date"], recent_date)
 
     # ---------- 依代碼查留言 ----------
 

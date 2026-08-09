@@ -543,10 +543,13 @@ class DashboardTest(unittest.TestCase):
         watchlist_end = page.index("</details>", watchlist_start) + len("</details>")
         watchlist_section = page[watchlist_start:watchlist_end]
 
-        self.assertIn("data-label=\"代碼\">3661", holdings_section)
+        # 庫存總覽的代碼欄位是個股詳情頁連結（2026-08-09，庫存買賣圖表
+        # 嫁接進 /dashboard/stock/<code>），純觀察區塊沒有交易/庫存資料
+        # 可畫圖，維持純文字，兩邊格式刻意不同。
+        self.assertIn("<a href=\"/dashboard/stock/3661\">3661</a>", holdings_section)
         self.assertNotIn("data-label=\"代碼\">3661", watchlist_section)
         self.assertIn("data-label=\"代碼\">2454", watchlist_section)
-        self.assertNotIn("data-label=\"代碼\">2454", holdings_section)
+        self.assertNotIn("<a href=\"/dashboard/stock/2454\">2454</a>", holdings_section)
 
     def test_flash_message_success_and_error_styling(self):
         success_page = report.render_dashboard(self.store, flash="已加入自選股：2330")
@@ -728,6 +731,25 @@ class StockListPageTest(unittest.TestCase):
         page_research = report.render_stock_list_page(self.store, filter_key="research")
         self.assertIn("2441", page_research)
         self.assertNotIn("2330", page_research)
+
+    def test_row_shows_sparkline_when_price_history_cached(self):
+        """2026-08-09新增：迷你走勢——有股價歷史快取時畫出sparkline
+        （紅漲綠跌），沒有快取時顯示「走勢資料不足」而不是報錯或空白。
+        清單頁sparkline只取近60天（見_tracked_stock_rows），日期用相對
+        「今天」回推，避免日期寫死日後跑出視窗外而讓測試失真。"""
+        today = report.datetime.date.today()
+        d1 = (today - report.datetime.timedelta(days=30)).isoformat()
+        d2 = (today - report.datetime.timedelta(days=5)).isoformat()
+        self.store.save_stance("2330", "偏多", name="台積電")
+        self.store.save_price_history_points("2330", [
+            {"date": d1, "close": 900.0},
+            {"date": d2, "close": 1000.0},
+        ])
+        self.store.save_stance("2441", "研究中", name="超豐")  # 無快取
+        page = report.render_stock_list_page(self.store)
+        self.assertIn("class=\"spark\"", page)
+        self.assertIn("var(--red)", page)  # 900→1000 上漲，紅漲
+        self.assertIn("走勢資料不足", page)  # 2441 沒有股價歷史快取
 
     def test_pagination_shows_ten_per_page(self):
         for i in range(15):
@@ -929,6 +951,35 @@ class StockDetailPageTest(unittest.TestCase):
         self.assertIn("目前未持有", page)
         self.assertIn("trade-row__tag buy", page)
         self.assertIn("trade-row__tag sell", page)
+
+    def test_holdings_card_chart_shows_insufficient_data_message_without_history_cache(self):
+        """2026-08-09新增：庫存買賣圖表——還沒被背景刷新過（stock_price_
+        history無資料）時，圖表區顯示提示文字而不是空白或報錯，交易清單
+        仍照常顯示。"""
+        self.store.save_trade_ledger_entry("2441", "超豐", "買", 1000, 90,
+                                           "2026-06-01", add_sequence=1)
+        page = report.render_stock_detail_page(self.store, "2441")
+        self.assertIn("股價快取資料不足，按上方「更新」刷新後即可看到走勢圖", page)
+        self.assertIn("trade-row__tag buy", page)
+
+    def test_holdings_card_chart_renders_combo_chart_with_cached_history(self):
+        """有股價歷史快取＋交易紀錄時，畫出價格折線＋買賣力道長條圖。"""
+        self.store.save_holdings([{"code": "2330", "name": "台積電", "shares": 100,
+                                   "avg_cost": 900}])
+        self.store.save_price_history_points("2330", [
+            {"date": "2026-06-01", "close": 900.0},
+            {"date": "2026-06-15", "close": 950.0},
+            {"date": "2026-07-01", "close": 1000.0},
+        ])
+        self.store.save_trade_ledger_entry("2330", "台積電", "買", 100, 900,
+                                           "2026-06-01", add_sequence=1)
+        self.store.save_trade_ledger_entry("2330", "台積電", "賣", 30, 1000,
+                                           "2026-07-01")
+        page = report.render_stock_detail_page(self.store, "2330")
+        self.assertIn("class=\"combo-chart\"", page)
+        self.assertIn("<polyline", page)
+        self.assertIn("<rect", page)
+        self.assertIn("快取範圍 2026-06-01 ~ 2026-07-01", page)
 
     def test_notes_card_lists_non_buy_reason_comments(self):
         self.store.save_stance("2330", "偏多", name="台積電")

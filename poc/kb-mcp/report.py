@@ -274,6 +274,15 @@ details.section > summary h2 { margin-top: 0; display: inline-block; }
 .trade-row__tag.sell { color: var(--green); background: var(--paper-sunken); }
 .trade-row__mid { flex: 1; min-width: 0; }
 .trade-row__date { color: var(--ink-dim); font-size: .74rem; flex-shrink: 0; }
+/* 庫存買賣圖表（2026-08-09，嫁接進個股清單/詳情頁）：.spark 是清單頁
+   每列的迷你走勢，.combo-chart 是詳情頁「走勢與力道」卡片裡的價格
+   折線＋買賣力道長條圖，色彩沿用既有 .trade-row__tag／_delta_badge
+   同一套紅漲綠跌語意，不另外配色。 */
+.spark { display: block; vertical-align: middle; flex-shrink: 0; }
+.combo-chart { width: 100%; height: auto; background: var(--paper-sunken);
+                border-radius: 8px; margin: .5rem 0; }
+.chart-label { font-size: 11px; fill: var(--ink-dim); font-variant-numeric: tabular-nums; }
+.chart-label-latest { fill: var(--accent); font-weight: 700; }
 .note { padding: .6rem 0; border-bottom: 1px solid var(--rule); }
 .note:last-child { border-bottom: none; padding-bottom: 0; }
 .note:first-child { padding-top: 0; }
@@ -423,14 +432,17 @@ def _render_holdings_section(store):
                 ratio_text = "未更新價格"
 
             parts.append(
-                "<tr><td data-label=\"代碼\">%s</td><td data-label=\"名稱\">%s</td>"
+                "<tr><td data-label=\"代碼\">"
+                "<a href=\"/dashboard/stock/%s\">%s</a></td>"
+                "<td data-label=\"名稱\">%s</td>"
                 "<td data-label=\"產業別\">%s</td><td data-label=\"投資主題\">%s</td>"
                 "<td data-label=\"股數\">%s</td><td data-label=\"平均成本\">%s</td>"
                 "<td data-label=\"市值\">%s</td><td data-label=\"持股比例\">%s</td>"
                 "<td data-label=\"立場\" class=\"stance\" style=\"color:%s\">%s</td>"
                 "<td data-label=\"估值依據\">%s</td><td data-label=\"理由\">%s</td>"
                 "<td data-label=\"更新日期\">%s</td></tr>"
-                % (esc(h["code"]), esc(h["name"]), industry_text, theme_text,
+                % (esc(urllib.parse.quote(h["code"], safe="")), esc(h["code"]), esc(h["name"]),
+                   industry_text, theme_text,
                    esc(h["shares"]), esc(h["avg_cost"]), value_text, ratio_text,
                    color, stance_text, valuation_text, reason_text, date_text))
         parts.append("</tbody></table></div>")
@@ -995,11 +1007,17 @@ def _tracked_stock_rows(store):
         if price is not None and prev_close:
             delta_pct = (price - prev_close) / prev_close * 100
         latest_batch = _latest_module_d_batch(store, code)
+        # 迷你走勢（2026-08-09新增）：讀快取股價歷史，只取最近60天——
+        # 清單頁每列只要「近期形狀」，不需要跟詳情頁一樣的完整範圍，
+        # 且點數少SVG較輕，一次渲染10列不會太重。純本地讀，不即時查價。
+        spark_html = _render_sparkline_svg(
+            _sparkline_points(store.get_cached_price_history(code, limit_days=60), price_info))
         rows.append({
             "code": code, "name": name, "is_holding": is_holding,
             "price": price, "delta_pct": delta_pct,
             "has_concern": any(r.get("concern_flag") for r in latest_batch),
             "status_text": _row_status_text(latest_batch),
+            "spark_html": spark_html,
         })
     return rows
 
@@ -1106,11 +1124,13 @@ def render_stock_list_page(store, filter_key="all", query="", page=1, flash=None
                 "<span class=\"stock-row__name\">%s</span>"
                 "<span class=\"stock-row__code\">%s</span></div>"
                 "<div class=\"stock-row__sub\">%s</div></div>"
+                "%s"
                 "<div class=\"stock-row__price\"><div class=\"stock-row__now\">%s</div>"
                 "<div class=\"stock-row__delta %s\">%s</div></div></a>"
                 % (row_class, href_code, concern_html,
                    esc(r["name"]), esc(r["code"]),
-                   esc(r["status_text"]), _fmt_price(r["price"]), delta_cls, esc(delta_text)))
+                   esc(r["status_text"]), r["spark_html"],
+                   _fmt_price(r["price"]), delta_cls, esc(delta_text)))
     else:
         parts.append("<p class=\"empty\">%s</p>"
                      % ("沒有符合搜尋條件的標的。" if query else
@@ -1202,6 +1222,137 @@ def _portfolio_context(store):
     return holdings, market_values, total_value
 
 
+def _combo_chart_aligned_trades(prices, entries):
+    """把交易流水的 date 對齊到快取股價歷史（prices，已依 date 升冪排序，
+    來自 store.get_cached_price_history()）的索引位置，供
+    _render_combo_chart_svg() 畫買賣力道長條用。x 軸刻意用「第幾個交易日」
+    的整數索引而非真實日曆天數（股價圖常見慣例，週末／休市日不佔版面，
+    折線才不會出現無意義的長平段）。交易日期若剛好不是交易日，往前找
+    最近一個有股價的交易日對齊；早於股價快取起點的交易日對不到，跳過
+    （該筆仍會出現在下方精簡清單，只是圖上畫不出來）。"""
+    date_index = {p["date"]: i for i, p in enumerate(prices)}
+    sorted_dates = sorted(date_index)
+    aligned = []
+    for e in entries:
+        idx = date_index.get(e["date"])
+        if idx is None:
+            earlier = [d for d in sorted_dates if d <= e["date"]]
+            if not earlier:
+                continue
+            idx = date_index[earlier[-1]]
+        aligned.append({"index": idx, "entry": e})
+    return aligned
+
+
+def _render_combo_chart_svg(prices, aligned, width=640, height=260):
+    """個股詳情頁「走勢與力道」：上半部價格折線＋下半部買賣力道長條，
+    共用同一條x軸（見 _combo_chart_aligned_trades 的索引對齊說明）。長條
+    高度以當次交易金額（股數×價格）相對「這批交易裡金額最大那筆」的
+    比例縮放，不是相對股價或市值——單純呈現「這幾筆交易彼此的力道差異」。
+    資料源是 store.get_cached_price_history()（2026-08-09新增，背景刷新
+    順便存下的快取，見kb_store.py），不即時查外部API——跟這個頁面其餘
+    區塊「所有資料都讀快取」的既有原則一致，還沒刷新過的代碼這裡會顯示
+    資料不足的提示。"""
+    closes = [p["close"] for p in prices if p.get("close") is not None]
+    if len(closes) < 2:
+        return "<p class=\"empty\">股價快取資料不足，按上方「更新」刷新後即可看到走勢圖。</p>"
+    lo, hi = min(closes), max(closes)
+    span = (hi - lo) or (abs(hi) * 0.02 or 1.0)
+    n = len(prices)
+    # pad_r 刻意留寬給右側高/低/最新價文字標籤，不只是視覺留白。
+    pad_l, pad_r, pad_t, pad_b = 8.0, 52.0, 10.0, 6.0
+    price_h = height * 0.60
+    bar_h = height * 0.28
+    gap = height - pad_t - price_h - bar_h - pad_b
+
+    def x_at(i):
+        return pad_l + (width - pad_l - pad_r) * i / max(n - 1, 1)
+
+    def y_price(close):
+        return pad_t + price_h * (1 - (close - lo) / span)
+
+    coords = " ".join(
+        "%.1f,%.1f" % (x_at(i), y_price(p["close"]))
+        for i, p in enumerate(prices) if p.get("close") is not None)
+
+    parts = ["<svg class=\"combo-chart\" viewBox=\"0 0 %d %d\" preserveAspectRatio="
+            "\"xMidYMid meet\" role=\"img\" aria-label=\"價格與買賣力道圖\">"
+            % (width, height)]
+    parts.append("<polyline points=\"%s\" fill=\"none\" stroke=\"var(--accent)\" "
+                "stroke-width=\"1.8\" stroke-linejoin=\"round\"/>" % coords)
+
+    # 高／低／最新收盤價文字標籤：只標數字，不畫格線，維持圖表簡潔。
+    label_x = width - pad_r + 6
+    latest_close = next(p["close"] for p in reversed(prices) if p.get("close") is not None)
+    parts.append("<text x=\"%.1f\" y=\"%.1f\" class=\"chart-label\">%s</text>"
+                % (label_x, y_price(hi) + 4, esc(_fmt_num(hi))))
+    parts.append("<text x=\"%.1f\" y=\"%.1f\" class=\"chart-label\">%s</text>"
+                % (label_x, y_price(lo) + 4, esc(_fmt_num(lo))))
+    if lo < latest_close < hi:
+        parts.append("<text x=\"%.1f\" y=\"%.1f\" class=\"chart-label chart-label-latest\">"
+                    "%s</text>" % (label_x, y_price(latest_close) + 4,
+                                    esc(_fmt_num(latest_close))))
+
+    bar_base_y = pad_t + price_h + gap + bar_h
+    max_value = max((abs(a["entry"]["shares"] * a["entry"]["price"]) for a in aligned),
+                    default=0) or 1.0
+    bar_w = max(2.0, (width - pad_l - pad_r) / max(n, 1) * 0.6)
+    for a in aligned:
+        e = a["entry"]
+        value = e["shares"] * e["price"]
+        bh = bar_h * min(1.0, abs(value) / max_value)
+        color = "var(--red)" if e["action"] == "買" else "var(--green)"
+        x = x_at(a["index"]) - bar_w / 2
+        parts.append(
+            "<rect x=\"%.1f\" y=\"%.1f\" width=\"%.1f\" height=\"%.1f\" fill=\"%s\" "
+            "opacity=\"0.85\"><title>%s %s %s股 @%s</title></rect>"
+            % (x, bar_base_y - bh, bar_w, bh, color,
+               esc(e["date"]), esc(e["action"]), esc(_fmt_num(e["shares"])),
+               esc(_fmt_num(e["price"]))))
+    parts.append("<line x1=\"%.1f\" y1=\"%.1f\" x2=\"%.1f\" y2=\"%.1f\" "
+                "stroke=\"var(--rule)\" stroke-width=\"1\"/>"
+                % (pad_l, bar_base_y, width - pad_r, bar_base_y))
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def _sparkline_points(history, price_info):
+    """個股清單頁每列迷你走勢用：優先用快取股價歷史（store.
+    get_cached_price_history()，多日真實序列，2026-08-09新增），該代碼
+    還沒被背景刷新過（history為空）時退回目前快取的單一股價當唯一的點
+    （會因為只有1個點畫不出線，由 _render_sparkline_svg 顯示「資料不足」，
+    不強行湊數）。"""
+    if history:
+        return [(p["date"], p["close"]) for p in history if p.get("close") is not None]
+    if price_info and price_info.get("price") is not None:
+        return [(price_info.get("price_date") or "", price_info["price"])]
+    return []
+
+
+def _render_sparkline_svg(points, width=64, height=28):
+    """畫個股清單頁每列的迷你走勢。少於2個點畫不出線，回傳文字提示。
+    台股慣例紅漲綠跌：終點價 >= 起點價描紅，反之描綠，跟 STANCE_COLORS／
+    _delta_badge 同一套色彩語意。"""
+    if len(points) < 2:
+        return "<span class=\"meta\" style=\"font-size:.7rem;\">走勢資料不足</span>"
+    prices = [p for _, p in points]
+    lo, hi = min(prices), max(prices)
+    span = (hi - lo) or (abs(hi) * 0.02 or 1.0)
+    n = len(points)
+    pad = 2.0
+    coords = []
+    for i, (_, price) in enumerate(points):
+        x = pad + (width - 2 * pad) * i / (n - 1)
+        y = pad + (height - 2 * pad) * (1 - (price - lo) / span)
+        coords.append("%.1f,%.1f" % (x, y))
+    color = "var(--red)" if points[-1][1] >= points[0][1] else "var(--green)"
+    return ("<svg class=\"spark\" viewBox=\"0 0 %d %d\" width=\"%d\" height=\"%d\" "
+           "role=\"img\" aria-label=\"走勢\">"
+           "<polyline points=\"%s\" fill=\"none\" stroke=\"%s\" stroke-width=\"1.6\" "
+           "stroke-linejoin=\"round\" stroke-linecap=\"round\"/></svg>"
+           % (width, height, width, height, " ".join(coords), color))
+
+
 def _holdings_card_html(store, code):
     """持股與交易卡：純研究標的（不在最新庫存快照、也從無交易紀錄）整個
     不顯示這張卡片，回傳空字串由呼叫端不附加（見派工說明「不要顯示空
@@ -1237,6 +1388,21 @@ def _holdings_card_html(store, code):
     else:
         parts.append("<p class=\"meta\">目前未持有此標的（曾有交易記錄如下）。</p>")
     if ledger:
+        # 走勢與力道（2026-08-09新增）：價格折線疊買賣力道長條，資料源是
+        # store.get_cached_price_history()——背景刷新（refresh_price_and_
+        # valuation）順便存下的快取，不即時查外部API，還沒刷新過時顯示
+        # 資料不足提示（見 _render_combo_chart_svg docstring）。
+        history = store.get_cached_price_history(code)
+        aligned = _combo_chart_aligned_trades(history, ledger)
+        parts.append(_render_combo_chart_svg(history, aligned))
+        if len(history) >= 2:
+            parts.append(
+                "<p class=\"meta\">"
+                "<span style=\"color:var(--accent);\">●</span> 價格折線　"
+                "<span style=\"color:var(--red);\">●</span> 買進力道　"
+                "<span style=\"color:var(--green);\">●</span> 賣出力道　"
+                "｜快取範圍 %s ~ %s</p>"
+                % (esc(history[0]["date"]), esc(history[-1]["date"])))
         parts.append("<div class=\"trade-list\">")
         for entry in reversed(ledger):  # get_trade_ledger回傳舊到新，這裡改新到舊顯示
             tag_cls = "buy" if entry["action"] == "買" else "sell"

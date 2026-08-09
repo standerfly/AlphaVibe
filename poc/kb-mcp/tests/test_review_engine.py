@@ -1019,6 +1019,34 @@ class RefreshPriceAndValuationTest(unittest.TestCase):
         self.assertEqual(valuation["revenue_yoy"], 0.332)
         self.assertEqual(valuation["valuation_data_source"], "twse_official")
 
+    def test_full_price_series_persisted_to_history_cache(self):
+        """2026-08-09新增：庫存買賣圖表用——_fetch_prices_with_fallback()
+        本來就查回整段序列，改動前只挑最後兩筆存進stock_prices、其餘
+        丟棄；這裡驗證整段序列「順便」存進stock_price_history，不是
+        只有最新兩筆。"""
+        prices = [
+            {"date": "2026-07-29", "close": 90.0},
+            {"date": "2026-07-30", "close": 95.0},
+            {"date": "2026-07-31", "close": 93.6},
+        ]
+        with unittest.mock.patch.object(
+                screener, "_fetch_prices_with_fallback",
+                return_value=(prices, "twse_official")), \
+             unittest.mock.patch.object(
+                fundamentals_client, "get_valuation",
+                return_value={"per": None, "pbr": None, "dividend_yield": None,
+                             "market": None, "data_source": None, "error": None}), \
+             unittest.mock.patch.object(
+                fundamentals_client, "get_revenue_yoy_latest",
+                return_value={"revenue_yoy": None, "revenue_period": None,
+                             "market": None, "data_source": None, "error": None}):
+            review_engine.refresh_price_and_valuation("2441", self.store)
+
+        history = self.store.get_cached_price_history("2441", limit_days=3650)
+        self.assertEqual(len(history), 3)
+        self.assertEqual(history[0], {"date": "2026-07-29", "close": 90.0})
+        self.assertEqual(history[-1], {"date": "2026-07-31", "close": 93.6})
+
     def test_single_price_row_leaves_prev_close_none(self):
         with unittest.mock.patch.object(
                 screener, "_fetch_prices_with_fallback",

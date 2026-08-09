@@ -99,6 +99,13 @@ CREATE TABLE IF NOT EXISTS stock_valuation_snapshots (
     revenue_error TEXT,
     checked_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS stock_price_history (
+    code TEXT NOT NULL,
+    date TEXT NOT NULL,
+    close REAL,
+    PRIMARY KEY (code, date)
+);
+CREATE INDEX IF NOT EXISTS idx_stock_price_history_code ON stock_price_history(code, date);
 CREATE TABLE IF NOT EXISTS stock_industries (
     code TEXT PRIMARY KEY,
     industry_category TEXT,
@@ -603,6 +610,49 @@ class KBStore:
             "SELECT * FROM stock_valuation_snapshots WHERE code=?", (code,)
         ).fetchone()
         return dict(row) if row else None
+
+    # ---------- 個股股價歷史快取（2026-08-09新增，庫存買賣圖表用）：
+    # review_engine.refresh_price_and_valuation() 背景刷新時本來就已經
+    # 打過官方/FinMind查到一整段區間的股價（只是改動前只挑最後兩筆存進
+    # stock_prices 算漲跌幅、其餘丟棄）——這裡讓它「順便」把整段也存下來，
+    # 不是另外多打一次API。INSERT OR REPLACE以(code,date)為key，同一天
+    # 重複刷新會覆蓋成最新值；不同天的舊資料不會被清掉，隨著PO時間推移
+    # 反覆按「更新」，快取會自然累積成比單次查詢窗口更長的歷史（每次
+    # fetch的180天窗口會隨時間推移往前滑動，重疊的部分覆蓋更新、新的
+    # 部分補進來、舊窗口以外先前存過的部分繼續保留），不用另外設計
+    # 「合併歷史」的邏輯。頁面讀取時仍只顯示最近N天（get_cached_price_
+    # history的limit_days），避免圖表因為累積太多年資料而畫不出有意義
+    # 的走勢。 ----------
+
+    def save_price_history_points(self, code, prices):
+        """prices：[{"date": "YYYY-MM-DD", "close": float}, ...]，通常是
+        screener._fetch_prices_with_fallback() 已經查到、正要被呼叫端
+        丟棄的完整序列。缺 date 或 close 的點跳過不存（比照其餘cache
+        寫入函式「查不到就是None，不擅自臆測」的既有慣例，但這裡是
+        「這筆資料本身不完整就不存」，不是存None）。"""
+        if not code or not prices:
+            return {"saved": True, "code": code, "count": 0}
+        rows = [(code, p["date"], p.get("close")) for p in prices
+                if p.get("date") and p.get("close") is not None]
+        if rows:
+            self.conn.executemany(
+                "INSERT OR REPLACE INTO stock_price_history (code, date, close)"
+                " VALUES (?,?,?)", rows)
+            self.conn.commit()
+        return {"saved": True, "code": code, "count": len(rows)}
+
+    def get_cached_price_history(self, code, limit_days=180):
+        """回傳依日期升冪排序的 [{"date","close"}, ...]，只取最近
+        limit_days 天（見上方表註解——快取本身可能累積比這更長的歷史，
+        這裡負責裁到畫圖用得到的範圍，不是資料庫實際保留的範圍）。
+        還沒刷新過的代碼回傳空list，呼叫端自行決定顯示什麼提示文字，
+        不在這裡臆測。"""
+        cutoff = (datetime.date.today() - datetime.timedelta(days=limit_days)).isoformat()
+        rows = self.conn.execute(
+            "SELECT date, close FROM stock_price_history"
+            " WHERE code=? AND date>=? ORDER BY date", (code, cutoff),
+        ).fetchall()
+        return [{"date": r["date"], "close": r["close"]} for r in rows]
 
     def upsert_stock_industry(self, code, industry_category):
         if not code:

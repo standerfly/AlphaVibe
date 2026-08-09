@@ -5,7 +5,7 @@
 > 維護規則：完成一個階段就更新狀態欄（含日期與證據）；改動計畫本身
 > 需 PO 同意並在 clarification-log 留紀錄。
 
-## 階段總覽（2026-07-27 更新）
+## 階段總覽（2026-08-09 更新：1e/1f 補正真實狀態＋庫存買賣圖表整合）
 
 | 階段 | 內容 | 狀態 | 證據 |
 |------|------|------|------|
@@ -16,9 +16,9 @@
 | 1a+++. PoC 擴充：部位管理／加碼系統（FR-038~043） | 十層決策框架（投資假說＋情境機率評估/寒冬保留比例、加碼Gate/Score、遞減式加碼、組合集中度、重新估值、減碼三分類＋錨點抗恐慌、風險評分）存進 `raw/部位管理*.md`（SRC-011）＋product-spec §5-K＋Layer 1 哲學庫 `framework_evidence_based_position_sizing`；程式面只做了組合集中度需要的「投資主題標籤」（FR-041/042） | ✅ 完成 | 2026-07-24；測試 175/175 |
 | 1b. 試用累積 | PO 日常使用：聊資訊→選股→估值→確認入庫；加碼/減碼討論時套用部位管理框架、建倉時標記投資主題 | 🔄 持續進行（資料持續累積，供模組G未來使用） | 已累積28+檔立場（2026-07-24查證） |
 | **1b+. 需求重新盤點＋product-spec全面重寫** | 依1b實測發現多處「文件與實際行為不同模式」（entry_condition/time_horizon 0%使用、snapshots表0筆使用、部位管理十層框架0%採用率等），PO與Claude完整討論（2026-07-25~27）產出「策略引擎＋每日PDCA」的 A-G 模組新架構，product-spec.md／scope-decision.md／clarification-log.md 全面更新 | ✅ 完成 | 2026-07-27；`requirements-rescoping.md`（討論全紀錄，含fresh-context agent通盤審查抓到4嚴重+5建議、PO逐項裁決）；product-spec.md重寫後fresh agent驗收10項條件（9直接PASS，1項小落差已修正） |
-| 1e. 模組A+D+E開發 | 老芋頭交易結構化表（FR-044）、交易流水表（FR-056）、策略檢視引擎四組成部分（FR-051~055：通用檢視層/策略專屬層/老芋頭動向比對/部位控制建議）、每日排程整合（FR-057） | ⏳ 待啟動 | — |
-| 1f. 模組F開發：儀表板方案A | FR-058，依 mockup（見 requirements-rescoping.md 連結）定案的單頁式結構：今日重點/新候選/觀察庫存/策略設定/快速輸入 | ⏳ 待1e完成（F依賴E的排程結果） | — |
-| 1g. 模組G：策略績效回顧 | FR-059 | ⏳ 待樣本量足夠再啟動（目前33筆立場、7次market_scan，回顧意義還不大，但1e/1f的資料寫入設計要對，才有東西可以累積） | — |
+| 1e. 模組A+D+E開發 | 老芋頭交易結構化表（FR-044）、交易流水表（FR-056）、策略檢視引擎四組成部分（FR-051~055：通用檢視層/策略專屬層/老芋頭動向比對/部位控制建議）、每日排程整合（FR-057） | ✅ 完成（2026-08-09查證修正，先前本檔誤標待啟動） | commit `4fa230e`（2026-07-31）；`review_engine.py`／`module_d_scheduler.py`；MCP工具`check_general_review`/`check_strategy_review`/`check_laoyutou_signal`/`check_position_control`/`record_module_d_findings`/`run_module_d_check`已掛載server.py |
+| 1f. 模組F開發：儀表板方案A＋個股清單/詳情頁＋庫存買賣圖表 | FR-058單頁式儀表板（今日重點/新候選/觀察庫存/策略設定/快速輸入）；個股清單頁＋詳情頁（`/dashboard/stocks`／`/dashboard/stock/<code>`，搜尋/篩選/背景刷新）；庫存買賣圖表（清單頁迷你走勢、詳情頁價格折線＋買賣力道長條圖） | ✅ 完成（2026-08-09查證修正，先前本檔誤標待1e完成） | commit `4fa230e`（2026-07-31，基礎儀表板）＋本機 Cline session `552c625`（2026-08-02，未commit的已完成工作，2026-08-09補commit保存：個股清單/詳情頁、背景刷新機制、`fundamentals_client.py`估值來源架構修正）＋本次session（2026-08-09，庫存買賣圖表嫁接進上述架構，見下方接手指南）；測試600/600綠 |
+| 1g. 模組G：策略績效回顧 | FR-059 | ⏳ 待樣本量足夠再啟動（1e/1f已完成，資料寫入管道已對，可持續累積） | — |
 | 2. 正式產品 | speckit 流程＋交易紀錄整合 FR-022/FR-056 | ⏳ Phase 1 驗證後（五項前置開放問題已於2026-07-27全數定案，見下方「Phase 2 正式產品」節，但「現在啟動Phase 2」本身仍是待PO另外決定的獨立問題，不是自動觸發） | — |
 
 Deferred（已定案遞延，見 scope-decision.md）：Docker 雲端部署、多用戶、
@@ -61,6 +61,21 @@ In-Scope（Q-042），不再屬於此清單**。
   ——**注意**：全市場條件篩選（Q-030）已於2026-07-27獨立解禁改列
   In-Scope（Q-042），兩者是分開的決定，類股資金流不因此自動連帶解禁。
 
+- **2026-08-09 查證發現兩層落差，一併記錄**：
+  (1) 本檔案「階段總覽」表格在 `4fa230e`（2026-07-31）之後就沒同步
+  更新過，1e/1f 狀態欄停留在「⏳待啟動」長達一週以上，接手前務必實際
+  查 `git log`／跑測試，不能只看狀態欄——已於本次查證修正（見上方
+  階段總覽與1e/1f接手指南）。
+  (2) 本機 `function/alphavibe` 一度有一批完整、已測試（590/590）但
+  從未commit的工作（個股清單頁/詳情頁/背景刷新架構，2026-08-02本機
+  Cline session產出），本檔案完全沒有記錄，只存在於本機working tree、
+  一直沒同步。這代表**「開發完成」跟「commit」跟「文件記錄」是三件
+  可能各自落後的事**，同一個session換執行環境（例如雲端↔本機）時
+  尤其容易漏——已於2026-08-09補commit（`552c625`）並補進本檔案。
+  接手任何session：換執行環境或間隔較長時間再接手前，先跑
+  `git status`／`git diff --stat` 確認本機有沒有未commit的東西，
+  不要假設乾淨。
+
 ## 各階段接手指南
 
 ### 1b 試用累積（持續進行）
@@ -73,29 +88,55 @@ In-Scope（Q-042），不再屬於此清單**。
   PO已完成需求重新盤點（1b+），下一步是照 1e→1f→1g 開發模組，不是
   停在「試用累積」——1b 本身持續進行只是為了累積更多資料供模組G使用。
 
-### 1e 模組A+D+E開發（老芋頭表／交易流水表／策略檢視引擎／排程整合）
-- 啟動方式（對任何 session 說）：「讀 docs/spec-intake/alphavibe/roadmap.md
-  和 product-spec.md §5 模組D（FR-051~055）與模組A（FR-044）／FR-056，
-  開發策略檢視引擎。」
-- 建議開發順序（依賴關係）：
-  1. FR-044（老芋頭交易表）＋FR-056（交易流水表）——基礎資料結構，
-     FR-053／FR-054 依賴這兩張表
-  2. FR-051（通用檢視層）＋FR-052（策略專屬層）——先做「能不能算出
-     檢視結果」，可先不接老芋頭比對與部位控制建議
-  3. FR-053（老芋頭動向比對）＋FR-054（部位控制建議）——接上依賴的表
-  4. FR-055（立場自動回寫機制）——需要FR-051~054都有結果可寫
-  5. FR-057（每日排程整合）——把 C（已有）＋D（1-4完成）接上02:00排程＋
-     即時觸發
-- 驗收（不可自驗）：派 fresh agent 依 product-spec.md FR-051~057 逐項
-  核對＋實跑排程一次，確認模組D檢視結果表有正確寫入。
+### 1e 模組A+D+E開發（老芋頭表／交易流水表／策略檢視引擎／排程整合）—— ✅ 已完成
+- **2026-08-09查證修正**：本節先前寫「待啟動」是誤標，實際已於
+  commit `4fa230e`（2026-07-31）完成，見 `poc/kb-mcp/review_engine.py`
+  （FR-051~055、FR-057）與 `poc/kb-mcp/module_d_scheduler.py`（CLI排程
+  入口）。若要接手改動這塊：先讀 `review_engine.py` 檔頭docstring
+  （每個FR的設計取捨都寫在裡面），不要憑product-spec.md文字重新設計。
 
-### 1f 模組F開發：儀表板方案A
-- 啟動方式：「讀 roadmap.md 和 product-spec.md §5 模組F（FR-058），依
-  `requirements-rescoping.md` 內的mockup連結開發儀表板。」
-- 前置：1e完成（F讀取E寫入的模組D檢視結果表，不即時運算）。
-- 硬約束：Python 3.9 相容、不引外部依賴（沿用 poc 原則）、繁體中文介面。
-- 驗收（不可自驗）：頁面呈現「今日重點」正確反映模組D結果、快速輸入
-  表單可用；派 fresh agent 依 FR-058 逐項核對＋實際開啟頁面。
+### 1f 模組F開發：儀表板方案A＋個股清單/詳情頁＋庫存買賣圖表 —— ✅ 已完成
+- **2026-08-09查證修正**：本節先前寫「待1e完成」是誤標。完整現況分三批：
+  1. **FR-058基礎儀表板**（commit `4fa230e`，2026-07-31）：
+     `report.py`的`render_dashboard()`／`render_today_highlights()`／
+     策略設定／快速輸入，`report_server.py`提供`/`（新版）與
+     `/report-classic`（舊版）並存。
+  2. **個股清單頁＋詳情頁＋背景刷新架構**（commit `552c625`，本機Cline
+     session產出於2026-08-02，2026-08-09才補commit保存——這批工作
+     完成後一直是本機未commit狀態，若接手前發現本機又有類似的未
+     commit異動，先跟PO確認是不是同類情況，不要直接捨棄）：
+     `GET /dashboard/stocks`（庫存＋研究中標的統一列表，搜尋/篩選/
+     分頁，FTS5全文搜尋心得）、`GET /dashboard/stock/<code>`（個股
+     詳情頁，資料全部讀快取不即時查外部API）、`POST .../refresh`
+     觸發背景執行緒刷新（`report_server.py`的`trigger_stock_refresh()`／
+     `is_refreshing()`）、`stock_valuation_snapshots`估值快照快取、
+     `fundamentals_client.py`（官方來源優先＋FinMind備援，補齊低流量
+     個股查詢路徑的架構原則）、CSV交易紀錄匯入、`server_readonly.py`
+     （Cline唯讀MCP wrapper）。
+  3. **庫存買賣圖表**（本次session，2026-08-09，PO要求「協助判斷加減碼
+     力道」）：嫁接進上述(2)的架構，不是另開新頁面——
+     - `kb_store.py`新增`stock_price_history`表＋
+       `save_price_history_points()`/`get_cached_price_history()`：
+       `review_engine.refresh_price_and_valuation()`背景刷新時本來就
+       查過一整段股價序列（改動前只挑最後兩筆存`stock_prices`算漲跌幅、
+       其餘丟棄），現在「順便」把整段也存下來，不是多打一次API。
+     - `render_stock_list_page()`每列：迷你走勢（`.spark`，讀近60天
+       快取歷史，`_sparkline_points()`/`_render_sparkline_svg()`）。
+     - `render_stock_detail_page()`「持股與交易」卡：價格折線＋買賣
+       力道長條圖（`.combo-chart`，讀`get_cached_price_history()`預設
+       近180天，`_combo_chart_aligned_trades()`/`_render_combo_chart_svg()`），
+       疊在既有的`.trade-list`精簡清單上方，共用同一張卡片不重複。
+     - 首頁「我的庫存與分析」表格代碼欄位改連結到
+       `/dashboard/stock/<code>`。
+     - 刻意不做：詳情頁走勢圖只在PO點進單一檔＋按「更新」時才會有資料
+       （背景刷新才會查價），不是每次開頁面就查；不fallback回FinMind
+       （2026-07-28教訓：匿名額度全域共用）。
+- 硬約束：Python 3.9 相容、不引外部依賴（沿用 poc 原則，SVG/inline JS
+  屬頁面自身內容非外部套件，可用）、繁體中文介面。全數符合。
+- 驗收（不可自驗）：本次session已跑600/600測試綠＋用真實TWSE官方API
+  （2330台積電）+ playwright screenshot驗證清單頁/詳情頁/首頁三頁渲染
+  正常（見對話紀錄，未存檔進repo）——這是開發者自驗，仍須PO在本機
+  實際開啟頁面確認、或派fresh agent逐項核對。
 
 ### 1g 模組G：策略績效回顧
 - 啟動時機：PO主動觸發，不是排程自動跑；等1e/1f運作一段時間、累積夠
