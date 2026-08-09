@@ -283,6 +283,69 @@ class ReportServerTest(unittest.TestCase):
         after_run_id = after["run"]["id"] if after["found"] else None
         self.assertEqual(before_run_id, after_run_id)  # 沒有新增任何一筆
 
+    # ---- /dashboard/chart/<code>：概念B單檔拉大圖（roadmap 1f，2026-08-09）----
+    # 一律 mock twse_price_client.fetch_price_history，測試不打真實網路
+    # （即使官方端點免費，測試套件也不該依賴外部服務是否可連線）。
+
+    def test_chart_route_renders_price_success(self):
+        fake_prices = {"prices": [
+            {"date": "2026-06-10", "close": 2000.0},
+            {"date": "2026-06-20", "close": 2100.0},
+            {"date": "2026-07-01", "close": 2300.0},
+        ]}
+        store = KBStore(self.tmp)
+        store.save_holdings([
+            {"code": "3699", "name": "測試芯", "shares": 100, "avg_cost": 2000},
+        ])
+        store.save_trade_ledger_entry(
+            code="3699", name="測試芯", action="買", shares=100,
+            price=2000.0, date="2026-06-10", add_sequence=1)
+        store.close()
+
+        with unittest.mock.patch.object(
+                report_server.twse_price_client, "fetch_price_history",
+                return_value=fake_prices) as mock_fetch:
+            status, headers, body = self._get("/dashboard/chart/3699")
+        page = body.decode("utf-8")
+        self.assertEqual(status, 200)
+        self.assertIn("text/html", headers["Content-Type"])
+        self.assertIn("測試芯（3699）買賣走勢", page)
+        self.assertIn("class=\"combo-chart\"", page)
+        # 官方端點優先試TWSE，成功就不用再試TPEx
+        mock_fetch.assert_called_once()
+        self.assertEqual(mock_fetch.call_args[0][0], "3699")
+        self.assertEqual(mock_fetch.call_args[0][1], "TWSE")
+
+    def test_chart_route_falls_back_to_tpex_when_twse_official_fails(self):
+        def fake_fetch(code, market, window_days=120, cache=None):
+            if market == "TWSE":
+                return {"error": "TWSE查無資料"}
+            return {"prices": [{"date": "2026-07-01", "close": 400.0},
+                               {"date": "2026-07-10", "close": 420.0}]}
+        with unittest.mock.patch.object(
+                report_server.twse_price_client, "fetch_price_history",
+                side_effect=fake_fetch):
+            status, _, body = self._get("/dashboard/chart/3799")
+        page = body.decode("utf-8")
+        self.assertEqual(status, 200)
+        self.assertIn("class=\"combo-chart\"", page)
+        self.assertIn("資料來源：TPEx官方端點", page)
+
+    def test_chart_route_both_markets_fail_shows_error_not_finmind_fallback(self):
+        with unittest.mock.patch.object(
+                report_server.twse_price_client, "fetch_price_history",
+                return_value={"error": "查無資料"}):
+            status, _, body = self._get("/dashboard/chart/3899")
+        page = body.decode("utf-8")
+        self.assertEqual(status, 200)  # 查價失敗仍是正常頁面，不是500
+        self.assertIn("官方股價查詢失敗", page)
+        self.assertIn("刻意不 fallback 回 FinMind", page)
+
+    def test_chart_route_rejects_path_with_slash(self):
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self._get("/dashboard/chart/2330%2Fmalformed")
+        self.assertEqual(ctx.exception.code, 404)
+
     def _seed_scan_result(self, code, meets=True, peg=0.16):
         """幫/market-scan/track測試準備一筆真實存在的run+result（用獨特代碼
         前綴避免跟其他測試/其他候選代碼衝突）。"""

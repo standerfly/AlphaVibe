@@ -38,6 +38,7 @@ Basic Auth 密碼驗證通過的請求，回應會附帶 `Set-Cookie: alphavibe_
 """
 import argparse
 import base64
+import datetime
 import hashlib
 import hmac
 import json
@@ -57,6 +58,7 @@ import report  # noqa: E402
 import screener  # noqa: E402
 import trade_ledger_parser  # noqa: E402
 import trade_text_parser  # noqa: E402
+import twse_price_client  # noqa: E402
 from kb_store import KBStore  # noqa: E402
 
 # FR-058：`/` 改渲染儀表板（方案A單頁式），舊版完整檢視移到 /report-classic；
@@ -66,6 +68,35 @@ CLASSIC_PATHS = ("/report-classic", "/report.html", "/poc/data/report.html")
 
 _DASHBOARD_COOKIE_NAME = "alphavibe_session"
 _DASHBOARD_COOKIE_MAX_AGE_SECONDS = 2592000  # 30 天
+
+_CHART_MIN_WINDOW_DAYS = 120
+_CHART_MAX_WINDOW_DAYS = 1460  # 4年，避免最早一筆交易紀錄年代久遠時查詢範圍失控
+
+
+def _fetch_chart_price_history(code, entries):
+    """概念B單檔拉大圖（roadmap 1f，2026-08-09）唯一的即時查價入口：只在
+    PO 點進 /dashboard/chart/<code> 時才呼叫，不是每次開首頁都查（見
+    report.py 檔頭說明）。查詢窗口涵蓋「最早一筆交易紀錄至今」（沒有
+    交易紀錄則用 _CHART_MIN_WINDOW_DAYS 預設值），確保交易點都落在圖表
+    範圍內。市場別未知，依序試 TWSE 再試 TPEx（比照 screener.
+    _fetch_prices_with_fallback 的官方優先順序），兩者都查不到就回傳
+    error，刻意不 fallback 回 FinMind（2026-07-28 教訓：匿名額度全域
+    共用，不該為了畫一張圖去花）。"""
+    window_days = _CHART_MIN_WINDOW_DAYS
+    if entries:
+        earliest = min(e["date"] for e in entries)
+        try:
+            earliest_date = datetime.date.fromisoformat(earliest)
+            span = (datetime.date.today() - earliest_date).days + 30
+            window_days = max(_CHART_MIN_WINDOW_DAYS, min(span, _CHART_MAX_WINDOW_DAYS))
+        except ValueError:
+            pass
+    for market in ("TWSE", "TPEx"):
+        result = twse_price_client.fetch_price_history(code, market, window_days=window_days)
+        if "error" not in result and result.get("prices"):
+            result["market"] = market
+            return result
+    return {"error": "TWSE／TPEx 官方端點皆查無資料（代碼 %s）" % code}
 
 
 def _configured_dashboard_token():
@@ -253,6 +284,25 @@ class ReportHandler(BaseHTTPRequestHandler):
             finally:
                 store.close()
             self._send(200, "text/html; charset=utf-8", page.encode("utf-8"))
+        elif path.startswith("/dashboard/chart/"):
+            # 概念B單檔拉大圖（roadmap 1f，2026-08-09）：唯一會對外即時查
+            # 股價的路由，且只查這一檔（見 _fetch_chart_price_history
+            # docstring）。code 直接取路徑最後一段，不需要額外驗證格式——
+            # 查無資料時 report.render_stock_chart() 自己會顯示錯誤訊息，
+            # 不會因為代碼亂打而整頁壞掉。
+            code = urllib.parse.unquote(path[len("/dashboard/chart/"):]).strip()
+            if not code or "/" in code:
+                self._send(404, "text/plain; charset=utf-8",
+                          "404：股票代碼格式錯誤".encode("utf-8"))
+            else:
+                store = KBStore(self.data_dir)
+                try:
+                    entries = store.get_trade_ledger(code)["entries"]
+                    price_result = _fetch_chart_price_history(code, entries)
+                    page = report.render_stock_chart(store, code, price_result)
+                finally:
+                    store.close()
+                self._send(200, "text/html; charset=utf-8", page.encode("utf-8"))
         elif path.endswith("/apple-touch-icon.png") or path == "/apple-touch-icon.png":
             self._send(200, "image/png", report.make_icon_png())
         elif path == "/healthz":

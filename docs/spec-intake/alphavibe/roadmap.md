@@ -17,7 +17,7 @@
 | 1b. 試用累積 | PO 日常使用：聊資訊→選股→估值→確認入庫；加碼/減碼討論時套用部位管理框架、建倉時標記投資主題 | 🔄 持續進行（資料持續累積，供模組G未來使用） | 已累積28+檔立場（2026-07-24查證） |
 | **1b+. 需求重新盤點＋product-spec全面重寫** | 依1b實測發現多處「文件與實際行為不同模式」（entry_condition/time_horizon 0%使用、snapshots表0筆使用、部位管理十層框架0%採用率等），PO與Claude完整討論（2026-07-25~27）產出「策略引擎＋每日PDCA」的 A-G 模組新架構，product-spec.md／scope-decision.md／clarification-log.md 全面更新 | ✅ 完成 | 2026-07-27；`requirements-rescoping.md`（討論全紀錄，含fresh-context agent通盤審查抓到4嚴重+5建議、PO逐項裁決）；product-spec.md重寫後fresh agent驗收10項條件（9直接PASS，1項小落差已修正） |
 | 1e. 模組A+D+E開發 | 老芋頭交易結構化表（FR-044）、交易流水表（FR-056）、策略檢視引擎四組成部分（FR-051~055：通用檢視層/策略專屬層/老芋頭動向比對/部位控制建議）、每日排程整合（FR-057） | ✅ 完成（2026-08-07查證修正，先前誤標待啟動） | commit `4fa230e`（2026-07-31）；`review_engine.py`／`module_d_scheduler.py`；測試見`test_review_engine.py`／`test_module_d_scheduler.py`，2026-08-07實測全專案470/470綠；MCP工具`check_general_review`/`check_strategy_review`/`check_laoyutou_signal`/`check_position_control`/`record_module_d_findings`/`run_module_d_check`已掛載server.py |
-| 1f. 模組F開發：儀表板方案A | FR-058，依 mockup（見 requirements-rescoping.md 連結）定案的單頁式結構：今日重點/新候選/觀察庫存/策略設定/快速輸入 | ✅ 完成（2026-08-07查證修正，先前誤標待1e完成） | 同commit `4fa230e`；`report.py`之`render_dashboard()`／`render_today_highlights()`／策略設定／快速輸入區塊；`report_server.py`提供`/`首頁與`/report-classic`舊版並存 |
+| 1f. 模組F開發：儀表板方案A | FR-058，依 mockup（見 requirements-rescoping.md 連結）定案的單頁式結構：今日重點/新候選/觀察庫存/策略設定/快速輸入；後補庫存買賣圖表（概念A總覽走勢/力道＋概念B單檔拉大圖） | ✅ 完成（2026-08-07查證修正，先前誤標待1e完成；2026-08-09補做庫存買賣圖表） | 同commit `4fa230e`；`report.py`之`render_dashboard()`／`render_today_highlights()`／策略設定／快速輸入區塊；`report_server.py`提供`/`首頁與`/report-classic`舊版並存；圖表功能見下方1f接手指南，測試484/484 |
 | 1g. 模組G：策略績效回顧 | FR-059 | ⏳ 待樣本量足夠再啟動（1e/1f已完成，資料寫入管道已對，可持續累積） | — |
 | 2. 正式產品 | speckit 流程＋交易紀錄整合 FR-022/FR-056 | ⏳ Phase 1 驗證後（五項前置開放問題已於2026-07-27全數定案，見下方「Phase 2 正式產品」節，但「現在啟動Phase 2」本身仍是待PO另外決定的獨立問題，不是自動觸發） | — |
 
@@ -102,20 +102,59 @@ In-Scope（Q-042），不再屬於此清單**。
   `render_dashboard()`／`render_today_highlights()`／策略設定／快速輸入
   區塊，`report_server.py` 提供 `/`（新版）與 `/report-classic`（舊版）
   並存。
-- **已知落差／下一步（2026-08-07 PO提出）**：`report.py` 目前庫存呈現
-  是純文字/表格，沒有任何圖表（無`<svg>`/`polyline`/`canvas`）。PO想要
-  的「庫存進出圖形化表格」（股價走勢＋買賣力道長條圖，協助判斷加減碼
-  力道）尚未實作，是1f底下真正待做的新增功能，不是重新做1e/1f。
-  已產出mockup定案（見對話紀錄，2026-08-07）：概念A總覽圖形化表格
-  （每列一檔庫存徽章+迷你走勢+力道進度條+建議）＋概念B單檔拉大範例
-  （價格折線+買賣力道長條圖+精簡清單），表格先掃過、點進去看大圖。
-  「建議」欄位理由文字直接重用`review_engine.strategy_specific_review()`/
-  `general_review()`/`laoyutou_signal_review()`/`position_control_suggestion()`
-  的既有輸出，不必另外設計判斷邏輯。
+- **庫存買賣圖表（概念A＋B）—— ✅ 已實作（2026-08-09）**：`report.py`
+  目前庫存呈現原本是純文字/表格，沒有任何圖表。PO想要的「庫存進出
+  圖形化表格」（股價走勢＋買賣力道長條圖，協助判斷加減碼力道）已補上：
+  - **概念A**（`_render_holdings_section()`，我的庫存與分析表格新增
+    欄位）：徽章（立場色 badge，跟既有「立場」文字欄互補）、走勢
+    （`_render_sparkline_svg()`，用 trade_ledger 成交價點＋
+    `stock_prices` 快取串成的迷你折線，刻意不即時查價——見下方效能取捨）、
+    買賣力道（`_force_bar_html()`，trade_ledger 淨買/淨賣金額佔目前
+    市值的比例，橫向進度條）、建議（`_suggestion_for_code()`，讀
+    `module_d_results` 最近一筆非空 suggested_action，跟「今日重點」
+    同一份資料源）。代碼欄位是連結，點進去到概念B。
+  - **概念B**（`report.render_stock_chart()` ＋ report_server.py
+    `GET /dashboard/chart/<code>`）：官方 TWSE/TPEx 股價折線
+    （`_render_combo_chart_svg()`，含高/低/最新價文字標籤）＋買賣力道
+    長條（依交易金額比例縮放，滑鼠懸停有 tooltip）疊在同一條x軸
+    （交易日索引對齊，見 `_combo_chart_aligned_trades()`）、精簡清單
+    （交易流水表格）、建議區塊（module_d_results 歷史＋即時呼叫
+    `laoyutou_signal_review()`/`position_control_suggestion()`，這兩個
+    純本地讀不打網路，可以放心即時算）。
+  - **效能取捨（重要，寫在 report.py 檔頭）**：概念A的走勢/力道刻意
+    只用本地已有資料，不即時查價——避免每次開儀表板都對全部持股各打
+    一輪外部API。概念B才即時查一次官方股價，但只在PO點進單一檔時查
+    （report_server.py 的路由負責查，report.py 純畫圖），不是每次開
+    首頁都查。兩者都刻意不 fallback 回 FinMind（2026-07-28 教訓：
+    匿名額度全域共用），官方端點查無資料就顯示錯誤訊息。
+  - 「建議」欄位最終改成讀**已持久化**的 `module_d_results`（模組E
+    排程 `run_module_d_review()` 跑出來的結果），不是每次開頁面即時
+    呼叫 `general_review()`/`strategy_specific_review()`（會打
+    FinMind）——這點跟 2026-08-07 當初 mockup 討論時「直接重用...的
+    既有輸出」字面上可能引導成即時呼叫的理解不同，改成讀持久化結果
+    更符合現有架構（`_render_today_highlights_section()` 已經是同一套
+    模式）且不會累加 FinMind 負擔，PO 若期待的是即時判斷，這是後續
+    可以再議的點。
+  - 測試：`tests/test_report.py`（`DashboardTest` 新增4個、新增
+    `StockChartPageTest` 6個）／`tests/test_report_server.py`
+    （`/dashboard/chart/<code>` 路由4個，mock `twse_price_client`不打
+    真實網路），2026-08-09實測全專案484/484綠；另外用暫存DB＋真實
+    TWSE官方API（2330台積電）＋playwright screenshot 手動驗證過桌面／
+    手機版渲染皆正常（見對話紀錄，未存檔進repo）。
+  - **已知限制／PO應review的點**：(1) 沒有拿到PO 2026-08-07討論當時的
+    實際mockup圖檔，徽章/力道bar/圖表配色版面是本次實作依文字描述的
+    詮釋，不是逐像素還原——PO開啟 `/` 與 `/dashboard/chart/<code>`
+    後如果視覺跟想像的不同，屬預期內，提反饋即可微調。(2) 迷你走勢
+    只有交易價點＋目前價，不是真正的每日股價曲線（效能取捨，見上）。
+    (3) 這台雲端 remote session 的 `poc/data/alphavibe.db` 是空的
+    （`.gitignore` 排除 `poc/data/`，PO 本機真實資料不會進容器），本次
+    開發全程用暫存 KBStore 測試資料驗證，PO 在本機開啟才會看到真實
+    庫存套用新版面的樣子。
 - 硬約束：Python 3.9 相容、不引外部依賴（沿用 poc 原則，SVG/inline JS
-  屬頁面自身內容非外部套件，可用）、繁體中文介面。
-- 驗收（不可自驗）：派 fresh agent 依實作內容逐項核對＋實際開啟頁面
-  確認圖表正確反映真實交易流水表與review_engine輸出。
+  屬頁面自身內容非外部套件，可用）、繁體中文介面。全數符合。
+- 驗收（不可自驗）：上面測試/screenshot驗證是開發者自驗，仍須派 fresh
+  agent 依實作內容逐項核對＋在PO本機實際開啟頁面確認圖表正確反映真實
+  交易流水表與review_engine輸出——尚未執行，是下一步。
 
 ### 1g 模組G：策略績效回顧
 - 啟動時機：PO主動觸發，不是排程自動跑；等1e/1f運作一段時間、累積夠

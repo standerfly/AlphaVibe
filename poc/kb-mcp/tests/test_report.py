@@ -543,10 +543,12 @@ class DashboardTest(unittest.TestCase):
         watchlist_end = page.index("</details>", watchlist_start) + len("</details>")
         watchlist_section = page[watchlist_start:watchlist_end]
 
-        self.assertIn("data-label=\"代碼\">3661", holdings_section)
+        # 庫存總覽的代碼欄位是概念B單檔拉大圖連結（2026-08-09，roadmap 1f），
+        # 純觀察區塊沒有交易/庫存資料可畫圖，維持純文字，兩邊格式刻意不同。
+        self.assertIn("<a href=\"/dashboard/chart/3661\">3661</a>", holdings_section)
         self.assertNotIn("data-label=\"代碼\">3661", watchlist_section)
         self.assertIn("data-label=\"代碼\">2454", watchlist_section)
-        self.assertNotIn("data-label=\"代碼\">2454", holdings_section)
+        self.assertNotIn("<a href=\"/dashboard/chart/2454\">2454</a>", holdings_section)
 
     def test_flash_message_success_and_error_styling(self):
         success_page = report.render_dashboard(self.store, flash="已加入自選股：2330")
@@ -556,6 +558,158 @@ class DashboardTest(unittest.TestCase):
         error_page = report.render_dashboard(self.store, flash="⚠️ 加自選股失敗：代碼為必填")
         self.assertIn("加自選股失敗：代碼為必填", error_page)
         self.assertIn("#c92a2a", error_page)  # 錯誤＝紅
+
+    # ---- 庫存買賣圖表：概念A（2026-08-09，roadmap 1f 已知落差補做）----
+
+    def test_holdings_table_has_new_chart_columns(self):
+        self.store.save_holdings([
+            {"code": "3661", "name": "世芯-KY", "shares": 100, "avg_cost": 2000},
+        ])
+        page = report.render_dashboard(self.store)
+        self.assertIn("<th>徽章</th>", page)
+        self.assertIn("<th>走勢</th>", page)
+        self.assertIn("<th>買賣力道</th>", page)
+        self.assertIn("<th>建議</th>", page)
+        # 無交易流水、無立場：走勢/力道/徽章/建議都要有合理的空狀態，不能整頁壞掉
+        self.assertIn("資料不足", page)
+        self.assertIn("尚無交易紀錄", page)
+        self.assertIn("badge-neutral", page)
+
+    def test_holdings_table_sparkline_uses_trade_ledger_and_cached_price(self):
+        self.store.save_holdings([
+            {"code": "3661", "name": "世芯-KY", "shares": 100, "avg_cost": 2000},
+        ])
+        self.store.save_trade_ledger_entry(
+            code="3661", name="世芯-KY", action="買", shares=100,
+            price=2000.0, date="2026-07-01", add_sequence=1)
+        self.store.upsert_stock_price("3661", 2200.0, "2026-08-01")
+        page = report.render_dashboard(self.store)
+        self.assertIn("class=\"spark\"", page)
+        self.assertIn("<polyline", page)
+        # 終點價(2200) >= 起點價(2000)：紅漲，跟 STANCE_COLORS 同一套語意
+        holdings_start = page.index('<details class="section" id="section-holdings"')
+        holdings_end = page.index("</details>", holdings_start)
+        self.assertIn("var(--red)", page[holdings_start:holdings_end])
+
+    def test_holdings_table_force_bar_net_buy_and_net_sell(self):
+        self.store.save_holdings([
+            {"code": "3661", "name": "世芯-KY", "shares": 100, "avg_cost": 2000},
+            {"code": "2454", "name": "聯發科", "shares": 50, "avg_cost": 1000},
+        ])
+        # 3661：只買沒賣，淨買，市值查不到（無股價快取）時分母退回買賣總額
+        self.store.save_trade_ledger_entry(
+            code="3661", name="世芯-KY", action="買", shares=100,
+            price=2000.0, date="2026-07-01", add_sequence=1)
+        # 2454：買100股後全賣，淨賣為負
+        self.store.save_trade_ledger_entry(
+            code="2454", name="聯發科", action="買", shares=100,
+            price=1000.0, date="2026-06-01", add_sequence=1)
+        self.store.save_trade_ledger_entry(
+            code="2454", name="聯發科", action="賣", shares=150,
+            price=1200.0, date="2026-07-15")
+        page = report.render_dashboard(self.store)
+        self.assertIn("淨買 100%", page)
+        self.assertIn("淨賣", page)
+        self.assertIn("force-buy", page)
+        self.assertIn("force-sell", page)
+
+    def test_holdings_table_suggestion_reuses_module_d_results(self):
+        self.store.save_holdings([
+            {"code": "3661", "name": "世芯-KY", "shares": 100, "avg_cost": 2000},
+        ])
+        self.store.save_module_d_result(
+            code="3661", trigger_type="策略層", finding="PEG回升，假說可能失效",
+            suggested_action="建議減碼30%")
+        page = report.render_dashboard(self.store)
+        holdings_start = page.index('<details class="section" id="section-holdings"')
+        holdings_end = page.index("</details>", holdings_start)
+        self.assertIn("建議減碼30%", page[holdings_start:holdings_end])
+
+
+class StockChartPageTest(unittest.TestCase):
+    """report.render_stock_chart()：概念B單檔拉大圖（roadmap 1f，
+    2026-08-09）。即時查價由 report_server.py 負責，這裡一律傳入已經
+    準備好的 price_result，不牽涉網路。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="alphavibe-chart-test-")
+        self.store = KBStore(self.tmp)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp)
+
+    def test_no_holdings_no_trades_shows_empty_states(self):
+        page = report.render_stock_chart(self.store, "9999", {"error": "查無資料"})
+        self.assertIn("9999", page)
+        self.assertIn("官方股價查詢失敗", page)
+        self.assertIn("查無資料", page)
+        self.assertIn("尚無交易流水紀錄", page)
+        self.assertIn("尚無模組D檢視紀錄", page)
+
+    def test_price_error_does_not_fallback_and_shows_reason(self):
+        page = report.render_stock_chart(
+            self.store, "3661", {"error": "TWSE／TPEx 官方端點皆查無資料"})
+        self.assertIn("刻意不 fallback 回 FinMind", page)
+
+    def test_price_none_shows_internal_error_message(self):
+        page = report.render_stock_chart(self.store, "3661", None)
+        self.assertIn("內部錯誤", page)
+
+    def test_price_success_renders_combo_chart_and_trade_list(self):
+        self.store.save_holdings([
+            {"code": "3661", "name": "世芯-KY", "shares": 100, "avg_cost": 2000},
+        ])
+        self.store.save_trade_ledger_entry(
+            code="3661", name="世芯-KY", action="買", shares=100,
+            price=2000.0, date="2026-06-10", add_sequence=1)
+        self.store.save_trade_ledger_entry(
+            code="3661", name="世芯-KY", action="賣", shares=30,
+            price=2300.0, date="2026-07-01")
+        price_result = {
+            "market": "TWSE",
+            "prices": [
+                {"date": "2026-06-10", "close": 2000.0},
+                {"date": "2026-06-20", "close": 2100.0},
+                {"date": "2026-07-01", "close": 2300.0},
+                {"date": "2026-07-10", "close": 2250.0},
+            ],
+        }
+        page = report.render_stock_chart(self.store, "3661", price_result)
+        self.assertIn("世芯-KY（3661）買賣走勢", page)
+        self.assertIn("class=\"combo-chart\"", page)
+        self.assertIn("<polyline", page)
+        self.assertIn("<rect", page)
+        self.assertIn("資料來源：TWSE官方端點", page)
+        # 精簡清單：兩筆交易都要列出
+        self.assertIn("data-label=\"日期\">2026-06-10", page)
+        self.assertIn("data-label=\"日期\">2026-07-01", page)
+        self.assertIn("data-label=\"金額\">200,000 元", page)
+        # 老芋頭動向／部位控制是純本地讀，B頁面即時呼叫，不需要mock
+        self.assertIn("老芋頭動向：", page)
+        self.assertIn("部位控制：", page)
+
+    def test_price_insufficient_data_shows_empty_message(self):
+        page = report.render_stock_chart(
+            self.store, "3661",
+            {"market": "TWSE", "prices": [{"date": "2026-07-01", "close": 2000.0}]})
+        self.assertIn("官方股價資料不足，暫時無法畫圖", page)
+
+    def test_trade_date_outside_price_window_skips_bar_but_keeps_list(self):
+        self.store.save_trade_ledger_entry(
+            code="3661", name="世芯-KY", action="買", shares=100,
+            price=1800.0, date="2026-01-01", add_sequence=1)
+        price_result = {
+            "market": "TWSE",
+            "prices": [
+                {"date": "2026-06-10", "close": 2000.0},
+                {"date": "2026-07-01", "close": 2100.0},
+            ],
+        }
+        page = report.render_stock_chart(self.store, "3661", price_result)
+        # 圖畫得出來（有股價資料），但精簡清單仍列出這筆對不到圖的早期交易
+        self.assertIn("class=\"combo-chart\"", page)
+        self.assertIn("data-label=\"日期\">2026-01-01", page)
 
 
 class HoldingsPreviewTest(unittest.TestCase):

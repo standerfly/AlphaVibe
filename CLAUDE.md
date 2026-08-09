@@ -97,3 +97,7 @@ Phase 1 PoC，零外部依賴）；**正式 production code 尚未開始**（屬
 - 2026-08-07｜情境：PO要求開發庫存買賣圖表功能，Claude依roadmap.md「1e ⏳待啟動／1f ⏳待1e完成」的狀態欄，準備從FR-051/052從零開工；動工前依慣例查git log才發現commit `4fa230e`（2026-07-31）其實已經完整實作FR-044/FR-051~058（`review_engine.py`／`module_d_scheduler.py`／`report.py`的`render_dashboard()`），MCP工具（`check_general_review`等6個）也已掛載server.py，470/470測試綠——**該commit本身有改動roadmap.md，但只改了部分段落，狀態欄跟header日期都沒同步更新，讓文件停留在「待啟動」的舊狀態長達一週**
   ｜教訓：「這個commit本身有動到文件」不代表文件內容真的跟上了實作——大型commit容易漏改狀態欄這種容易被忽略的表格/摘要欄位。核對開發現況不能只看roadmap.md的文字敘述，開工前務必額外查`git log -- <相關檔案>`實際比對日期，或直接跑一次測試（`python3 -m unittest discover -s tests`）看數字，這比讀文件狀態欄可靠。這次若沒有先查git log，會浪費一輪重工FR-051~054。
   ｜動作：已修正roadmap.md階段總覽表格（1e/1f改標✅已完成＋補證據）、已知限制新增一條記錄此落差、1e/1f接手指南補上「真正待做的是report.py庫存區塊的圖表視覺化，不是重做1e/1f」的指引，避免下次接手session重蹈覆轍
+
+- 2026-08-09｜情境：開發庫存買賣圖表（概念A/B）動工前查證資料管道，發現這台雲端 remote session 的 `poc/data/alphavibe.db` 是全空的（holdings/trade_ledger/stances等表都0筆），只有 comments_config／comments_data 各幾筆殘留
+  ｜教訓：`.gitignore` 排除 `poc/data/`（local-first設計預期內），PO 的真實持股/交易資料只存在本機，不會進雲端容器——這代表**任何雲端 session 都無法用「真實資料庫」驗收涉及庫存/交易的功能**，開發與測試必須改用暫存 KBStore 灌測試資料（tempfile 目錄），驗收（尤其「派 fresh agent 開啟頁面確認圖表正確反映真實資料」這類條款）勢必要在 PO 本機環境才能真的執行，雲端 session 只能做到「邏輯與渲染正確」層級的自驗，不能誤報成「已驗證反映真實資料」
+  ｜動作：無條文修改；`report.py`／`report_server.py`新增的圖表功能開發全程用暫存資料庫驗證，roadmap.md 1f 已知限制節加註此環境限制；日後任何雲端session要處理庫存/交易類功能，開工前應先比照本次查一次真實DB表筆數，不要預設有資料可用

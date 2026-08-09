@@ -5,6 +5,16 @@
 
 刻意不做：即時股價、距離目標買價（需線上數據與互動，屬 1c 儀表板 FR-024）。
 
+【2026-08-09 範圍調整，見 roadmap.md 1f「已知落差／下一步」】庫存買賣圖表
+（概念A總覽表的迷你走勢／力道進度條、概念B `render_stock_chart()` 單檔
+拉大圖）是上述原則刻意的例外：概念A只用本地已有資料（trade_ledger 成交
+價點＋stock_prices 快取，不即時查價，維持「開一次儀表板不對外打一堆
+請求」的原則）；概念B的價格折線才即時查一次官方股價，但只在 PO 點進
+單一檔的 `/dashboard/chart/<code>` 時才查（report_server.py 負責查、
+report.py 這裡只管畫），不是每次開首頁都對全部持股各查一次——刻意不用
+FinMind（2026-07-28 教訓：匿名額度全域共用），官方端點兩個市場都查不到
+就顯示錯誤訊息，不 fallback。
+
 用法：python3 poc/kb-mcp/report.py [--data-dir DIR] [--out 路徑]
 預設讀 poc/data/、寫到 poc/data/report.html。純標準庫、Python 3.9 相容。
 """
@@ -21,6 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from kb_store import KBStore  # noqa: E402
 import frameworks  # noqa: E402
+import review_engine  # noqa: E402
 import screener  # noqa: E402
 
 # 台股慣例：紅漲綠跌 → 偏多紅、偏空綠
@@ -105,6 +116,31 @@ tbody tr:hover { background: var(--paper-raised); }
          white-space: nowrap; }
 .badge-danger { background: var(--red-soft); color: var(--red-ink); }
 .badge-neutral { background: var(--paper-sunken); color: var(--ink-dim); }
+.badge-bear { background: var(--paper-sunken); color: var(--green); }
+/* 庫存買賣圖表（2026-08-09，roadmap 1f 已知落差補做）：概念A迷你走勢
+   （.spark）／力道進度條（.force-bar 系列）、概念B單檔拉大圖
+   （.combo-chart／.trade-list）共用樣式，深色模式一律走 var() token，
+   不寫死顏色。 */
+.spark { display: block; vertical-align: middle; }
+.force-bar { width: 100%; max-width: 110px; }
+.force-track { position: relative; height: 10px; background: var(--paper-sunken);
+                border-radius: 5px; overflow: hidden; }
+.force-fill { position: absolute; top: 0; bottom: 0; }
+.force-buy { background: var(--red); }
+.force-sell { background: var(--green); }
+.force-center { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px;
+                 background: var(--rule-strong); }
+.combo-chart { width: 100%; height: auto; background: var(--paper-raised);
+                border-radius: 8px; }
+.chart-label { font-size: 11px; fill: var(--ink-dim); font-variant-numeric: tabular-nums; }
+.chart-label-latest { fill: var(--accent); font-weight: 700; }
+.chart-legend { font-size: .82rem; color: var(--ink-dim); margin: .3rem 0 1rem; }
+.chart-legend .dot { display: inline-block; width: .7em; height: .7em;
+                       border-radius: 50%; margin: 0 .3em 0 .9em; vertical-align: middle; }
+.chart-legend .dot:first-child { margin-left: 0; }
+.dot-price { background: var(--accent); }
+.dot-buy { background: var(--red); }
+.dot-sell { background: var(--green); }
 /* 今日重點：有衝突的列用左側色條＋淡底標出來，比整列變色更容易一眼
    掃過去找到真正需要注意的那幾列（純色底在深色模式下太搶眼，改用
    左側 4px 色條＋輕微淡底） */
@@ -303,6 +339,7 @@ def _render_holdings_section(store):
                      "持股比例可能不含全部庫存</p>" % price_meta)
 
         parts.append("<div class=\"tablewrap\"><table><thead><tr><th>代碼</th><th>名稱</th>"
+                     "<th>徽章</th><th>走勢</th><th>買賣力道</th><th>建議</th>"
                      "<th>產業別</th><th>投資主題</th><th>股數</th><th>平均成本</th><th>市值</th>"
                      "<th>持股比例</th><th>立場</th><th>估值依據</th><th>理由</th>"
                      "<th>更新日期</th></tr></thead><tbody>")
@@ -314,9 +351,12 @@ def _render_holdings_section(store):
                 valuation_text = esc(match["valuation_metric"])
                 reason_text = reason_html(match["reason"])
                 date_text = esc(match["date"])
+                badge_class = "badge-danger" if match["stance"] == "偏多" else (
+                    "badge-bear" if match["stance"] == "偏空" else "badge-neutral")
             else:
                 color = DEFAULT_STANCE_COLOR
                 stance_text = valuation_text = reason_text = date_text = "尚無分析"
+                badge_class = "badge-neutral"
 
             industry_text = esc(industry_map.get(h["code"], {}).get("industry_category"))
             theme_text = esc(theme_map.get(h["code"], {}).get("theme"))
@@ -330,15 +370,39 @@ def _render_holdings_section(store):
                 value_text = "未更新價格"
                 ratio_text = "未更新價格"
 
+            # 庫存買賣圖表（2026-08-09，roadmap 1f 已知落差補做）：概念A
+            # 三個新欄位——徽章（立場色一眼掃過，跟右側「立場」文字欄互補，
+            # 不是重複）、走勢（迷你 sparkline）、買賣力道（進度條）——都只
+            # 讀本地已有資料（trade_ledger／stock_prices 快取），不即時
+            # 查價，見檔頭 2026-08-09 說明。「建議」重用
+            # _suggestion_for_code() 同一份 module_d_results。代碼欄位
+            # 點進去是概念B單檔拉大圖（/dashboard/chart/<code>，只有
+            # report_server.py 起的互動頁能用，靜態匯出的 report.html
+            # 點了不會動，跟既有快速輸入表單同樣的既知限制）。
+            code_entries = store.get_trade_ledger(h["code"])["entries"]
+            spark_html = _render_sparkline_svg(
+                _sparkline_points(code_entries, price_map.get(h["code"])))
+            force_html = _force_bar_html(code_entries, value)
+            suggestion = _suggestion_for_code(store, h["code"])
+            suggestion_text = esc(suggestion["suggested_action"]) if suggestion else "—"
+
             parts.append(
-                "<tr><td data-label=\"代碼\">%s</td><td data-label=\"名稱\">%s</td>"
+                "<tr><td data-label=\"代碼\">"
+                "<a href=\"/dashboard/chart/%s\">%s</a></td>"
+                "<td data-label=\"名稱\">%s</td>"
+                "<td data-label=\"徽章\"><span class=\"badge %s\">%s</span></td>"
+                "<td data-label=\"走勢\">%s</td>"
+                "<td data-label=\"買賣力道\">%s</td>"
+                "<td data-label=\"建議\">%s</td>"
                 "<td data-label=\"產業別\">%s</td><td data-label=\"投資主題\">%s</td>"
                 "<td data-label=\"股數\">%s</td><td data-label=\"平均成本\">%s</td>"
                 "<td data-label=\"市值\">%s</td><td data-label=\"持股比例\">%s</td>"
                 "<td data-label=\"立場\" class=\"stance\" style=\"color:%s\">%s</td>"
                 "<td data-label=\"估值依據\">%s</td><td data-label=\"理由\">%s</td>"
                 "<td data-label=\"更新日期\">%s</td></tr>"
-                % (esc(h["code"]), esc(h["name"]), industry_text, theme_text,
+                % (esc(h["code"]), esc(h["code"]), esc(h["name"]),
+                   badge_class, stance_text, spark_html, force_html, suggestion_text,
+                   industry_text, theme_text,
                    esc(h["shares"]), esc(h["avg_cost"]), value_text, ratio_text,
                    color, stance_text, valuation_text, reason_text, date_text))
         parts.append("</tbody></table></div>")
@@ -360,6 +424,294 @@ def _render_holdings_section(store):
     else:
         parts.append("<p class=\"empty\">尚無持股快照。</p>")
     parts.append("</details>")
+    return "".join(parts)
+
+
+def _suggestion_for_code(store, code, limit=20):
+    """庫存買賣圖表「建議」欄位共用資料源（概念A表格欄位＋概念B單檔頁）：
+    直接讀已持久化的 module_d_results（模組E排程／run_module_d_review
+    已經跑過、寫入的結果），取最近一筆 suggested_action 非空的紀錄，跟
+    _render_today_highlights_section 同一份資料源、同一套「非空才算」
+    判斷準則——不即時呼叫 general_review()/strategy_specific_review()
+    （會打 FinMind，不該在每次開頁面時重算，見檔頭 2026-08-09 說明）。
+    查無任何紀錄（該檔還沒被模組D檢視過，或全部都是「正常」結果）回傳
+    None，呼叫端自行決定顯示什麼預設文字。"""
+    results = store.get_module_d_results(code=code, limit=limit)["results"]
+    for r in results:
+        if r.get("suggested_action") is not None:
+            return r
+    return None
+
+
+def _sparkline_points(entries, price_info):
+    """把 trade_ledger 成交價點＋目前快取股價（store.get_stock_prices()
+    單筆快照）串成迷你走勢用的 (date, price) 序列，依日期升冪排序，同一天
+    多筆交易只留最後一筆（避免 sparkline 在同一 x 位置來回折返）。刻意
+    不即時查完整每日股價（見檔頭說明）——這條線畫的其實是「你自己的
+    進出場價位軌跡＋目前價位」，不是大盤級技術線圖，正好貼合「協助判斷
+    加減碼力道」的實際用途。"""
+    points = {}
+    for e in entries:
+        if e.get("price") is not None:
+            points[e["date"]] = e["price"]
+    if price_info and price_info.get("price") is not None:
+        points[price_info.get("price_date") or _today_str()] = price_info["price"]
+    return sorted(points.items())
+
+
+def _today_str():
+    return datetime.date.today().isoformat()
+
+
+def _render_sparkline_svg(points, width=96, height=28):
+    """畫概念A表格裡的迷你走勢（見 _sparkline_points 說明資料來源）。少於
+    2 個點畫不出線，回傳文字提示。台股慣例紅漲綠跌：終點價 >= 起點價
+    描紅，反之描綠，跟 STANCE_COLORS 同一套色彩語意。"""
+    if len(points) < 2:
+        return "<span class=\"meta\">資料不足</span>"
+    prices = [p for _, p in points]
+    lo, hi = min(prices), max(prices)
+    span = (hi - lo) or (abs(hi) * 0.02 or 1.0)
+    n = len(points)
+    pad = 2.0
+    coords = []
+    for i, (_, price) in enumerate(points):
+        x = pad + (width - 2 * pad) * i / (n - 1)
+        y = pad + (height - 2 * pad) * (1 - (price - lo) / span)
+        coords.append("%.1f,%.1f" % (x, y))
+    color = "var(--red)" if points[-1][1] >= points[0][1] else "var(--green)"
+    return ("<svg class=\"spark\" viewBox=\"0 0 %d %d\" width=\"%d\" height=\"%d\" "
+           "role=\"img\" aria-label=\"走勢\">"
+           "<polyline points=\"%s\" fill=\"none\" stroke=\"%s\" stroke-width=\"1.6\" "
+           "stroke-linejoin=\"round\" stroke-linecap=\"round\"/></svg>"
+           % (width, height, width, height, " ".join(coords), color))
+
+
+def _force_bar_html(entries, current_value):
+    """庫存買賣圖表「力道進度條」：用 trade_ledger 全部買入金額－賣出金額
+    的淨值，除以目前市值（查不到市值時退回買賣總金額當分母），算出
+    -100%~+100%（超出範圍裁切）的淨買/淨賣比例，畫成從中線向左右延伸的
+    橫向進度條——買方力道描紅、賣方力道描綠，跟 STANCE_COLORS 同一套
+    「紅漲綠跌」語意（這裡是「紅＝淨買、綠＝淨賣」，方向一致不衝突）。
+    純粹本地讀 trade_ledger，不即時查價，可放心每列都算。"""
+    if not entries:
+        return "<span class=\"meta\">尚無交易紀錄</span>"
+    buy_value = sum(e["shares"] * e["price"] for e in entries if e["action"] == "買")
+    sell_value = sum(e["shares"] * e["price"] for e in entries if e["action"] == "賣")
+    net = buy_value - sell_value
+    denom = current_value if current_value else (buy_value + sell_value)
+    if not denom:
+        return "<span class=\"meta\">無法計算</span>"
+    ratio = max(-1.0, min(1.0, net / denom))
+    half_width_pct = abs(ratio) * 50
+    if ratio > 0.001:
+        fill = ("<div class=\"force-fill force-buy\" style=\"left:50%%;width:%.1f%%\">"
+               "</div>" % half_width_pct)
+        label = "淨買 %.0f%%" % (ratio * 100)
+    elif ratio < -0.001:
+        fill = ("<div class=\"force-fill force-sell\" style=\"right:50%%;width:%.1f%%\">"
+               "</div>" % half_width_pct)
+        label = "淨賣 %.0f%%" % (abs(ratio) * 100)
+    else:
+        fill = ""
+        label = "買賣平衡"
+    return ("<div class=\"force-bar\"><div class=\"force-track\">%s"
+           "<div class=\"force-center\"></div></div></div>"
+           "<div class=\"meta\">%s</div>" % (fill, esc(label)))
+
+
+def _combo_chart_aligned_trades(prices, entries):
+    """把交易流水的 date 對齊到官方股價序列（prices，已依 date 升冪排序）
+    的索引位置，供 _render_combo_chart_svg() 畫買賣力道長條用。x 軸刻意
+    用「第幾個交易日」的整數索引而非真實日曆天數（股價圖常見慣例，
+    週末／休市日不佔版面，折線才不會出現無意義的長平段）。交易日期若
+    剛好不是交易日，往前找最近一個有股價的交易日對齊（跟獨立驗證腳本
+    2026-08-09 驗證過的作法一致）；早於股價視窗起點的交易日對不到，
+    跳過（該筆仍會出現在精簡清單，只是圖上畫不出來）。"""
+    date_index = {p["date"]: i for i, p in enumerate(prices)}
+    sorted_dates = sorted(date_index)
+    aligned = []
+    for e in entries:
+        idx = date_index.get(e["date"])
+        if idx is None:
+            earlier = [d for d in sorted_dates if d <= e["date"]]
+            if not earlier:
+                continue
+            idx = date_index[earlier[-1]]
+        aligned.append({"index": idx, "entry": e})
+    return aligned
+
+
+def _render_combo_chart_svg(prices, aligned, width=640, height=280):
+    """概念B單檔拉大圖核心：上半部價格折線＋下半部買賣力道長條，共用同一
+    條 x 軸（見 _combo_chart_aligned_trades 的索引對齊說明）。長條高度以
+    當次交易金額（股數×價格）相對「這批交易裡金額最大那筆」的比例縮放，
+    不是相對股價或市值——單純呈現「這幾筆交易彼此的力道差異」。"""
+    closes = [p["close"] for p in prices if p.get("close") is not None]
+    if len(closes) < 2:
+        return "<p class=\"empty\">官方股價資料不足，暫時無法畫圖。</p>"
+    lo, hi = min(closes), max(closes)
+    span = (hi - lo) or (abs(hi) * 0.02 or 1.0)
+    n = len(prices)
+    # pad_r 刻意留寬給右側高/低/最新價文字標籤（見下方 <text>），不只是
+    # 視覺留白。
+    pad_l, pad_r, pad_t, pad_b = 8.0, 52.0, 10.0, 6.0
+    price_h = height * 0.60
+    bar_h = height * 0.28
+    gap = height - pad_t - price_h - bar_h - pad_b
+
+    def x_at(i):
+        return pad_l + (width - pad_l - pad_r) * i / max(n - 1, 1)
+
+    def y_price(close):
+        return pad_t + price_h * (1 - (close - lo) / span)
+
+    coords = " ".join(
+        "%.1f,%.1f" % (x_at(i), y_price(p["close"]))
+        for i, p in enumerate(prices) if p.get("close") is not None)
+
+    parts = ["<svg class=\"combo-chart\" viewBox=\"0 0 %d %d\" preserveAspectRatio="
+            "\"xMidYMid meet\" role=\"img\" aria-label=\"價格與買賣力道圖\">"
+            % (width, height)]
+    parts.append("<polyline points=\"%s\" fill=\"none\" stroke=\"var(--accent)\" "
+                "stroke-width=\"1.8\" stroke-linejoin=\"round\"/>" % coords)
+
+    # 高／低／最新收盤價文字標籤：只標數字，不畫格線，維持圖表簡潔。
+    label_x = width - pad_r + 6
+    latest_close = next(p["close"] for p in reversed(prices) if p.get("close") is not None)
+    parts.append("<text x=\"%.1f\" y=\"%.1f\" class=\"chart-label\">%s</text>"
+                % (label_x, y_price(hi) + 4, esc(_fmt_num(hi))))
+    parts.append("<text x=\"%.1f\" y=\"%.1f\" class=\"chart-label\">%s</text>"
+                % (label_x, y_price(lo) + 4, esc(_fmt_num(lo))))
+    if lo < latest_close < hi:
+        parts.append("<text x=\"%.1f\" y=\"%.1f\" class=\"chart-label chart-label-latest\">"
+                    "%s</text>" % (label_x, y_price(latest_close) + 4,
+                                    esc(_fmt_num(latest_close))))
+
+    bar_base_y = pad_t + price_h + gap + bar_h
+    max_value = max((abs(a["entry"]["shares"] * a["entry"]["price"]) for a in aligned),
+                    default=0) or 1.0
+    bar_w = max(2.0, (width - pad_l - pad_r) / max(n, 1) * 0.6)
+    for a in aligned:
+        e = a["entry"]
+        value = e["shares"] * e["price"]
+        bh = bar_h * min(1.0, abs(value) / max_value)
+        color = "var(--red)" if e["action"] == "買" else "var(--green)"
+        x = x_at(a["index"]) - bar_w / 2
+        parts.append(
+            "<rect x=\"%.1f\" y=\"%.1f\" width=\"%.1f\" height=\"%.1f\" fill=\"%s\" "
+            "opacity=\"0.85\"><title>%s %s %s股 @%s</title></rect>"
+            % (x, bar_base_y - bh, bar_w, bh, color,
+               esc(e["date"]), esc(e["action"]), esc(_fmt_num(e["shares"])),
+               esc(_fmt_num(e["price"]))))
+    parts.append("<line x1=\"%.1f\" y1=\"%.1f\" x2=\"%.1f\" y2=\"%.1f\" "
+                "stroke=\"var(--rule)\" stroke-width=\"1\"/>"
+                % (pad_l, bar_base_y, width - pad_r, bar_base_y))
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def render_stock_chart(store, code, price_result):
+    """GET /dashboard/chart/<code>：概念B單檔拉大圖（roadmap 1f「已知落差
+    ／下一步」，2026-08-09）。`price_result` 由 report_server.py 事先即時
+    查好（官方 TWSE/TPEx 端點，見檔頭說明，這裡本身不打網路），格式為
+    twse_price_client.fetch_price_history() 的回傳值或 {"error": ...}。
+
+    表格先掃過（概念A）、點進去看大圖（這裡）：疊上交易流水的買賣力道
+    長條、附精簡清單，「建議」重用 _suggestion_for_code() 同一份
+    module_d_results 資料源，額外把 laoyutou_signal_review()／
+    position_control_suggestion()（純本地讀，不打網路）即時算一次，
+    比概念A的靜態建議欄多一點即時性（B本來就是使用者主動點進來看單一檔，
+    不是每次開首頁都算全部持股）。
+    """
+    holdings = [h for h in store.get_holdings()["holdings"] if h["code"] == code]
+    holding = holdings[0] if holdings else None
+    stance = store.get_latest_stance(code)
+    price_info = store.get_stock_prices().get(code)
+    theme = store.get_stock_theme().get(code, {}).get("theme")
+    ledger = store.get_trade_ledger(code)
+    entries = ledger["entries"]
+    name = (holding or {}).get("name") or (entries[0]["name"] if entries else code)
+
+    parts = [_screen_page_head("%s（%s）買賣走勢" % (name, code))]
+    parts.append("<p class=\"meta\"><a href=\"/\">← 回儀表板</a></p>")
+    parts.append("<h1>%s（%s）買賣走勢</h1>" % (esc(name), esc(code)))
+
+    info_bits = []
+    if holding:
+        info_bits.append("股數 %s" % _fmt_num(holding.get("shares")))
+        if holding.get("avg_cost") is not None:
+            info_bits.append("平均成本 %s" % _fmt_num(holding["avg_cost"]))
+    if price_info:
+        info_bits.append("目前價 %s（%s）" % (_fmt_num(price_info["price"]),
+                                          esc(price_info["price_date"])))
+    if stance:
+        color = STANCE_COLORS.get(stance["stance"], DEFAULT_STANCE_COLOR)
+        info_bits.append("立場 <span style=\"color:%s;font-weight:700\">%s</span>"
+                         % (color, esc(stance["stance"])))
+    if theme:
+        info_bits.append("投資主題 %s" % esc(theme))
+    if info_bits:
+        parts.append("<p class=\"meta\">%s</p>" % "　｜　".join(info_bits))
+
+    if price_result is None:
+        parts.append("<p class=\"empty\">尚未查詢股價（內部錯誤，price_result 為 None）。</p>")
+    elif "error" in price_result:
+        parts.append("<p class=\"empty\">官方股價查詢失敗：%s"
+                     "（可能是興櫃股或當日尚無資料；刻意不 fallback 回 FinMind，"
+                     "見 report.py 檔頭 2026-08-09 說明）</p>" % esc(price_result["error"]))
+    else:
+        prices = price_result["prices"]
+        aligned = _combo_chart_aligned_trades(prices, entries)
+        parts.append(_render_combo_chart_svg(prices, aligned))
+        parts.append("<p class=\"chart-legend\">"
+                     "<span class=\"dot dot-price\"></span>價格折線　"
+                     "<span class=\"dot dot-buy\"></span>買進力道　"
+                     "<span class=\"dot dot-sell\"></span>賣出力道　"
+                     "｜資料來源：%s官方端點，%s ~ %s</p>"
+                     % (esc(price_result.get("market") or "TWSE/TPEx"),
+                        esc(prices[0]["date"]), esc(prices[-1]["date"])))
+
+    parts.append("<h2>建議</h2>")
+    suggestion = _suggestion_for_code(store, code)
+    if suggestion:
+        parts.append("<p>%s：%s</p>" % (esc(suggestion["trigger_type"]),
+                                        esc(suggestion["suggested_action"])))
+        parts.append("<p class=\"meta\">依據：%s（%s）</p>"
+                     % (esc(suggestion["finding"]), esc(suggestion["checked_at"])))
+    else:
+        parts.append("<p class=\"empty\">尚無模組D檢視紀錄，或目前皆為正常結果。</p>")
+    try:
+        laoyutou = review_engine.laoyutou_signal_review(code, store)
+        parts.append("<p class=\"meta\">老芋頭動向：%s</p>" % esc(laoyutou["finding"]))
+    except Exception as exc:
+        parts.append("<p class=\"meta\">老芋頭動向比對失敗：%s</p>" % esc(str(exc)))
+    if holding:
+        try:
+            pc = review_engine.position_control_suggestion(code, store)
+            parts.append("<p class=\"meta\">部位控制：%s</p>" % esc(pc["detail"]))
+        except Exception as exc:
+            parts.append("<p class=\"meta\">部位控制建議計算失敗：%s</p>" % esc(str(exc)))
+
+    parts.append("<h2>交易流水（精簡清單）</h2>")
+    if entries:
+        parts.append("<div class=\"tablewrap\"><table><thead><tr><th>日期</th><th>動作</th>"
+                     "<th>股數</th><th>價格</th><th>金額</th><th>加碼序號</th>"
+                     "</tr></thead><tbody>")
+        for e in entries:
+            value = e["shares"] * e["price"]
+            parts.append(
+                "<tr><td data-label=\"日期\">%s</td><td data-label=\"動作\">%s</td>"
+                "<td data-label=\"股數\">%s</td><td data-label=\"價格\">%s</td>"
+                "<td data-label=\"金額\">%s 元</td><td data-label=\"加碼序號\">%s</td></tr>"
+                % (esc(e["date"]), esc(e["action"]), esc(_fmt_num(e["shares"])),
+                   esc(_fmt_num(e["price"])), format(value, ",.0f"),
+                   esc(e["add_sequence"]) if e["add_sequence"] is not None else "—"))
+        parts.append("</tbody></table></div>")
+    else:
+        parts.append("<p class=\"empty\">尚無交易流水紀錄。</p>")
+
+    parts.append("</body></html>")
     return "".join(parts)
 
 
