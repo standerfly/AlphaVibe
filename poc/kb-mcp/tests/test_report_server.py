@@ -546,6 +546,172 @@ class ReportServerTest(unittest.TestCase):
         self.assertIn("代碼查無比對", page)
         self.assertIn("絕對查無此股票代號測試", page)
 
+    def test_dashboard_tradecsv_post_success_with_po_real_sample(self):
+        """2026-07-31新增第四個貼文字快速輸入工具：貼國泰證券App「已成交」
+        CSV格式對帳單，伺服器端呼叫trade_ledger_parser.parse_trade_csv_text()
+        解析＋批次寫入trade_ledger（跟tradeledger寫入同一張表）。用PO實際
+        貼的4筆真實範例文字端對端驗證（含開頭變動提示行、CSV引號逗號）。
+        預先存好stock_aliases快取命中，避免測試觸發真的FinMind網路查詢。"""
+        store = KBStore(self.tmp)
+        store.save_stock_alias("弘塑", "T9301", source="測試預先快取")
+        store.save_stock_alias("矽格", "T9302", source="測試預先快取")
+        store.save_stock_alias("矽科宏晟", "T9303", source="測試預先快取")
+        store.save_stock_alias("群聯", "T9304", source="測試預先快取")
+        store.close()
+
+        text = (
+            "根據您篩選的結果，總計有4筆資料，當前資料為1-4筆，看更多請至國泰證券app查詢\n"
+            "股名,日期,成交股數,淨收付金額,買賣別,成交價,成本,手續費,交易稅,"
+            "融資金額/券擔保品,資自備款/券保證金,利息,稅款,券手續費/標借費,委託書號\n"
+            '弘塑,2026/07/30,3,"-6,542",現買,2180,"6,540",2,0,0,0,0,0,0,k09QI\n'
+            '矽格,2026/07/30,50,"8,622",現賣,173,"8,650",3,25,0,0,0,0,0,k09j3\n'
+            '矽科宏晟,2026/07/30,40,"9,569",現賣,240,"9,600",3,28,0,0,0,0,0,k09VZ\n'
+            '群聯,2026/07/30,6,"-9,213",現買,1535,"9,210",3,0,0,0,0,0,0,k07xA\n'
+        )
+        status, _, body = self._post("/dashboard/tradecsv", {"text": text})
+        page = body.decode("utf-8")
+        self.assertEqual(status, 200)
+        self.assertIn("已存入 4 筆交易明細", page)
+
+        store = KBStore(self.tmp)
+        hongsu = store.get_trade_ledger("T9301")
+        siwge = store.get_trade_ledger("T9302")
+        siwkehong = store.get_trade_ledger("T9303")
+        qunlian = store.get_trade_ledger("T9304")
+        store.close()
+        self.assertEqual(hongsu["count"], 1)
+        self.assertEqual(hongsu["entries"][0]["action"], "買")
+        self.assertEqual(hongsu["entries"][0]["shares"], 3)
+        self.assertEqual(hongsu["entries"][0]["price"], 2180.0)
+        self.assertEqual(hongsu["entries"][0]["date"], "2026-07-30")
+        self.assertEqual(hongsu["entries"][0]["add_sequence"], 1)
+
+        self.assertEqual(siwge["entries"][0]["action"], "賣")
+        self.assertEqual(siwge["entries"][0]["shares"], 50)
+        self.assertEqual(siwge["entries"][0]["price"], 173.0)
+        self.assertIsNone(siwge["entries"][0]["add_sequence"])
+
+        self.assertEqual(siwkehong["entries"][0]["action"], "賣")
+        self.assertEqual(siwkehong["entries"][0]["shares"], 40)
+        self.assertEqual(siwkehong["entries"][0]["price"], 240.0)
+
+        self.assertEqual(qunlian["entries"][0]["action"], "買")
+        self.assertEqual(qunlian["entries"][0]["shares"], 6)
+        self.assertEqual(qunlian["entries"][0]["price"], 1535.0)
+        self.assertEqual(qunlian["entries"][0]["add_sequence"], 1)
+
+    def test_dashboard_tradecsv_post_missing_required_field_shows_error(self):
+        status, _, body = self._post("/dashboard/tradecsv", {"text": "   "})
+        page = body.decode("utf-8")
+        self.assertEqual(status, 200)
+        self.assertIn("內容是空的", page)
+
+    def test_dashboard_tradecsv_post_unresolved_name_reported_not_saved(self):
+        """代碼查無比對時不寫入、flash訊息要明確列出未解析名稱。mock掉
+        finmind_client.get_stock_info，避免測試打光FinMind匿名額度。"""
+        text = (
+            "股名,日期,成交股數,淨收付金額,買賣別,成交價,成本,手續費,交易稅,"
+            "融資金額/券擔保品,資自備款/券保證金,利息,稅款,券手續費/標借費,委託書號\n"
+            '絕對查無此股票代號測試,2026/07/30,3,"-6,542",現買,2180,"6,540",2,0,0,0,0,0,0,k09QI\n'
+        )
+        with unittest.mock.patch.object(
+                finmind_client, "get_stock_info", return_value={"stocks": []}):
+            status, _, body = self._post("/dashboard/tradecsv", {"text": text})
+        page = body.decode("utf-8")
+        self.assertEqual(status, 200)
+        self.assertIn("代碼查無比對", page)
+        self.assertIn("絕對查無此股票代號測試", page)
+
+    def test_dashboard_tradecsv_post_unsupported_action_reported_as_unparsed(self):
+        """買賣別不是「現買」/「現賣」時歸入unparsed_lines，flash訊息要
+        回報行數，不能靜默略過也不能誤判成買或賣。"""
+        store = KBStore(self.tmp)
+        store.save_stock_alias("弘塑", "T9305", source="測試預先快取")
+        store.close()
+        text = (
+            "股名,日期,成交股數,淨收付金額,買賣別,成交價,成本,手續費,交易稅,"
+            "融資金額/券擔保品,資自備款/券保證金,利息,稅款,券手續費/標借費,委託書號\n"
+            '弘塑,2026/07/30,3,"-6,542",融資買,2180,"6,540",2,0,0,0,0,0,0,k09QI\n'
+        )
+        status, _, body = self._post("/dashboard/tradecsv", {"text": text})
+        page = body.decode("utf-8")
+        self.assertEqual(status, 200)
+        self.assertIn("已存入 0 筆交易明細", page)
+        self.assertIn("行格式無法解析", page)
+
+        store = KBStore(self.tmp)
+        ledger = store.get_trade_ledger("T9305")
+        store.close()
+        self.assertEqual(ledger["count"], 0)
+
+    def test_dashboard_tradeledger_post_duplicate_order_ref_skipped_and_reported(self):
+        """委託書號防重複（2026-07-31新增）：貼同一份交易明細表文字兩次，
+        第二次該筆委託書號已存在資料庫，flash訊息要明確講清楚被跳過，
+        不能讓PO誤以為又成功存入一筆。委託書號用本測試專屬值
+        （k-RS08-00，非其他測試共用的k-0001-00等），避免跟同一個class
+        共用的DB裡其他測試互相碰撞——order_ref是全域唯一比對，不分代碼。"""
+        store = KBStore(self.tmp)
+        store.save_stock_alias("測試防重複股", "T9208", source="測試預先快取")
+        store.close()
+
+        text = "115/07/22 集買 測試防重複股 10 100.00 7 1,000 1,007(收) k-RS08-00\n"
+        status1, _, body1 = self._post("/dashboard/tradeledger", {"text": text})
+        page1 = body1.decode("utf-8")
+        self.assertEqual(status1, 200)
+        self.assertIn("已存入 1 筆交易明細", page1)
+
+        status2, _, body2 = self._post("/dashboard/tradeledger", {"text": text})
+        page2 = body2.decode("utf-8")
+        self.assertEqual(status2, 200)
+        self.assertIn("已存入 0 筆交易明細", page2)
+        self.assertIn("偵測為重複", page2)
+        self.assertIn("委託書號", page2)
+
+        store = KBStore(self.tmp)
+        ledger = store.get_trade_ledger("T9208")
+        store.close()
+        self.assertEqual(ledger["count"], 1)  # 沒有被多存一份
+
+    def test_dashboard_tradecsv_post_duplicate_order_ref_skipped_and_reported(self):
+        """委託書號防重複——用PO實際貼過的4筆CSV真實範例格式（弘塑/矽格/
+        矽科宏晟/群聯）直接對應PO今天真實遇到的情境：貼同一份對帳單兩次，
+        第二次應該4筆全部被判定為重複，flash訊息要明確講清楚，不能讓PO
+        誤以為又成功存入。委託書號改用本測試專屬值（kRS01~04，非PO原始
+        範例的k09QI等），避免跟同一個class共用的DB裡另一個測試
+        （test_dashboard_tradecsv_post_success_with_po_real_sample，用的
+        正是PO原始委託書號）互相碰撞——order_ref是全域唯一比對，不分代碼。"""
+        store = KBStore(self.tmp)
+        store.save_stock_alias("弘塑", "T9306", source="測試預先快取")
+        store.save_stock_alias("矽格", "T9307", source="測試預先快取")
+        store.save_stock_alias("矽科宏晟", "T9308", source="測試預先快取")
+        store.save_stock_alias("群聯", "T9309", source="測試預先快取")
+        store.close()
+
+        text = (
+            "根據您篩選的結果，總計有4筆資料，當前資料為1-4筆，看更多請至國泰證券app查詢\n"
+            "股名,日期,成交股數,淨收付金額,買賣別,成交價,成本,手續費,交易稅,"
+            "融資金額/券擔保品,資自備款/券保證金,利息,稅款,券手續費/標借費,委託書號\n"
+            '弘塑,2026/07/30,3,"-6,542",現買,2180,"6,540",2,0,0,0,0,0,0,kRS01\n'
+            '矽格,2026/07/30,50,"8,622",現賣,173,"8,650",3,25,0,0,0,0,0,kRS02\n'
+            '矽科宏晟,2026/07/30,40,"9,569",現賣,240,"9,600",3,28,0,0,0,0,0,kRS03\n'
+            '群聯,2026/07/30,6,"-9,213",現買,1535,"9,210",3,0,0,0,0,0,0,kRS04\n'
+        )
+        status1, _, body1 = self._post("/dashboard/tradecsv", {"text": text})
+        page1 = body1.decode("utf-8")
+        self.assertEqual(status1, 200)
+        self.assertIn("已存入 4 筆交易明細", page1)
+
+        status2, _, body2 = self._post("/dashboard/tradecsv", {"text": text})
+        page2 = body2.decode("utf-8")
+        self.assertEqual(status2, 200)
+        self.assertIn("已存入 0 筆交易明細", page2)
+        self.assertIn("另有 4 筆偵測為重複", page2)
+
+        store = KBStore(self.tmp)
+        for code in ("T9306", "T9307", "T9308", "T9309"):
+            self.assertEqual(store.get_trade_ledger(code)["count"], 1)
+        store.close()
+
     def test_dashboard_holdings_preview_post_empty_text_shows_error(self):
         status, _, body = self._post(
             "/dashboard/holdings/preview", {"text": "   "})

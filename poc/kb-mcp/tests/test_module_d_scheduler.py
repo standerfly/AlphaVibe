@@ -86,6 +86,43 @@ class MainCliTest(unittest.TestCase):
             module_d_scheduler.main(
                 ["--data-dir", self.tmp, "--trigger", "not-a-real-choice"])
 
+    def test_refreshes_price_and_valuation_for_batch_codes(self):
+        """2026-08-01新增：排程跑完run_module_d_batch後，要對同一批代碼
+        （summary["results"]）呼叫refresh_price_and_valuation，不重跑
+        run_module_d_review。"""
+        summary = self._fake_summary()
+        summary["results"] = [{"code": "2330"}, {"code": "2441"}]
+        with unittest.mock.patch.object(
+                review_engine, "run_module_d_batch", return_value=summary), \
+             unittest.mock.patch.object(
+                review_engine, "refresh_price_and_valuation",
+                return_value={"errors": {}}) as mock_refresh:
+            code = module_d_scheduler.main(["--data-dir", self.tmp])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(mock_refresh.call_count, 2)
+        called_codes = {c.args[0] for c in mock_refresh.call_args_list}
+        self.assertEqual(called_codes, {"2330", "2441"})
+
+    def test_single_code_price_refresh_failure_does_not_abort_others(self):
+        summary = self._fake_summary()
+        summary["results"] = [{"code": "2330"}, {"code": "2441"}]
+
+        def _side_effect(code, store, data_dir=None):
+            if code == "2330":
+                raise Exception("網路炸了")
+            return {"errors": {}}
+
+        with unittest.mock.patch.object(
+                review_engine, "run_module_d_batch", return_value=summary), \
+             unittest.mock.patch.object(
+                review_engine, "refresh_price_and_valuation",
+                side_effect=_side_effect) as mock_refresh:
+            code = module_d_scheduler.main(["--data-dir", self.tmp])
+
+        self.assertEqual(code, 0)  # 單檔價格刷新失敗不該讓整個排程回傳失敗
+        self.assertEqual(mock_refresh.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

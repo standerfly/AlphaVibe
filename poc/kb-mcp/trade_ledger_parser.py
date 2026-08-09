@@ -30,7 +30,34 @@ laoyutou_trades）。名稱→代碼解析共用 stock_alias_resolver.py（同�
 的兩階段設計）。
 
 僅標準庫（re/datetime），不丟例外、回傳 dict。Python 3.9 相容。
+
+---
+
+`parse_trade_csv_text()`（2026-07-31 新增，第四個貼文字快速輸入工具）：
+國泰證券App還能匯出**另一種**「已成交」CSV格式對帳單，比上面的交易明細表
+更乾淨（標準CSV、西元日期、明確買賣別文字），概念上仍是PO自己的交易紀錄
+（同一張 trade_ledger 表），只是輸入格式不同，因此是這個模組的姊妹函式，
+不另開檔案。
+
+輸入格式（PO 實際貼法，逐行）：
+    根據您篩選的結果，總計有4筆資料，當前資料為1-4筆，看更多請至國泰證券app查詢
+    股名,日期,成交股數,淨收付金額,買賣別,成交價,成本,手續費,交易稅,融資金額/券擔保品,資自備款/券保證金,利息,稅款,券手續費/標借費,委託書號
+    弘塑,2026/07/30,3,"-6,542",現買,2180,"6,540",2,0,0,0,0,0,0,k09QI
+    矽格,2026/07/30,50,"8,622",現賣,173,"8,650",3,25,0,0,0,0,0,k09j3
+
+第一行是變動的提示文字（筆數/內容會變），不寫死比對其內容，只要在還沒
+看到表頭列之前一律當雜訊跳過。第二行起是**真正的CSV**（含千分位逗號的
+數字欄位有雙引號包住，如`"-6,542"`）——用標準庫`csv`模組逐行解析（不用
+正規表示式/split手刻），才能正確處理引號內的逗號。日期已是西元
+`YYYY/MM/DD`，只需把`/`換成`-`，不需要民國年轉換。買賣別目前只認得
+「現買」「現賣」（對應「買」「賣」）；其他字串（如融資買/融券賣，PO未
+提供範例）歸入unparsed_lines讓PO人工檢查，不猜測。
+
+輸出格式跟`parse_trade_ledger_text()`完全一致（trades/unparsed_lines/
+total_parsed），可直接餵給`resolve_and_save_trade_ledger()`，不需要另
+一套resolve/save邏輯。
 """
+import csv
 import re
 
 import stock_alias_resolver
@@ -80,7 +107,13 @@ def parse_trade_ledger_text(text):
     {"trades": [...], "unparsed_lines": [...], "total_parsed": int}。
 
     每筆 trade：{"date"(西元YYYY-MM-DD), "action"("買"/"賣"), "name",
-    "shares"(int), "price"(float), "raw_line"}。
+    "shares"(int), "price"(float), "raw_line", "order_ref"(str或None)}。
+
+    order_ref（委託書號，2026-07-31新增，供防重複判斷用）：這一列最後一個
+    非空白token（如「k-0116-00」）——不用正則結構化抽取每個中間欄位（手續
+    費/交易稅/...數量不固定），直接取價格欄位之後剩餘文字的最後一個token
+    即可。抽取失敗（例如price之後沒有剩餘文字）給None，不拋例外、不影響
+    這一列其餘欄位的解析結果。
 
     跳過：表頭列（含「交易日期」「CD」「股票名稱」「委託書號」等字樣）、
     分隔線（一整排"-"）、「交易日期:...頁次:...」開頭列、「合 計:」開頭列。
@@ -109,6 +142,11 @@ def parse_trade_ledger_text(text):
                 # CD 欄位不含買也不含賣，格式不符預期，歸入待查而不是亂猜。
                 unparsed_lines.append(raw_line)
                 continue
+            try:
+                trailing = line[match.end("price"):].strip()
+                order_ref = trailing.split()[-1] if trailing else None
+            except Exception:
+                order_ref = None
             trades.append({
                 "date": _roc_to_western(match.group("date")),
                 "action": action,
@@ -116,6 +154,7 @@ def parse_trade_ledger_text(text):
                 "shares": int(match.group("shares").replace(",", "")),
                 "price": float(match.group("price").replace(",", "")),
                 "raw_line": line,
+                "order_ref": order_ref,
             })
             continue
 
@@ -131,9 +170,110 @@ def parse_trade_ledger_text(text):
     }
 
 
+# ---------------------------------------------------------------------------
+# parse_trade_csv_text()：國泰證券App「已成交」CSV格式對帳單（見模組docstring）
+# ---------------------------------------------------------------------------
+
+# 表頭列第一欄固定是「股名」，只認第一欄就足以判斷是不是表頭列（容錯優先，
+# 不要求其餘14欄逐字比對——欄位順序/名稱萬一App改版微調也還能繼續動作）。
+_CSV_HEADER_FIRST_FIELD = "股名"
+
+# 買賣別目前只看過這兩種值。其他字串（融資買/融券賣等，PO未提供範例）一律
+# 歸入unparsed_lines讓PO人工檢查，不可靜默猜測（同模組docstring規則）。
+_CSV_ACTION_MAP = {"現買": "買", "現賣": "賣"}
+
+# 日期欄位必須是西元 YYYY/MM/DD（4碼年/2碼月/2碼日），格式跑掉的行歸入
+# unparsed_lines，不硬解析出可能錯誤的日期。
+_CSV_DATE_RE = re.compile(r"^\d{4}/\d{2}/\d{2}$")
+
+
+def parse_trade_csv_text(text):
+    """解析國泰證券App「已成交」CSV格式對帳單原始文字，回傳格式跟
+    parse_trade_ledger_text() 完全一致：
+    {"trades": [...], "unparsed_lines": [...], "total_parsed": int}。
+
+    每筆 trade：{"date"(西元YYYY-MM-DD), "action"("買"/"賣"), "name",
+    "shares"(int), "price"(float), "raw_line", "order_ref"(str或None)}。
+
+    order_ref（委託書號，2026-07-31新增，供防重複判斷用）：CSV最後一欄
+    （索引14，見模組docstring欄位順序），取值失敗（欄位數不足14／該欄
+    為空字串）給None，不拋例外。
+
+    逐行處理（不是把整段文字一次丟給csv.reader）：先用strip()去頭尾空白，
+    空行跳過；還沒看到表頭列（第一欄=="股名"）之前的行一律當雜訊跳過
+    （含PO App產生的變動提示文字，見模組docstring，不寫死比對其內容）；
+    看到表頭列本身也跳過，之後每一行才用`csv.reader([line])`解析成欄位
+    （正確處理引號內的千分位逗號，如`"-6,542"`）。
+
+    資料列欄位不足、買賣別不是「現買」/「現賣」、或日期格式不是
+    西元YYYY/MM/DD，都歸入unparsed_lines（保留原始行文字），不猜測。
+    """
+    trades = []
+    unparsed_lines = []
+    header_seen = False
+
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        row = next(csv.reader([line]), [])
+        if not row:
+            continue
+
+        if not header_seen:
+            if row[0].strip() == _CSV_HEADER_FIRST_FIELD:
+                header_seen = True
+            # 表頭列本身、以及表頭列出現前的任何雜訊（含變動提示文字）都
+            # 在這裡被跳過，不進 unparsed_lines（同 parse_trade_ledger_text()
+            # 對表頭/分隔線/頁首列的既有處理精神）。
+            continue
+
+        # 欄位順序：股名(0) 日期(1) 成交股數(2) 淨收付金額(3) 買賣別(4)
+        # 成交價(5)，之後欄位（成本/手續費/交易稅/...）不需要精確解析。
+        if len(row) < 6:
+            unparsed_lines.append(raw_line)
+            continue
+
+        action = _CSV_ACTION_MAP.get(row[4].strip())
+        date_str = row[1].strip()
+        if action is None or not _CSV_DATE_RE.match(date_str):
+            unparsed_lines.append(raw_line)
+            continue
+
+        try:
+            shares = int(row[2].strip().replace(",", ""))
+            price = float(row[5].strip().replace(",", ""))
+        except ValueError:
+            unparsed_lines.append(raw_line)
+            continue
+
+        try:
+            order_ref = row[14].strip() or None if len(row) > 14 else None
+        except Exception:
+            order_ref = None
+
+        trades.append({
+            "date": date_str.replace("/", "-"),
+            "action": action,
+            "name": row[0].strip(),
+            "shares": shares,
+            "price": price,
+            "raw_line": line,
+            "order_ref": order_ref,
+        })
+
+    return {
+        "trades": trades,
+        "unparsed_lines": unparsed_lines,
+        "total_parsed": len(trades),
+    }
+
+
 def resolve_and_save_trade_ledger(parsed, store, data_dir=None, token=None):
-    """把 parse_trade_ledger_text() 的解析結果做名稱→代碼解析＋add_sequence
-    計算並批次寫入 trade_ledger。
+    """把 parse_trade_ledger_text() 或 parse_trade_csv_text() 的解析結果
+    做名稱→代碼解析＋add_sequence計算並批次寫入 trade_ledger（兩個解析
+    函式輸出格式完全一致，共用同一套resolve/save邏輯，不重寫）。
 
     parsed：接受 parse_trade_ledger_text() 的完整回傳 dict（優先讀裡面的
     unparsed_lines 直接透傳），也容錯接受單純的 trades list。
@@ -155,8 +295,21 @@ def resolve_and_save_trade_ledger(parsed, store, data_dir=None, token=None):
        遞增（起始基準+1, +2, ...）。「賣」的 add_sequence 固定是 None
        （save_trade_ledger_entry() 既有邏輯會自動處理，這裡不特別設）。
 
+    委託書號防重複（2026-07-31新增，PO明確要求）：名稱解析成功後、算
+    add_sequence／寫入之前，逐筆檢查 trade.get("order_ref")——有值且
+    store.trade_ledger_order_ref_exists(order_ref) 為True，代表資料庫裡
+    已經有這筆交易（同一份對帳單／交易明細表被貼了兩次，或同一筆交易
+    出現在不同批次貼上的文字裡），整筆跳過：不寫入、也不佔用add_sequence
+    序號（因為它根本沒被寫入這批，序號基準只該反映「真的寫入」的筆
+    數）。沒有order_ref（None，例如來源格式抽取失敗）的交易不做任何
+    防重複檢查、照常寫入——刻意保守，寧可放行也不要誤判合法交易為重複。
+    這個檢查只比對「這批新資料之前」已存在的DB列，同一批次內部若出現
+    重複order_ref不會被互相攔下（已知邊界情況，見呼叫端docstring）。
+
     回傳 {"total_parsed", "saved"(每筆含code/name/action/shares/price/
-    date/add_sequence), "unresolved_names", "unparsed_lines"}。
+    date/add_sequence/order_ref), "unresolved_names", "unparsed_lines",
+    "duplicates_skipped"(每筆含code/name/action/shares/price/date/
+    order_ref，被防重複機制擋下、未寫入的交易)}。
     """
     if isinstance(parsed, dict):
         trades = list(parsed.get("trades") or [])
@@ -180,6 +333,22 @@ def resolve_and_save_trade_ledger(parsed, store, data_dir=None, token=None):
             unresolved_names.append({"name": name, "raw_line": trade.get("raw_line")})
             continue
         resolvable_trades.append((idx, trade, code))
+
+    # 委託書號防重複：有order_ref且DB裡已存在同一order_ref的交易整筆
+    # 跳過，且不進入下面的add_sequence計算基礎（見本函式docstring）。
+    duplicates_skipped = []
+    deduped_trades = []
+    for idx, trade, code in resolvable_trades:
+        order_ref = trade.get("order_ref")
+        if order_ref and store.trade_ledger_order_ref_exists(order_ref):
+            duplicates_skipped.append({
+                "code": code, "name": trade.get("name"), "action": trade.get("action"),
+                "shares": trade.get("shares"), "price": trade.get("price"),
+                "date": trade.get("date"), "order_ref": order_ref,
+            })
+            continue
+        deduped_trades.append((idx, trade, code))
+    resolvable_trades = deduped_trades
 
     # 依代碼分組，組內依 (date, 原始出現順序) 排序——Python sort 穩定，
     # 用 (date, idx) 當排序鍵即可達成「同日按原始出現順序」的 tie-break。
@@ -212,14 +381,17 @@ def resolve_and_save_trade_ledger(parsed, store, data_dir=None, token=None):
     saved = []
     for idx, trade, code in resolvable_trades:
         add_sequence = add_sequence_by_idx.get(idx)
+        order_ref = trade.get("order_ref")
         store.save_trade_ledger_entry(
             code=code, name=trade.get("name"), action=trade["action"],
             shares=trade["shares"], price=trade["price"], date=trade["date"],
-            add_sequence=add_sequence, source_ref="交易明細表批次解析")
+            add_sequence=add_sequence, source_ref="交易明細表批次解析",
+            order_ref=order_ref)
         saved.append({
             "code": code, "name": trade.get("name"), "action": trade["action"],
             "shares": trade["shares"], "price": trade["price"],
             "date": trade["date"], "add_sequence": add_sequence,
+            "order_ref": order_ref,
         })
 
     return {
@@ -227,4 +399,5 @@ def resolve_and_save_trade_ledger(parsed, store, data_dir=None, token=None):
         "saved": saved,
         "unresolved_names": unresolved_names,
         "unparsed_lines": unparsed_lines,
+        "duplicates_skipped": duplicates_skipped,
     }

@@ -4,9 +4,11 @@
 「清理門戶」策略沉澱，2026-07-20）——PEG<1 且股價從近期高點回檔>=40%，
 視為同時符合這套框架的兩項可量化條件。
 
-只負責算數字、不寫資料庫、不丟例外中斷整批。重用既有 finmind_client 的
-單股查詢函式（get_fundamentals／get_revenue_yoy／get_stock_price_history／
-get_stock_info），純標準庫、Python 3.9 相容，跟本專案既有模組風格一致。
+只負責算數字、不寫資料庫、不丟例外中斷整批。PER／最新一期營收年增率查詢
+重用 fundamentals_client（官方優先＋FinMind備援，見下方2026-08-01說明）；
+股價歷史／股票基本資料仍重用既有 finmind_client 的單股查詢函式
+（get_stock_price_history／get_stock_info），純標準庫、Python 3.9 相容，
+跟本專案既有模組風格一致。
 
 2026-07-28（Phase 3B）：compute_drawdown() 的股價來源改為優先呼叫
 twse_price_client（TWSE STOCK_DAY／TPEx tradingStock 官方端點，免額度），
@@ -16,11 +18,20 @@ market_scan.py 呼叫端已知候選的 market（"TWSE"/"TPEx"），直接傳入
 試 TWSE 再試 TPEx」的雙重嘗試（choice (b)：比 (a) 多一次API呼叫但省去
 額外查 get_stock_info 判斷市場的往返，且兩個市場官方端點都不消耗
 FinMind額度，多打一次的成本很低）。
+
+2026-08-01（來源選用邏輯稽核修正）：screen_stocks() 查PER／最新一期營收
+年增率改呼叫 fundamentals_client（官方TWSE/TPEx批次端點優先，FinMind
+降級為備援），不再直接寫死呼叫 finmind_client.get_fundamentals／
+get_revenue_yoy——跟股價回檔幅度早就有的「官方優先」原則一致，見
+fundamentals_client 模組docstring。fundamentals_client 對 market_scan 的
+依賴是函式內延遲匯入（避免三模組互相匯入形成環，見該模組docstring說明），
+這裡在模組頂層 import 沒有問題。
 """
 import datetime
 
 import benchmark
 import finmind_client
+import fundamentals_client
 import twse_price_client
 
 MAX_CODES = 50
@@ -205,6 +216,10 @@ def screen_stocks(codes, data_dir=None, token=None,
                          % (MAX_CODES, len(codes))}
 
     price_cache = {}
+    # fundamentals_client 內部呼叫的官方批次PER／營收端點回傳「全市場」資料，
+    # 同一次 screen_stocks() 呼叫裡多檔代碼共用同一份批次回應，不用每檔各打
+    # 一次（比照 market_scan.py 的 shared["batch"] 快取設計）。
+    batch_cache = {}
     bench = benchmark.load_benchmark(
         data_dir=data_dir, token=token, window_days=PRICE_WINDOW_DAYS,
         price_cache=price_cache)
@@ -224,21 +239,38 @@ def screen_stocks(codes, data_dir=None, token=None,
     results = []
     for code in codes:
         row = {"code": code, "name": names.get(code), "per": None,
+               "per_data_source": None,
                "revenue_yoy": None, "revenue_period": None,
+               "revenue_data_source": None,
                "drawdown_pct": None, "high_price": None, "high_date": None,
                "current_price": None, "current_date": None,
                "market_drawdown_pct": None, "excess_drawdown_pct": None,
                "data_source": None,
                "peg": None, "meets_framework": False, "error": None}
         try:
-            fund = finmind_client.get_fundamentals(code, data_dir=data_dir, token=token)
-            per = fund.get("valuation", {}).get("PER") if fund.get("valuation") else None
+            # PER／最新一期營收年增率：官方優先＋FinMind備援，見
+            # fundamentals_client 模組docstring（2026-08-01 來源選用邏輯
+            # 稽核修正）。兩個函式內部各自 try/except，不會丟例外；
+            # error 欄位只在「官方與FinMind都真的查詢失敗」時才有值
+            # （純粹「查得到但這期算不出年增率」不算error，維持None，
+            # 跟改動前 screen_stocks() 從不檢查 fund/rev errors 的既有
+            # 靜默降級行為一致）。
+            valuation = fundamentals_client.get_valuation(
+                code, data_dir=data_dir, token=token, cache=batch_cache)
+            per = valuation["per"]
             row["per"] = per
+            row["per_data_source"] = valuation["data_source"]
+            if valuation["error"]:
+                row["error"] = valuation["error"]
 
-            rev = finmind_client.get_revenue_yoy(code, data_dir=data_dir, token=token)
-            yoy, period = _latest_yoy_growth(rev.get("revenue_yoy") or [])
+            revenue = fundamentals_client.get_revenue_yoy_latest(
+                code, data_dir=data_dir, token=token, cache=batch_cache)
+            yoy = revenue["revenue_yoy"]
             row["revenue_yoy"] = yoy
-            row["revenue_period"] = period
+            row["revenue_period"] = revenue["revenue_period"]
+            row["revenue_data_source"] = revenue["data_source"]
+            if revenue["error"] and not row["error"]:
+                row["error"] = revenue["error"]
 
             drawdown_info = compute_drawdown(
                 code, data_dir=data_dir, token=token, benchmark_series=bench,
@@ -252,7 +284,7 @@ def screen_stocks(codes, data_dir=None, token=None,
             row["market_drawdown_pct"] = drawdown_info["market_drawdown_pct"]
             row["excess_drawdown_pct"] = drawdown_info["excess_drawdown_pct"]
             row["data_source"] = drawdown_info["data_source"]
-            if drawdown_info["error"]:
+            if drawdown_info["error"] and not row["error"]:
                 row["error"] = drawdown_info["error"]
 
             # PEG = 本益比 / 營收年增率(%數字，非小數)。yoy<=0 或缺資料時

@@ -13,8 +13,10 @@ import datetime
 import html
 import json
 import os
+import re
 import struct
 import sys
+import urllib.parse
 import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -190,6 +192,96 @@ details.section > summary h2 { margin-top: 0; display: inline-block; }
 @media (min-width: 900px) {
   th, td { padding: .6rem .8rem; }
   .toc { font-size: .95rem; }
+}
+/* ---- 個股清單頁／詳情頁（2026-08-01，依已核准mockup的版面結構重繪，
+   刻意沿用上面既有的色彩token、不引入新配色：漲(紅var(--red))/跌
+   (綠var(--green))語意跟.stance／STANCE_COLORS一致，「需留意」用
+   var(--red)（跟既有.row-alert語意一致），卡片沿用.comment／
+   details.philomod已有的圓角+邊框+陰影語言，只是換一種排列方式。 ---- */
+.stocklist-search, .stocklist-add { display: flex; align-items: center; gap: .5rem;
+  border-radius: 10px; padding: .55rem .8rem; margin-bottom: .75rem; }
+.stocklist-search { background: var(--paper-raised); border: 1px solid var(--rule); }
+.stocklist-add { background: var(--paper-sunken); border: 1px dashed var(--rule-strong); }
+.stocklist-search input[type=text], .stocklist-add input[type=text] {
+  border: none; background: none; outline: none; color: var(--ink); font: inherit;
+  font-size: .9rem; width: 100%; padding: 0; }
+.stocklist-add button { flex-shrink: 0; }
+.filter-tabs { display: flex; gap: .4rem; margin-bottom: .9rem; flex-wrap: wrap; }
+.filter-tab { font-size: .8rem; font-weight: 600; padding: .35rem .85rem; border-radius: 999px;
+  border: 1px solid var(--rule); background: var(--paper); color: var(--ink-dim);
+  text-decoration: none; display: inline-block; }
+.filter-tab.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.stock-list { display: flex; flex-direction: column; gap: .55rem; margin-bottom: 1rem; }
+.stock-row { display: flex; align-items: center; gap: .7rem; background: var(--paper);
+  border: 1px solid var(--rule); border-radius: 10px; box-shadow: var(--shadow);
+  padding: .7rem .9rem; text-decoration: none; color: inherit; }
+.stock-row.has-concern { border-color: var(--red); }
+.stock-row__id { min-width: 0; flex: 1; }
+.stock-row__name-line { display: flex; align-items: baseline; gap: .4rem; flex-wrap: wrap; }
+.stock-row__name { font-size: .96rem; font-weight: 700; }
+.stock-row__code { font-size: .72rem; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+.stock-row__sub { font-size: .72rem; color: var(--ink-dim); margin-top: .15rem; overflow-wrap: break-word; }
+.stock-row__price { text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.stock-row__now { font-size: .92rem; font-weight: 700; }
+.stock-row__delta { font-size: .74rem; font-weight: 700; }
+.stock-row__delta.is-up { color: var(--red); }
+.stock-row__delta.is-down { color: var(--green); }
+.concern-dot { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--red); }
+.concern-slot { width: 8px; flex-shrink: 0; }
+.pager { display: flex; align-items: center; justify-content: space-between;
+  margin-top: .3rem; font-size: .82rem; color: var(--ink-dim); }
+.pager__nav a, .pager__nav span { margin-left: .4rem; }
+.pager .btn-muted[aria-disabled="true"] { opacity: .4; pointer-events: none; }
+
+.card { background: var(--paper); border: 1px solid var(--rule); border-radius: 10px;
+  box-shadow: var(--shadow); margin-bottom: 1rem; overflow: hidden; }
+.card__head { display: flex; align-items: center; justify-content: space-between; gap: .75rem;
+  padding: .8rem 1rem .65rem; border-bottom: 1px solid var(--rule); }
+.card__head h2 { font-size: .95rem; font-weight: 700; margin: 0; border: none; padding: 0; }
+.card__meta { font-size: .72rem; color: var(--ink-dim); white-space: nowrap; }
+.card__body { padding: .85rem 1rem 1rem; }
+.val-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: .5rem; }
+.val-item { background: var(--paper-sunken); border-radius: 8px; padding: .55rem .4rem; text-align: center; }
+.val-item .label { font-size: .68rem; color: var(--ink-dim); }
+.val-item .value { font-size: 1.02rem; font-weight: 700; margin-top: .15rem; font-variant-numeric: tabular-nums; }
+.val-source { margin-top: .6rem; font-size: .7rem; color: var(--ink-dim); }
+.finding { display: flex; gap: .6rem; padding: .65rem 0; border-bottom: 1px solid var(--rule); }
+.finding:last-child { border-bottom: none; padding-bottom: 0; }
+.finding:first-child { padding-top: 0; }
+.finding__stripe { flex-shrink: 0; width: 3px; border-radius: 3px; align-self: stretch; }
+.finding.ok .finding__stripe { background: var(--green); }
+.finding.alert .finding__stripe { background: var(--red); }
+.finding__label-row { display: flex; align-items: center; gap: .45rem; margin-bottom: .2rem; flex-wrap: wrap; }
+.finding__label { font-size: .82rem; font-weight: 700; }
+.pill { font-size: .68rem; font-weight: 700; padding: .1rem .55rem; border-radius: 999px; flex-shrink: 0; }
+.pill.ok { color: var(--green); background: var(--paper-sunken); }
+.pill.alert { color: var(--red-ink); background: var(--red-soft); }
+.finding__detail { font-size: .84rem; color: var(--ink-dim); overflow-wrap: break-word; }
+.reason-pin { display: flex; gap: .6rem; background: var(--accent-soft); border: 1px solid var(--accent);
+  border-radius: 10px; padding: .75rem .9rem; margin-bottom: 1rem; }
+.reason-pin__body { min-width: 0; flex: 1; }
+.reason-pin__label-row { display: flex; justify-content: space-between; gap: .5rem; margin-bottom: .2rem; }
+.reason-pin__label { font-size: .72rem; font-weight: 700; color: var(--accent); }
+.reason-pin__date { font-size: .68rem; color: var(--ink-dim); white-space: nowrap; }
+.reason-pin__text { font-size: .88rem; overflow-wrap: break-word; }
+.holdings-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; margin-bottom: .8rem; }
+.holdings-grid .val-item .value { font-size: .92rem; }
+.trade-row { display: flex; align-items: center; gap: .6rem; padding: .4rem 0;
+  border-bottom: 1px solid var(--rule); font-size: .8rem; }
+.trade-row:last-child { border-bottom: none; }
+.trade-row__tag { font-size: .68rem; font-weight: 700; padding: .08rem .45rem; border-radius: 5px; flex-shrink: 0; }
+.trade-row__tag.buy { color: var(--red-ink); background: var(--red-soft); }
+.trade-row__tag.sell { color: var(--green); background: var(--paper-sunken); }
+.trade-row__mid { flex: 1; min-width: 0; }
+.trade-row__date { color: var(--ink-dim); font-size: .74rem; flex-shrink: 0; }
+.note { padding: .6rem 0; border-bottom: 1px solid var(--rule); }
+.note:last-child { border-bottom: none; padding-bottom: 0; }
+.note:first-child { padding-top: 0; }
+.note__meta { display: flex; justify-content: space-between; gap: .5rem; font-size: .7rem;
+  color: var(--ink-dim); margin-bottom: .15rem; }
+.note__text { font-size: .85rem; overflow-wrap: break-word; white-space: pre-wrap; }
+@media (min-width: 560px) {
+  .val-grid { grid-template-columns: repeat(4, 1fr); }
 }
 """
 
@@ -704,7 +796,7 @@ def _render_quick_input_section():
         "<form method=\"post\" action=\"/dashboard/laoyutou\">"
         "<textarea name=\"text\" rows=\"8\" placeholder=\"20260729&#10;"
         "殺估值，獲利跟不上股價，清倉換股&#10;365賣出500股聯鈞（出清）\" "
-        "required style=\"width:100%%;font-family:inherit;font-size:.9rem;"
+        "required style=\"width:100%;font-family:inherit;font-size:.9rem;"
         "padding:.5rem .6rem;\"></textarea>"
         "<div style=\"margin-top:.5rem;\">"
         "<button type=\"submit\">解析並批次記錄</button></div></form>")
@@ -717,7 +809,24 @@ def _render_quick_input_section():
         "<form method=\"post\" action=\"/dashboard/tradeledger\">"
         "<textarea name=\"text\" rows=\"8\" placeholder=\"交易日期: 115/07/22 - "
         "115/07/29 頁次: 1&#10;115/07/22 OT賣 中美晶 50 242.50 ... "
-        "12,085(付) k-0116-00\" required style=\"width:100%%;"
+        "12,085(付) k-0116-00\" required style=\"width:100%;"
+        "font-family:inherit;font-size:.9rem;padding:.5rem .6rem;\">"
+        "</textarea>"
+        "<div style=\"margin-top:.5rem;\">"
+        "<button type=\"submit\">解析並批次記錄</button></div></form>")
+    parts.append(
+        "<h3>＋ 貼CSV對帳單</h3>"
+        "<p class=\"meta\">整段貼上券商App匯出的「已成交」CSV格式對帳單"
+        "（PO自己的買賣紀錄，跟上面的交易明細表寫入同一張表，只是這份"
+        "格式更乾淨：標準CSV、西元日期）。貼了送出就直接解析並批次記錄，"
+        "會自動算好每筆買進的加碼序號，不用像貼庫存帳單那樣先預覽確認。</p>"
+        "<form method=\"post\" action=\"/dashboard/tradecsv\">"
+        "<textarea name=\"text\" rows=\"8\" placeholder=\"根據您篩選的結果，"
+        "總計有4筆資料，當前資料為1-4筆，看更多請至國泰證券app查詢&#10;"
+        "股名,日期,成交股數,淨收付金額,買賣別,成交價,成本,手續費,交易稅,"
+        "融資金額/券擔保品,資自備款/券保證金,利息,稅款,券手續費/標借費,"
+        "委託書號&#10;弘塑,2026/07/30,3,&quot;-6,542&quot;,現買,2180,"
+        "&quot;6,540&quot;,2,0,0,0,0,0,0,k09QI\" required style=\"width:100%;"
         "font-family:inherit;font-size:.9rem;padding:.5rem .6rem;\">"
         "</textarea>"
         "<div style=\"margin-top:.5rem;\">"
@@ -729,7 +838,7 @@ def _render_quick_input_section():
         "不會貼上就直接寫入資料庫。</p>"
         "<form method=\"post\" action=\"/dashboard/holdings/preview\">"
         "<textarea name=\"text\" rows=\"8\" placeholder=\"股票代號 股票名稱 "
-        "庫存股數 ...\" required style=\"width:100%%;font-family:inherit;"
+        "庫存股數 ...\" required style=\"width:100%;font-family:inherit;"
         "font-size:.9rem;padding:.5rem .6rem;\"></textarea>"
         "<div style=\"margin-top:.5rem;\">"
         "<button type=\"submit\">解析並預覽</button></div></form>")
@@ -773,7 +882,8 @@ def render_dashboard(store, flash=None):
         parts.append("<p class=\"meta\" style=\"color:%s;font-weight:600;\">%s</p>"
                      % (color, esc(flash)))
     parts.append(
-        "<p><a href=\"/report-classic\" class=\"btn-muted\">完整舊版檢視 →</a>"
+        "<p><a href=\"/dashboard/stocks\" class=\"btn\">持股與自選清單 →</a>"
+        "<a href=\"/report-classic\" class=\"btn-muted\">完整舊版檢視 →</a>"
         "<a href=\"/screen\" class=\"btn\">第一層選股篩選 →</a>"
         "<a href=\"/market-scan\" class=\"btn\">第二層全市場批次篩選 →</a></p>")
     parts.append(
@@ -792,6 +902,516 @@ def render_dashboard(store, flash=None):
     parts.append(_render_watchlist_only_section(store))
     parts.append(_render_strategy_settings_section())
     parts.append(_render_quick_input_section())
+
+    parts.append("</body></html>")
+    return "".join(parts)
+
+
+STOCKLIST_PAGE_SIZE = 10
+
+_NOTE_TAGS = ("心得", "買進理由", "交易備註")
+
+
+def _fmt_price(value):
+    """個股清單/詳情頁的價格顯示：四捨五入到2位小數、去除多餘尾端0
+    （1580.0→"1,580"、93.6→"93.6"），None顯示「—」。跟_fmt_num()不同
+    （那個是給門檻文字用的，這裡額外要千分位）。"""
+    if value is None:
+        return "—"
+    text = format(round(value, 2), ",.2f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text
+
+
+def _delta_badge(delta_pct):
+    """回傳 (css class, 顯示文字)。delta_pct 為 None（查不到price或
+    prev_close）時顯示「—」、無漲跌class。台股慣例紅漲綠跌：is-up（漲）
+    用 var(--red)，is-down（跌）用 var(--green)（token定義見CSS常數
+    「個股清單頁／詳情頁」段落），跟既有STANCE_COLORS的偏多紅/偏空綠
+    同一語意，不是憑空新配色。"""
+    if delta_pct is None:
+        return "", "—"
+    if delta_pct > 0:
+        return "is-up", "+%.2f%%" % delta_pct
+    if delta_pct < 0:
+        return "is-down", "%.2f%%" % delta_pct
+    return "", "0.00%"
+
+
+def _latest_module_d_batch(store, code):
+    """回傳「最新一批」Module D檢視結果：同一次背景刷新（review_engine.
+    run_module_d_review）寫入的所有列共用同一個checked_at時間戳，可能是
+    通用層2筆＋策略層N筆＋老芋頭層0或1筆——不能把歷史所有批次的列混在
+    一起顯示（見派工說明）。get_module_d_results()本身已依checked_at
+    DESC排序，取第一筆的checked_at當「最新批次」的判準，篩出同批次
+    全部列即可，不需要另外排序。"""
+    rows = store.get_module_d_results(code=code, limit=50)["results"]
+    if not rows:
+        return []
+    latest_checked_at = rows[0]["checked_at"]
+    return [r for r in rows if r["checked_at"] == latest_checked_at]
+
+
+def _row_status_text(latest_batch):
+    """清單頁每列的一行狀態摘要：優先顯示需留意（concern_flag=True）的
+    發現內容，沒有需留意項目則顯示第一筆檢視結果（例如「下檔風險可控」
+    這類正常訊息），完全沒有資料則提示尚在等待背景刷新。"""
+    if not latest_batch:
+        return "尚無檢視資料，稍後將自動更新"
+    concerns = [r for r in latest_batch if r.get("concern_flag")]
+    pick = concerns[0] if concerns else latest_batch[0]
+    return pick["finding"]
+
+
+def _tracked_stock_rows(store):
+    """清單頁資料來源：庫存（get_holdings，最新快照）∪ 立場（list_stances，
+    每代碼最新一筆，涵蓋研究中/觀察/偏多/偏空各種立場文字）去重後的代碼
+    清單——跟 review_engine.run_module_d_batch() 的批次範圍公式完全一致
+    （同一套「PO在追蹤什麼」定義，不另外發明一套）。回傳每筆含
+    code/name/is_holding/price/delta_pct/has_concern/status_text 的
+    dict 清單，依代碼首次出現順序（庫存優先於純立場）。"""
+    stances = store.list_stances()
+    stance_by_code = {s["code"]: s for s in stances}
+    holdings = store.get_holdings()["holdings"]
+    holding_codes = set(h["code"] for h in holdings)
+    holding_by_code = {h["code"]: h for h in holdings}
+    all_codes = list(dict.fromkeys(
+        [h["code"] for h in holdings] + [s["code"] for s in stances]))
+    price_map = store.get_stock_prices()
+
+    rows = []
+    for code in all_codes:
+        is_holding = code in holding_codes
+        name = None
+        if code in holding_by_code:
+            name = holding_by_code[code].get("name")
+        if not name and code in stance_by_code:
+            name = stance_by_code[code].get("name")
+        price_info = price_map.get(code)
+        price = price_info["price"] if price_info else None
+        prev_close = price_info.get("prev_close") if price_info else None
+        delta_pct = None
+        if price is not None and prev_close:
+            delta_pct = (price - prev_close) / prev_close * 100
+        latest_batch = _latest_module_d_batch(store, code)
+        rows.append({
+            "code": code, "name": name, "is_holding": is_holding,
+            "price": price, "delta_pct": delta_pct,
+            "has_concern": any(r.get("concern_flag") for r in latest_batch),
+            "status_text": _row_status_text(latest_batch),
+        })
+    return rows
+
+
+def _stocklist_link(filter_key, query, page):
+    params = []
+    if filter_key and filter_key != "all":
+        params.append("filter=" + urllib.parse.quote(filter_key))
+    if query:
+        params.append("q=" + urllib.parse.quote(query))
+    if page and page != 1:
+        params.append("page=%d" % page)
+    return "/dashboard/stocks" + ("?" + "&".join(params) if params else "")
+
+
+def render_stock_list_page(store, filter_key="all", query="", page=1, flash=None):
+    """個股清單頁（GET /dashboard/stocks，2026-08-01新增）：庫存＋研究中
+    標的清單，分批顯示（一次10筆），可依全部/庫存中/研究中篩選，可搜尋
+    代碼/名稱/PO寫過的心得內容（後者重用store.search_comments的FTS5
+    全文檢索，symbols欄位解析成代碼集合後跟目前清單取交集）。純GET
+    query string帶filter/q/page狀態，不用session，維持本專案整頁送出、
+    無JS的既有技術棧（比照render_dashboard()等既有頁面的風格）。
+    """
+    if filter_key not in ("all", "holdings", "research"):
+        filter_key = "all"
+    query = (query or "").strip()
+
+    all_rows = _tracked_stock_rows(store)
+    holdings_count = sum(1 for r in all_rows if r["is_holding"])
+    research_count = len(all_rows) - holdings_count
+
+    if filter_key == "holdings":
+        rows = [r for r in all_rows if r["is_holding"]]
+    elif filter_key == "research":
+        rows = [r for r in all_rows if not r["is_holding"]]
+    else:
+        rows = all_rows
+
+    if query:
+        comment_hit_codes = set()
+        if len(query) >= 3:
+            hits = store.search_comments(query, limit=100).get("results") or []
+            for h in hits:
+                for part in re.split(r"[,，\s]+", h.get("symbols") or ""):
+                    if part:
+                        comment_hit_codes.add(part)
+        rows = [r for r in rows
+                if query in (r["code"] or "") or query in (r["name"] or "")
+                or r["code"] in comment_hit_codes]
+
+    total = len(rows)
+    total_pages = max(1, (total + STOCKLIST_PAGE_SIZE - 1) // STOCKLIST_PAGE_SIZE)
+    page = max(1, min(page or 1, total_pages))
+    start = (page - 1) * STOCKLIST_PAGE_SIZE
+    page_rows = rows[start:start + STOCKLIST_PAGE_SIZE]
+
+    parts = [_screen_page_head("持股與自選")]
+    parts.append("<p class=\"meta\"><a href=\"/\">← 回儀表板</a></p>")
+    parts.append("<h1>持股與自選</h1>")
+    parts.append("<p class=\"meta\">共 %d 檔（%d 檔庫存＋%d 檔研究中）</p>"
+                 % (len(all_rows), holdings_count, research_count))
+    if flash:
+        is_error = flash.startswith("⚠️")
+        color = "var(--red)" if is_error else "var(--green)"
+        parts.append("<p class=\"meta\" style=\"color:%s;font-weight:600;\">%s</p>"
+                     % (color, esc(flash)))
+
+    parts.append(
+        "<form method=\"get\" action=\"/dashboard/stocks\" class=\"stocklist-search\">"
+        "<input type=\"hidden\" name=\"filter\" value=\"%s\">"
+        "<input type=\"text\" name=\"q\" value=\"%s\" "
+        "placeholder=\"搜尋股票代碼/名稱，或搜尋你寫過的心得內容…\">"
+        "<button type=\"submit\" class=\"btn-muted\" style=\"margin:0;\">搜尋</button>"
+        "</form>" % (esc(filter_key), esc(query)))
+
+    parts.append(
+        "<form method=\"post\" action=\"/dashboard/stocks/add\" class=\"stocklist-add\">"
+        "<input type=\"text\" name=\"input\" "
+        "placeholder=\"輸入還沒追蹤的股票代碼/名稱，開始研究……\" required>"
+        "<button type=\"submit\" class=\"btn\" style=\"margin:0;\">加入研究</button>"
+        "</form>")
+
+    parts.append("<div class=\"filter-tabs\">")
+    for key, label, count in (("all", "全部", len(all_rows)),
+                              ("holdings", "庫存中", holdings_count),
+                              ("research", "研究中", research_count)):
+        active = " active" if key == filter_key else ""
+        parts.append(
+            "<a class=\"filter-tab%s\" href=\"%s\">%s <span>%d</span></a>"
+            % (active, esc(_stocklist_link(key, query, 1)), esc(label), count))
+    parts.append("</div>")
+
+    parts.append("<div class=\"stock-list\">")
+    if page_rows:
+        for r in page_rows:
+            concern_html = ('<span class="concern-dot" title="需留意"></span>'
+                            if r["has_concern"] else '<span class="concern-slot"></span>')
+            row_class = "stock-row has-concern" if r["has_concern"] else "stock-row"
+            delta_cls, delta_text = _delta_badge(r["delta_pct"])
+            href_code = esc(urllib.parse.quote(r["code"], safe=""))
+            parts.append(
+                "<a class=\"%s\" href=\"/dashboard/stock/%s\">%s"
+                "<div class=\"stock-row__id\"><div class=\"stock-row__name-line\">"
+                "<span class=\"stock-row__name\">%s</span>"
+                "<span class=\"stock-row__code\">%s</span></div>"
+                "<div class=\"stock-row__sub\">%s</div></div>"
+                "<div class=\"stock-row__price\"><div class=\"stock-row__now\">%s</div>"
+                "<div class=\"stock-row__delta %s\">%s</div></div></a>"
+                % (row_class, href_code, concern_html,
+                   esc(r["name"]), esc(r["code"]),
+                   esc(r["status_text"]), _fmt_price(r["price"]), delta_cls, esc(delta_text)))
+    else:
+        parts.append("<p class=\"empty\">%s</p>"
+                     % ("沒有符合搜尋條件的標的。" if query else
+                        "目前沒有追蹤中的標的，用上面「加入研究」開始追蹤第一檔。"))
+    parts.append("</div>")
+
+    if total:
+        end = min(start + STOCKLIST_PAGE_SIZE, total)
+        parts.append("<div class=\"pager\">")
+        parts.append("<span>顯示 %d–%d / %d 檔</span>" % (start + 1, end, total))
+        parts.append("<div class=\"pager__nav\">")
+        if page > 1:
+            parts.append("<a class=\"btn-muted\" href=\"%s\">上一批</a>"
+                         % esc(_stocklist_link(filter_key, query, page - 1)))
+        else:
+            parts.append("<span class=\"btn-muted\" aria-disabled=\"true\">上一批</span>")
+        if page < total_pages:
+            parts.append("<a class=\"btn\" href=\"%s\">下一批</a>"
+                         % esc(_stocklist_link(filter_key, query, page + 1)))
+        else:
+            parts.append("<span class=\"btn-muted\" aria-disabled=\"true\">下一批</span>")
+        parts.append("</div></div>")
+
+    parts.append("</body></html>")
+    return "".join(parts)
+
+
+def _valuation_source_text(data_source):
+    mapping = {
+        "twse_official": "官方來源（TWSE）",
+        "tpex_official": "官方來源（TPEx）",
+        "finmind_fallback": "FinMind備援資料",
+    }
+    return mapping.get(data_source, "來源未知")
+
+
+def _module_d_card_html(latest_batch):
+    """Module D檢視結果卡：依trigger_type分組呈現（見派工說明），狀態
+    顏色二分（PO明確要求「有concern_flag的用警示色、沒有的用正常色」，
+    不細分mockup裡出現的warn第三種狀態）：concern_flag=True
+    →alert（var(--red)），否則→ok（var(--green)）。"""
+    parts = []
+    parts.append("<section class=\"card\"><div class=\"card__head\">"
+                 "<h2>Module D 檢視</h2>"
+                 "<span class=\"card__meta\">%s</span></div><div class=\"card__body\">"
+                 % ("%d 項" % len(latest_batch) if latest_batch else "尚無資料"))
+    if latest_batch:
+        groups = {}
+        order = []
+        for r in latest_batch:
+            key = r["trigger_type"]
+            if key not in groups:
+                groups[key] = []
+                order.append(key)
+            groups[key].append(r)
+        for trigger_type in order:
+            for r in groups[trigger_type]:
+                cls = "alert" if r.get("concern_flag") else "ok"
+                pill_text = "需留意" if r.get("concern_flag") else "正常"
+                label = trigger_type
+                if r.get("strategy_id"):
+                    label = "%s／%s" % (trigger_type, r["strategy_id"])
+                parts.append(
+                    "<div class=\"finding %s\"><span class=\"finding__stripe\"></span>"
+                    "<div class=\"finding__body\"><div class=\"finding__label-row\">"
+                    "<span class=\"finding__label\">%s</span>"
+                    "<span class=\"pill %s\">%s</span></div>"
+                    "<div class=\"finding__detail\">%s</div></div></div>"
+                    % (cls, esc(label), cls, pill_text, esc(r["finding"])))
+    else:
+        parts.append("<p class=\"empty\">尚無檢視資料，背景刷新完成後會顯示在這裡。</p>")
+    parts.append("</div></section>")
+    return "".join(parts)
+
+
+def _portfolio_context(store):
+    """跟 _render_holdings_section() 同一份市值計算邏輯（規格明講兩處
+    不能算出不同答案，見該函式docstring）：市值＝股數×快取股價，查不到
+    股價的持股不計入市值也不計入下面比例的分母。這裡只回傳detail頁
+    需要的部分：最新庫存快照列、每檔市值、投資組合總市值。"""
+    holdings = store.get_holdings()["holdings"]
+    price_map = store.get_stock_prices()
+    market_values = {}
+    for h in holdings:
+        info = price_map.get(h["code"])
+        if info and h.get("shares") is not None:
+            market_values[h["code"]] = h["shares"] * info["price"]
+    total_value = sum(market_values.values())
+    return holdings, market_values, total_value
+
+
+def _holdings_card_html(store, code):
+    """持股與交易卡：純研究標的（不在最新庫存快照、也從無交易紀錄）整個
+    不顯示這張卡片，回傳空字串由呼叫端不附加（見派工說明「不要顯示空
+    表格」）。曾經持有過、目前已出清（有交易紀錄但不在最新快照）的
+    標的，仍顯示交易歷史，只是持股統計格改顯示「目前未持有」而非空表格
+    ——這是判斷取捨，理由見最終回報。"""
+    holdings, market_values, total_value = _portfolio_context(store)
+    holding_row = next((h for h in holdings if h["code"] == code), None)
+    ledger = store.get_trade_ledger(code)["entries"]
+
+    if holding_row is None and not ledger:
+        return ""
+
+    parts = []
+    parts.append("<section class=\"card\"><div class=\"card__head\">"
+                 "<h2>持股與交易</h2>"
+                 "<span class=\"card__meta\">%s</span></div><div class=\"card__body\">"
+                 % ("庫存中" if holding_row else "目前未持有"))
+    if holding_row:
+        value = market_values.get(code)
+        value_text = ("%s 元" % format(value, ",.0f")) if value is not None else "未更新價格"
+        ratio_text = ("%.1f%%" % (value / total_value * 100)
+                     if value is not None and total_value else "—")
+        parts.append(
+            "<div class=\"holdings-grid\">"
+            "<div class=\"val-item\"><div class=\"label\">庫存股數</div>"
+            "<div class=\"value\">%s</div></div>"
+            "<div class=\"val-item\"><div class=\"label\">市值</div>"
+            "<div class=\"value\">%s</div></div>"
+            "<div class=\"val-item\"><div class=\"label\">佔投資組合</div>"
+            "<div class=\"value\">%s</div></div></div>"
+            % (esc(holding_row["shares"]), esc(value_text), esc(ratio_text)))
+    else:
+        parts.append("<p class=\"meta\">目前未持有此標的（曾有交易記錄如下）。</p>")
+    if ledger:
+        parts.append("<div class=\"trade-list\">")
+        for entry in reversed(ledger):  # get_trade_ledger回傳舊到新，這裡改新到舊顯示
+            tag_cls = "buy" if entry["action"] == "買" else "sell"
+            parts.append(
+                "<div class=\"trade-row\"><span class=\"trade-row__tag %s\">%s</span>"
+                "<span class=\"trade-row__mid\">%s 股 @ %s</span>"
+                "<span class=\"trade-row__date\">%s</span></div>"
+                % (tag_cls, esc(entry["action"]), esc(entry["shares"]), esc(entry["price"]),
+                   esc(entry["date"])))
+        parts.append("</div>")
+    parts.append("</div></section>")
+    return "".join(parts)
+
+
+def _reason_pin_html(buy_reason):
+    if not buy_reason:
+        return (
+            "<div class=\"reason-pin\"><div class=\"reason-pin__body\">"
+            "<div class=\"reason-pin__label-row\">"
+            "<span class=\"reason-pin__label\">買進理由</span></div>"
+            "<div class=\"reason-pin__text\">尚未記錄買進理由，"
+            "可在下方留言區選擇「買進理由」新增。</div></div></div>")
+    return (
+        "<div class=\"reason-pin\"><div class=\"reason-pin__body\">"
+        "<div class=\"reason-pin__label-row\">"
+        "<span class=\"reason-pin__label\">買進理由</span>"
+        "<span class=\"reason-pin__date\">%s</span></div>"
+        "<div class=\"reason-pin__text\">%s</div></div></div>"
+        % (esc(buy_reason["date"]), esc(buy_reason["body"])))
+
+
+def _notes_card_html(href_code, other_notes, buy_reasons_count):
+    parts = []
+    parts.append("<section class=\"card\"><div class=\"card__head\">"
+                 "<h2>心得與留言</h2>"
+                 "<span class=\"card__meta\">%d 則%s</span></div><div class=\"card__body\">"
+                 % (len(other_notes),
+                    "（另有 %d 則買進理由已置頂）" % buy_reasons_count
+                    if buy_reasons_count else ""))
+    parts.append(
+        "<div class=\"section\">"
+        "<form method=\"post\" action=\"/dashboard/stock/%s/note\">"
+        "<textarea name=\"body\" rows=\"3\" placeholder=\"記下你對這檔股票的想法……\" "
+        "required style=\"width:100%%;box-sizing:border-box;\"></textarea>"
+        "<div style=\"display:flex;align-items:center;justify-content:space-between;"
+        "gap:.6rem;flex-wrap:wrap;margin-top:.5rem;\">"
+        "<select name=\"source_tag\">" % href_code)
+    for tag in _NOTE_TAGS:
+        parts.append("<option value=\"%s\">%s</option>" % (esc(tag), esc(tag)))
+    parts.append(
+        "</select><button type=\"submit\">存入</button></div></form>"
+        "<p class=\"meta\">也可以直接在 Claude App 對話裡跟我討論，"
+        "我會幫你存到這裡（同一份資料）。</p></div>")
+
+    if other_notes:
+        for c in other_notes:
+            parts.append(
+                "<div class=\"note\"><div class=\"note__meta\"><span>%s</span>"
+                "<span>%s</span></div><div class=\"note__text\">%s</div></div>"
+                % (esc(c["date"]), esc(c["source_tag"]), esc(c["body"])))
+    else:
+        parts.append("<p class=\"empty\">尚無其他留言。</p>")
+    parts.append("</div></section>")
+    return "".join(parts)
+
+
+def render_stock_detail_page(store, code, flash=None, refreshing=False):
+    """個股詳情頁（GET /dashboard/stock/<code>，2026-08-01新增）：庫存股
+    與純研究標的共用同一個頁面。所有資料都讀快取（stock_prices／
+    stock_valuation_snapshots／module_d_results），不即時查外部API——
+    refreshing=True（report_server.is_refreshing()目前有背景執行緒在跑
+    這個代碼）時頁面提示「更新中」，資料仍是刷新前的快取值，要看到新
+    結果得重新整理（見派工說明「不即時查詢」原則）。
+    """
+    stance = store.get_latest_stance(code)
+    valuation = store.get_stock_valuation(code)
+    price_info = store.get_stock_prices().get(code)
+    latest_batch = _latest_module_d_batch(store, code)
+
+    holdings_latest = store.get_holdings()["holdings"]
+    holding_row = next((h for h in holdings_latest if h["code"] == code), None)
+    name = holding_row.get("name") if holding_row else None
+    if not name and stance:
+        name = stance.get("name")
+
+    price = price_info["price"] if price_info else None
+    prev_close = price_info.get("prev_close") if price_info else None
+    delta_pct = None
+    if price is not None and prev_close:
+        delta_pct = (price - prev_close) / prev_close * 100
+    delta_cls, delta_text = _delta_badge(delta_pct)
+
+    if refreshing:
+        updated_text = "更新中…請稍後重新整理查看最新結果"
+    else:
+        candidates = []
+        if valuation and valuation.get("checked_at"):
+            candidates.append(valuation["checked_at"])
+        if latest_batch:
+            candidates.append(latest_batch[0]["checked_at"])
+        updated_text = ("上次更新於 %s" % max(candidates)) if candidates else \
+            "尚未產生分析，正在背景處理中／請按下方「更新」"
+
+    href_code = esc(urllib.parse.quote(code, safe=""))
+    title_text = html.escape(("%s %s" % (code, name)) if name else code)
+
+    parts = [_screen_page_head(title_text)]
+    parts.append("<p class=\"meta\"><a href=\"/dashboard/stocks\">← 回持股清單</a></p>")
+    if flash:
+        is_error = flash.startswith("⚠️")
+        color = "var(--red)" if is_error else "var(--green)"
+        parts.append("<p class=\"meta\" style=\"color:%s;font-weight:600;\">%s</p>"
+                     % (color, esc(flash)))
+
+    parts.append(
+        "<div style=\"display:flex;align-items:baseline;gap:.6rem;flex-wrap:wrap;\">"
+        "<span style=\"font-size:.85rem;color:var(--ink-dim);\">%s</span>"
+        "<h1 style=\"margin:0;\">%s</h1></div>"
+        % (esc(code), esc(name) if name else "（尚無名稱）"))
+    parts.append(
+        "<div style=\"display:flex;align-items:baseline;gap:.6rem;margin:.3rem 0 .5rem;\">"
+        "<span style=\"font-size:1.3rem;font-weight:700;\">%s</span>"
+        "<span class=\"stock-row__delta %s\" style=\"font-size:.95rem;\">%s</span></div>"
+        % (_fmt_price(price), delta_cls, esc(delta_text)))
+    parts.append(
+        "<div style=\"display:flex;align-items:center;justify-content:space-between;"
+        "gap:.75rem;font-size:.82rem;color:var(--ink-dim);margin-bottom:.8rem;flex-wrap:wrap;\">"
+        "<span>%s</span>"
+        "<form method=\"post\" action=\"/dashboard/stock/%s/refresh\" style=\"margin:0;\">"
+        "<button type=\"submit\" class=\"btn-muted\" style=\"margin:0;\"%s>%s</button></form></div>"
+        % (esc(updated_text), href_code,
+           " disabled" if refreshing else "", "更新中…" if refreshing else "更新"))
+
+    comments = store.get_comments_by_code(code, limit=50)["results"]
+    buy_reasons = [c for c in comments if c["source_tag"] == "買進理由"]
+    other_notes = [c for c in comments if c["source_tag"] != "買進理由"]
+    parts.append(_reason_pin_html(buy_reasons[0] if buy_reasons else None))
+
+    parts.append("<section class=\"card\"><div class=\"card__head\"><h2>估值</h2>")
+    if valuation:
+        parts.append("<span class=\"card__meta\">%s</span></div><div class=\"card__body\">"
+                     % esc(valuation.get("checked_at")))
+        per_text = ("%.1f" % valuation["per"]) if valuation.get("per") is not None else "—"
+        pbr_text = ("%.2f" % valuation["pbr"]) if valuation.get("pbr") is not None else "—"
+        yield_text = ("%.2f%%" % valuation["dividend_yield"]) \
+            if valuation.get("dividend_yield") is not None else "—"
+        yoy_text = ("%.1f%%" % (valuation["revenue_yoy"] * 100)) \
+            if valuation.get("revenue_yoy") is not None else "—"
+        parts.append(
+            "<div class=\"val-grid\">"
+            "<div class=\"val-item\"><div class=\"label\">本益比</div><div class=\"value\">%s</div></div>"
+            "<div class=\"val-item\"><div class=\"label\">股價淨值比</div><div class=\"value\">%s</div></div>"
+            "<div class=\"val-item\"><div class=\"label\">殖利率</div><div class=\"value\">%s</div></div>"
+            "<div class=\"val-item\"><div class=\"label\">營收年增率</div><div class=\"value\">%s</div></div>"
+            "</div>" % (per_text, pbr_text, yield_text, yoy_text))
+        parts.append("<div class=\"val-source\">%s</div>"
+                     % esc(_valuation_source_text(valuation.get("valuation_data_source"))))
+        if valuation.get("valuation_error"):
+            parts.append("<p class=\"meta\" style=\"color:var(--red);\">估值查詢提醒：%s</p>"
+                         % esc(valuation["valuation_error"]))
+        if valuation.get("revenue_error"):
+            parts.append("<p class=\"meta\" style=\"color:var(--red);\">營收查詢提醒：%s</p>"
+                         % esc(valuation["revenue_error"]))
+    else:
+        parts.append("</div><div class=\"card__body\">"
+                     "<p class=\"empty\">尚無估值資料，背景刷新完成後會顯示在這裡。</p>")
+    parts.append("</div></section>")
+
+    parts.append(_module_d_card_html(latest_batch))
+
+    holdings_card = _holdings_card_html(store, code)
+    if holdings_card:
+        parts.append(holdings_card)
+
+    parts.append(_notes_card_html(href_code, other_notes, len(buy_reasons)))
 
     parts.append("</body></html>")
     return "".join(parts)

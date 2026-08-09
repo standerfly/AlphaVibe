@@ -86,6 +86,19 @@ CREATE TABLE IF NOT EXISTS stock_prices (
     price_date TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS stock_valuation_snapshots (
+    code TEXT PRIMARY KEY,
+    per REAL,
+    pbr REAL,
+    dividend_yield REAL,
+    revenue_yoy REAL,
+    revenue_period TEXT,
+    valuation_data_source TEXT,
+    revenue_data_source TEXT,
+    valuation_error TEXT,
+    revenue_error TEXT,
+    checked_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS stock_industries (
     code TEXT PRIMARY KEY,
     industry_category TEXT,
@@ -192,6 +205,23 @@ _MIGRATIONS = {
         ("excess_drawdown_pct", "REAL"),
         ("pbr", "REAL"),
         ("dividend_yield", "REAL"),
+    ],
+    "trade_ledger": [
+        ("order_ref", "TEXT"),
+    ],
+    "stock_prices": [
+        ("prev_close", "REAL"),
+    ],
+    "module_d_results": [
+        # concern_flag（2026-08-01 新增，個股頁背景刷新機制用）：
+        # run_module_d_review() 內部 items 清單本來就有這個布林值，但先前
+        # save_module_d_result() 沒有把它存下來——只存了語意不同的
+        # conflict_flag（自動回寫立場時是否跟既有記錄衝突，屬批次層級
+        # 旗標，不是逐項的「這項發現要不要留意」）。清單頁／個股詳情頁要
+        # 讀「最新一批檢視結果裡有沒有需留意的項目」，需要這個逐項欄位；
+        # 既有「今日重點」（_render_today_highlights_section）改用
+        # suggested_action 判斷、不受影響，這裡新增欄位不動它。
+        ("concern_flag", "INTEGER DEFAULT 0"),
     ],
 }
 
@@ -351,6 +381,32 @@ class KBStore:
         ).fetchall()
         return {"count": len(rows), "results": [dict(r) for r in rows]}
 
+    def get_comments_by_code(self, code, limit=50):
+        """依股票代碼精確查留言（2026-08-01新增，個股詳情頁「心得與留言」
+        卡片用）：`search_comments()` 是FTS5 MATCH全文搜尋，查詢字串出現
+        在body/symbols任何欄位都算命中，也不保證能拿代碼本身當查詢字串
+        （FTS5 trigram至少需要3字元，多數台股代碼剛好4碼還好，但無法精確
+        限定「只比對symbols欄位」，也無法排除code剛好是另一檔股票代碼子
+        字串的誤判，例如code="330"會誤中symbols="2330"）。這裡改用一般
+        SELECT掃描symbols欄位、以逗號/全形逗號/空白切開後精確比對code，
+        避免子字串誤判。FTS5虛擬表允許一般SELECT（非MATCH），個人使用
+        量級（數百筆留言）全表掃描效能無虞，不需要另建索引表。
+        依date DESC、created_at DESC排序，上限limit。"""
+        if not code:
+            raise ValueError("code 為必填")
+        rows = self.conn.execute(
+            "SELECT body, symbols, source_tag, date, source_ref"
+            " FROM comments ORDER BY date DESC, created_at DESC"
+        ).fetchall()
+        matched = []
+        for r in rows:
+            parts = [p for p in re.split(r"[,，\s]+", r["symbols"] or "") if p]
+            if code in parts:
+                matched.append(dict(r))
+                if len(matched) >= limit:
+                    break
+        return {"code": code, "count": len(matched), "results": matched}
+
     def recent_comments(self, limit=10):
         rows = self.conn.execute(
             "SELECT body, symbols, source_tag, date, source_ref"
@@ -487,25 +543,66 @@ class KBStore:
     # ---------- 股價／產業別快取（refresh_holdings_prices 用；手機檢視頁市值/
     # 持股比例/產業別皆讀這裡，不即時呼叫外部 API） ----------
 
-    def upsert_stock_price(self, code, price, price_date):
+    def upsert_stock_price(self, code, price, price_date, prev_close=None):
+        """prev_close（2026-08-01新增，個股清單/詳情頁「今天漲跌幅」用）：
+        前一交易日收盤價，選填——呼叫端查不到（例如資料源只回傳單一交易日）
+        時傳 None，沿用「查不到就是 None，不擅自臆測」的既有慣例，頁面端
+        看到 None 就顯示「—」不算漲跌幅。INSERT OR REPLACE 只存最新一筆，
+        沒有歷史（跟改動前的既有設計一致，見上方 stock_prices 表註解）。"""
         if not code:
             raise ValueError("code 為必填")
         updated_at = _now()
         self.conn.execute(
             "INSERT OR REPLACE INTO stock_prices"
-            " (code, price, price_date, updated_at) VALUES (?,?,?,?)",
-            (code, price, price_date, updated_at),
+            " (code, price, price_date, prev_close, updated_at) VALUES (?,?,?,?,?)",
+            (code, price, price_date, prev_close, updated_at),
         )
         self.conn.commit()
         return {"saved": True, "code": code, "price": price,
-                "price_date": price_date, "updated_at": updated_at}
+                "price_date": price_date, "prev_close": prev_close,
+                "updated_at": updated_at}
 
     def get_stock_prices(self):
         rows = self.conn.execute(
-            "SELECT code, price, price_date, updated_at FROM stock_prices"
+            "SELECT code, price, price_date, prev_close, updated_at FROM stock_prices"
         ).fetchall()
         return {r["code"]: {"price": r["price"], "price_date": r["price_date"],
+                            "prev_close": r["prev_close"],
                             "updated_at": r["updated_at"]} for r in rows}
+
+    # ---------- 估值快照快取（2026-08-01新增，個股詳情頁「上次更新於」
+    # 用）：背景刷新（trigger_stock_refresh／module_d_scheduler排程）查到的
+    # PER/PBR/殖利率/營收年增率，連同資料來源標記與錯誤訊息一起存最新一筆，
+    # 供頁面讀快取顯示，不即時查外部API。跟 module_d_results（存「發現」）
+    # 是不同性質的資料，不合併進同一張表：這裡是「估值數字快照」，
+    # PRIMARY KEY code 只留最新一筆（跟 stock_prices 同款設計，不需要歷史
+    # ——「這檔股票現在的估值是多少」不像 module_d 的「發現」需要累積比對，
+    # 只需要最新值）。 ----------
+
+    def upsert_stock_valuation(self, code, per=None, pbr=None, dividend_yield=None,
+                               revenue_yoy=None, revenue_period=None,
+                               valuation_data_source=None, revenue_data_source=None,
+                               valuation_error=None, revenue_error=None, checked_at=None):
+        if not code:
+            raise ValueError("code 為必填")
+        checked_at = checked_at or _now()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO stock_valuation_snapshots"
+            " (code, per, pbr, dividend_yield, revenue_yoy, revenue_period,"
+            " valuation_data_source, revenue_data_source, valuation_error,"
+            " revenue_error, checked_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (code, per, pbr, dividend_yield, revenue_yoy, revenue_period,
+             valuation_data_source, revenue_data_source, valuation_error,
+             revenue_error, checked_at),
+        )
+        self.conn.commit()
+        return {"saved": True, "code": code, "checked_at": checked_at}
+
+    def get_stock_valuation(self, code):
+        row = self.conn.execute(
+            "SELECT * FROM stock_valuation_snapshots WHERE code=?", (code,)
+        ).fetchone()
+        return dict(row) if row else None
 
     def upsert_stock_industry(self, code, industry_category):
         if not code:
@@ -599,10 +696,13 @@ class KBStore:
     # 這裡選擇賣出時一律強制寫入 NULL（而非 0），一來語意上「不適用」
     # 比「第 0 次加碼」更精確，二來讓呼叫端可以用
     # "WHERE add_sequence IS NOT NULL" 篩出買入紀錄來推算下一次加碼序號，
-    # 不必額外用 action 欄位過濾。 ----------
+    # 不必額外用 action 欄位過濾。order_ref（委託書號，2026-07-31 新增，
+    # 經 _MIGRATIONS 補欄位）：券商發的理論唯一編號，供
+    # resolve_and_save_trade_ledger() 防止同一份對帳單／交易明細表被貼入
+    # 兩次而重複寫入；沒有 order_ref 可判斷的來源（None）不受影響。 ----------
 
     def save_trade_ledger_entry(self, code, name, action, shares, price, date,
-                                add_sequence=None, source_ref=None):
+                                add_sequence=None, source_ref=None, order_ref=None):
         if not code:
             raise ValueError("code 為必填")
         if action not in ("買", "賣"):
@@ -614,13 +714,13 @@ class KBStore:
         created_at = _now()
         cur = self.conn.execute(
             "INSERT INTO trade_ledger (code, name, action, add_sequence, shares,"
-            " price, date, source_ref, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            " price, date, source_ref, order_ref, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (code, name, action, add_sequence, shares, price, date, source_ref,
-             created_at),
+             order_ref, created_at),
         )
         self.conn.commit()
         return {"saved": True, "id": cur.lastrowid, "code": code, "action": action,
-                "add_sequence": add_sequence, "date": date}
+                "add_sequence": add_sequence, "date": date, "order_ref": order_ref}
 
     def get_trade_ledger(self, code):
         """回傳該標的完整加碼流水（依 date、id 排序，舊到新），讓呼叫方能
@@ -632,13 +732,31 @@ class KBStore:
         ).fetchall()
         return {"code": code, "count": len(rows), "entries": [dict(r) for r in rows]}
 
+    def trade_ledger_order_ref_exists(self, order_ref):
+        """委託書號防重複查詢：trade_ledger 裡是否已存在相同 order_ref 的
+        既有列（非 NULL 比對，SQLite `=` 對 NULL 一律不成立，不需要額外
+        排除 NULL 條件）。order_ref 為空值（None／空字串）時，呼叫端本來就
+        不該呼叫（見 resolve_and_save_trade_ledger()：沒有 order_ref 的
+        交易不做防重複檢查），這裡仍防禦性回傳 False，避免誤擋合法交易。"""
+        if not order_ref:
+            return False
+        row = self.conn.execute(
+            "SELECT 1 FROM trade_ledger WHERE order_ref=? LIMIT 1", (order_ref,)
+        ).fetchone()
+        return row is not None
+
     # ---------- 模組D檢視結果表（FR-051~055/057）：模組E排程整合跑完
     # 模組D後，結果持久化在這裡，供模組F（報告呈現，下一輪）直接讀取，
     # 不即時運算。一檔標的每次檢視會有多筆（通用層2筆＋策略層N筆＋
     # 老芋頭層0或1筆），皆屬正常設計，不是重複資料。 ----------
 
     def save_module_d_result(self, code, trigger_type, finding, strategy_id=None,
-                             suggested_action=None, conflict_flag=False, checked_at=None):
+                             suggested_action=None, conflict_flag=False,
+                             concern_flag=False, checked_at=None):
+        """concern_flag（2026-08-01新增，見 _MIGRATIONS 註解）：這一項發現
+        是否需要PO留意（對應 review_engine.run_module_d_review() 內部
+        items/findings 清單的同名欄位）——跟 conflict_flag（自動回寫立場
+        跟既有記錄是否衝突，批次層級旗標）是兩個獨立概念，不要混淆。"""
         if not code:
             raise ValueError("code 為必填")
         if trigger_type not in MODULE_D_TRIGGER_TYPES:
@@ -649,9 +767,9 @@ class KBStore:
         checked_at = checked_at or _now()
         cur = self.conn.execute(
             "INSERT INTO module_d_results (code, strategy_id, trigger_type, finding,"
-            " suggested_action, conflict_flag, checked_at) VALUES (?,?,?,?,?,?,?)",
+            " suggested_action, conflict_flag, concern_flag, checked_at) VALUES (?,?,?,?,?,?,?,?)",
             (code, strategy_id, trigger_type, finding, suggested_action,
-             1 if conflict_flag else 0, checked_at),
+             1 if conflict_flag else 0, 1 if concern_flag else 0, checked_at),
         )
         self.conn.commit()
         return {"saved": True, "id": cur.lastrowid, "code": code,

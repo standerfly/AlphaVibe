@@ -42,19 +42,24 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import sys
+import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import finmind_client  # noqa: E402
 import frameworks  # noqa: E402
 import holdings_parser  # noqa: E402
 import market_scan  # noqa: E402
 import mcp_http_gateway  # noqa: E402
 import report  # noqa: E402
+import review_engine  # noqa: E402
 import screener  # noqa: E402
+import stock_alias_resolver  # noqa: E402
 import trade_ledger_parser  # noqa: E402
 import trade_text_parser  # noqa: E402
 from kb_store import KBStore  # noqa: E402
@@ -66,6 +71,120 @@ CLASSIC_PATHS = ("/report-classic", "/report.html", "/poc/data/report.html")
 
 _DASHBOARD_COOKIE_NAME = "alphavibe_session"
 _DASHBOARD_COOKIE_MAX_AGE_SECONDS = 2592000  # 30 天
+
+# 「加入研究」輸入框：純數字（4~6碼，允許末位一個英文字母，涵蓋一般個股
+# 4碼、ETF/特別股常見5~6碼＋字母後綴）直接當代碼使用，不經過名稱解析；
+# 其餘輸入一律視為股票名稱，走 _resolve_stock_add_input() 的名稱查證路徑。
+_STOCK_CODE_RE = re.compile(r"^[0-9]{4,6}[A-Za-z]?$")
+
+# ---------- 個股頁背景刷新（2026-08-01新增）----------
+# 「不即時查詢」原則（見派工說明）：PO開個股詳情頁或按「更新」，畫面不等
+# 外部API查詢完成——查詢在背景執行緒裡跑，跑完寫入資料庫，頁面下次重新
+# 整理才看到新結果。_refreshing_codes 只是暫時性UI提示（「更新中...」），
+# 行程重啟遺失也沒關係，故意不存資料庫。用 threading.Lock 保護存取（雖然
+# CPython GIL下set.add/discard本身已是原子操作，仍加鎖讓程式碼意圖更明確、
+# 不依賴直譯器實作細節）。
+_refreshing_codes = set()
+_refreshing_lock = threading.Lock()
+
+
+def _mark_refreshing(code):
+    with _refreshing_lock:
+        _refreshing_codes.add(code)
+
+
+def _unmark_refreshing(code):
+    with _refreshing_lock:
+        _refreshing_codes.discard(code)
+
+
+def is_refreshing(code):
+    """供 do_GET 渲染個股詳情頁前查詢：這個代碼目前是否有背景刷新
+    執行緒正在跑。"""
+    with _refreshing_lock:
+        return code in _refreshing_codes
+
+
+def _background_refresh_worker(code, data_dir):
+    """背景執行緒實際執行的函式：自己開一個新的 KBStore（SQLite connection
+    不可跨執行緒共用，每個 request handler／背景執行緒各自開自己的 store
+    是既有規範，見本檔案各 do_GET/do_POST 既有寫法）。例外不可讓執行緒
+    默默死掉不留痕跡，印到 stderr（比照 log_message() 既有的「安靜但
+    留痕」原則）；finally 一定要把 code 從 _refreshing_codes 移除，不管
+    成功或失敗，避免 UI 永遠卡在「更新中」。"""
+    store = KBStore(data_dir)
+    try:
+        review_engine.refresh_stock_snapshot(code, store, data_dir=data_dir)
+    except Exception as exc:  # 背景執行緒的例外不會被任何人接住，這裡是最後防線
+        sys.stderr.write("背景刷新失敗（%s）：%s\n" % (code, exc))
+    finally:
+        store.close()
+        _unmark_refreshing(code)
+
+
+def trigger_stock_refresh(code, data_dir):
+    """觸發背景執行緒刷新單一代碼的股價/估值/Module D檢視快取（「新增
+    研究標的」與「PO手動按更新」兩種觸發路徑共用）。立即回傳、不等待
+    執行緒完成——呼叫端（do_POST）應該在呼叫這個函式後馬上送出HTTP回應。
+    回傳 Thread 物件供測試用 `.join()` 做確定性等待（正式呼叫路徑不應該
+    join，只有測試需要等背景工作跑完才能斷言資料庫內容）。"""
+    _mark_refreshing(code)
+    thread = threading.Thread(
+        target=_background_refresh_worker, args=(code, data_dir), daemon=True)
+    thread.start()
+    return thread
+
+
+def _is_mcp_or_oauth_probe_path(path):
+    """dashboard Basic Auth 要完全跳過的路徑：既有的 `/mcp`、`/mcp/<token>`
+    （各自有自己的密鑰驗證），加上 2026-08-01 新發現的一類——手機 Claude
+    App 連接器在真正呼叫工具前，會先探測幾個標準OAuth能力探測路徑
+    （`/.well-known/oauth-authorization-server`、`/.well-known/
+    oauth-protected-resource`、`/register` 等 RFC 8414／RFC 7591 慣例
+    路徑），確認這台伺服器有沒有支援OAuth登入流程。這個專案沒有實作
+    OAuth，這些路徑「本來就該回404（沒有這個功能）」，但如果讓它們先
+    經過 dashboard 的 Basic Auth 檢查，會回401（有登入牆但你進不去）——
+    Claude App 把401誤判成「這裡真的有一個OAuth登入服務，但連不上」，
+    跳出「Couldn't register with AlphaVibe's sign-in service」的錯誤，
+    而不是正確理解成「這個伺服器不支援OAuth，跳過探測直接用既有的路徑
+    密鑰認證」。這裡讓這些路徑跳過Basic Auth，落到既有的通用404處理，
+    才會回傳語意正確的404而不是401。"""
+    return (path == "/mcp" or path.startswith("/mcp/")
+            or path.startswith("/.well-known/") or path == "/register")
+
+
+def _resolve_stock_add_input(raw_input, store, data_dir):
+    """清單頁「加入研究」輸入框解析：純數字（見 _STOCK_CODE_RE）直接當
+    代碼使用；否則視為股票名稱，重用 stock_alias_resolver.resolve_stock_
+    codes() 做名稱→代碼查證（跟 trade_text_parser／trade_ledger_parser
+    既有的名稱解析邏輯共用同一套，不重寫一份）。
+
+    回傳 (code, name, error)：成功時 error 為 None；code 為純代碼輸入時，
+    嘗試用 finmind_client.get_stock_info() 查一次公司全名（低流量單檔
+    查詢，2026-08-01 端對端測試發現：不查名稱會讓詳情頁永遠顯示「尚無
+    名稱」、清單頁的名稱搜尋也永遠比對不到——查詢失敗/查無資料時優雅
+    降級回 None，不拋例外，比照 finmind_client 既有慣例，不影響代碼
+    本身已經確定可用這件事）；走名稱解析成功時 name 回填使用者當初打的
+    原始輸入文字。解析失敗（查無代碼）時 code/name 皆為 None，error
+    附說明文字。"""
+    raw_input = (raw_input or "").strip()
+    if not raw_input:
+        return None, None, "請輸入股票代碼或名稱"
+    if _STOCK_CODE_RE.match(raw_input):
+        name = None
+        try:
+            info = finmind_client.get_stock_info(stock_id=raw_input, data_dir=data_dir)
+            stocks = info.get("stocks") or []
+            if stocks:
+                name = stocks[0].get("stock_name")
+        except Exception:
+            name = None
+        return raw_input, name, None
+    resolved, unresolved = stock_alias_resolver.resolve_stock_codes(
+        [raw_input], store, data_dir=data_dir, alias_source="dashboard加入研究自動比對")
+    if raw_input in resolved:
+        return resolved[raw_input], raw_input, None
+    return None, None, "查無對應股票代碼：%s，請確認名稱或直接輸入代碼" % raw_input
 
 
 def _configured_dashboard_token():
@@ -233,7 +352,7 @@ class ReportHandler(BaseHTTPRequestHandler):
         # /mcp、/mcp/<token> 已各自有獨立的密鑰驗證機制（手機 Claude App
         # 連接器無法處理 Basic Auth 彈窗），這裡的 dashboard 驗證要完全
         # 跳過這兩條路由，不可疊加（見模組docstring最後一段）。
-        if not (path == "/mcp" or path.startswith("/mcp/")):
+        if not _is_mcp_or_oauth_probe_path(path):
             if not self._require_dashboard_auth():
                 return
         if path == "/":
@@ -273,6 +392,48 @@ class ReportHandler(BaseHTTPRequestHandler):
                 store.close()
             page = report.render_market_scan_page(framework_id, latest)
             self._send(200, "text/html; charset=utf-8", page.encode("utf-8"))
+        elif path == "/dashboard/stocks":
+            # 個股清單頁（持股＋研究中，2026-08-01新增，見report.py
+            # render_stock_list_page()）：篩選/搜尋/分頁皆用GET query
+            # string帶狀態，不用session，維持本專案「整頁送出、無JS」的
+            # 技術棧原則。
+            query = self.path.split("?", 1)[1] if "?" in self.path else ""
+            params = urllib.parse.parse_qs(query)
+            filter_key = (params.get("filter") or ["all"])[0]
+            search_query = (params.get("q") or [""])[0]
+            try:
+                page = int((params.get("page") or ["1"])[0])
+            except ValueError:
+                page = 1
+            flash = (params.get("flash") or [None])[0]
+            store = KBStore(self.data_dir)
+            try:
+                page_html = report.render_stock_list_page(
+                    store, filter_key=filter_key, query=search_query,
+                    page=page, flash=flash)
+            finally:
+                store.close()
+            self._send(200, "text/html; charset=utf-8", page_html.encode("utf-8"))
+        elif path.startswith("/dashboard/stock/"):
+            # 個股詳情頁（2026-08-01新增，見report.py render_stock_detail_
+            # page()）：/dashboard/stock/<code>。刻意排在/dashboard/stocks
+            # 之後（不會互相誤判——"/dashboard/stocks"不match
+            # "/dashboard/stock/"這個含結尾斜線的前綴）。
+            code = path[len("/dashboard/stock/"):]
+            if not code or "/" in code:
+                self._send(404, "text/plain; charset=utf-8",
+                           "404：找不到這檔股票".encode("utf-8"))
+            else:
+                query = self.path.split("?", 1)[1] if "?" in self.path else ""
+                params = urllib.parse.parse_qs(query)
+                flash = (params.get("flash") or [None])[0]
+                store = KBStore(self.data_dir)
+                try:
+                    page_html = report.render_stock_detail_page(
+                        store, code, flash=flash, refreshing=is_refreshing(code))
+                finally:
+                    store.close()
+                self._send(200, "text/html; charset=utf-8", page_html.encode("utf-8"))
         elif path == "/mcp":
             # MCP Streamable HTTP transport 只支援 POST，GET 統一回 405
             # （沿用 mcp_http_gateway.py 獨立執行時的既有行為）。
@@ -295,7 +456,7 @@ class ReportHandler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         # 同 do_GET：/mcp、/mcp/<token> 有自己的密鑰驗證機制，dashboard
         # Basic Auth 要完全跳過這兩條路由（見模組docstring最後一段）。
-        if not (path == "/mcp" or path.startswith("/mcp/")):
+        if not _is_mcp_or_oauth_probe_path(path):
             if not self._require_dashboard_auth():
                 return
         if path == "/mcp":
@@ -347,8 +508,10 @@ class ReportHandler(BaseHTTPRequestHandler):
                 self._send(404, "text/plain; charset=utf-8",
                            "404：僅支援 POST /mcp、/screen、/market-scan、/market-scan/track、"
                            "/dashboard/watchlist、/dashboard/trade、/dashboard/laoyutou、"
-                           "/dashboard/tradeledger、/dashboard/holdings/preview 或 "
-                           "/dashboard/holdings/confirm"
+                           "/dashboard/tradeledger、/dashboard/tradecsv、"
+                           "/dashboard/holdings/preview、/dashboard/holdings/confirm、"
+                           "/dashboard/stocks/add、/dashboard/stock/<code>/refresh 或 "
+                           "/dashboard/stock/<code>/note"
                            .encode("utf-8"))
             return
         if path == "/screen":
@@ -526,6 +689,41 @@ class ReportHandler(BaseHTTPRequestHandler):
             finally:
                 store.close()
             msg_parts = ["已存入 %d 筆交易明細" % len(result["saved"])]
+            if result.get("duplicates_skipped"):
+                msg_parts.append("另有 %d 筆偵測為重複（委託書號已存在）已跳過"
+                                 % len(result["duplicates_skipped"]))
+            if result["unresolved_names"]:
+                names = "、".join(u["name"] for u in result["unresolved_names"])
+                msg_parts.append("⚠️ %d 筆代碼查無比對（%s），未存入，"
+                                 "請補stock_aliases後重貼這幾筆"
+                                 % (len(result["unresolved_names"]), names))
+            if result["unparsed_lines"]:
+                msg_parts.append("⚠️ %d 行格式無法解析，已略過"
+                                 % len(result["unparsed_lines"]))
+            self._dashboard_flash_redirect("；".join(msg_parts))
+            return
+        if path == "/dashboard/tradecsv":
+            # 國泰證券App「已成交」CSV格式對帳單批次貼入（跟上面的
+            # /dashboard/tradeledger同精神：直接處理不需要像庫存帳單那樣
+            # 兩步驟預覽確認，這是PO自己的交易記錄）。格式規則見
+            # trade_ledger_parser.py 模組docstring
+            # parse_trade_csv_text() 那段。
+            form = self._read_form()
+            text = (form.get("text") or [""])[0]
+            if not text.strip():
+                self._dashboard_flash_redirect("⚠️ 貼CSV對帳單失敗：內容是空的")
+                return
+            parsed = trade_ledger_parser.parse_trade_csv_text(text)
+            store = KBStore(self.data_dir)
+            try:
+                result = trade_ledger_parser.resolve_and_save_trade_ledger(
+                    parsed, store, data_dir=self.data_dir)
+            finally:
+                store.close()
+            msg_parts = ["已存入 %d 筆交易明細" % len(result["saved"])]
+            if result.get("duplicates_skipped"):
+                msg_parts.append("另有 %d 筆偵測為重複（委託書號已存在）已跳過"
+                                 % len(result["duplicates_skipped"]))
             if result["unresolved_names"]:
                 names = "、".join(u["name"] for u in result["unresolved_names"])
                 msg_parts.append("⚠️ %d 筆代碼查無比對（%s），未存入，"
@@ -580,11 +778,85 @@ class ReportHandler(BaseHTTPRequestHandler):
                 store.close()
             self._dashboard_flash_redirect("已存入 %d 檔持股快照" % result["count"])
             return
+        if path == "/dashboard/stocks/add":
+            # 清單頁「加入研究」：解析代碼→save_stance註冊「研究中」→
+            # 觸發背景刷新（見trigger_stock_refresh()）→導向新增的那檔
+            # 詳情頁（2026-08-01新增，見派工說明需求#3）。
+            form = self._read_form()
+            raw_input = (form.get("input") or [""])[0]
+            store = KBStore(self.data_dir)
+            try:
+                code, name, error = _resolve_stock_add_input(
+                    raw_input, store, self.data_dir)
+                if error:
+                    self._redirect(
+                        "/dashboard/stocks?flash=" + urllib.parse.quote("⚠️ " + error))
+                    return
+                save_result = store.save_stance(
+                    code, "研究中", name=name, source_ref="dashboard加入研究")
+            finally:
+                store.close()
+            # save_result["saved"]為False時代表既有立場衝突（FR-013/018保護，
+            # 見save_stance docstring）——不強制覆蓋既有立場，這裡只是想去看
+            # 這檔股票，直接導向既有詳情頁即可，不需要再觸發一次背景刷新
+            # （該代碼理論上早就有快取資料）。
+            if save_result.get("saved"):
+                trigger_stock_refresh(code, self.data_dir)
+            self._redirect("/dashboard/stock/" + urllib.parse.quote(code, safe=""))
+            return
+        if path.startswith("/dashboard/stock/") and path.endswith("/refresh"):
+            # 詳情頁「更新」按鈕：觸發背景刷新，立即303轉址回詳情頁並附
+            # flash提示，不等待背景執行緒完成（見trigger_stock_refresh()
+            # docstring／派工說明「手動更新是背景處理，不會卡住PO繼續用
+            # AlphaVibe」）。
+            code = path[len("/dashboard/stock/"):-len("/refresh")]
+            length = int(self.headers.get("Content-Length") or 0)
+            if length:
+                self.rfile.read(length)  # 沒有表單欄位要讀，純粹清空body避免殘留
+            if not code:
+                self._send(404, "text/plain; charset=utf-8",
+                           "404：找不到這檔股票".encode("utf-8"))
+                return
+            trigger_stock_refresh(code, self.data_dir)
+            self._redirect(
+                "/dashboard/stock/%s?flash=%s"
+                % (urllib.parse.quote(code, safe=""),
+                   urllib.parse.quote("已開始背景更新，稍後重新整理查看最新結果")))
+            return
+        if path.startswith("/dashboard/stock/") and path.endswith("/note"):
+            # 詳情頁「心得與留言」表單：寫入 comments 表（source_tag區分
+            # 買進理由/心得/交易備註），跟Claude App對話裡由AI寫入的是
+            # 同一張表、同一份資料（見派工說明需求#4）。
+            code = path[len("/dashboard/stock/"):-len("/note")]
+            form = self._read_form()
+            body_text = (form.get("body") or [""])[0].strip()
+            source_tag = (form.get("source_tag") or [""])[0].strip()
+            if source_tag not in ("買進理由", "心得", "交易備註"):
+                source_tag = "心得"
+            if not code:
+                self._send(404, "text/plain; charset=utf-8",
+                           "404：找不到這檔股票".encode("utf-8"))
+                return
+            if not body_text:
+                msg = "⚠️ 留言失敗：內容不可為空"
+            else:
+                store = KBStore(self.data_dir)
+                try:
+                    store.save_comment(body_text, source_tag, symbols=code,
+                                       source_ref="dashboard個股頁留言")
+                finally:
+                    store.close()
+                msg = "已存入留言（%s）" % source_tag
+            self._redirect("/dashboard/stock/%s?flash=%s"
+                           % (urllib.parse.quote(code, safe=""), urllib.parse.quote(msg)))
+            return
         self._send(404, "text/plain; charset=utf-8",
                    "404：僅支援 POST /mcp、/screen、/market-scan、/market-scan/track、"
                    "/dashboard/watchlist、/dashboard/trade、/dashboard/laoyutou、"
-                   "/dashboard/tradeledger、/dashboard/holdings/preview 或 "
-                   "/dashboard/holdings/confirm"
+                   "/dashboard/tradeledger、/dashboard/tradecsv、"
+                   "/dashboard/holdings/preview、/dashboard/holdings/confirm、"
+                   "/dashboard/stocks/add、/dashboard/stock/<code>/refresh 或 "
+                   "/dashboard/stock/<code>/note"
                    .encode("utf-8"))
 
     def log_message(self, fmt, *args):  # 安靜一點，只留到 stderr

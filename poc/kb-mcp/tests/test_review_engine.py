@@ -18,6 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
 import finmind_client  # noqa: E402
+import fundamentals_client  # noqa: E402
 import review_engine  # noqa: E402
 import screener  # noqa: E402
 from kb_store import KBStore  # noqa: E402
@@ -111,11 +112,19 @@ class DownsideRiskTest(unittest.TestCase):
 
 class GeneralReviewTest(unittest.TestCase):
     def test_general_review_shape_and_manual_notes_default_none(self):
+        # 2026-08-01 來源選用邏輯稽核修正：general_review() 的歷史PER查詢
+        # 改呼叫 fundamentals_client.get_per_history（官方優先＋FinMind
+        # 備援），不再直接呼叫 finmind_client.get_per_history——這裡改
+        # mock 前者，避免測試真的打官方TWSE BWIBBU端點（"2330"是真實代碼，
+        # 不mock的話official分支會成功，蓋掉這裡要測的假資料，且不該讓
+        # 單元測試打外部API）。月營收年增率（多月序列，_growth_deceleration
+        # 用）維持直接呼叫 finmind_client.get_revenue_yoy，不受這次修正
+        # 影響，mock目標不變。
         with unittest.mock.patch.object(
                 finmind_client, "get_revenue_yoy",
                 return_value=_revenue_yoy([0.9, 0.7, 0.55, 0.40])) as mock_yoy, \
              unittest.mock.patch.object(
-                finmind_client, "get_per_history",
+                fundamentals_client, "get_per_history",
                 return_value=_per_history([10.0 + i for i in range(20)] + [20.0])) as mock_per:
             out = review_engine.general_review("2330", data_dir="/tmp/fake")
 
@@ -735,6 +744,7 @@ class RunModuleDReviewTest(unittest.TestCase):
             self.assertIsNone(row["strategy_id"])
             self.assertIsNone(row["suggested_action"])
             self.assertEqual(row["conflict_flag"], 0)
+            self.assertEqual(row["concern_flag"], 0)  # 全部正常，逐項concern_flag也該是0
 
         # 沒有任何concern，stances不該被寫入
         self.assertEqual(self.store.get_stance_history("2330"), [])
@@ -791,10 +801,13 @@ class RunModuleDReviewTest(unittest.TestCase):
         normal_general = [r for r in general_rows if r["finding"] == "下檔風險detail"]
         self.assertEqual(concern_general[0]["suggested_action"], position_detail)
         self.assertIsNone(normal_general[0]["suggested_action"])
+        self.assertEqual(concern_general[0]["concern_flag"], 1)
+        self.assertEqual(normal_general[0]["concern_flag"], 0)
         strategy_rows = by_label_prefix["策略層"]
         self.assertEqual(len(strategy_rows), 1)
         self.assertEqual(strategy_rows[0]["strategy_id"], "peg_deep_dip_concentration")
         self.assertEqual(strategy_rows[0]["suggested_action"], position_detail)
+        self.assertEqual(strategy_rows[0]["concern_flag"], 1)
 
     def test_laoyutou_signal_produces_finding_and_module_d_result_row(self):
         with unittest.mock.patch.object(
@@ -958,6 +971,137 @@ class RunModuleDBatchTest(unittest.TestCase):
         self.assertEqual(out["total"], 0)
         self.assertEqual(out["checked_count"], 0)
         self.assertEqual(out["results"], [])
+
+
+class RefreshPriceAndValuationTest(unittest.TestCase):
+    """2026-08-01新增：個股頁背景刷新——股價/估值快照，mock掉
+    screener._fetch_prices_with_fallback／fundamentals_client 兩個查詢
+    函式，不打真實外部API，用真實KBStore驗證確實寫入 stock_prices／
+    stock_valuation_snapshots。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="alphavibe-refresh-price-test-")
+        self.store = KBStore(self.tmp)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp)
+
+    def test_saves_price_with_prev_close_from_last_two_rows(self):
+        prices = [
+            {"date": "2026-07-29", "close": 90.0},
+            {"date": "2026-07-30", "close": 95.0},
+            {"date": "2026-07-31", "close": 93.6},
+        ]
+        with unittest.mock.patch.object(
+                screener, "_fetch_prices_with_fallback",
+                return_value=(prices, "twse_official")), \
+             unittest.mock.patch.object(
+                fundamentals_client, "get_valuation",
+                return_value={"per": 14.2, "pbr": 2.85, "dividend_yield": 5.98,
+                             "market": "TWSE", "data_source": "twse_official",
+                             "error": None}), \
+             unittest.mock.patch.object(
+                fundamentals_client, "get_revenue_yoy_latest",
+                return_value={"revenue_yoy": 0.332, "revenue_period": "2026年6月",
+                             "market": "TWSE", "data_source": "twse_official",
+                             "error": None}):
+            out = review_engine.refresh_price_and_valuation("2441", self.store)
+
+        self.assertEqual(out["errors"], {})
+        price_map = self.store.get_stock_prices()
+        self.assertEqual(price_map["2441"]["price"], 93.6)
+        self.assertEqual(price_map["2441"]["prev_close"], 95.0)
+        self.assertEqual(price_map["2441"]["price_date"], "2026-07-31")
+
+        valuation = self.store.get_stock_valuation("2441")
+        self.assertEqual(valuation["per"], 14.2)
+        self.assertEqual(valuation["revenue_yoy"], 0.332)
+        self.assertEqual(valuation["valuation_data_source"], "twse_official")
+
+    def test_single_price_row_leaves_prev_close_none(self):
+        with unittest.mock.patch.object(
+                screener, "_fetch_prices_with_fallback",
+                return_value=([{"date": "2026-07-31", "close": 93.6}], "twse_official")), \
+             unittest.mock.patch.object(
+                fundamentals_client, "get_valuation",
+                return_value={"per": None, "pbr": None, "dividend_yield": None,
+                             "market": None, "data_source": None, "error": "查無資料"}), \
+             unittest.mock.patch.object(
+                fundamentals_client, "get_revenue_yoy_latest",
+                return_value={"revenue_yoy": None, "revenue_period": None,
+                             "market": None, "data_source": None, "error": "查無資料"}):
+            review_engine.refresh_price_and_valuation("9999", self.store)
+
+        price_map = self.store.get_stock_prices()
+        self.assertIsNone(price_map["9999"]["prev_close"])
+
+    def test_empty_price_list_records_error_but_does_not_raise(self):
+        with unittest.mock.patch.object(
+                screener, "_fetch_prices_with_fallback",
+                return_value=([], "finmind_fallback")), \
+             unittest.mock.patch.object(
+                fundamentals_client, "get_valuation",
+                return_value={"per": None, "pbr": None, "dividend_yield": None,
+                             "market": None, "data_source": None, "error": "查無資料"}), \
+             unittest.mock.patch.object(
+                fundamentals_client, "get_revenue_yoy_latest",
+                return_value={"revenue_yoy": None, "revenue_period": None,
+                             "market": None, "data_source": None, "error": "查無資料"}):
+            out = review_engine.refresh_price_and_valuation("9999", self.store)
+
+        self.assertIn("price", out["errors"])
+        self.assertEqual(self.store.get_stock_prices(), {})
+
+    def test_price_step_exception_does_not_block_valuation_step(self):
+        with unittest.mock.patch.object(
+                screener, "_fetch_prices_with_fallback",
+                side_effect=Exception("網路炸了")), \
+             unittest.mock.patch.object(
+                fundamentals_client, "get_valuation",
+                return_value={"per": 14.2, "pbr": None, "dividend_yield": None,
+                             "market": "TWSE", "data_source": "twse_official",
+                             "error": None}), \
+             unittest.mock.patch.object(
+                fundamentals_client, "get_revenue_yoy_latest",
+                return_value={"revenue_yoy": None, "revenue_period": None,
+                             "market": None, "data_source": None, "error": None}):
+            out = review_engine.refresh_price_and_valuation("2441", self.store)
+
+        self.assertIn("price", out["errors"])
+        self.assertIsNotNone(self.store.get_stock_valuation("2441"))
+
+
+class RefreshStockSnapshotTest(unittest.TestCase):
+    """2026-08-01新增：refresh_stock_snapshot() 合併股價/估值刷新＋Module D
+    檢視，供 report_server.trigger_stock_refresh() 背景執行緒使用。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="alphavibe-refresh-snapshot-test-")
+        self.store = KBStore(self.tmp)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp)
+
+    def test_calls_both_price_valuation_and_module_d_review(self):
+        fake_snapshot = {"code": "2441", "checked_at": "2026-07-31T18:00:00",
+                         "price_saved": {"price": 93.6}, "valuation_saved": {"per": 14.2},
+                         "errors": {}}
+        fake_review = {"code": "2441", "findings": [], "errors": {}}
+        with unittest.mock.patch.object(
+                review_engine, "refresh_price_and_valuation",
+                return_value=fake_snapshot) as mock_snapshot, \
+             unittest.mock.patch.object(
+                review_engine, "run_module_d_review",
+                return_value=fake_review) as mock_review:
+            out = review_engine.refresh_stock_snapshot("2441", self.store)
+
+        mock_snapshot.assert_called_once_with("2441", self.store, data_dir=None, token=None)
+        mock_review.assert_called_once_with("2441", self.store, data_dir=None, token=None)
+        self.assertEqual(out["price_saved"], {"price": 93.6})
+        self.assertEqual(out["valuation_saved"], {"per": 14.2})
+        self.assertEqual(out["review"], fake_review)
 
 
 if __name__ == "__main__":

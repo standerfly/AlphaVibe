@@ -30,6 +30,22 @@ class RocToAdDateTest(unittest.TestCase):
         self.assertIsNone(tpc._roc_to_ad_date("115/13/01"))  # 月份不合法
 
 
+class RocCjkToAdDateTest(unittest.TestCase):
+    """BWIBBU 專用日期格式（"115年07月01日"），跟 STOCK_DAY／FMTQIK 的
+    "115/07/01" 斜線格式不同（2026-08-01 curl 實測確認，見模組docstring）。"""
+
+    def test_normal_conversion(self):
+        self.assertEqual(tpc._roc_cjk_to_ad_date("115年07月01日"), "2026-07-01")
+        self.assertEqual(tpc._roc_cjk_to_ad_date("109年01月02日"), "2020-01-02")
+
+    def test_invalid_format_returns_none(self):
+        self.assertIsNone(tpc._roc_cjk_to_ad_date("2026-07-01"))  # 西元格式
+        self.assertIsNone(tpc._roc_cjk_to_ad_date("115/07/01"))  # 斜線格式
+        self.assertIsNone(tpc._roc_cjk_to_ad_date(""))
+        self.assertIsNone(tpc._roc_cjk_to_ad_date(None))
+        self.assertIsNone(tpc._roc_cjk_to_ad_date("115年13月01日"))  # 月份不合法
+
+
 class ToFloatTest(unittest.TestCase):
     def test_strips_thousand_separators(self):
         self.assertEqual(tpc._to_float("39,836,425"), 39836425.0)
@@ -225,6 +241,126 @@ class FetchTpexStockMonthTest(unittest.TestCase):
                 tpc, "_throttled_get",
                 return_value={"payload": {"stat": "ok"}}):
             out = tpc.fetch_tpex_stock_month("3260", "202607")
+        self.assertIn("error", out)
+
+
+class FetchTwsePerMonthTest(unittest.TestCase):
+    """BWIBBU：單月個股歷史PER/PBR/殖利率，2026-08-01 新增（來源選用邏輯
+    稽核修正，供 fundamentals_client.get_per_history 官方優先來源用）。
+    欄位對照 2026-08-01 curl 實測：fields=[日期,殖利率(%),股利年度,本益比,
+    股價淨值比,財報年/季]。"""
+
+    def test_parses_per_pbr_dividend_yield(self):
+        payload = {"stat": "OK", "data": [
+            ["115年07月01日", "0.88", 114, "33.68", "11.03", "115/1"],
+        ]}
+        with unittest.mock.patch.object(
+                tpc, "_throttled_get", return_value={"payload": payload}):
+            out = tpc.fetch_twse_per_month("2330", "202607")
+        row = out["per_history"][0]
+        self.assertEqual(row["date"], "2026-07-01")
+        self.assertEqual(row["PER"], 33.68)
+        self.assertEqual(row["PBR"], 11.03)
+        self.assertEqual(row["dividend_yield"], 0.88)
+
+    def test_wrong_market_code_stat_message_is_error(self):
+        """對 TPEx 代碼誤查 BWIBBU：stat 是「很抱歉，沒有符合條件的資料!」，
+        2026-08-01 實測驗證過（跟 STOCK_DAY 對 TPEx 代碼的行為一致）。"""
+        with unittest.mock.patch.object(
+                tpc, "_throttled_get",
+                return_value={"payload": {"stat": "很抱歉，沒有符合條件的資料!",
+                                          "total": 0}}):
+            out = tpc.fetch_twse_per_month("3260", "202607")
+        self.assertIn("error", out)
+
+    def test_network_error_propagates(self):
+        with unittest.mock.patch.object(
+                tpc, "_throttled_get", return_value={"error": "斷網"}):
+            out = tpc.fetch_twse_per_month("2330", "202607")
+        self.assertEqual(out, {"error": "斷網"})
+
+    def test_row_with_null_per_is_skipped(self):
+        """PER欄位是佔位符（停牌等情況）時該列被濾掉，不可以塞None進PER
+        造成下游誤判（_to_float已把"--"等轉None，這裡確認會跳過該列）。"""
+        payload = {"stat": "OK", "data": [
+            ["115年07月01日", "0.88", 114, "--", "11.03", "115/1"],
+            ["115年07月02日", "0.89", 114, "33.14", "10.85", "115/1"],
+        ]}
+        with unittest.mock.patch.object(
+                tpc, "_throttled_get", return_value={"payload": payload}):
+            out = tpc.fetch_twse_per_month("2330", "202607")
+        self.assertEqual(len(out["per_history"]), 1)
+        self.assertEqual(out["per_history"][0]["date"], "2026-07-02")
+
+    def test_empty_data_returns_error(self):
+        with unittest.mock.patch.object(
+                tpc, "_throttled_get",
+                return_value={"payload": {"stat": "OK", "data": []}}):
+            out = tpc.fetch_twse_per_month("2330", "202607")
+        self.assertIn("error", out)
+
+
+class FetchPerHistoryTest(unittest.TestCase):
+    """高階函式：TWSE個股歷史PER序列，逐月合併去重排序（重用
+    _merge_months／_recent_year_months／_months_needed，邏輯同
+    fetch_price_history，只是 result_key 不同）。"""
+
+    def test_merges_months_dedups_and_sorts(self):
+        def fake_month(stock_id, year_month, cache=None):
+            rows_by_month = {
+                "202606": [{"date": "2026-06-15", "PER": 10.0, "PBR": None,
+                           "dividend_yield": None}],
+                "202607": [{"date": "2026-07-01", "PER": 11.0, "PBR": None,
+                           "dividend_yield": None},
+                          {"date": "2026-07-02", "PER": 12.0, "PBR": None,
+                           "dividend_yield": None}],
+            }
+            return {"per_history": rows_by_month.get(year_month, [])}
+
+        with unittest.mock.patch.object(tpc, "fetch_twse_per_month", fake_month), \
+             unittest.mock.patch.object(
+                tpc, "_recent_year_months", return_value=[(2026, 6), (2026, 7)]), \
+             unittest.mock.patch.object(tpc, "_days_ago", return_value="2026-01-01"):
+            out = tpc.fetch_per_history("2330", window_days=730)
+        dates = [p["date"] for p in out["per_history"]]
+        self.assertEqual(dates, ["2026-06-15", "2026-07-01", "2026-07-02"])
+        self.assertEqual(out["stock_id"], "2330")
+
+    def test_window_cutoff_filters_out_old_rows(self):
+        def fake_month(stock_id, year_month, cache=None):
+            return {"per_history": [
+                {"date": "2024-01-01", "PER": 10.0, "PBR": None, "dividend_yield": None},
+                {"date": "2026-07-01", "PER": 11.0, "PBR": None, "dividend_yield": None},
+            ]}
+
+        with unittest.mock.patch.object(tpc, "fetch_twse_per_month", fake_month), \
+             unittest.mock.patch.object(
+                tpc, "_recent_year_months", return_value=[(2026, 7)]), \
+             unittest.mock.patch.object(tpc, "_days_ago", return_value="2026-06-01"):
+            out = tpc.fetch_per_history("2330", window_days=730)
+        dates = [p["date"] for p in out["per_history"]]
+        self.assertEqual(dates, ["2026-07-01"])
+
+    def test_all_months_fail_returns_error(self):
+        """典型情境：TPEx股票查BWIBBU全月查無資料——呼叫端
+        fundamentals_client.get_per_history 據此fallback FinMind。"""
+        with unittest.mock.patch.object(
+                tpc, "fetch_twse_per_month",
+                return_value={"error": "TWSE BWIBBU 查無資料"}), \
+             unittest.mock.patch.object(
+                tpc, "_recent_year_months", return_value=[(2026, 6), (2026, 7)]):
+            out = tpc.fetch_per_history("3260", window_days=730)
+        self.assertIn("error", out)
+
+    def test_all_rows_older_than_cutoff_returns_error(self):
+        with unittest.mock.patch.object(
+                tpc, "fetch_twse_per_month",
+                return_value={"per_history": [{"date": "2020-01-01", "PER": 10.0,
+                                              "PBR": None, "dividend_yield": None}]}), \
+             unittest.mock.patch.object(
+                tpc, "_recent_year_months", return_value=[(2020, 1)]), \
+             unittest.mock.patch.object(tpc, "_days_ago", return_value="2026-06-01"):
+            out = tpc.fetch_per_history("2330", window_days=730)
         self.assertIn("error", out)
 
 

@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import finmind_client  # noqa: E402
 import frameworks  # noqa: E402
+import fundamentals_client  # noqa: E402
 import holdings_parser  # noqa: E402
 import market_scan  # noqa: E402
 import review_engine  # noqa: E402
@@ -142,7 +143,8 @@ TOOLS = [
     },
     {
         "name": "get_fundamentals",
-        "description": "查 FinMind 個股基本面：近期 PER/PBR/殖利率＋近 6 個月營收（FR-019 名單驅動選股用）。",
+        "description": ("查個股基本面：近期 PER/PBR/殖利率（官方TWSE/TPEx優先，FinMind降級為備援，"
+                        "見 valuation_data_source）＋近 6 個月營收（FinMind，FR-019 名單驅動選股用）。"),
         "inputSchema": {
             "type": "object",
             "properties": {"stock_id": {"type": "string", "description": "台股代碼，如 2330"}},
@@ -172,7 +174,9 @@ TOOLS = [
     },
     {
         "name": "get_revenue_yoy",
-        "description": "查個股月營收年增率（FinMind 無此欄位，以去年同月營收自行計算；找不到去年同月資料則標 null）。",
+        "description": ("查個股月營收年增率完整序列（FinMind無此欄位，以去年同月營收自行計算；"
+                        "找不到去年同月資料則標null）。額外附上 latest：最新一期年增率，"
+                        "官方TWSE/TPEx優先、FinMind降級為備援。"),
         "inputSchema": {
             "type": "object",
             "properties": {"stock_id": {"type": "string", "description": "台股代碼，如 2330"}},
@@ -692,12 +696,47 @@ TOOLS = [
                         "再用FinMind全市場清單比對（自動存回快取）；兩者都查無"
                         "代碼的名稱歸入unresolved_names，不會寫入（不可塞假"
                         "代碼），需人工處理。格式解析失敗的行歸入unparsed_lines，"
-                        "同樣需人工檢查。經使用者確認貼入的文字無誤後才呼叫。"),
+                        "同樣需人工檢查。防重複：每列委託書號若跟資料庫裡既有"
+                        "紀錄相同，該筆視為重複（同一份對帳單被貼了兩次），"
+                        "整筆跳過不寫入，歸入回傳的duplicates_skipped（不佔用"
+                        "add_sequence序號）。經使用者確認貼入的文字無誤後才呼叫。"),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "text": {"type": "string",
                          "description": "交易明細表原始文字，整段貼入。"},
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "parse_and_save_trade_csv",
+        "description": ("貼入國泰證券App匯出的「已成交」CSV格式對帳單文字，自動"
+                        "解析每筆日期/買賣/股數/價格，並正確計算遞減式加碼序號後"
+                        "批次寫入trade_ledger（跟parse_and_save_trade_ledger寫入"
+                        "同一張表，只是輸入格式不同——這份格式是標準CSV、西元"
+                        "日期，比交易明細表〔民國年+CD欄位〕更乾淨）。文字第一行"
+                        "是變動的提示文字（筆數會變，自動跳過，不用管內容），第"
+                        "二行是CSV表頭（第一欄「股名」），之後每行是一筆標準CSV"
+                        "格式的交易資料（含千分位逗號的欄位有雙引號包住，如"
+                        "\"-6,542\"）。買賣別目前只認得「現買」「現賣」（對應"
+                        "「買」「賣」），其他字串歸入unparsed_lines。"
+                        "add_sequence（第幾次加碼）計算：依代碼分組後依日期"
+                        "（同日按原始出現順序）排序，接續該代碼在資料庫裡既有"
+                        "的買進筆數往後遞增；賣出一律為None。股票名稱→代碼解析"
+                        "先查stock_aliases快取，未命中再用FinMind全市場清單比對"
+                        "（自動存回快取）；兩者都查無代碼的名稱歸入"
+                        "unresolved_names，不會寫入（不可塞假代碼），需人工"
+                        "處理。格式解析失敗的行歸入unparsed_lines，同樣需人工"
+                        "檢查。防重複：每列委託書號若跟資料庫裡既有紀錄相同，"
+                        "該筆視為重複（同一份對帳單被貼了兩次），整筆跳過不"
+                        "寫入，歸入回傳的duplicates_skipped（不佔用add_sequence"
+                        "序號）。經使用者確認貼入的文字無誤後才呼叫。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string",
+                         "description": "國泰證券App「已成交」CSV對帳單原始文字，整段貼入。"},
             },
             "required": ["text"],
         },
@@ -778,8 +817,27 @@ class Server:
                 return self.store.get_philosophy(module)
             return self.store.list_philosophy()
         if name == "get_fundamentals":
-            return finmind_client.get_fundamentals(
-                args["stock_id"], data_dir=self.data_dir)
+            # PER/PBR/殖利率：官方優先＋FinMind備援（2026-08-01 來源選用
+            # 邏輯稽核修正，見 fundamentals_client 模組docstring）。
+            # monthly_revenue（近6個月原始營收）沒有對應官方多月來源，
+            # 仍呼叫 finmind_client.get_fundamentals 取得——這裡把它的
+            # valuation 覆寫成官方優先結果，其餘欄位（monthly_revenue／
+            # errors／token_used）維持不動。⚠️已知取捨：finmind_client.
+            # get_fundamentals 內部PER與營收是綁在一起的單一函式，即使
+            # 官方估值查詢成功、不需要FinMind的PER資料，這裡仍會為了
+            # monthly_revenue而連帶打一次FinMind TaiwanStockPER（其回傳
+            # 值不會被使用）——沒有完全省下這次FinMind額度消耗，只是
+            # 回傳給呼叫端的PER/PBR/殖利率數值本身是官方優先且正確的。
+            stock_id = args["stock_id"]
+            result = finmind_client.get_fundamentals(stock_id, data_dir=self.data_dir)
+            valuation = fundamentals_client.get_valuation(stock_id, data_dir=self.data_dir)
+            result["valuation"] = {"PER": valuation["per"], "PBR": valuation["pbr"],
+                                   "dividend_yield": valuation["dividend_yield"]}
+            result["valuation_data_source"] = valuation["data_source"]
+            if valuation["error"]:
+                result.setdefault("errors", [])
+                result["errors"].append(valuation["error"])
+            return result
         if name == "get_stock_info":
             return finmind_client.get_stock_info(
                 stock_id=args.get("stock_id"), data_dir=self.data_dir)
@@ -788,8 +846,16 @@ class Server:
                 args["stock_id"], start_date=args.get("start_date"),
                 end_date=args.get("end_date"), data_dir=self.data_dir)
         if name == "get_revenue_yoy":
-            return finmind_client.get_revenue_yoy(
-                args["stock_id"], data_dir=self.data_dir)
+            # 完整多月序列（供趨勢判斷）維持直接呼叫 finmind_client，
+            # 官方批次端點只有最新一期沒有多月歷史（見 fundamentals_client
+            # 模組docstring，PO已確認範圍）。額外附上 latest：最新一期
+            # 年增率改用官方優先＋FinMind備援（2026-08-01 來源選用邏輯
+            # 稽核修正）。
+            stock_id = args["stock_id"]
+            result = finmind_client.get_revenue_yoy(stock_id, data_dir=self.data_dir)
+            result["latest"] = fundamentals_client.get_revenue_yoy_latest(
+                stock_id, data_dir=self.data_dir)
+            return result
         if name == "get_institutional_trading":
             return finmind_client.get_institutional_trading(
                 args["stock_id"], start_date=args.get("start_date"),
@@ -965,6 +1031,10 @@ class Server:
                 data_dir=self.data_dir)
         if name == "parse_and_save_trade_ledger":
             parsed = trade_ledger_parser.parse_trade_ledger_text(args["text"])
+            return trade_ledger_parser.resolve_and_save_trade_ledger(
+                parsed, store=self.store, data_dir=self.data_dir)
+        if name == "parse_and_save_trade_csv":
+            parsed = trade_ledger_parser.parse_trade_csv_text(args["text"])
             return trade_ledger_parser.resolve_and_save_trade_ledger(
                 parsed, store=self.store, data_dir=self.data_dir)
         raise ValueError("未知工具：%s" % name)

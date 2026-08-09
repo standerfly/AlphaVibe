@@ -174,6 +174,75 @@ class KBStoreTest(unittest.TestCase):
     def test_stock_price_get_empty(self):
         self.assertEqual(self.store.get_stock_prices(), {})
 
+    def test_stock_price_upsert_with_prev_close(self):
+        out = self.store.upsert_stock_price("2330", 1005.0, "2026-07-18", prev_close=995.0)
+        self.assertEqual(out["prev_close"], 995.0)
+        prices = self.store.get_stock_prices()
+        self.assertEqual(prices["2330"]["prev_close"], 995.0)
+
+    def test_stock_price_prev_close_defaults_to_none(self):
+        self.store.upsert_stock_price("2330", 1005.0, "2026-07-18")
+        prices = self.store.get_stock_prices()
+        self.assertIsNone(prices["2330"]["prev_close"])
+
+    # ---------- 估值快照快取 ----------
+
+    def test_stock_valuation_upsert_and_get(self):
+        out = self.store.upsert_stock_valuation(
+            "2330", per=14.2, pbr=2.85, dividend_yield=5.98,
+            revenue_yoy=0.332, revenue_period="2026年6月",
+            valuation_data_source="twse_official", revenue_data_source="twse_official",
+            checked_at="2026-07-31T18:00:00")
+        self.assertTrue(out["saved"])
+        got = self.store.get_stock_valuation("2330")
+        self.assertEqual(got["per"], 14.2)
+        self.assertEqual(got["pbr"], 2.85)
+        self.assertEqual(got["dividend_yield"], 5.98)
+        self.assertEqual(got["revenue_yoy"], 0.332)
+        self.assertEqual(got["valuation_data_source"], "twse_official")
+        self.assertEqual(got["checked_at"], "2026-07-31T18:00:00")
+
+    def test_stock_valuation_upsert_overwrites_not_duplicates(self):
+        self.store.upsert_stock_valuation("2330", per=14.0, checked_at="2026-07-30T18:00:00")
+        self.store.upsert_stock_valuation("2330", per=15.0, checked_at="2026-07-31T18:00:00")
+        got = self.store.get_stock_valuation("2330")
+        self.assertEqual(got["per"], 15.0)
+        row_count = self.store.conn.execute(
+            "SELECT COUNT(*) c FROM stock_valuation_snapshots WHERE code='2330'").fetchone()["c"]
+        self.assertEqual(row_count, 1)
+
+    def test_stock_valuation_get_missing_returns_none(self):
+        self.assertIsNone(self.store.get_stock_valuation("9999"))
+
+    def test_stock_valuation_requires_code(self):
+        with self.assertRaises(ValueError):
+            self.store.upsert_stock_valuation("")
+
+    # ---------- 依代碼查留言 ----------
+
+    def test_get_comments_by_code_exact_symbol_match(self):
+        self.store.save_comment("封測產能利用率回升", source_tag="心得", symbols="2441")
+        self.store.save_comment("外資調升目標價", source_tag="心得", symbols="2330")
+        got = self.store.get_comments_by_code("2441")
+        self.assertEqual(got["count"], 1)
+        self.assertIn("封測", got["results"][0]["body"])
+
+    def test_get_comments_by_code_avoids_substring_false_positive(self):
+        """code="330"不該誤中symbols="2330"（子字串誤判，見docstring）。"""
+        self.store.save_comment("外資調升目標價", source_tag="心得", symbols="2330")
+        got = self.store.get_comments_by_code("330")
+        self.assertEqual(got["count"], 0)
+
+    def test_get_comments_by_code_multi_symbol_comment(self):
+        self.store.save_comment("同時討論兩檔", source_tag="心得", symbols="2330,2441")
+        self.assertEqual(self.store.get_comments_by_code("2330")["count"], 1)
+        self.assertEqual(self.store.get_comments_by_code("2441")["count"], 1)
+        self.assertEqual(self.store.get_comments_by_code("9999")["count"], 0)
+
+    def test_get_comments_by_code_requires_code(self):
+        with self.assertRaises(ValueError):
+            self.store.get_comments_by_code("")
+
     def test_stock_industry_upsert_and_get(self):
         out = self.store.upsert_stock_industry("2330", "半導體業")
         self.assertTrue(out["saved"])
@@ -286,6 +355,84 @@ class KBStoreTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.save_trade_ledger_entry(
                 "2330", "台積電", "持有", 1000, 900.0, "2026-07-01")
+
+    def test_trade_ledger_order_ref_saved_and_retrievable(self):
+        """order_ref（委託書號，2026-07-31新增）要能正確存入並讀出。"""
+        self.store.save_trade_ledger_entry(
+            "2330", "台積電", "買", 1000, 900.0, "2026-07-01",
+            add_sequence=1, order_ref="k09QI")
+        result = self.store.get_trade_ledger("2330")
+        self.assertEqual(result["entries"][0]["order_ref"], "k09QI")
+
+    def test_trade_ledger_order_ref_defaults_to_none(self):
+        """沒有傳order_ref的呼叫（既有呼叫端）要維持相容，值是NULL/None。"""
+        self.store.save_trade_ledger_entry(
+            "2330", "台積電", "買", 1000, 900.0, "2026-07-01", add_sequence=1)
+        result = self.store.get_trade_ledger("2330")
+        self.assertIsNone(result["entries"][0]["order_ref"])
+
+    def test_trade_ledger_order_ref_exists_true_when_present(self):
+        self.store.save_trade_ledger_entry(
+            "2330", "台積電", "買", 1000, 900.0, "2026-07-01", order_ref="k09QI")
+        self.assertTrue(self.store.trade_ledger_order_ref_exists("k09QI"))
+
+    def test_trade_ledger_order_ref_exists_false_when_absent(self):
+        self.assertFalse(self.store.trade_ledger_order_ref_exists("k09QI"))
+
+    def test_trade_ledger_order_ref_exists_false_for_none_or_empty(self):
+        """None／空字串都是「無法判斷」，防禦性回傳False（不誤擋）。"""
+        self.assertFalse(self.store.trade_ledger_order_ref_exists(None))
+        self.assertFalse(self.store.trade_ledger_order_ref_exists(""))
+
+    def test_trade_ledger_migrates_old_schema_without_order_ref(self):
+        """回歸測試：模擬2026-07-31之前建的、沒有order_ref欄位的既有
+        trade_ledger表（正式環境alphavibe.db目前19筆既有資料的實況），
+        確認KBStore開啟時能安全遷移：既有資料列不消失，新欄位能正常寫入。"""
+        tmp = tempfile.mkdtemp(prefix="alphavibe-trade-ledger-migration-test-")
+        try:
+            db_path = os.path.join(tmp, "alphavibe.db")
+            conn = sqlite3.connect(db_path)
+            conn.execute("""
+                CREATE TABLE trade_ledger (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    code TEXT NOT NULL,
+                    name TEXT,
+                    action TEXT NOT NULL,
+                    add_sequence INTEGER,
+                    shares REAL,
+                    price REAL,
+                    date TEXT NOT NULL,
+                    source_ref TEXT,
+                    created_at TEXT NOT NULL
+                )
+            """)
+            conn.execute(
+                "INSERT INTO trade_ledger (code, name, action, add_sequence,"
+                " shares, price, date, source_ref, created_at)"
+                " VALUES ('2330', '台積電', '買', 1, 1000, 900.0,"
+                " '2026-07-01', NULL, '2026-07-01T00:00:00')")
+            conn.commit()
+            conn.close()
+
+            store = KBStore(tmp)
+            try:
+                cols = {row["name"] for row in
+                        store.conn.execute("PRAGMA table_info(trade_ledger)")}
+                self.assertIn("order_ref", cols)
+
+                old_entry = store.get_trade_ledger("2330")["entries"][0]
+                self.assertIsNone(old_entry["order_ref"])
+                self.assertEqual(old_entry["code"], "2330")
+
+                # 遷移後新欄位能正常寫入。
+                store.save_trade_ledger_entry(
+                    "2330", "台積電", "買", 500, 950.0, "2026-07-10",
+                    add_sequence=2, order_ref="k09QI")
+                self.assertTrue(store.trade_ledger_order_ref_exists("k09QI"))
+            finally:
+                store.close()
+        finally:
+            shutil.rmtree(tmp)
 
     def _market_scan_row(self, code, peg=0.5, meets=True, error=None):
         return {"code": code, "name": "測試股%s" % code, "market": "TWSE",
@@ -469,6 +616,14 @@ class KBStoreTest(unittest.TestCase):
         self.assertIsNone(row["strategy_id"])
         self.assertIsNone(row["suggested_action"])
         self.assertEqual(row["conflict_flag"], 0)
+        self.assertEqual(row["concern_flag"], 0)  # 預設False，見_MIGRATIONS註解
+
+    def test_save_module_d_result_with_concern_flag(self):
+        self.store.save_module_d_result(
+            code="2330", trigger_type="通用層", finding="下檔風險偏高",
+            concern_flag=True)
+        row = self.store.get_module_d_results(code="2330")["results"][0]
+        self.assertEqual(row["concern_flag"], 1)
 
     def test_save_module_d_result_with_strategy_and_suggested_action(self):
         self.store.save_module_d_result(

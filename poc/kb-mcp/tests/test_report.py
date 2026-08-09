@@ -557,6 +557,18 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("加自選股失敗：代碼為必填", error_page)
         self.assertIn("#c92a2a", error_page)  # 錯誤＝紅
 
+    def test_quick_input_section_has_trade_csv_form(self):
+        """第四個貼文字快速輸入工具（2026-07-31新增）：貼國泰證券App
+        「已成交」CSV格式對帳單，POST到/dashboard/tradecsv，跟既有3個表單
+        同樣掛在快速輸入區塊裡。"""
+        page = report.render_dashboard(self.store)
+        start = page.index('<details class="section" id="section-quick-input"')
+        end = page.index("</details>", start) + len("</details>")
+        section = page[start:end]
+        self.assertIn("貼CSV對帳單", section)
+        self.assertIn('action="/dashboard/tradecsv"', section)
+        self.assertIn('<textarea name="text"', section)
+
 
 class HoldingsPreviewTest(unittest.TestCase):
     """report.render_holdings_preview()：貼庫存帳單快速輸入第一步（預覽），
@@ -681,6 +693,267 @@ class HoldingsPreviewTest(unittest.TestCase):
         raw = html.unescape(page[start:end])
         restored = json.loads(raw)
         self.assertEqual(restored[0]["name"], "世芯-KY")
+
+
+class StockListPageTest(unittest.TestCase):
+    """2026-08-01新增：render_stock_list_page()（清單頁）測試。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="alphavibe-stocklist-test-")
+        self.store = KBStore(self.tmp)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp)
+
+    def test_empty_shows_placeholder_and_add_form(self):
+        page = report.render_stock_list_page(self.store)
+        self.assertIn("目前沒有追蹤中的標的", page)
+        self.assertIn("/dashboard/stocks/add", page)
+        self.assertIn("共 0 檔（0 檔庫存＋0 檔研究中）", page)
+
+    def test_holdings_and_research_counted_and_filtered(self):
+        self.store.save_holdings([{"code": "2330", "name": "台積電", "shares": 100}])
+        self.store.save_stance("2330", "偏多", name="台積電")
+        self.store.save_stance("2441", "研究中", name="超豐")
+        page_all = report.render_stock_list_page(self.store, filter_key="all")
+        self.assertIn("共 2 檔（1 檔庫存＋1 檔研究中）", page_all)
+        self.assertIn("2330", page_all)
+        self.assertIn("2441", page_all)
+
+        page_holdings = report.render_stock_list_page(self.store, filter_key="holdings")
+        self.assertIn("2330", page_holdings)
+        self.assertNotIn("2441", page_holdings)
+
+        page_research = report.render_stock_list_page(self.store, filter_key="research")
+        self.assertIn("2441", page_research)
+        self.assertNotIn("2330", page_research)
+
+    def test_pagination_shows_ten_per_page(self):
+        for i in range(15):
+            self.store.save_stance("%04d" % (3000 + i), "研究中", name="測試股%d" % i)
+        page1 = report.render_stock_list_page(self.store, page=1)
+        self.assertIn("顯示 1–10 / 15 檔", page1)
+        self.assertIn("下一批", page1)
+        self.assertIn("aria-disabled=\"true\"", page1)  # 上一批disabled
+
+        page2 = report.render_stock_list_page(self.store, page=2)
+        self.assertIn("顯示 11–15 / 15 檔", page2)
+        self.assertIn("上一批", page2)
+
+        # 第一頁跟第二頁的代碼不重複
+        codes_p1 = set(re.findall(r"stock-row__code\">(\d{4})<", page1))
+        codes_p2 = set(re.findall(r"stock-row__code\">(\d{4})<", page2))
+        self.assertEqual(len(codes_p1), 10)
+        self.assertEqual(len(codes_p2), 5)
+        self.assertEqual(codes_p1 & codes_p2, set())
+
+    def test_page_out_of_range_clamped_to_last_page(self):
+        self.store.save_stance("2330", "研究中", name="台積電")
+        page = report.render_stock_list_page(self.store, page=99)
+        self.assertIn("顯示 1–1 / 1 檔", page)
+
+    def test_search_matches_code(self):
+        self.store.save_stance("2330", "研究中", name="台積電")
+        self.store.save_stance("2454", "研究中", name="聯發科")
+        page = report.render_stock_list_page(self.store, query="2330")
+        self.assertIn("2330", page)
+        self.assertNotIn("2454", page)
+
+    def test_search_matches_name(self):
+        self.store.save_stance("2330", "研究中", name="台積電")
+        self.store.save_stance("2454", "研究中", name="聯發科")
+        page = report.render_stock_list_page(self.store, query="聯發科")
+        self.assertIn("2454", page)
+        self.assertNotIn("2330", page)
+
+    def test_search_matches_comment_full_text(self):
+        self.store.save_stance("2330", "研究中", name="台積電")
+        self.store.save_stance("2454", "研究中", name="聯發科")
+        self.store.save_comment("先進封裝需求強勁，法說會展望佳", source_tag="心得",
+                                symbols="2330")
+        page = report.render_stock_list_page(self.store, query="先進封裝")
+        self.assertIn("2330", page)
+        self.assertNotIn("2454", page)
+
+    def test_search_no_match_shows_message(self):
+        self.store.save_stance("2330", "研究中", name="台積電")
+        page = report.render_stock_list_page(self.store, query="不存在的關鍵字xyz")
+        self.assertIn("沒有符合搜尋條件的標的", page)
+
+    def test_concern_flag_marks_row_and_status_text(self):
+        self.store.save_stance("2330", "研究中", name="台積電")
+        self.store.save_module_d_result(
+            code="2330", trigger_type="老芋頭動向",
+            finding="老芋頭於2026-07-30賣出500股", concern_flag=True,
+            checked_at="2026-07-31T18:00:00")
+        page = report.render_stock_list_page(self.store)
+        self.assertIn("has-concern", page)
+        self.assertIn("老芋頭於2026-07-30賣出500股", page)
+
+    def test_only_latest_batch_used_not_historical_rows_mixed(self):
+        """同一代碼跨兩個批次的檢視結果，清單頁只該用最新一批判斷concern，
+        不能把舊批次的concern也算進來（見派工說明「不能把歷史所有批次的
+        列混在一起顯示」）。"""
+        self.store.save_stance("2330", "研究中", name="台積電")
+        self.store.save_module_d_result(
+            code="2330", trigger_type="通用層", finding="舊批次：下檔風險偏高",
+            concern_flag=True, checked_at="2026-07-30T18:00:00")
+        self.store.save_module_d_result(
+            code="2330", trigger_type="通用層", finding="新批次：下檔風險可控",
+            concern_flag=False, checked_at="2026-07-31T18:00:00")
+        page = report.render_stock_list_page(self.store)
+        # 只檢查「列本身有沒有被套用 has-concern class」，不能檢查裸字串
+        # "has-concern"——CSS樣式表裡 `.stock-row.has-concern {...}` 這條
+        # 規則定義本身永遠存在於頁面裡，裸字串比對必定誤判成「找到了」。
+        self.assertNotIn('class="stock-row has-concern"', page)
+        self.assertIn("新批次：下檔風險可控", page)
+
+    def test_price_and_delta_rendered(self):
+        self.store.save_stance("2330", "研究中", name="台積電")
+        self.store.upsert_stock_price("2330", 1005.0, "2026-07-31", prev_close=995.0)
+        page = report.render_stock_list_page(self.store)
+        self.assertIn("1,005", page)
+        self.assertIn("is-up", page)  # 漲=紅色class
+
+    def test_no_price_shows_dash(self):
+        self.store.save_stance("2330", "研究中", name="台積電")
+        page = report.render_stock_list_page(self.store)
+        self.assertIn("—", page)
+
+    def test_xss_escapes_stock_name_and_comment_content(self):
+        self.store.save_stance("2330", "研究中", name="<script>alert(1)</script>")
+        page = report.render_stock_list_page(self.store)
+        self.assertNotIn("<script>alert(1)</script>", page)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", page)
+
+    def test_invalid_filter_key_defaults_to_all(self):
+        self.store.save_stance("2330", "研究中", name="台積電")
+        page = report.render_stock_list_page(self.store, filter_key="not-a-real-filter")
+        self.assertIn("2330", page)
+        self.assertIn("filter-tab active", page)  # 落回「全部」還是要有一個active
+
+
+class StockDetailPageTest(unittest.TestCase):
+    """2026-08-01新增：render_stock_detail_page()（個股詳情頁）測試。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="alphavibe-stockdetail-test-")
+        self.store = KBStore(self.tmp)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp)
+
+    def test_unknown_code_does_not_raise_shows_placeholders(self):
+        page = report.render_stock_detail_page(self.store, "9999")
+        self.assertIn("9999", page)
+        self.assertIn("尚未產生分析", page)
+        self.assertIn("尚無估值資料", page)
+        self.assertIn("尚未記錄買進理由", page)
+
+    def test_refreshing_state_shows_updating_message_and_disables_button(self):
+        self.store.save_stance("2330", "研究中", name="台積電")
+        page = report.render_stock_detail_page(self.store, "2330", refreshing=True)
+        self.assertIn("更新中", page)
+        self.assertIn("disabled", page)
+
+    def test_buy_reason_pinned_card_shows_latest(self):
+        self.store.save_stance("2330", "偏多", name="台積電")
+        self.store.save_comment("舊的買進理由", source_tag="買進理由", symbols="2330",
+                                date="2026-01-01")
+        self.store.save_comment("最新的買進理由：先進封裝需求強", source_tag="買進理由",
+                                symbols="2330", date="2026-05-11")
+        page = report.render_stock_detail_page(self.store, "2330")
+        self.assertIn("reason-pin", page)
+        self.assertIn("最新的買進理由：先進封裝需求強", page)
+        # 心得與留言卡的一般留言清單不該重複列出買進理由
+        self.assertEqual(page.count("最新的買進理由：先進封裝需求強"), 1)
+
+    def test_valuation_card_shows_numbers_and_source(self):
+        self.store.save_stance("2330", "偏多", name="台積電")
+        self.store.upsert_stock_valuation(
+            "2330", per=14.2, pbr=2.85, dividend_yield=5.98, revenue_yoy=0.332,
+            valuation_data_source="twse_official", checked_at="2026-07-31T18:00:00")
+        page = report.render_stock_detail_page(self.store, "2330")
+        self.assertIn("14.2", page)
+        self.assertIn("2.85", page)
+        self.assertIn("5.98%", page)
+        self.assertIn("33.2%", page)
+        self.assertIn("官方來源（TWSE）", page)
+
+    def test_module_d_card_groups_by_trigger_type_with_concern_color(self):
+        self.store.save_stance("2330", "偏多", name="台積電")
+        self.store.save_module_d_result(
+            code="2330", trigger_type="通用層", finding="下檔風險可控",
+            concern_flag=False, checked_at="2026-07-31T18:00:00")
+        self.store.save_module_d_result(
+            code="2330", trigger_type="策略層", strategy_id="peg_deep_dip_concentration",
+            finding="假說未失效", concern_flag=False, checked_at="2026-07-31T18:00:00")
+        self.store.save_module_d_result(
+            code="2330", trigger_type="老芋頭動向", finding="老芋頭賣出，你仍持有",
+            concern_flag=True, checked_at="2026-07-31T18:00:00")
+        page = report.render_stock_detail_page(self.store, "2330")
+        self.assertIn("下檔風險可控", page)
+        self.assertIn("peg_deep_dip_concentration", page)
+        self.assertIn("老芋頭賣出，你仍持有", page)
+        self.assertIn("finding ok", page)
+        self.assertIn("finding alert", page)
+        self.assertIn("需留意", page)
+
+    def test_holdings_card_shown_when_holding_exists(self):
+        self.store.save_holdings([{"code": "2330", "name": "台積電", "shares": 100,
+                                   "avg_cost": 900}])
+        self.store.upsert_stock_price("2330", 1000.0, "2026-07-31")
+        self.store.save_trade_ledger_entry("2330", "台積電", "買", 100, 900,
+                                           "2026-05-11", add_sequence=1)
+        page = report.render_stock_detail_page(self.store, "2330")
+        self.assertIn("持股與交易", page)
+        self.assertIn("庫存中", page)
+        self.assertIn("100", page)
+
+    def test_holdings_card_hidden_for_pure_research_stock(self):
+        self.store.save_stance("2441", "研究中", name="超豐")
+        page = report.render_stock_detail_page(self.store, "2441")
+        self.assertNotIn("持股與交易", page)
+
+    def test_holdings_card_shows_history_when_sold_out(self):
+        """曾經持有、目前已出清（不在最新庫存快照，但trade_ledger有紀錄）：
+        卡片仍顯示、但標示「目前未持有」，不是空表格（見派工說明判斷取捨）。"""
+        self.store.save_trade_ledger_entry("2441", "超豐", "買", 1000, 90,
+                                           "2026-01-01", add_sequence=1)
+        self.store.save_trade_ledger_entry("2441", "超豐", "賣", 1000, 95,
+                                           "2026-06-01")
+        page = report.render_stock_detail_page(self.store, "2441")
+        self.assertIn("持股與交易", page)
+        self.assertIn("目前未持有", page)
+        self.assertIn("trade-row__tag buy", page)
+        self.assertIn("trade-row__tag sell", page)
+
+    def test_notes_card_lists_non_buy_reason_comments(self):
+        self.store.save_stance("2330", "偏多", name="台積電")
+        self.store.save_comment("買進理由内容", source_tag="買進理由", symbols="2330")
+        self.store.save_comment("心得內容A", source_tag="心得", symbols="2330")
+        self.store.save_comment("交易備註內容B", source_tag="交易備註", symbols="2330")
+        self.store.save_comment("別檔股票的留言，不該出現", source_tag="心得", symbols="9999")
+        page = report.render_stock_detail_page(self.store, "2330")
+        self.assertIn("心得內容A", page)
+        self.assertIn("交易備註內容B", page)
+        self.assertNotIn("別檔股票的留言，不該出現", page)
+        self.assertIn("另有 1 則買進理由已置頂", page)
+
+    def test_xss_escapes_comment_body_and_name(self):
+        self.store.save_stance("2330", "偏多", name="台積電")
+        self.store.save_comment('<img src=x onerror=alert(1)>', source_tag="心得",
+                                symbols="2330")
+        page = report.render_stock_detail_page(self.store, "2330")
+        self.assertNotIn("<img src=x onerror=alert(1)>", page)
+        self.assertIn("&lt;img src=x onerror=alert(1)&gt;", page)
+
+    def test_title_escapes_stock_name(self):
+        self.store.save_stance("2330", "偏多", name="<b>台積電</b>")
+        page = report.render_stock_detail_page(self.store, "2330")
+        self.assertIn("<title>2330 &lt;b&gt;台積電&lt;/b&gt; - AlphaVibe</title>", page)
 
 
 if __name__ == "__main__":

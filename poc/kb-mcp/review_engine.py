@@ -39,6 +39,15 @@ strategies` 的 SQL 細節封裝在 `kb_store.KBStore.get_associated_frameworks`
 （review_engine.py 跟 FR-053/054 既有慣例一致，不直接碰 `store.conn`，
 所有 SQL 留在 kb_store.py），這裡只是薄包裝。
 
+2026-08-01（來源選用邏輯稽核修正）：`general_review()` 的歷史PER查詢
+（`_downside_risk` 用）改呼叫 `fundamentals_client.get_per_history`（TWSE
+官方BWIBBU逐月合併優先，FinMind降級為備援），不再直接寫死呼叫
+`finmind_client.get_per_history`。⚠️ 月營收年增率查詢（`_growth_deceleration`
+用）刻意「不」跟著改——那個檢查需要的是多月歷史序列判斷連續趨勢，官方
+批次端點只有最新一期，沒有可用的官方多月序列來源（PO已確認範圍：只有
+「最新一期單筆」才需要官方優先，多月趨勢維持現狀呼叫FinMind），所以
+`revenue_result` 那一行維持不動。
+
 僅標準庫。外部查詢失敗不丟例外，回傳裡標記失敗原因，不中斷整個檢查流程
 （比照 finmind_client 既有慣例）。
 """
@@ -46,6 +55,7 @@ import datetime
 
 import finmind_client
 import frameworks
+import fundamentals_client
 import screener
 
 # FR-054 遞減式加碼比例表：key＝第幾次加碼，value＝這次加碼相對於「這檔
@@ -195,8 +205,12 @@ def general_review(code, data_dir=None, token=None):
     預期獲利能否持續上修這 3 項留 `manual_notes` 手動欄位，尚未自動化。
     所有檢查結果都是提醒，不自動裁決，決策權在 PO。
     """
+    # 月營收多月序列：維持直接呼叫 finmind_client（見模組docstring說明，
+    # 官方無對應多月歷史來源，不套用官方優先包裝）。
     revenue_result = finmind_client.get_revenue_yoy(code, data_dir=data_dir, token=token)
-    per_result = finmind_client.get_per_history(code, data_dir=data_dir, token=token)
+    # 歷史PER序列：官方優先（TWSE BWIBBU逐月合併），FinMind降級為備援
+    # （2026-08-01 來源選用邏輯稽核修正，見模組docstring）。
+    per_result = fundamentals_client.get_per_history(code, data_dir=data_dir, token=token)
 
     return {
         "code": code,
@@ -713,7 +727,8 @@ def run_module_d_review(code, store, data_dir=None, token=None):
             store.save_module_d_result(
                 code=code, trigger_type=it["trigger_type"], finding=it["detail"],
                 strategy_id=it["strategy_id"], suggested_action=suggested_action,
-                conflict_flag=conflict_flag, checked_at=checked_at)
+                conflict_flag=conflict_flag, concern_flag=it["concern_flag"],
+                checked_at=checked_at)
             saved_count += 1
         except Exception as exc:
             errors.setdefault("module_d_results_save", []).append(
@@ -765,3 +780,86 @@ def run_module_d_batch(store, data_dir=None, token=None):
         "concern_codes": concern_codes,
         "results": results,
     }
+
+
+# ---------------------------------------------------------------------------
+# 個股頁背景刷新（2026-08-01新增）：清單頁／詳情頁「不即時查詢」原則——
+# 頁面只讀 stock_prices／stock_valuation_snapshots／module_d_results 快取，
+# 實際查詢都在這裡的背景刷新流程裡完成，由 report_server.trigger_stock_
+# refresh()（PO手動按更新／新增研究標的觸發）與 module_d_scheduler.py
+# （每日18:00排程）兩條路徑共用，確保寫入同一份資料、同一套邏輯。
+# ---------------------------------------------------------------------------
+
+def refresh_price_and_valuation(code, store, data_dir=None, token=None):
+    """單一代碼的股價＋估值快照刷新：
+
+    - 股價：重用 screener._fetch_prices_with_fallback()（官方TWSE/TPEx
+      優先、FinMind降級備援，market=None時依序試TWSE、TPEx——跟
+      screen_stocks() 手動貼代碼、不知道市場別時的既有邏輯一致，不重寫
+      一套新的股價來源選用規則）。取回的價格序列依日期升冪排列，最後
+      一筆是最新收盤、倒數第二筆是前一交易日收盤，兩者一起存入
+      stock_prices（prev_close有值時，清單頁/詳情頁才能算「今天漲跌幅」；
+      只有一筆資料時 prev_close 存 None，不臆測）。
+    - 估值：fundamentals_client.get_valuation()／get_revenue_yoy_latest()
+      （官方優先＋FinMind備援，2026-08-01已建好的模組，見該模組docstring
+      的稽核修正說明），存入 stock_valuation_snapshots。
+
+    兩步驟各自 try/except，一個失敗不影響另一個（比照 run_module_d_review
+    的既有 try/except-per-step 慣例）。回傳 dict 供呼叫端記錄
+    checked_at／saved結果／errors；不丟例外中斷呼叫端。
+    """
+    checked_at = datetime.datetime.now().isoformat(timespec="seconds")
+    errors = {}
+
+    price_saved = None
+    try:
+        prices, price_data_source = screener._fetch_prices_with_fallback(
+            code, None, data_dir, token, None)
+        if prices:
+            latest = prices[-1]
+            prev = prices[-2] if len(prices) >= 2 else None
+            price_saved = store.upsert_stock_price(
+                code, latest.get("close"), latest.get("date"),
+                prev_close=(prev.get("close") if prev else None))
+        else:
+            errors["price"] = "查無股價資料（來源：%s）" % price_data_source
+    except Exception as exc:  # 絕不丟例外中斷呼叫端
+        errors["price"] = "股價刷新失敗：%s" % exc
+
+    valuation_saved = None
+    try:
+        valuation = fundamentals_client.get_valuation(code, data_dir=data_dir, token=token)
+        revenue = fundamentals_client.get_revenue_yoy_latest(code, data_dir=data_dir, token=token)
+        valuation_saved = store.upsert_stock_valuation(
+            code, per=valuation.get("per"), pbr=valuation.get("pbr"),
+            dividend_yield=valuation.get("dividend_yield"),
+            revenue_yoy=revenue.get("revenue_yoy"), revenue_period=revenue.get("revenue_period"),
+            valuation_data_source=valuation.get("data_source"),
+            revenue_data_source=revenue.get("data_source"),
+            valuation_error=valuation.get("error"), revenue_error=revenue.get("error"),
+            checked_at=checked_at)
+    except Exception as exc:  # 絕不丟例外中斷呼叫端
+        errors["valuation"] = "估值刷新失敗：%s" % exc
+
+    return {"code": code, "checked_at": checked_at, "price_saved": price_saved,
+            "valuation_saved": valuation_saved, "errors": errors}
+
+
+def refresh_stock_snapshot(code, store, data_dir=None, token=None):
+    """單一代碼的完整背景刷新：股價／估值快照（refresh_price_and_valuation）
+    ＋ Module D 檢視（run_module_d_review）。供
+    report_server.trigger_stock_refresh() 背景執行緒使用——「新增研究
+    標的」與「PO手動按更新」兩種觸發路徑都呼叫這個函式，確保寫入完全
+    相同的資料／邏輯（見派工說明「背景刷新機制」）。
+
+    每日18:00排程（module_d_scheduler.py）刻意「不」呼叫這個函式：排程
+    走 run_module_d_batch()（已個別覆蓋 try/except／failed清單），批次跑完
+    後另外對同一批代碼呼叫 refresh_price_and_valuation()，避免 run_module_d_
+    review() 被重複呼叫兩次（run_module_d_batch 內部已經呼叫過一次）。
+    """
+    snapshot = refresh_price_and_valuation(code, store, data_dir=data_dir, token=token)
+    review = run_module_d_review(code, store, data_dir=data_dir, token=token)
+    return {"code": code, "checked_at": snapshot["checked_at"],
+            "price_saved": snapshot["price_saved"],
+            "valuation_saved": snapshot["valuation_saved"],
+            "snapshot_errors": snapshot["errors"], "review": review}

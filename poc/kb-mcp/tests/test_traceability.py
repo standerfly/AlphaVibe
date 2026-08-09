@@ -11,6 +11,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
 import finmind_client  # noqa: E402
+import fundamentals_client  # noqa: E402
 import report  # noqa: E402
 import review_engine  # noqa: E402
 import server  # noqa: E402
@@ -120,9 +121,9 @@ class ServerToolsTest(unittest.TestCase):
         self.server.store.close()
         shutil.rmtree(self.tmp)
 
-    def test_tools_list_has_thirty_nine(self):
+    def test_tools_list_has_forty(self):
         names = [t["name"] for t in server.TOOLS]
-        self.assertEqual(len(names), 39)
+        self.assertEqual(len(names), 40)
         for expected in ("save_snapshot", "get_snapshots",
                          "save_holdings", "get_holdings",
                          "save_stock_alias", "get_stock_alias",
@@ -141,7 +142,8 @@ class ServerToolsTest(unittest.TestCase):
                          "check_laoyutou_signal", "check_position_control",
                          "record_module_d_findings", "run_module_d_check",
                          "parse_and_save_laoyutou_trades",
-                         "parse_and_save_trade_ledger"):
+                         "parse_and_save_trade_ledger",
+                         "parse_and_save_trade_csv"):
             self.assertIn(expected, names)
 
     def test_check_laoyutou_signal_tool_dispatch_wires_args(self):
@@ -342,11 +344,21 @@ class ServerToolsTest(unittest.TestCase):
                 "2330", start_date="2026-06-01", end_date="2026-07-01",
                 data_dir=self.server.data_dir)
 
+        # 2026-08-01 來源選用邏輯稽核修正：get_revenue_yoy dispatch 額外呼叫
+        # fundamentals_client.get_revenue_yoy_latest 附上官方優先的
+        # "latest" 欄位（見 server.py），這裡一併mock掉，避免測試真的打
+        # 官方TWSE/TPEx批次端點（"2330"是真實代碼，不mock會真的打網路）。
         with unittest.mock.patch.object(
                 finmind_client, "get_revenue_yoy",
-                return_value={"stock_id": "2330", "revenue_yoy": []}) as mock_yoy:
+                return_value={"stock_id": "2330", "revenue_yoy": []}) as mock_yoy, \
+             unittest.mock.patch.object(
+                fundamentals_client, "get_revenue_yoy_latest",
+                return_value={"revenue_yoy": None, "revenue_period": None,
+                              "market": None, "data_source": None, "error": None}
+                ) as mock_latest:
             self.server.call_tool("get_revenue_yoy", {"stock_id": "2330"})
             mock_yoy.assert_called_once_with("2330", data_dir=self.server.data_dir)
+            mock_latest.assert_called_once_with("2330", data_dir=self.server.data_dir)
 
         with unittest.mock.patch.object(
                 finmind_client, "get_institutional_trading",
@@ -354,6 +366,52 @@ class ServerToolsTest(unittest.TestCase):
             self.server.call_tool("get_institutional_trading", {"stock_id": "2330"})
             mock_inst.assert_called_once_with(
                 "2330", start_date=None, end_date=None, data_dir=self.server.data_dir)
+
+    def test_get_fundamentals_dispatch_uses_official_valuation_keeps_monthly_revenue(self):
+        """2026-08-01 來源選用邏輯稽核修正：get_fundamentals dispatch 的
+        PER/PBR/殖利率改用 fundamentals_client.get_valuation()（官方優先），
+        monthly_revenue／errors／token_used 仍來自 finmind_client.get_fundamentals
+        （官方無對應多月來源，見 fundamentals_client 模組docstring）。"""
+        with unittest.mock.patch.object(
+                finmind_client, "get_fundamentals",
+                return_value={"stock_id": "2330", "token_used": False, "errors": [],
+                             "valuation": {"date": "2026-06-01", "PER": 999.0,
+                                          "PBR": 999.0, "dividend_yield": 999.0},
+                             "monthly_revenue": [{"date": "2026-07-01", "revenue_year": 2026,
+                                                 "revenue_month": 6, "revenue": 100}]}
+                ) as mock_fund, \
+             unittest.mock.patch.object(
+                fundamentals_client, "get_valuation",
+                return_value={"per": 32.60, "pbr": 10.67, "dividend_yield": 0.91,
+                             "market": "TWSE", "data_source": "twse_official",
+                             "error": None}) as mock_val:
+            out = self.server.call_tool("get_fundamentals", {"stock_id": "2330"})
+
+        mock_fund.assert_called_once_with("2330", data_dir=self.server.data_dir)
+        mock_val.assert_called_once_with("2330", data_dir=self.server.data_dir)
+        # 官方優先結果覆蓋掉 finmind_client.get_fundamentals 本身的valuation
+        # （999.0 是刻意設的哨兵值，確認真的被覆蓋，不是巧合對上）。
+        self.assertEqual(out["valuation"], {"PER": 32.60, "PBR": 10.67, "dividend_yield": 0.91})
+        self.assertEqual(out["valuation_data_source"], "twse_official")
+        # monthly_revenue 維持 finmind_client 的結果不動
+        self.assertEqual(out["monthly_revenue"][0]["revenue"], 100)
+        self.assertEqual(out["errors"], [])
+
+    def test_get_fundamentals_dispatch_appends_error_when_valuation_fails(self):
+        with unittest.mock.patch.object(
+                finmind_client, "get_fundamentals",
+                return_value={"stock_id": "0000", "token_used": False,
+                             "errors": ["TaiwanStockMonthRevenue 無資料（代碼是否正確？）"]}), \
+             unittest.mock.patch.object(
+                fundamentals_client, "get_valuation",
+                return_value={"per": None, "pbr": None, "dividend_yield": None,
+                             "market": None, "data_source": "finmind_fallback",
+                             "error": "模擬官方與FinMind估值皆查詢失敗"}):
+            out = self.server.call_tool("get_fundamentals", {"stock_id": "0000"})
+
+        self.assertIn("模擬官方與FinMind估值皆查詢失敗", out["errors"])
+        self.assertIn("TaiwanStockMonthRevenue 無資料（代碼是否正確？）", out["errors"])
+        self.assertIsNone(out["valuation"]["PER"])
 
     def test_emerging_stock_valuation_tool_dispatch_wires_args(self):
         """驗證 get_emerging_stock_valuation 的 dispatch 正確傳遞參數（不打真實 API）。"""

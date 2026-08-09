@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 
 import benchmark  # noqa: E402
 import finmind_client  # noqa: E402
+import fundamentals_client  # noqa: E402
 import screener  # noqa: E402
 import twse_price_client  # noqa: E402
 
@@ -36,6 +37,25 @@ def _force_finmind_fallback(test_case):
         return_value={"error": "test stub：強制模擬官方端點不可用，測試 fallback 路徑"})
     patcher.start()
     test_case.addCleanup(patcher.stop)
+
+
+def _force_fundamentals_official_fallback(test_case):
+    """在給定 TestCase 上 patch fundamentals_client._official_valuation／
+    _official_revenue 永遠回傳 None，逼 screen_stocks() 呼叫
+    fundamentals_client.get_valuation／get_revenue_yoy_latest 時走
+    finmind_client fallback 路徑（2026-08-01 來源選用邏輯稽核修正）。
+
+    給改動前寫的既有測試沿用，不用逐一修改每個測試案例——這些測試直接
+    mock finmind_client.get_fundamentals／get_revenue_yoy，只關心「拿到
+    FinMind估值/營收資料之後」的PEG計算邏輯，不關心資料源本身。沒有這個
+    patch的話，"2330" 這種真實代碼會讓 fundamentals_client 真的打官方
+    TWSE/TPEx 端點拿到真實資料，蓋掉mock的假資料，測試斷言會失真、而且
+    真的打了外部API（不該發生在單元測試裡）。真正測試「官方優先／
+    fallback」這兩條路徑本身的案例見 test_fundamentals_client.py。"""
+    for attr in ("_official_valuation", "_official_revenue"):
+        patcher = unittest.mock.patch.object(fundamentals_client, attr, return_value=None)
+        patcher.start()
+        test_case.addCleanup(patcher.stop)
 
 
 def _bench(dates, closes, error=None):
@@ -90,6 +110,7 @@ class ParseCodesTest(unittest.TestCase):
 class ScreenStocksTest(unittest.TestCase):
     def setUp(self):
         _force_finmind_fallback(self)
+        _force_fundamentals_official_fallback(self)
 
     def test_empty_code_list_returns_empty_results(self):
         out = screener.screen_stocks([])
@@ -424,6 +445,95 @@ class TwsePriceClientFallbackTest(unittest.TestCase):
         self.assertIs(mock_official.call_args.kwargs["cache"], cache)
 
 
+class ScreenStocksFundamentalsSourceTest(unittest.TestCase):
+    """2026-08-01 來源選用邏輯稽核修正：screen_stocks() 接上
+    fundamentals_client 後，PER／最新一期營收年增率的資料源正確反映在
+    per_data_source／revenue_data_source 欄位；官方成功時不打
+    finmind_client.get_fundamentals／get_revenue_yoy。真正測試「官方優先／
+    fallback」這兩條路徑本身的案例見 test_fundamentals_client.py，這裡
+    只測「screener.py 有沒有正確接上」這件事本身。"""
+
+    def setUp(self):
+        _force_finmind_fallback(self)  # 股價維持既有fallback強制，這裡只關心PER/revenue
+
+    def test_official_valuation_and_revenue_used_skips_finmind_for_those_two(self):
+        with unittest.mock.patch.object(
+                fundamentals_client, "get_valuation",
+                return_value={"per": 20.0, "pbr": 5.0, "dividend_yield": 1.0,
+                             "market": "TWSE", "data_source": "twse_official",
+                             "error": None}) as mock_val, \
+             unittest.mock.patch.object(
+                fundamentals_client, "get_revenue_yoy_latest",
+                return_value={"revenue_yoy": 0.20, "revenue_period": "2026-06",
+                             "market": "TWSE", "data_source": "twse_official",
+                             "error": None}) as mock_rev, \
+             unittest.mock.patch.object(finmind_client, "get_fundamentals") as mock_fm_fund, \
+             unittest.mock.patch.object(finmind_client, "get_revenue_yoy") as mock_fm_rev, \
+             unittest.mock.patch.object(
+                finmind_client, "get_stock_info", return_value={"stocks": []}), \
+             unittest.mock.patch.object(
+                finmind_client, "get_stock_price_history",
+                return_value=_prices(high=100.0, current=100.0)):
+            out = screener.screen_stocks(["2330"])
+        row = out["results"][0]
+        self.assertEqual(row["per"], 20.0)
+        self.assertAlmostEqual(row["peg"], 1.0)
+        self.assertEqual(row["per_data_source"], "twse_official")
+        self.assertEqual(row["revenue_data_source"], "twse_official")
+        mock_val.assert_called_once()
+        mock_rev.assert_called_once()
+        mock_fm_fund.assert_not_called()
+        mock_fm_rev.assert_not_called()
+
+    def test_fundamentals_error_propagates_to_row_when_both_sources_fail(self):
+        with unittest.mock.patch.object(
+                fundamentals_client, "get_valuation",
+                return_value={"per": None, "pbr": None, "dividend_yield": None,
+                             "market": None, "data_source": "finmind_fallback",
+                             "error": "模擬官方與FinMind皆失敗"}), \
+             unittest.mock.patch.object(
+                fundamentals_client, "get_revenue_yoy_latest",
+                return_value={"revenue_yoy": None, "revenue_period": None,
+                             "market": None, "data_source": "finmind_fallback",
+                             "error": None}), \
+             unittest.mock.patch.object(
+                finmind_client, "get_stock_info", return_value={"stocks": []}), \
+             unittest.mock.patch.object(
+                finmind_client, "get_stock_price_history",
+                return_value=_prices(high=100.0, current=60.0)):
+            out = screener.screen_stocks(["2330"])
+        row = out["results"][0]
+        self.assertIsNone(row["per"])
+        self.assertIsNone(row["peg"])
+        self.assertEqual(row["error"], "模擬官方與FinMind皆失敗")
+
+    def test_batch_cache_shared_across_codes_in_one_call(self):
+        """同一次 screen_stocks() 呼叫裡，多檔代碼應共用同一個 cache dict
+        傳給 fundamentals_client（避免官方批次端點被重打多次）。"""
+        seen_caches = []
+
+        def fake_valuation(code, data_dir=None, token=None, cache=None):
+            seen_caches.append(cache)
+            return {"per": None, "pbr": None, "dividend_yield": None, "market": None,
+                    "data_source": "finmind_fallback", "error": None}
+
+        with unittest.mock.patch.object(
+                fundamentals_client, "get_valuation", fake_valuation), \
+             unittest.mock.patch.object(
+                fundamentals_client, "get_revenue_yoy_latest",
+                return_value={"revenue_yoy": None, "revenue_period": None,
+                             "market": None, "data_source": "finmind_fallback",
+                             "error": None}), \
+             unittest.mock.patch.object(
+                finmind_client, "get_stock_info", return_value={"stocks": []}), \
+             unittest.mock.patch.object(
+                finmind_client, "get_stock_price_history",
+                return_value=_prices(high=100.0, current=60.0)):
+            screener.screen_stocks(["2330", "2454"])
+        self.assertEqual(len(seen_caches), 2)
+        self.assertIs(seen_caches[0], seen_caches[1])
+
+
 class MeetsFrameworkThresholdsTest(unittest.TestCase):
     def test_single_sided_threshold_peg_deep_dip(self):
         # framework_peg_deep_dip_concentration：PEG<1 且回檔>=40%（單邊，無上限）
@@ -467,6 +577,7 @@ class MeetsFrameworkThresholdsTest(unittest.TestCase):
 class ScreenStocksCustomThresholdsTest(unittest.TestCase):
     def setUp(self):
         _force_finmind_fallback(self)
+        _force_fundamentals_official_fallback(self)
 
     def test_custom_thresholds_change_meets_framework(self):
         # PER=10,yoy=20% → peg=0.5；drawdown=20%。預設門檻(drawdown>=0.40)不符合，
@@ -510,6 +621,7 @@ class ScreenStocksBenchmarkTest(unittest.TestCase):
 
     def setUp(self):
         _force_finmind_fallback(self)
+        _force_fundamentals_official_fallback(self)
 
     def test_load_benchmark_called_once_not_per_code(self):
         bench = _bench(["2026-06-01", "2026-07-01"], [100.0, 100.0])

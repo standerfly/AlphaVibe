@@ -48,9 +48,22 @@ User-Agent，降低未來被視為異常流量擋掉的風險。
 
 僅標準庫（urllib），錯誤處理風格比照 finmind_client.py／tpex_client.py：
 不丟例外、回傳 {"error": ...}。Python 3.9 相容。
+
+2026-08-01（來源選用邏輯稽核修正）：新增 TWSE BWIBBU（個股歷史殖利率／
+本益比／股價淨值比，`www.twse.com.tw/exchangeReport/BWIBBU`）——
+`fetch_per_history()` 供 `fundamentals_client.get_per_history()` 取代
+FinMind `get_per_history` 當第一優先來源（FR-051 下檔風險模型用）。
+⚠️ BWIBBU 的日期欄位格式是中文全形「115年07月01日」，跟 STOCK_DAY／
+FMTQIK 用的「115/07/01」斜線格式不同（2026-08-01 實測確認），故另立
+`_roc_cjk_to_ad_date()` 解析，不擴充 `_roc_to_ad_date()` 的職責。
+⚠️ 對 TPEx 代碼查 BWIBBU（2026-08-01 對 3260 實測）回傳
+`{"stat":"很抱歉，沒有符合條件的資料!"}`，跟 STOCK_DAY 對 TPEx 代碼的
+清爽失敗行為一致，`stat != "OK"` 即可判斷——BWIBBU 沒有對應的 TPEx
+官方歷史端點，TPEx 股或 TWSE 查詢失敗一律由呼叫端 fallback FinMind。
 """
 import datetime
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -66,6 +79,7 @@ SLEEP_SECONDS = 0.15
 TWSE_FMTQIK_URL = "https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK"
 TWSE_STOCK_DAY_URL = "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY"
 TPEX_TRADING_STOCK_URL = "https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock"
+TWSE_BWIBBU_URL = "https://www.twse.com.tw/exchangeReport/BWIBBU"
 
 # window_days（曆日）換算回溯月數的除數＋buffer——沿用 Phase 3B 規格建議值。
 # 20 是粗估「每月交易日數」，+2 個月是保守buffer，確保逐月合併後窗口起點
@@ -92,6 +106,29 @@ def _roc_to_ad_date(roc_str):
         year = int(parts[0]) + 1911
         month = int(parts[1])
         day = int(parts[2])
+        return datetime.date(year, month, day).isoformat()
+    except ValueError:
+        return None
+
+
+_BWIBBU_DATE_RE = re.compile(r"^(\d+)年(\d+)月(\d+)日$")
+
+
+def _roc_cjk_to_ad_date(date_str):
+    """BWIBBU 專用：民國年中文日期字串（如 "115年07月01日"）轉西元 ISO
+    格式（"2026-07-01"）。格式不符或轉換後不是合法日期回傳 None，不丟例外。
+    見模組 docstring：BWIBBU 的日期格式跟 STOCK_DAY／FMTQIK 的斜線格式不同，
+    不能沿用 `_roc_to_ad_date()`。
+    """
+    if not isinstance(date_str, str):
+        return None
+    match = _BWIBBU_DATE_RE.match(date_str)
+    if not match:
+        return None
+    try:
+        year = int(match.group(1)) + 1911
+        month = int(match.group(2))
+        day = int(match.group(3))
         return datetime.date(year, month, day).isoformat()
     except ValueError:
         return None
@@ -252,10 +289,79 @@ def fetch_tpex_stock_month(stock_id, year_month, cache=None):
     return {"prices": prices}
 
 
-def _merge_months(fetch_month_fn, months, cache, stock_id=None):
+def fetch_twse_per_month(stock_id, year_month, cache=None):
+    """單月上市個股歷史PER/PBR/殖利率（BWIBBU，僅TWSE，見模組 docstring）。
+
+    fields＝["日期","殖利率(%)","股利年度","本益比","股價淨值比","財報年/季"]
+    （2026-08-01 curl 實測確認），data 每列對應索引：
+    [0]日期(中文民國格式) [1]殖利率 [2]股利年度 [3]本益比 [4]股價淨值比
+    [5]財報年/季。stat != "OK" 一律視為失敗，含「查無符合條件的資料」
+    （TPEx代碼誤查時的清爽失敗，見模組 docstring）。
+    """
+    cache_key = ("TWSE_PER", stock_id, year_month)
+    url = TWSE_BWIBBU_URL + "?date=%s01&stockNo=%s&response=json" % (year_month, stock_id)
+    fetched = _throttled_get(url, cache_key=cache_key, cache=cache)
+    if "error" in fetched:
+        return {"error": fetched["error"]}
+    payload = fetched["payload"]
+    if payload.get("stat") != "OK":
+        return {"error": "TWSE BWIBBU 查無資料（%s，%s）：%s"
+                         % (stock_id, year_month, payload.get("stat"))}
+    per_history = []
+    for row in payload.get("data", []):
+        if len(row) < 6:
+            continue
+        date = _roc_cjk_to_ad_date(row[0])
+        per = _to_float(row[3])
+        if date is None or per is None:
+            continue
+        per_history.append({"date": date, "PER": per, "PBR": _to_float(row[4]),
+                            "dividend_yield": _to_float(row[1])})
+    if not per_history:
+        return {"error": "TWSE BWIBBU 該月無有效資料（%s，%s）" % (stock_id, year_month)}
+    return {"per_history": per_history}
+
+
+def fetch_per_history(stock_id, window_days=730, cache=None):
+    """高階函式：TWSE個股歷史PER序列，依 window_days 回推月數、逐月合併
+    去重排序（重用 `_merge_months`／`_recent_year_months`／`_months_needed`，
+    邏輯跟 fetch_price_history 一致，只是資料集與 result_key 不同）。
+
+    僅支援TWSE（BWIBBU沒有對應TPEx官方端點，見模組docstring）——TPEx股票
+    查詢會查無資料回傳error，呼叫端（fundamentals_client.get_per_history）
+    據此fallback FinMind get_per_history，這裡不用先判斷市場別，直接嘗試
+    即可（跟STOCK_DAY對TPEx代碼的清爽失敗行為一致）。
+
+    回傳 {"per_history": [...], "stock_id": stock_id} 或 {"error": ...}；
+    格式對齊 finmind_client.get_per_history 的 per_history 結構（date/PER/
+    PBR/dividend_yield），讓下游 review_engine._downside_risk 可以直接
+    替換資料源，不需要改讀取邏輯。
+    """
+    months = _recent_year_months(_months_needed(window_days))
+    by_date, month_errors = _merge_months(fetch_twse_per_month, months, cache,
+                                          stock_id=stock_id, result_key="per_history")
+    if not by_date:
+        return {"error": "TWSE %s BWIBBU官方端點全數月份查無資料：%s"
+                         % (stock_id, "；".join(month_errors) or "無詳細原因")}
+    cutoff = _days_ago(window_days)
+    per_history = sorted((row for row in by_date.values() if row["date"] >= cutoff),
+                         key=lambda r: r["date"])
+    if not per_history:
+        return {"error": "TWSE %s BWIBBU資料都早於窗口起點（%s）" % (stock_id, cutoff)}
+    return {"per_history": per_history, "stock_id": stock_id}
+
+
+def _merge_months(fetch_month_fn, months, cache, stock_id=None, result_key="prices"):
     """共用邏輯：逐月呼叫 fetch_month_fn、依日期去重合併。回傳
     (by_date dict, 月份層級的錯誤訊息 list)。stock_id 為 None 時
-    fetch_month_fn 只吃 year_month 一個參數（給 TAIEX 用）。"""
+    fetch_month_fn 只吃 year_month 一個參數（給 TAIEX 用）。
+
+    result_key（2026-08-01 新增，預設 "prices" 維持既有呼叫不變）：
+    fetch_month_fn 成功時回傳 dict 裡實際的清單欄位名——`fetch_per_history()`
+    重用這個迴圈邏輯合併 BWIBBU 歷史PER月資料時，該欄位叫 "per_history"
+    不是 "prices"（避免用「prices」這個名字裝PER資料造成誤導），故加這個
+    參數讓同一份合併邏輯可以服務兩種資料，不必另外複製一份迴圈。
+    """
     by_date = {}
     month_errors = []
     for year, month in months:
@@ -265,7 +371,7 @@ def _merge_months(fetch_month_fn, months, cache, stock_id=None):
         if "error" in result:
             month_errors.append(result["error"])
             continue
-        for row in result["prices"]:
+        for row in result[result_key]:
             by_date[row["date"]] = row
     return by_date, month_errors
 
