@@ -5,7 +5,7 @@
 > 維護規則：完成一個階段就更新狀態欄（含日期與證據）；改動計畫本身
 > 需 PO 同意並在 clarification-log 留紀錄。
 
-## 階段總覽（2026-07-27 更新）
+## 階段總覽（2026-08-07 更新：修正1e/1f狀態，見下方「已知限制」文件落差記錄）
 
 | 階段 | 內容 | 狀態 | 證據 |
 |------|------|------|------|
@@ -16,9 +16,9 @@
 | 1a+++. PoC 擴充：部位管理／加碼系統（FR-038~043） | 十層決策框架（投資假說＋情境機率評估/寒冬保留比例、加碼Gate/Score、遞減式加碼、組合集中度、重新估值、減碼三分類＋錨點抗恐慌、風險評分）存進 `raw/部位管理*.md`（SRC-011）＋product-spec §5-K＋Layer 1 哲學庫 `framework_evidence_based_position_sizing`；程式面只做了組合集中度需要的「投資主題標籤」（FR-041/042） | ✅ 完成 | 2026-07-24；測試 175/175 |
 | 1b. 試用累積 | PO 日常使用：聊資訊→選股→估值→確認入庫；加碼/減碼討論時套用部位管理框架、建倉時標記投資主題 | 🔄 持續進行（資料持續累積，供模組G未來使用） | 已累積28+檔立場（2026-07-24查證） |
 | **1b+. 需求重新盤點＋product-spec全面重寫** | 依1b實測發現多處「文件與實際行為不同模式」（entry_condition/time_horizon 0%使用、snapshots表0筆使用、部位管理十層框架0%採用率等），PO與Claude完整討論（2026-07-25~27）產出「策略引擎＋每日PDCA」的 A-G 模組新架構，product-spec.md／scope-decision.md／clarification-log.md 全面更新 | ✅ 完成 | 2026-07-27；`requirements-rescoping.md`（討論全紀錄，含fresh-context agent通盤審查抓到4嚴重+5建議、PO逐項裁決）；product-spec.md重寫後fresh agent驗收10項條件（9直接PASS，1項小落差已修正） |
-| 1e. 模組A+D+E開發 | 老芋頭交易結構化表（FR-044）、交易流水表（FR-056）、策略檢視引擎四組成部分（FR-051~055：通用檢視層/策略專屬層/老芋頭動向比對/部位控制建議）、每日排程整合（FR-057） | ⏳ 待啟動 | — |
-| 1f. 模組F開發：儀表板方案A | FR-058，依 mockup（見 requirements-rescoping.md 連結）定案的單頁式結構：今日重點/新候選/觀察庫存/策略設定/快速輸入 | ⏳ 待1e完成（F依賴E的排程結果） | — |
-| 1g. 模組G：策略績效回顧 | FR-059 | ⏳ 待樣本量足夠再啟動（目前33筆立場、7次market_scan，回顧意義還不大，但1e/1f的資料寫入設計要對，才有東西可以累積） | — |
+| 1e. 模組A+D+E開發 | 老芋頭交易結構化表（FR-044）、交易流水表（FR-056）、策略檢視引擎四組成部分（FR-051~055：通用檢視層/策略專屬層/老芋頭動向比對/部位控制建議）、每日排程整合（FR-057） | ✅ 完成（2026-08-07查證修正，先前誤標待啟動） | commit `4fa230e`（2026-07-31）；`review_engine.py`／`module_d_scheduler.py`；測試見`test_review_engine.py`／`test_module_d_scheduler.py`，2026-08-07實測全專案470/470綠；MCP工具`check_general_review`/`check_strategy_review`/`check_laoyutou_signal`/`check_position_control`/`record_module_d_findings`/`run_module_d_check`已掛載server.py |
+| 1f. 模組F開發：儀表板方案A | FR-058，依 mockup（見 requirements-rescoping.md 連結）定案的單頁式結構：今日重點/新候選/觀察庫存/策略設定/快速輸入 | ✅ 完成（2026-08-07查證修正，先前誤標待1e完成） | 同commit `4fa230e`；`report.py`之`render_dashboard()`／`render_today_highlights()`／策略設定／快速輸入區塊；`report_server.py`提供`/`首頁與`/report-classic`舊版並存 |
+| 1g. 模組G：策略績效回顧 | FR-059 | ⏳ 待樣本量足夠再啟動（1e/1f已完成，資料寫入管道已對，可持續累積） | — |
 | 2. 正式產品 | speckit 流程＋交易紀錄整合 FR-022/FR-056 | ⏳ Phase 1 驗證後（五項前置開放問題已於2026-07-27全數定案，見下方「Phase 2 正式產品」節，但「現在啟動Phase 2」本身仍是待PO另外決定的獨立問題，不是自動觸發） | — |
 
 Deferred（已定案遞延，見 scope-decision.md）：Docker 雲端部署、多用戶、
@@ -61,6 +61,16 @@ In-Scope（Q-042），不再屬於此清單**。
   ——**注意**：全市場條件篩選（Q-030）已於2026-07-27獨立解禁改列
   In-Scope（Q-042），兩者是分開的決定，類股資金流不因此自動連帶解禁。
 
+- **2026-08-07 查證發現：1e／1f 其實已在 commit `4fa230e`（2026-07-31）
+  完成，但本檔案「階段總覽」表格當時沒同步更新狀態欄**（該commit本身
+  有動到roadmap.md，但只改了其他段落，狀態欄仍停留在「⏳待啟動」，
+  header日期也還留著舊的「2026-07-27更新」）——即使是「同一個commit
+  改了程式又改了文件」也不保證文件內容真的跟上，接手前務必實際查
+  `git log`／跑測試查證，不能只看狀態欄。已於本次查證修正狀態欄，
+  詳見上方階段總覽表格與下方1e/1f接手指南。實測2026-08-07：
+  `python3 -m unittest discover -s tests` 470/470 綠（含
+  `test_review_engine.py`／`test_module_d_scheduler.py`）。
+
 ## 各階段接手指南
 
 ### 1b 試用累積（持續進行）
@@ -73,29 +83,39 @@ In-Scope（Q-042），不再屬於此清單**。
   PO已完成需求重新盤點（1b+），下一步是照 1e→1f→1g 開發模組，不是
   停在「試用累積」——1b 本身持續進行只是為了累積更多資料供模組G使用。
 
-### 1e 模組A+D+E開發（老芋頭表／交易流水表／策略檢視引擎／排程整合）
-- 啟動方式（對任何 session 說）：「讀 docs/spec-intake/alphavibe/roadmap.md
-  和 product-spec.md §5 模組D（FR-051~055）與模組A（FR-044）／FR-056，
-  開發策略檢視引擎。」
-- 建議開發順序（依賴關係）：
-  1. FR-044（老芋頭交易表）＋FR-056（交易流水表）——基礎資料結構，
-     FR-053／FR-054 依賴這兩張表
-  2. FR-051（通用檢視層）＋FR-052（策略專屬層）——先做「能不能算出
-     檢視結果」，可先不接老芋頭比對與部位控制建議
-  3. FR-053（老芋頭動向比對）＋FR-054（部位控制建議）——接上依賴的表
-  4. FR-055（立場自動回寫機制）——需要FR-051~054都有結果可寫
-  5. FR-057（每日排程整合）——把 C（已有）＋D（1-4完成）接上02:00排程＋
-     即時觸發
-- 驗收（不可自驗）：派 fresh agent 依 product-spec.md FR-051~057 逐項
-  核對＋實跑排程一次，確認模組D檢視結果表有正確寫入。
+### 1e 模組A+D+E開發（老芋頭表／交易流水表／策略檢視引擎／排程整合）—— ✅ 已完成
+- **2026-08-07查證修正**：本節先前寫「待啟動」是誤標，實際已於
+  commit `4fa230e`（2026-07-31）完成，見 `poc/kb-mcp/review_engine.py`
+  （FR-051~055、FR-057的`get_associated_strategies`/`run_module_d_review`/
+  `run_module_d_batch`）與 `poc/kb-mcp/module_d_scheduler.py`（CLI排程
+  入口）。MCP工具已掛載：`check_general_review`／`check_strategy_review`／
+  `check_laoyutou_signal`／`check_position_control`／`record_module_d_findings`／
+  `run_module_d_check`。測試：`test_review_engine.py`／
+  `test_module_d_scheduler.py`，2026-08-07實測隨全專案470/470通過。
+- 若要接手改動這塊：先讀 `review_engine.py` 檔頭docstring（每個FR的
+  設計取捨都寫在裡面，含「findings跟items為何要分開」等刻意決定），
+  不要憑product-spec.md文字重新設計一遍。
 
-### 1f 模組F開發：儀表板方案A
-- 啟動方式：「讀 roadmap.md 和 product-spec.md §5 模組F（FR-058），依
-  `requirements-rescoping.md` 內的mockup連結開發儀表板。」
-- 前置：1e完成（F讀取E寫入的模組D檢視結果表，不即時運算）。
-- 硬約束：Python 3.9 相容、不引外部依賴（沿用 poc 原則）、繁體中文介面。
-- 驗收（不可自驗）：頁面呈現「今日重點」正確反映模組D結果、快速輸入
-  表單可用；派 fresh agent 依 FR-058 逐項核對＋實際開啟頁面。
+### 1f 模組F開發：儀表板方案A —— ✅ 已完成
+- **2026-08-07查證修正**：本節先前寫「待1e完成」是誤標，實際已於同一
+  commit `4fa230e`（2026-07-31）完成，見 `poc/kb-mcp/report.py` 的
+  `render_dashboard()`／`render_today_highlights()`／策略設定／快速輸入
+  區塊，`report_server.py` 提供 `/`（新版）與 `/report-classic`（舊版）
+  並存。
+- **已知落差／下一步（2026-08-07 PO提出）**：`report.py` 目前庫存呈現
+  是純文字/表格，沒有任何圖表（無`<svg>`/`polyline`/`canvas`）。PO想要
+  的「庫存進出圖形化表格」（股價走勢＋買賣力道長條圖，協助判斷加減碼
+  力道）尚未實作，是1f底下真正待做的新增功能，不是重新做1e/1f。
+  已產出mockup定案（見對話紀錄，2026-08-07）：概念A總覽圖形化表格
+  （每列一檔庫存徽章+迷你走勢+力道進度條+建議）＋概念B單檔拉大範例
+  （價格折線+買賣力道長條圖+精簡清單），表格先掃過、點進去看大圖。
+  「建議」欄位理由文字直接重用`review_engine.strategy_specific_review()`/
+  `general_review()`/`laoyutou_signal_review()`/`position_control_suggestion()`
+  的既有輸出，不必另外設計判斷邏輯。
+- 硬約束：Python 3.9 相容、不引外部依賴（沿用 poc 原則，SVG/inline JS
+  屬頁面自身內容非外部套件，可用）、繁體中文介面。
+- 驗收（不可自驗）：派 fresh agent 依實作內容逐項核對＋實際開啟頁面
+  確認圖表正確反映真實交易流水表與review_engine輸出。
 
 ### 1g 模組G：策略績效回顧
 - 啟動時機：PO主動觸發，不是排程自動跑；等1e/1f運作一段時間、累積夠
