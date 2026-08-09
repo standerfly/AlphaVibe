@@ -981,6 +981,44 @@ class StockDetailPageTest(unittest.TestCase):
         self.assertIn("<rect", page)
         self.assertIn("快取範圍 2026-06-01 ~ 2026-07-01", page)
 
+    def test_chart_stats_shows_current_avg_and_floating_pnl(self):
+        """2026-08-09新增（PO比對mockup反饋）：走勢圖右上方現價/均價/
+        浮動損益。holding.avg_cost有值時均價欄位不帶筆數。"""
+        self.store.save_holdings([{"code": "2330", "name": "台積電", "shares": 100,
+                                   "avg_cost": 900.0}])
+        self.store.upsert_stock_price("2330", 1000.0, "2026-07-31")
+        self.store.save_trade_ledger_entry("2330", "台積電", "買", 100, 900,
+                                           "2026-06-01", add_sequence=1)
+        page = report.render_stock_detail_page(self.store, "2330")
+        self.assertIn("class=\"chart-stats\"", page)
+        self.assertIn("<b>1,000</b><span>現價</span>", page)
+        self.assertIn("<b style=\"color:var(--amber)\">900</b><span>均價</span>", page)
+        self.assertIn("+11.1%", page)
+        self.assertIn("color:var(--red)", page)  # 浮動損益為正，紅漲語意
+
+    def test_chart_stats_avg_cost_label_shows_buy_count_when_no_holding_avg_cost(self):
+        """holding.avg_cost 缺值（實務常見）時退回交易流水加權平均，均價
+        欄位標籤要帶「（N筆）」讓PO知道這是估算值不是帳上真實成本。"""
+        self.store.save_holdings([{"code": "2441", "name": "超豐", "shares": 2000,
+                                   "avg_cost": None}])
+        self.store.save_trade_ledger_entry("2441", "超豐", "買", 1000, 90,
+                                           "2026-06-01", add_sequence=1)
+        self.store.save_trade_ledger_entry("2441", "超豐", "買", 1000, 100,
+                                           "2026-06-15", add_sequence=2)
+        page = report.render_stock_detail_page(self.store, "2441")
+        self.assertIn("均價（2筆）", page)
+
+    def test_chart_stats_floating_pnl_hidden_without_current_price(self):
+        """查不到現價時浮動損益不算、不顯示假數字，均價本身仍顯示。"""
+        self.store.save_holdings([{"code": "2330", "name": "台積電", "shares": 100,
+                                   "avg_cost": 900.0}])
+        self.store.save_trade_ledger_entry("2330", "台積電", "買", 100, 900,
+                                           "2026-06-01", add_sequence=1)
+        page = report.render_stock_detail_page(self.store, "2330")
+        self.assertIn("<b>—</b><span>現價</span>", page)
+        self.assertIn("<b style=\"color:var(--amber)\">900</b><span>均價</span>", page)
+        self.assertNotIn("浮動損益", page)
+
     def test_notes_card_lists_non_buy_reason_comments(self):
         self.store.save_stance("2330", "偏多", name="台積電")
         self.store.save_comment("買進理由内容", source_tag="買進理由", symbols="2330")

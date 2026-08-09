@@ -288,6 +288,12 @@ details.section > summary h2 { margin-top: 0; display: inline-block; }
 .chart-label { font-size: 11px; fill: var(--ink-dim); font-variant-numeric: tabular-nums; }
 .chart-label-latest { fill: var(--accent); font-weight: 700; }
 .chart-label-avg { fill: var(--amber); font-weight: 700; }
+.chart-stats { display: flex; justify-content: flex-end; gap: 1.1rem; flex-wrap: wrap;
+                margin-bottom: .4rem; }
+.chart-stats .stat { text-align: right; }
+.chart-stats .stat b { display: block; font-size: 1rem; font-weight: 700;
+                         font-variant-numeric: tabular-nums; }
+.chart-stats .stat span { font-size: .68rem; color: var(--ink-dim); }
 .chart-bar-label { font-size: 9px; font-weight: 700; text-anchor: middle;
                      font-variant-numeric: tabular-nums; }
 .note { padding: .6rem 0; border-bottom: 1px solid var(--rule); }
@@ -1435,6 +1441,28 @@ def _avg_cost_for_chart(holding_row, entries):
     return buy_value / buy_shares
 
 
+def _chart_stats_html(current_price, avg_cost, avg_cost_label):
+    """走勢圖右上方的現價／均價／浮動損益（2026-08-09，PO比對mockup反饋
+    補上——原mockup的chart-stats一直沒接進正式頁面）。浮動損益＝
+    (現價-均價)/均價，兩者缺一個就不算、不臆測，只顯示「—」。台股慣例
+    紅漲綠跌：損益為正描紅、為負描綠，跟 _delta_badge／STANCE_COLORS
+    同一套語意（這裡「正」是賺錢，跟賣出力道那個「紅=買」的語意是兩件
+    事，各自獨立不衝突）。"""
+    parts = ["<div class=\"chart-stats\">"
+            "<div class=\"stat\"><b>%s</b><span>現價</span></div>" % esc(_fmt_price(current_price))]
+    if avg_cost is not None:
+        parts.append("<div class=\"stat\"><b style=\"color:var(--amber)\">%s</b>"
+                     "<span>%s</span></div>" % (esc(_fmt_price(avg_cost)), esc(avg_cost_label)))
+        if current_price is not None:
+            pnl_pct = (current_price - avg_cost) / avg_cost * 100
+            color = ("var(--red)" if pnl_pct > 0 else
+                    "var(--green)" if pnl_pct < 0 else "var(--ink-dim)")
+            parts.append("<div class=\"stat\"><b style=\"color:%s\">%+.1f%%</b>"
+                         "<span>浮動損益</span></div>" % (color, pnl_pct))
+    parts.append("</div>")
+    return "".join(parts)
+
+
 def _holdings_card_html(store, code):
     """持股與交易卡：純研究標的（不在最新庫存快照、也從無交易紀錄）整個
     不顯示這張卡片，回傳空字串由呼叫端不附加（見派工說明「不要顯示空
@@ -1477,6 +1505,13 @@ def _holdings_card_html(store, code):
         history = store.get_cached_price_history(code)
         aligned = _combo_chart_aligned_trades(history, ledger)
         avg_cost = _avg_cost_for_chart(holding_row, ledger)
+        if holding_row and holding_row.get("avg_cost") is not None:
+            avg_cost_label = "均價"
+        else:
+            avg_cost_label = "均價（%d筆）" % sum(1 for e in ledger if e["action"] == "買")
+        price_info = store.get_stock_prices().get(code)
+        current_price = price_info["price"] if price_info else None
+        parts.append(_chart_stats_html(current_price, avg_cost, avg_cost_label))
         parts.append(_render_combo_chart_svg(history, aligned, avg_cost=avg_cost))
         if len(history) >= 2:
             parts.append(
