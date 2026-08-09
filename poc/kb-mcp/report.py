@@ -1257,6 +1257,17 @@ def _combo_chart_aligned_trades(prices, entries):
     return aligned
 
 
+def _last_sell_position(aligned):
+    """回傳 aligned（依日期升冪排序）裡最後一筆「賣」的位置索引；整份
+    紀錄裡沒有賣出過（單純累積加碼）回傳 -1。供 _render_combo_chart_svg()
+    區分「已平倉舊紀錄」（此索引含之前）跟「目前部位」（此索引之後）。"""
+    last = -1
+    for i, a in enumerate(aligned):
+        if a["entry"]["action"] == "賣":
+            last = i
+    return last
+
+
 def _render_combo_chart_svg(prices, aligned, avg_cost=None, width=640, height=300):
     """個股詳情頁「走勢與力道」：上半部價格折線＋下半部買賣力道長條，
     共用同一條x軸（見 _combo_chart_aligned_trades 的索引對齊說明）。長條
@@ -1273,6 +1284,13 @@ def _render_combo_chart_svg(prices, aligned, avg_cost=None, width=640, height=30
       讓「這筆交易當時的價位」跟「這筆的力道」看得出是同一筆。
     - 力道長條區加橫軸（基準線＋每筆的刻度）＋每根長條上方標股數。
     - 折線右側维持高/低/最新價文字標籤；橫軸下方加最早/最新交易日期。
+
+    2026-08-09再補（PO反饋：混著全部歷史買賣紀錄容易誤會成都是目前
+    部位）：以「最後一筆賣出」當分界——之前的交易（可能是已經出清的
+    舊部位）淡化顯示＋分界處畫一條直向分隔線，之後的交易（目前部位的
+    加碼史）維持實色。沒有賣出紀錄（單純累積加碼，如從未減碼過的
+    標的）就整批維持實色，不畫分隔線。這是視覺上的粗略區隔，不是嚴謹
+    的先進先出成本分批（FIFO），跟均價估算同一套「刻意簡化」原則。
     """
     closes = [p["close"] for p in prices if p.get("close") is not None]
     if len(closes) < 2:
@@ -1336,34 +1354,50 @@ def _render_combo_chart_svg(prices, aligned, avg_cost=None, width=640, height=30
         parts.append("<text x=\"%.1f\" y=\"%.1f\" class=\"%s\">%s</text>"
                     % (label_x, y + 4, css_class, text))
 
+    # 已平倉舊紀錄 vs 目前部位：見 _last_sell_position() docstring。
+    boundary = _last_sell_position(aligned)
+
     # 每筆交易的價位點＋往下接到力道長條區的虛線，讓價位跟力道對得起來。
-    for a in aligned:
+    for i, a in enumerate(aligned):
         e, x = a["entry"], x_at(a["index"])
         y = y_price(e["price"])
         color = "var(--red)" if e["action"] == "買" else "var(--green)"
+        dim = " opacity=\"0.4\"" if i <= boundary else ""
         parts.append("<line x1=\"%.1f\" y1=\"%.1f\" x2=\"%.1f\" y2=\"%.1f\" "
                     "stroke=\"var(--rule-strong)\" stroke-width=\"1\" "
-                    "stroke-dasharray=\"2,2\"/>" % (x, y, x, bar_area_top))
-        parts.append("<circle cx=\"%.1f\" cy=\"%.1f\" r=\"2.6\" fill=\"%s\"/>" % (x, y, color))
+                    "stroke-dasharray=\"2,2\"%s/>" % (x, y, x, bar_area_top, dim))
+        parts.append("<circle cx=\"%.1f\" cy=\"%.1f\" r=\"2.6\" fill=\"%s\"%s/>"
+                    % (x, y, color, dim))
 
     max_value = max((abs(a["entry"]["shares"] * a["entry"]["price"]) for a in aligned),
                     default=0) or 1.0
     bar_w = max(2.0, (width - pad_l - pad_r) / max(n, 1) * 0.6)
-    for a in aligned:
+    for i, a in enumerate(aligned):
         e = a["entry"]
         value = e["shares"] * e["price"]
         bh = bar_h * min(1.0, abs(value) / max_value)
         color = "var(--red)" if e["action"] == "買" else "var(--green)"
+        opacity = "0.35" if i <= boundary else "0.85"
         x = x_at(a["index"]) - bar_w / 2
         parts.append(
             "<rect x=\"%.1f\" y=\"%.1f\" width=\"%.1f\" height=\"%.1f\" fill=\"%s\" "
-            "opacity=\"0.85\"><title>%s %s %s股 @%s</title></rect>"
-            % (x, bar_base_y - bh, bar_w, bh, color,
+            "opacity=\"%s\"><title>%s %s %s股 @%s%s</title></rect>"
+            % (x, bar_base_y - bh, bar_w, bh, color, opacity,
                esc(e["date"]), esc(e["action"]), esc(_fmt_num(e["shares"])),
-               esc(_fmt_num(e["price"]))))
+               esc(_fmt_num(e["price"])), "（已平倉舊紀錄）" if i <= boundary else ""))
         parts.append(
-            "<text x=\"%.1f\" y=\"%.1f\" class=\"chart-bar-label\" fill=\"%s\">%s</text>"
-            % (x_at(a["index"]), bar_base_y - bh - 4, color, esc(_fmt_num(e["shares"]))))
+            "<text x=\"%.1f\" y=\"%.1f\" class=\"chart-bar-label\" fill=\"%s\" opacity=\"%s\">"
+            "%s</text>"
+            % (x_at(a["index"]), bar_base_y - bh - 4, color, opacity, esc(_fmt_num(e["shares"]))))
+
+    # 分隔線：最後一筆賣出所在的x位置，畫一條貫穿價格區＋力道區的直線，
+    # 把「已平倉舊紀錄」跟「目前部位」在視覺上切開。沒有賣出過（boundary
+    # 為-1）就不畫，避免無意義的線。
+    if boundary >= 0:
+        sep_x = x_at(aligned[boundary]["index"])
+        parts.append("<line x1=\"%.1f\" y1=\"%.1f\" x2=\"%.1f\" y2=\"%.1f\" "
+                    "stroke=\"var(--ink-dim)\" stroke-width=\"1\" stroke-dasharray=\"4,3\"/>"
+                    % (sep_x, pad_t, sep_x, bar_base_y))
 
     # 橫軸：基準線＋每筆交易的刻度＋最早/最新交易日期。
     parts.append("<line x1=\"%.1f\" y1=\"%.1f\" x2=\"%.1f\" y2=\"%.1f\" "
@@ -1514,16 +1548,18 @@ def _holdings_card_html(store, code):
         parts.append(_chart_stats_html(current_price, avg_cost, avg_cost_label))
         parts.append(_render_combo_chart_svg(history, aligned, avg_cost=avg_cost))
         if len(history) >= 2:
+            has_sell = any(e["action"] == "賣" for e in ledger)
             parts.append(
                 "<p class=\"meta\">"
                 "<span style=\"color:var(--accent);\">●</span> 價格折線　"
                 "<span style=\"color:var(--red);\">●</span> 買進力道　"
                 "<span style=\"color:var(--green);\">●</span> 賣出力道　"
                 "%s"
-                "｜快取範圍 %s ~ %s</p>"
+                "｜快取範圍 %s ~ %s%s</p>"
                 % ("<span style=\"color:var(--amber);\">┄</span> 均價　"
                    if avg_cost is not None else "",
-                   esc(history[0]["date"]), esc(history[-1]["date"])))
+                   esc(history[0]["date"]), esc(history[-1]["date"]),
+                   "　｜淡色＝已平倉舊紀錄，實色＝目前這批部位" if has_sell else ""))
         # 交易明細用原生 <details> 收折（2026-08-09，PO比對mockup反饋）：
         # 預設收合，只在summary先告訴筆數，避免交易一多整張卡被清單撐長，
         # 跟頁面其餘 <details class="section"> 收折的既有慣例一致。

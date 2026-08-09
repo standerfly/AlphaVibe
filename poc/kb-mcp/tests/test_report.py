@@ -1019,6 +1019,45 @@ class StockDetailPageTest(unittest.TestCase):
         self.assertIn("<b style=\"color:var(--amber)\">900</b><span>均價</span>", page)
         self.assertNotIn("浮動損益", page)
 
+    def test_chart_dims_closed_lot_before_last_sell_and_draws_separator(self):
+        """2026-08-09新增（PO反饋：混著全部歷史買賣紀錄容易誤會成都是
+        目前部位）：最後一筆賣出之前的交易淡化顯示＋分隔線，之後的
+        （目前部位）維持實色 opacity=0.85。"""
+        self.store.save_holdings([{"code": "8299", "name": "群聯", "shares": 6,
+                                   "avg_cost": 1535.0}])
+        self.store.save_price_history_points("8299", [
+            {"date": "2026-04-30", "close": 1990.0},
+            {"date": "2026-07-15", "close": 2095.0},
+            {"date": "2026-07-30", "close": 1535.0},
+        ])
+        self.store.save_trade_ledger_entry("8299", "群聯", "買", 4, 1990.0,
+                                           "2026-04-30", add_sequence=1)
+        self.store.save_trade_ledger_entry("8299", "群聯", "賣", 14, 2095.0, "2026-07-15")
+        self.store.save_trade_ledger_entry("8299", "群聯", "買", 6, 1535.0,
+                                           "2026-07-30", add_sequence=2)
+        page = report.render_stock_detail_page(self.store, "8299")
+        self.assertIn("opacity=\"0.35\"", page)  # 已平倉那筆長條淡化
+        self.assertIn("opacity=\"0.85\"", page)  # 目前部位那筆長條維持實色
+        self.assertIn("淡色＝已平倉舊紀錄，實色＝目前這批部位", page)
+        self.assertIn("（已平倉舊紀錄）", page)  # rect title 上有附註
+
+    def test_chart_no_dimming_when_never_sold(self):
+        """單純累積加碼、從未賣出過：整批維持實色，不畫分隔線、不顯示
+        「已平倉」相關文字，避免無意義的視覺雜訊。"""
+        self.store.save_holdings([{"code": "2330", "name": "台積電", "shares": 20,
+                                   "avg_cost": 900.0}])
+        self.store.save_price_history_points("2330", [
+            {"date": "2026-06-01", "close": 900.0},
+            {"date": "2026-07-01", "close": 950.0},
+        ])
+        self.store.save_trade_ledger_entry("2330", "台積電", "買", 10, 890,
+                                           "2026-06-01", add_sequence=1)
+        self.store.save_trade_ledger_entry("2330", "台積電", "買", 10, 910,
+                                           "2026-07-01", add_sequence=2)
+        page = report.render_stock_detail_page(self.store, "2330")
+        self.assertNotIn("opacity=\"0.35\"", page)
+        self.assertNotIn("已平倉", page)
+
     def test_notes_card_lists_non_buy_reason_comments(self):
         self.store.save_stance("2330", "偏多", name="台積電")
         self.store.save_comment("買進理由内容", source_tag="買進理由", symbols="2330")
