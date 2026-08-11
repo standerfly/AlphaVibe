@@ -17,8 +17,11 @@
    FinMind額度打光教訓）；`peers`有指定時對每個peer重跑財務體檢五項並排
    放入`peer_comparison`，且不再呼叫`get_stock_info`（兩欄位互斥）。
 """
+import contextlib
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 import unittest.mock
 
@@ -28,6 +31,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 import finmind_client  # noqa: E402
 import fundamentals_client  # noqa: E402
 import research_brief  # noqa: E402
+from kb_store import KBStore  # noqa: E402
 
 NO_DATA_SOURCE_FIELDS = ("gross_margin_operating_leverage", "cash_flow", "earnings_call_qa")
 NEEDS_DISCUSSION_SECTIONS = ("business_understanding", "industry_structure",
@@ -118,44 +122,76 @@ def _patch_all_success():
     ]
 
 
-class PrepareResearchBriefStructureTest(unittest.TestCase):
-    """全部底層查詢成功時，驗證整體dict結構與七節骨架完整。"""
+@contextlib.contextmanager
+def _all_success_patched():
+    """Stage 3閘門測試用：`with`區塊版的`_patch_all_success()`，方便在單一
+    測試方法內局部套用（例如先存holdings/stance再patch再呼叫）。"""
+    patchers = _patch_all_success()
+    for p in patchers:
+        p.start()
+    try:
+        yield
+    finally:
+        for p in patchers:
+            p.stop()
+
+
+class _TempStoreTestCase(unittest.TestCase):
+    """Stage 3新增：`prepare_research_brief`現在必須帶`store`（真實KBStore，
+    用tempfile建臨時SQLite，比照test_review_engine.py既有慣例），供閘門
+    邏輯查`get_holdings`／`get_latest_stance`。"""
 
     def setUp(self):
+        super(_TempStoreTestCase, self).setUp()
+        self.tmp = tempfile.mkdtemp(prefix="alphavibe-research-brief-test-")
+        self.store = KBStore(self.tmp)
+        self.addCleanup(self.store.close)
+        self.addCleanup(lambda: shutil.rmtree(self.tmp, ignore_errors=True))
+
+
+class PrepareResearchBriefStructureTest(_TempStoreTestCase):
+    """全部底層查詢成功時，驗證整體dict結構與七節骨架完整。store為全新
+    空白（無持股無立場），閘門不觸發，等同Stage 3之前的既有行為。"""
+
+    def setUp(self):
+        super(PrepareResearchBriefStructureTest, self).setUp()
         self.patchers = _patch_all_success()
         for p in self.patchers:
             p.start()
         self.addCleanup(lambda: [p.stop() for p in self.patchers])
 
     def test_top_level_keys(self):
-        out = research_brief.prepare_research_brief("2330")
+        out = research_brief.prepare_research_brief("2330", store=self.store)
         # Stage 2：peers未指定（預設）時，多一個peer_candidates欄位。
-        expected_top = ({"code", "generated_at", "financial_check", "peer_candidates"}
+        # Stage 3：新增analysis_mode欄位（全新標的固定n/a_no_existing_record）。
+        expected_top = ({"code", "generated_at", "financial_check", "peer_candidates",
+                         "analysis_mode"}
                         | set(NEEDS_DISCUSSION_SECTIONS))
         self.assertEqual(set(out.keys()), expected_top)
         self.assertEqual(out["code"], "2330")
         self.assertTrue(out["generated_at"])
+        self.assertEqual(out["analysis_mode"], "n/a_no_existing_record")
 
     def test_financial_check_sub_keys(self):
-        out = research_brief.prepare_research_brief("2330")
+        out = research_brief.prepare_research_brief("2330", store=self.store)
         expected_sub = set(DATA_BEARING_FIELDS) | set(NO_DATA_SOURCE_FIELDS)
         self.assertEqual(set(out["financial_check"].keys()), expected_sub)
 
     def test_no_data_source_status_fixed(self):
-        out = research_brief.prepare_research_brief("2330")
+        out = research_brief.prepare_research_brief("2330", store=self.store)
         for field in NO_DATA_SOURCE_FIELDS:
             self.assertEqual(out["financial_check"][field]["status"], "no_data_source")
             self.assertTrue(out["financial_check"][field]["note"])
 
     def test_needs_discussion_status_fixed(self):
-        out = research_brief.prepare_research_brief("2330")
+        out = research_brief.prepare_research_brief("2330", store=self.store)
         for section in NEEDS_DISCUSSION_SECTIONS:
             self.assertEqual(out[section]["status"], "needs_discussion")
             self.assertTrue(out[section]["note"])
 
     def test_no_data_source_and_needs_discussion_are_distinct_status_values(self):
         """SRC-013核心設計原則：兩種留白狀態不能混用同一個status值。"""
-        out = research_brief.prepare_research_brief("2330")
+        out = research_brief.prepare_research_brief("2330", store=self.store)
         no_data_statuses = {out["financial_check"][f]["status"] for f in NO_DATA_SOURCE_FIELDS}
         needs_discussion_statuses = {out[s]["status"] for s in NEEDS_DISCUSSION_SECTIONS}
         self.assertEqual(no_data_statuses, {"no_data_source"})
@@ -163,7 +199,7 @@ class PrepareResearchBriefStructureTest(unittest.TestCase):
         self.assertTrue(no_data_statuses.isdisjoint(needs_discussion_statuses))
 
     def test_revenue_quality_has_real_numbers(self):
-        out = research_brief.prepare_research_brief("2330")
+        out = research_brief.prepare_research_brief("2330", store=self.store)
         section = out["financial_check"]["revenue_quality"]
         self.assertEqual(section["status"], "ok")
         self.assertEqual(section["latest_yoy"], 0.15)
@@ -171,7 +207,7 @@ class PrepareResearchBriefStructureTest(unittest.TestCase):
         self.assertEqual(len(section["recent_trend"]), 6)  # 近6個月
 
     def test_valuation_has_real_numbers(self):
-        out = research_brief.prepare_research_brief("2330")
+        out = research_brief.prepare_research_brief("2330", store=self.store)
         section = out["financial_check"]["valuation"]
         self.assertEqual(section["status"], "ok")
         self.assertEqual(section["per"], 20.5)
@@ -179,7 +215,7 @@ class PrepareResearchBriefStructureTest(unittest.TestCase):
         self.assertEqual(section["data_source"], "twse_official")
 
     def test_institutional_flow_has_real_numbers(self):
-        out = research_brief.prepare_research_brief("2330")
+        out = research_brief.prepare_research_brief("2330", store=self.store)
         section = out["financial_check"]["institutional_flow"]
         self.assertEqual(section["status"], "ok")
         self.assertEqual(section["foreign_net"], 40)
@@ -187,7 +223,7 @@ class PrepareResearchBriefStructureTest(unittest.TestCase):
         self.assertEqual(section["latest_date"], "2026-08-04")
 
     def test_price_history_recent_has_real_numbers(self):
-        out = research_brief.prepare_research_brief("2330")
+        out = research_brief.prepare_research_brief("2330", store=self.store)
         section = out["financial_check"]["price_history_recent"]
         self.assertEqual(section["status"], "ok")
         self.assertEqual(section["latest_close"], 1050.0)
@@ -196,7 +232,7 @@ class PrepareResearchBriefStructureTest(unittest.TestCase):
         self.assertEqual(section["data_points"], 2)
 
     def test_balance_sheet_has_real_numbers(self):
-        out = research_brief.prepare_research_brief("2330")
+        out = research_brief.prepare_research_brief("2330", store=self.store)
         section = out["financial_check"]["balance_sheet"]
         self.assertEqual(section["status"], "ok")
         self.assertEqual(section["cash_and_equivalents"], 3000000000.0)
@@ -208,16 +244,16 @@ class PrepareResearchBriefStructureTest(unittest.TestCase):
         LLM相關呼叫——mock齊全的情況下函式仍能跑完不出例外，且回傳值
         completely derived from the mocked returns（不會無中生有多餘欄位
         內容），是最直接能驗證「機械組裝」性質的方式。"""
-        out = research_brief.prepare_research_brief("2330")
+        out = research_brief.prepare_research_brief("2330", store=self.store)
         # revenue_quality的note在latest_yoy有值時應為None（不會被塞入任何
         # 額外生成文字）
         self.assertIsNone(out["financial_check"]["revenue_quality"]["note"])
         self.assertIsNone(out["financial_check"]["valuation"]["note"])
 
 
-class PrepareResearchBriefFailureTest(unittest.TestCase):
+class PrepareResearchBriefFailureTest(_TempStoreTestCase):
     """底層查詢失敗時，對應小節status要標記query_failed並保留原因，
-    不臆測、不中斷整個啟動包組裝。"""
+    不臆測、不中斷整個啟動包組裝。store為全新空白，閘門不觸發。"""
 
     def test_revenue_query_failed(self):
         with unittest.mock.patch.object(
@@ -238,7 +274,7 @@ class PrepareResearchBriefFailureTest(unittest.TestCase):
                                         return_value=_ok_balance_sheet()), \
              unittest.mock.patch.object(finmind_client, "get_stock_info",
                                         return_value=_ok_stock_info()):
-            out = research_brief.prepare_research_brief("0000")
+            out = research_brief.prepare_research_brief("0000", store=self.store)
 
         section = out["financial_check"]["revenue_quality"]
         self.assertEqual(section["status"], "query_failed")
@@ -271,7 +307,7 @@ class PrepareResearchBriefFailureTest(unittest.TestCase):
                              "total_assets": None, "debt_ratio": None}), \
              unittest.mock.patch.object(finmind_client, "get_stock_info",
                                         return_value=_ok_stock_info()):
-            out = research_brief.prepare_research_brief("0000")
+            out = research_brief.prepare_research_brief("0000", store=self.store)
 
         for field in DATA_BEARING_FIELDS:
             section = out["financial_check"][field]
@@ -297,25 +333,26 @@ class PrepareResearchBriefFailureTest(unittest.TestCase):
                 finmind_client, "get_revenue_yoy",
                 side_effect=RuntimeError("模擬不該發生的意外例外")):
             with self.assertRaises(RuntimeError):
-                research_brief.prepare_research_brief("2330")
+                research_brief.prepare_research_brief("2330", store=self.store)
 
 
-class PrepareResearchBriefPeerCandidatesTest(unittest.TestCase):
+class PrepareResearchBriefPeerCandidatesTest(_TempStoreTestCase):
     """SRC-013 Stage 2：`peers`未指定（預設）時的`peer_candidates`分支。"""
 
     def setUp(self):
+        super(PrepareResearchBriefPeerCandidatesTest, self).setUp()
         self.patchers = _patch_all_success()
         for p in self.patchers:
             p.start()
         self.addCleanup(lambda: [p.stop() for p in self.patchers])
 
     def test_peer_candidates_present_not_peer_comparison(self):
-        out = research_brief.prepare_research_brief("2330")
+        out = research_brief.prepare_research_brief("2330", store=self.store)
         self.assertIn("peer_candidates", out)
         self.assertNotIn("peer_comparison", out)
 
     def test_peer_candidates_industry_and_candidates(self):
-        out = research_brief.prepare_research_brief("2330")
+        out = research_brief.prepare_research_brief("2330", store=self.store)
         pc = out["peer_candidates"]
         self.assertEqual(pc["industry"], "半導體業")
         # 同產業扣除自己：2303聯電／2454聯發科，順序沿用stock_info原始順序
@@ -325,13 +362,13 @@ class PrepareResearchBriefPeerCandidatesTest(unittest.TestCase):
         ])
 
     def test_peer_candidates_excludes_self(self):
-        out = research_brief.prepare_research_brief("2330")
+        out = research_brief.prepare_research_brief("2330", store=self.store)
         codes = [c["code"] for c in out["peer_candidates"]["candidates"]]
         self.assertNotIn("2330", codes)
 
     def test_peer_candidates_empty_when_industry_not_found(self):
         # "0000" 不在_ok_stock_info()的名單裡，查無產業分類。
-        out = research_brief.prepare_research_brief("0000")
+        out = research_brief.prepare_research_brief("0000", store=self.store)
         self.assertEqual(out["peer_candidates"], {"industry": None, "candidates": []})
 
     def test_peer_candidates_empty_when_alone_in_industry(self):
@@ -341,14 +378,14 @@ class PrepareResearchBriefPeerCandidatesTest(unittest.TestCase):
                              "stocks": [{"stock_id": "2330", "stock_name": "台積電",
                                         "industry_category": "半導體業",
                                         "type": "twse", "date": "2026-01-01"}]}):
-            out = research_brief.prepare_research_brief("2330")
+            out = research_brief.prepare_research_brief("2330", store=self.store)
         self.assertEqual(out["peer_candidates"], {"industry": "半導體業", "candidates": []})
 
     def test_peer_candidates_calls_get_stock_info_exactly_once(self):
         with unittest.mock.patch.object(
                 finmind_client, "get_stock_info",
                 return_value=_ok_stock_info()) as mock_info:
-            research_brief.prepare_research_brief("2330")
+            research_brief.prepare_research_brief("2330", store=self.store)
         self.assertEqual(mock_info.call_count, 1)
 
     def test_peer_candidates_does_not_call_financial_apis_for_candidates(self):
@@ -374,35 +411,36 @@ class PrepareResearchBriefPeerCandidatesTest(unittest.TestCase):
                 return_value=_ok_balance_sheet()) as m_bs, \
              unittest.mock.patch.object(
                 finmind_client, "get_stock_info", return_value=_ok_stock_info()):
-            research_brief.prepare_research_brief("2330")
+            research_brief.prepare_research_brief("2330", store=self.store)
 
         for mock_fn in (m_rev, m_rev_latest, m_val, m_inst, m_price, m_bs):
             self.assertEqual(mock_fn.call_count, 1)
 
 
-class PrepareResearchBriefPeerComparisonTest(unittest.TestCase):
+class PrepareResearchBriefPeerComparisonTest(_TempStoreTestCase):
     """SRC-013 Stage 2：`peers`有指定時的`peer_comparison`分支。"""
 
     def setUp(self):
+        super(PrepareResearchBriefPeerComparisonTest, self).setUp()
         self.patchers = _patch_all_success()
         for p in self.patchers:
             p.start()
         self.addCleanup(lambda: [p.stop() for p in self.patchers])
 
     def test_peer_comparison_present_not_peer_candidates(self):
-        out = research_brief.prepare_research_brief("2330", peers=["2303"])
+        out = research_brief.prepare_research_brief("2330", store=self.store, peers=["2303"])
         self.assertIn("peer_comparison", out)
         self.assertNotIn("peer_candidates", out)
 
     def test_peer_comparison_has_five_data_bearing_fields_per_peer(self):
-        out = research_brief.prepare_research_brief("2330", peers=["2303", "3711"])
+        out = research_brief.prepare_research_brief("2330", store=self.store, peers=["2303", "3711"])
         self.assertEqual(set(out["peer_comparison"].keys()), {"2303", "3711"})
         for peer_code in ("2303", "3711"):
             self.assertEqual(set(out["peer_comparison"][peer_code].keys()),
                              set(DATA_BEARING_FIELDS))
 
     def test_peer_comparison_reuses_existing_functions_real_numbers(self):
-        out = research_brief.prepare_research_brief("2330", peers=["2303"])
+        out = research_brief.prepare_research_brief("2330", store=self.store, peers=["2303"])
         peer = out["peer_comparison"]["2303"]
         self.assertEqual(peer["valuation"]["status"], "ok")
         self.assertEqual(peer["valuation"]["per"], 20.5)
@@ -414,7 +452,7 @@ class PrepareResearchBriefPeerComparisonTest(unittest.TestCase):
         """方向A核心原則：純數字並排，不做評語/排名判斷——驗證peer_comparison
         底下每個peer的五項只有既有函式回傳的固定鍵，沒有額外塞入排名/評分/
         建議類欄位。"""
-        out = research_brief.prepare_research_brief("2330", peers=["2303"])
+        out = research_brief.prepare_research_brief("2330", store=self.store, peers=["2303"])
         for field_name, section in out["peer_comparison"]["2303"].items():
             for forbidden in ("rank", "score", "recommendation", "comment", "better"):
                 self.assertNotIn(forbidden, section, "%s.%s 不應有評語/排名欄位" % (field_name, forbidden))
@@ -424,7 +462,7 @@ class PrepareResearchBriefPeerComparisonTest(unittest.TestCase):
         （那是peer_candidates分支才需要的，避免多餘API呼叫）。"""
         with unittest.mock.patch.object(
                 finmind_client, "get_stock_info", return_value=_ok_stock_info()) as mock_info:
-            research_brief.prepare_research_brief("2330", peers=["2303"])
+            research_brief.prepare_research_brief("2330", store=self.store, peers=["2303"])
         self.assertEqual(mock_info.call_count, 0)
 
     def test_peer_comparison_calls_financial_apis_once_per_code(self):
@@ -445,7 +483,7 @@ class PrepareResearchBriefPeerComparisonTest(unittest.TestCase):
                 return_value=_ok_price_history()), \
              unittest.mock.patch.object(
                 finmind_client, "get_balance_sheet_summary", return_value=_ok_balance_sheet()):
-            research_brief.prepare_research_brief("2330", peers=["2303", "3711"])
+            research_brief.prepare_research_brief("2330", store=self.store, peers=["2303", "3711"])
         self.assertEqual(m_rev.call_count, 3)
 
     def test_peer_comparison_peer_query_failure_does_not_break_brief(self):
@@ -458,12 +496,103 @@ class PrepareResearchBriefPeerComparisonTest(unittest.TestCase):
 
         with unittest.mock.patch.object(
                 finmind_client, "get_revenue_yoy", side_effect=revenue_side_effect):
-            out = research_brief.prepare_research_brief("2330", peers=["2303"])
+            out = research_brief.prepare_research_brief("2330", store=self.store, peers=["2303"])
 
         self.assertEqual(out["peer_comparison"]["2303"]["revenue_quality"]["status"],
                          "query_failed")
         # 主標的自己的財務體檢不受peer查詢失敗影響
         self.assertEqual(out["financial_check"]["revenue_quality"]["status"], "ok")
+
+
+class PrepareResearchBriefAnalysisModeGateTest(_TempStoreTestCase):
+    """SRC-013 Stage 3（本次新增）：已有持股/立場記錄時的硬性程式閘門。
+
+    重點驗證2026-08-11測試結論的落地——純文字description提醒會被模型繞過，
+    改成程式碼層面直接短路，且短路時**真的不查任何financial_check資料**
+    （不是查完才擋，用mock call_count反面驗證），確認省下FinMind額度。
+    """
+
+    def test_gate_triggered_when_has_holdings_no_analysis_mode(self):
+        """情境(a)：已有持股、未帶analysis_mode → gate，且沒有觸發任何
+        financial_check相關外部查詢mock（驗證真的有短路，不是查完才擋）。"""
+        self.store.save_holdings([{"code": "2330", "shares": 1000}])
+        with unittest.mock.patch.object(finmind_client, "get_revenue_yoy") as m_rev, \
+             unittest.mock.patch.object(fundamentals_client, "get_revenue_yoy_latest") as m_rev_l, \
+             unittest.mock.patch.object(fundamentals_client, "get_valuation") as m_val, \
+             unittest.mock.patch.object(finmind_client, "get_institutional_trading") as m_inst, \
+             unittest.mock.patch.object(finmind_client, "get_stock_price_history") as m_price, \
+             unittest.mock.patch.object(finmind_client, "get_balance_sheet_summary") as m_bs, \
+             unittest.mock.patch.object(finmind_client, "get_stock_info") as m_info:
+            out = research_brief.prepare_research_brief("2330", store=self.store)
+
+        self.assertEqual(out["gate"], "confirm_analysis_mode_required")
+        self.assertEqual(out["code"], "2330")
+        self.assertTrue(out["has_holdings"])
+        self.assertFalse(out["has_stance"])
+        self.assertIsNone(out["latest_stance_summary"])
+        self.assertIn("PO", out["message"])
+        # 唯一輸出：不應附加financial_check等其他欄位讓呼叫端誤以為可以直接分析
+        self.assertEqual(set(out.keys()),
+                         {"code", "gate", "message", "has_holdings", "has_stance",
+                          "latest_stance_summary"})
+        for m in (m_rev, m_rev_l, m_val, m_inst, m_price, m_bs, m_info):
+            m.assert_not_called()
+
+    def test_gate_triggered_when_has_stance_no_holdings(self):
+        """情境(b)：已有現行立場（無持股）、未帶analysis_mode → gate。"""
+        self.store.save_stance("2330", "buy", reason="測試用立場")
+        with unittest.mock.patch.object(finmind_client, "get_revenue_yoy") as m_rev:
+            out = research_brief.prepare_research_brief("2330", store=self.store)
+
+        self.assertEqual(out["gate"], "confirm_analysis_mode_required")
+        self.assertFalse(out["has_holdings"])
+        self.assertTrue(out["has_stance"])
+        self.assertEqual(out["latest_stance_summary"]["stance"], "buy")
+        m_rev.assert_not_called()
+
+    def test_gate_passed_with_analysis_mode_full(self):
+        """情境(c)：已有持股、帶analysis_mode="full" → 正常產出完整結果。"""
+        self.store.save_holdings([{"code": "2330", "shares": 1000}])
+        with _all_success_patched():
+            out = research_brief.prepare_research_brief(
+                "2330", store=self.store, analysis_mode="full")
+
+        self.assertNotIn("gate", out)
+        self.assertEqual(out["analysis_mode"], "full")
+        self.assertEqual(out["financial_check"]["valuation"]["status"], "ok")
+        self.assertEqual(out["financial_check"]["valuation"]["per"], 20.5)
+
+    def test_gate_passed_with_analysis_mode_monitoring(self):
+        """情境(d)：已有持股、帶analysis_mode="monitoring" → 正常產出完整結果。"""
+        self.store.save_holdings([{"code": "2330", "shares": 1000}])
+        with _all_success_patched():
+            out = research_brief.prepare_research_brief(
+                "2330", store=self.store, analysis_mode="monitoring")
+
+        self.assertNotIn("gate", out)
+        self.assertEqual(out["analysis_mode"], "monitoring")
+        self.assertEqual(out["financial_check"]["revenue_quality"]["status"], "ok")
+
+    def test_new_stock_no_record_not_gated(self):
+        """情境(e)：全新標的（無持股無立場）、未帶analysis_mode → 正常產出
+        完整結果，不用問——這是原本設計就對的部分。"""
+        with _all_success_patched():
+            out = research_brief.prepare_research_brief("2330", store=self.store)
+
+        self.assertNotIn("gate", out)
+        self.assertEqual(out["analysis_mode"], "n/a_no_existing_record")
+        self.assertEqual(out["financial_check"]["balance_sheet"]["status"], "ok")
+
+    def test_invalid_analysis_mode_value_treated_as_not_provided(self):
+        """情境(f)：analysis_mode帶了不合法值（例如"foo"）且該標的已有持股
+        → 視同沒帶，一樣gate。"""
+        self.store.save_holdings([{"code": "2330", "shares": 1000}])
+        with unittest.mock.patch.object(finmind_client, "get_revenue_yoy") as m_rev:
+            out = research_brief.prepare_research_brief(
+                "2330", store=self.store, analysis_mode="foo")
+
+        self.assertEqual(out["gate"], "confirm_analysis_mode_required")
+        m_rev.assert_not_called()
 
 
 if __name__ == "__main__":

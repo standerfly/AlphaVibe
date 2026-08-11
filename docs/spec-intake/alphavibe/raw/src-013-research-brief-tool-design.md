@@ -200,6 +200,45 @@ PO第三次開新對話說「研究一下台達電」，新session完全沒問�
 描述是唯一保證任何session都看得到的地方，哲學文件草稿目前還沒
 `save_philosophy`安裝，能否被讀到完全不確定。
 
+**2026-08-11 第四次驗證：軟性文字提醒改成硬性程式閘門（已實作，MCP連線
+是否即時生效待PO實測確認）**：連續3次真實對話測試＋1次專門派agent做的
+驗證測試，都證實「第0步」寫成工具description的軟性文字提醒不可靠——
+模型會用「不確定就查、可逆低成本不用問」這類全域判斷原則把規則推理
+繞過去，直接分析、不先問。文字說服此路不通，改採**硬性程式閘門**，
+參考本repo既有的`save_stance`衝突偵測模式（偵測到衝突不寫入、回傳
+衝突資訊，呼叫端須明確帶`overwrite=True`才能真的寫入）：
+
+- `prepare_research_brief(code, store, analysis_mode=None, peers=None, ...)`
+  新增必要參數`store`；函式一開始查`store.get_holdings()`／
+  `store.get_latest_stance()`，若該標的已有持股或立場記錄、且
+  `analysis_mode`不是`"full"`或`"monitoring"`，**直接短路回傳**
+  `{"gate": "confirm_analysis_mode_required", ...}`，**不觸碰任何
+  financial_check查詢**（額外好處：省下FinMind額度）。查無持股/立場
+  的全新標的不受影響，照舊直接產出完整結果。
+- `server.py`同步更新inputSchema（新增`analysis_mode`可選參數）與
+  description（改寫成描述硬性閘門行為，不再是「建議先問」語氣）。
+- 主對話獨立驗證（不採信subagent自報）：重跑測試637→**643 tests
+  OK**（+6）；直接Python呼叫三種情境——2308不帶`analysis_mode`→
+  正確被擋（只有gate欄位，無financial_check）；2308帶
+  `analysis_mode="monitoring"`→正常出五項數字；2330（先查證真的無
+  持股/立場）不帶`analysis_mode`→正常出結果，未被誤擋。三種情境皆
+  與程式碼行為一致。
+
+**發現一個環境限制，誠實記錄**：主對話用ToolSearch查詢當前session
+連到的`prepare_research_brief`工具schema，發現**還是舊版**（description
+沒有`analysis_mode`字樣，inputSchema也沒有這個參數）——這個session
+與MCP server的連線是在改程式碼「之前」建立並快取住的，不會因為檔案
+變更就自動更新。派一個診斷用subagent去查也連到同一個舊版（回報
+`BLOCKED_STALE_TOOL`），代表**subagent共用主對話既有的MCP連線，不是
+獨立建立新的**——這代表主對話沒辦法從這個環境裡自己把「新session會
+不會真的被擋」驗到底，這是本次驗證方法論的實際邊界，不是裝作測過了。
+好消息：程式碼正確性已用直接Python呼叫的方式獨立驗證過（見上），
+可信；不確定的只剩「PO之後在手機/新開對話觸發時，是否真的拿到新版
+工具」——如果PO那邊的連線跟這個session各自獨立（前三次真實測試看起來
+就是如此，各自開新對話），應該會直接讀到新版程式碼，但main agent
+無法百分之百保證，需要PO下次實際觸發時確認才算數（比照前三次抓到
+真實問題的方式）。
+
 ### Stage 4（視Stage 1-3使用狀況再評估）
 若留白欄位在實際使用中不夠好用，考慮要不要讓Claude在對話中直接讀取
 啟動包輸出＋SRC-012 checklist哲學文件，主動逐項引導討論（技術上這已

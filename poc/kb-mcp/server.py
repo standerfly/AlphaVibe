@@ -233,17 +233,28 @@ TOOLS = [
                         "today查詢結果混排成同一段——尤其source_ref顯示是PO手動提供的"
                         "截圖/資料（非AlphaVibe自己API查證），更要清楚標示，避免讀者誤以"
                         "為是同等可信度的即時查詢結果。"
-                        "第0步（觸發本工具前或呈現結果前，PO已裁決、非建議）：先查"
-                        "get_holdings／get_stance，若該標的已有持股或現行立場記錄，"
-                        "必須先問PO要（a）完整研究checklist六問、還是（b）針對現有立場的"
-                        "持倉監控式檢視（成長趨緩/籌碼轉向/技術位階這類），由PO選，"
-                        "不可自動判斷或直接套用其中一種就分析——已持股不代表只需要監控，"
-                        "PO可能仍要重新完整研究，這是PO的判斷不是系統的判斷。查無持股/"
-                        "立場記錄的全新標的，直接走六問不用多問這一步。"),
+                        "強制程式閘門（2026-08-11新增，非文字建議——純description提醒"
+                        "已實測會被繞過，見SRC-013）：若該標的已有持股或現行立場記錄，"
+                        "且本次呼叫未帶analysis_mode（或帶的值不是full/monitoring），"
+                        "本工具**不會產出任何分析**，只會回傳"
+                        "gate:\"confirm_analysis_mode_required\"與PO持股/立場摘要，"
+                        "financial_check等其餘欄位完全不會出現（連查詢都不會發生）。"
+                        "呼叫端看到這個gate必須先問PO要（a）完整研究checklist六問"
+                        "（analysis_mode=\"full\"）、還是（b）針對現有立場的持倉監控式"
+                        "檢視（analysis_mode=\"monitoring\"），拿到PO的答案後帶著"
+                        "analysis_mode參數再呼叫一次，不可自行判斷或代PO選。查無持股/"
+                        "立場記錄的全新標的不受此限，可省略analysis_mode直接取得完整"
+                        "結果（回傳的analysis_mode欄位會標示為n/a_no_existing_record）。"),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "code": {"type": "string", "description": "台股代碼，如 2330"},
+                "analysis_mode": {"type": "string", "enum": ["full", "monitoring"],
+                                  "description": ("該標的已有持股/立場記錄時必填：\"full\"＝"
+                                                  "完整研究checklist六問，\"monitoring\"＝"
+                                                  "針對現有立場的持倉監控式檢視。由PO選定，"
+                                                  "不可自行判斷。全新標的（查無持股/立場）"
+                                                  "可省略。")},
                 "peers": {"type": "array", "items": {"type": "string"},
                          "description": ("可選：對照組股票代碼清單（同產業鏈上下游/競爭者），"
                                          "如 [\"2303\", \"3711\"]，建議1-3檔但不強制上限。"
@@ -920,7 +931,9 @@ class Server:
                 args["stock_id"], data_dir=self.data_dir)
         if name == "prepare_research_brief":
             return research_brief.prepare_research_brief(
-                args["code"], peers=args.get("peers"), data_dir=self.data_dir)
+                args["code"], store=self.store,
+                analysis_mode=args.get("analysis_mode"),
+                peers=args.get("peers"), data_dir=self.data_dir)
         if name == "save_snapshot":
             return self.store.save_snapshot(
                 code=args["code"], thesis=args["thesis"],

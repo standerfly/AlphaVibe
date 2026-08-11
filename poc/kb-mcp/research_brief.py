@@ -231,10 +231,27 @@ def _peer_comparison(peers, data_dir, token):
     }
 
 
-def prepare_research_brief(code, peers=None, data_dir=None, token=None):
+VALID_ANALYSIS_MODES = ("full", "monitoring")
+
+
+def prepare_research_brief(code, store, analysis_mode=None, peers=None, data_dir=None, token=None):
     """組裝「研究啟動包」：財務體檢五個有資料源小節查實際數字，其餘三個
     財務小節與頂層六節固定佔位（見模組docstring status三分法）。不呼叫
     任何LLM，全部是既有工具回傳值的直接組裝或簡單機械運算。
+
+    Stage 3（本次新增，硬性程式閘門——SRC-013 2026-08-11測試結論：純文字
+    description提醒會被模型用「不確定就查、可逆低成本不用問」等全域原則
+    推理繞過，改用程式碼層面直接擋下）：呼叫前用`store.get_holdings`／
+    `store.get_latest_stance`檢查該標的是否已有持股或現行立場記錄。若有，
+    且`analysis_mode`未帶或不是合法值（"full"／"monitoring"），直接短路
+    回傳`{"gate": "confirm_analysis_mode_required", ...}`，**不查任何
+    financial_check資料**（連帶省下FinMind額度）——呼叫端必須先問PO要哪種
+    分析角度，帶著PO的答案再呼叫一次，不可自行判斷。查無持股/立場記錄的
+    全新標的不受此限，直接照原邏輯產出完整結果，不用多問。
+
+    通過閘門後，回傳最外層新增`analysis_mode`欄位，記錄這次實際使用的
+    模式：`"full"`／`"monitoring"`（沿用呼叫端帶入的合法值）／
+    `"n/a_no_existing_record"`（全新標的，本來就不需要選模式）。
 
     `peers`（SRC-013 Stage 2，對照組交叉驗證，可選）：
     - 未指定（None，預設）：不查任何額外財務資料，只用一次
@@ -246,6 +263,34 @@ def prepare_research_brief(code, peers=None, data_dir=None, token=None):
       不做任何評語/排名判斷。
     - 兩個欄位互斥，一次呼叫只產生其中一個，不會同時出現。
     """
+    holdings = store.get_holdings(code=code)
+    has_holdings = bool(holdings.get("count"))
+    latest_stance = store.get_latest_stance(code)
+    has_stance = bool(latest_stance)
+
+    if (has_holdings or has_stance) and analysis_mode not in VALID_ANALYSIS_MODES:
+        stance_summary = None
+        if latest_stance:
+            stance_summary = {
+                "stance": latest_stance.get("stance"),
+                "date": latest_stance.get("date"),
+                "name": latest_stance.get("name"),
+            }
+        return {
+            "code": code,
+            "gate": "confirm_analysis_mode_required",
+            "message": ("此標的已有持股/立場記錄，請先問PO要（a）完整研究"
+                        "checklist六問（analysis_mode=\"full\"）、還是（b）"
+                        "針對現有立場的持倉監控式檢視（analysis_mode="
+                        "\"monitoring\"），PO選定後帶analysis_mode參數再"
+                        "呼叫。不可自行判斷或直接套用其中一種。"),
+            "has_holdings": has_holdings,
+            "has_stance": has_stance,
+            "latest_stance_summary": stance_summary,
+        }
+
+    resolved_mode = analysis_mode if (has_holdings or has_stance) else "n/a_no_existing_record"
+
     financial_check = {
         "revenue_quality": _revenue_quality(code, data_dir, token),
         "valuation": _valuation(code, data_dir, token),
@@ -259,6 +304,7 @@ def prepare_research_brief(code, peers=None, data_dir=None, token=None):
     brief = {
         "code": code,
         "generated_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "analysis_mode": resolved_mode,
         "financial_check": financial_check,
     }
     for section, note in NEEDS_DISCUSSION_SECTIONS.items():
