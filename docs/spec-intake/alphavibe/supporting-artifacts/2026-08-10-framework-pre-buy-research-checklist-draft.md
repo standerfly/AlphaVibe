@@ -63,6 +63,16 @@ peers一併帶入，例如「研究2330，跟聯電比」）。拿到回傳的di
 5. 討論出的結論，照舊由PO確認後手動呼叫`save_stance`寫回`reason`／
    `risk_factor`，本框架與`prepare_research_brief`都不會自動寫入
    Layer 2
+6. **混用`get_stance`等其他工具的歷史資料時，必須標日期與來源，不能跟
+   `prepare_research_brief`今天的查詢結果混排成同一段**（2026-08-11
+   實測發現的問題：一份研究摘要把2026-08-01立場記錄裡的毛利率數字——
+   當時PO提供截圖、Claude正確標了`source_ref`——跟同一天`prepare_research_brief`
+   查到的PER/PBR新數字排在同一段「營收動能」，格式一樣、沒有日期差異
+   提示，讀者完全分不出哪個是今天查的、哪個是十天前的舊記錄）。正確
+   做法：今天的`financial_check`查詢結果單獨一段；`get_stance`歷史另
+   立一段，每筆都標明日期＋`source_ref`（尤其`source_ref`顯示是PO手動
+   提供截圖/資料、非AlphaVibe自己API查證得來的，更要清楚標示，不能讓
+   讀者誤以為是同等可信度的即時查詢結果）
 
 **這份框架不管的事**：已經是持股、只是要決定加碼幾成／減碼幾成，
 那是 `framework_evidence_based_position_sizing`（部位管理框架）的
