@@ -19,6 +19,7 @@
 | 1e. 模組A+D+E開發 | 老芋頭交易結構化表（FR-044）、交易流水表（FR-056）、策略檢視引擎四組成部分（FR-051~055：通用檢視層/策略專屬層/老芋頭動向比對/部位控制建議）、每日排程整合（FR-057） | ✅ 完成（2026-08-09查證修正，先前本檔誤標待啟動） | commit `4fa230e`（2026-07-31）；`review_engine.py`／`module_d_scheduler.py`；MCP工具`check_general_review`/`check_strategy_review`/`check_laoyutou_signal`/`check_position_control`/`record_module_d_findings`/`run_module_d_check`已掛載server.py |
 | 1f. 模組F開發：儀表板方案A＋個股清單/詳情頁＋庫存買賣圖表 | FR-058單頁式儀表板（今日重點/新候選/觀察庫存/策略設定/快速輸入）；個股清單頁＋詳情頁（`/dashboard/stocks`／`/dashboard/stock/<code>`，搜尋/篩選/背景刷新）；庫存買賣圖表（清單頁迷你走勢、詳情頁價格折線＋買賣力道長條圖） | ✅ 完成（2026-08-09查證修正，先前本檔誤標待1e完成） | commit `4fa230e`（2026-07-31，基礎儀表板）＋本機 Cline session `552c625`（2026-08-02，未commit的已完成工作，2026-08-09補commit保存：個股清單/詳情頁、背景刷新機制、`fundamentals_client.py`估值來源架構修正）＋本次session（2026-08-09，庫存買賣圖表嫁接進上述架構，見下方接手指南）；測試600/600綠 |
 | 1g. 模組G：策略績效回顧 | FR-059 | ⏳ 待樣本量足夠再啟動（1e/1f已完成，資料寫入管道已對，可持續累積） | — |
+| **1h. 研究啟動包（新規劃，2026-08-10）** | 候選FR-060：`prepare_research_brief(code)`——依SRC-012 checklist骨架機械蒐集財務數字＋排版，判斷性欄位留白待對話討論（方向A，見SRC-013） | 🔄 規劃中，PO已確認要做，逐步分Stage建置，Stage 1尚未開始 | `raw/src-013-research-brief-tool-design.md` |
 | 2. 正式產品 | speckit 流程＋交易紀錄整合 FR-022/FR-056 | ⏳ Phase 1 驗證後（五項前置開放問題已於2026-07-27全數定案，見下方「Phase 2 正式產品」節，但「現在啟動Phase 2」本身仍是待PO另外決定的獨立問題，不是自動觸發） | — |
 
 Deferred（已定案遞延，見 scope-decision.md）：Docker 雲端部署、多用戶、
@@ -149,6 +150,33 @@ In-Scope（Q-042），不再屬於此清單**。
 - 啟動時機：PO主動觸發，不是排程自動跑；等1e/1f運作一段時間、累積夠
   多市場篩選與檢視樣本後再啟動，避免樣本太小的統計沒有意義。
 - 需求依據：product-spec.md FR-059。
+
+### 1h 研究啟動包（規劃中，2026-08-10 PO確認要做）
+- **背景與設計依據**：完整討論見 `raw/src-013-research-brief-tool-design.md`
+  （延續SRC-012）。核心判斷：文章checklist七節裡，只有「財務體檢」多數
+  可自動查數字，其餘六節（業務理解/產業結構/預期差/破裂條件/估值敘事/
+  收斂四問）本質是判斷，不能自動生成——已評估並排除「全自動產出報告」
+  方向（幻覺風險＋違背FR-021/FR-026「自動結構化結論0%使用」的既有教訓），
+  採用「機械蒐集＋排版，判斷性欄位留白待對話討論」的方向。
+- **候選FR-060**，尚未走scope-decision正式流程，product-spec.md暫不動。
+- **分階段計畫**（逐步完成，每階段接手前先讀SRC-013確認最新進度，不要
+  只看這裡的摘要）：
+  1. Stage 1（MVP）：新增唯讀MCP工具`prepare_research_brief(code)`，
+     純組裝現有工具（`get_fundamentals`／`get_revenue_yoy`／
+     `get_institutional_trading`／`get_stock_price_history`等，實際
+     涵蓋範圍以查證為準）輸出，依checklist財務六面向骨架排版，其餘
+     六節固定佔位「〔需要對話討論〕」。不呼叫LLM生成任何敘事。
+  2. Stage 2：支援對照組股票並排交叉驗證——**待PO裁決**對照組怎麼決定
+     （沿用FR-041主題標籤自動抓，或PO手動指定）。
+  3. Stage 3：與對話流程掛勾的觸發時機——**待PO裁決**是PO主動觸發，
+     還是模組C篩出新候選時併入FR-057排程自動先跑一次。
+  4. Stage 4：視Stage 1-3實際使用狀況，再評估要不要讓Claude主動依
+     啟動包＋SRC-012 checklist哲學文件引導逐項討論。
+- **已知資料邊界（誠實列出，任何Stage都解決不了）**：法說會Q&A逐字稿、
+  TAM市場規模、法人共識預期/預估修正方向——台股無免費結構化API，永遠
+  留白，需PO自己讀到的外部資訊補進對話。
+- **現況**：尚未開始寫程式碼，下一步是PO與Claude逐步確認Stage 1的
+  具體規格後開工。
 
 ### Phase 2 正式產品（前置條件已全數定案，是否現在啟動仍待PO另外決定）
 - 前置五項開放問題（2026-07-24~27 PO逐項定案，見clarification-log.md
