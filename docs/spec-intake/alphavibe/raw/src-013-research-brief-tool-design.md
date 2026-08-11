@@ -92,24 +92,55 @@
   對不齊（例如多月序列近5個月yoy_growth為null、latest卻有值）——這是
   `fundamentals_client`/`finmind_client`既有的資料源口徑差異（`get_revenue_yoy`
   工具本來就是同樣組合方式），不是Stage 1新增程式碼造成，維持現況呈現
-- 未加入 `server_readonly.py`（Cline唯讀白名單）——語意上屬唯讀查詢，
-  要不要開放給Cline查詢路徑待PO決定
+- 未加入 `server_readonly.py`（Cline唯讀白名單）——**已於Stage 3補上**
+  （見下方）
 - 完整改動：`finmind_client.py`／`server.py`／`README.md`／
   `tests/test_kb.py`／`tests/test_traceability.py`（既有 `test_tools_list_has_forty`
   因新增2個工具改名`test_tools_list_has_forty_two`）／新檔案
   `research_brief.py`／`tests/test_research_brief.py`
 
-### Stage 2（交叉驗證擴充）
-支援選填「對照組」股票代碼（同產業鏈上下游/競爭者），並排呈現同一批
-財務數字，對應checklist「交叉驗證」小節。
-- **待PO裁決**：對照組怎麼決定？沿用FR-041投資主題標籤自動抓同主題
-  標的，還是PO每次手動指定？
+### Stage 2（交叉驗證擴充）—— ✅ 已完成（2026-08-11）
+PO裁決：**列出候選清單交由PO判斷，系統不自動挑選**（不用FR-041主題
+標籤——那是PO討論/建倉過程才手動標的，第一次研究新標的時通常還沒有
+標籤；改用官方產業分類，任何股票都有，更適合當預設候選來源）。
 
-### Stage 3（與對話流程掛勾）
-討論「研究啟動包」的觸發時機。
-- **待PO裁決**：PO在對話中主動要求觸發，還是模組C篩出新候選時自動先
-  跑一次（併入FR-057每日排程整合）？結論寫回Layer 2時，來源標注方式
-  是否沿用FR-055「[模組D自動檢視 日期]」的模式，改成「[研究啟動包 日期]」？
+`prepare_research_brief(code, peers=None)` 新增 `peers` 參數：
+- 未指定：一次 `get_stock_info` 全量查詢（不逐檔查財務API，避免同產業
+  幾十檔被查詢浪費額度），篩出同產業分類代碼放進 `peer_candidates`
+  （`{"industry":..., "candidates":[...]}`），只列清單給PO自己挑
+- 有指定（如`["2303"]`）：對每個peer重跑財務體檢五項，並排放進
+  `peer_comparison`，不做任何評語/排名判斷
+- 兩欄位互斥，一次呼叫只出現其中一個
+
+**完成紀錄（實作＋獨立驗證）**：
+- `research_brief.py` 新增 `_peer_candidates()`／`_peer_comparison()`，
+  重用既有五個財務體檢內部函式，未複製貼上邏輯
+- 主對話獨立重跑測試：改前623→改後 **637 tests OK**（+14）
+- 主對話獨立實測兩種情境（真實FinMind呼叫）：
+  - `prepare_research_brief("2330")`（無peers）→ `industry="半導體業"`，
+    `candidates`共291筆（例：3219倚強股份、6594展匯科、3054立萬利）
+  - `prepare_research_brief("2330", peers=["2303"])`（2303聯電，真實
+    同產業標的）→ `peer_comparison["2303"]`五項皆`status:"ok"`且有實際
+    數字（例：PER 18.5、debt_ratio≈0.333），與2330自身數字並排、無評語
+
+### Stage 3（與對話流程掛勾）—— ✅ 已完成（2026-08-11）
+PO裁決：**PO手動觸發**（不併入FR-057排程自動跑）。
+
+- **觸發方式**：對話中PO說「研究一下XXXX」「幫我拉XXXX的資料」類語句，
+  Claude據此呼叫`prepare_research_brief`（要指定對照組可直接一併講，如
+  「研究2330，跟聯電比」）——沿用既有對話觸發模式，不發明新指令語法
+- **呈現規則**（已寫入
+  `supporting-artifacts/2026-08-10-framework-pre-buy-research-checklist-draft.md`
+  「搭配prepare_research_brief使用」小節）：Claude不原樣貼JSON、不幫
+  needs_discussion欄位自動生成答案、peer_candidates原樣列給PO自己挑、
+  六個needs_discussion欄位換成checklist對應小節的引導提問、結論仍由
+  PO確認後手動`save_stance`
+- **Cline唯讀白名單**：`prepare_research_brief`／`get_balance_sheet`已
+  加入`server_readonly.py`的`READONLY_TOOLS`，主對話獨立grep確認
+- **已知待辦（非阻塞）**：`server_readonly.py`白名單與全域
+  `~/.claude/agents/stock-researcher.md`列的23個工具清單目前不完全
+  一致（該檔在repo範圍外，屬全域設定），已在`server_readonly.py`
+  docstring註記；要不要同步兩份清單待PO決定，不在本次範圍內處理
 
 ### Stage 4（視Stage 1-3使用狀況再評估）
 若留白欄位在實際使用中不夠好用，考慮要不要讓Claude在對話中直接讀取

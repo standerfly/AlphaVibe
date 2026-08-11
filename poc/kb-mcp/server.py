@@ -220,10 +220,22 @@ TOOLS = [
                         "無資料源，status固定為no_data_source。頂層業務理解/產業結構/預期差/"
                         "破裂條件/估值敘事/收斂四問六節本質是判斷非查詢，status固定為"
                         "needs_discussion，需另外與PO對話討論、結論寫回save_stance，"
-                        "本工具不會、也不應該幫這六節生成任何文字。"),
+                        "本工具不會、也不應該幫這六節生成任何文字。"
+                        "SRC-013 Stage 2（對照組交叉驗證，可選）：不帶peers時，用一次"
+                        "get_stock_info全量查詢帶出同產業候選名單peer_candidates"
+                        "（不對候選逐檔查財務資料，避免浪費FinMind額度）；帶peers時（例如"
+                        "[\"2303\"]），對每個peer code重跑財務體檢五項並排放入"
+                        "peer_comparison，純數字不含任何評語/排名判斷。兩欄位互斥，"
+                        "一次呼叫只回傳其中一個。"),
         "inputSchema": {
             "type": "object",
-            "properties": {"code": {"type": "string", "description": "台股代碼，如 2330"}},
+            "properties": {
+                "code": {"type": "string", "description": "台股代碼，如 2330"},
+                "peers": {"type": "array", "items": {"type": "string"},
+                         "description": ("可選：對照組股票代碼清單（同產業鏈上下游/競爭者），"
+                                         "如 [\"2303\", \"3711\"]，建議1-3檔但不強制上限。"
+                                         "省略或空值時改回傳同產業候選名單peer_candidates。")},
+            },
             "required": ["code"],
         },
     },
@@ -895,7 +907,7 @@ class Server:
                 args["stock_id"], data_dir=self.data_dir)
         if name == "prepare_research_brief":
             return research_brief.prepare_research_brief(
-                args["code"], data_dir=self.data_dir)
+                args["code"], peers=args.get("peers"), data_dir=self.data_dir)
         if name == "save_snapshot":
             return self.store.save_snapshot(
                 code=args["code"], thesis=args["thesis"],

@@ -55,6 +55,14 @@ design.md`（延續SRC-012）。完整checklist七節骨架見
 外部查詢失敗不丟例外，比照全專案既有慣例（finmind_client／fundamentals_
 client／review_engine），失敗時該欄位status標記query_failed並附note，
 不中斷整個啟動包組裝。
+
+## Stage 2（對照組交叉驗證，本次新增）
+
+`prepare_research_brief` 新增可選參數 `peers`：未指定時只用一次
+`get_stock_info` 全量查詢篩出同產業候選名單（`peer_candidates`），不對
+候選逐檔查財務資料；有指定時對每個peer重跑財務體檢五項並排呈現
+（`peer_comparison`），純數字不做評語/排名判斷（方向A原則延伸）。詳見
+`_peer_candidates`／`_peer_comparison` docstring。
 """
 import datetime
 
@@ -174,10 +182,69 @@ def _balance_sheet(code, data_dir, token):
             "debt_ratio": balance.get("debt_ratio"), "note": None}
 
 
-def prepare_research_brief(code, data_dir=None, token=None):
+def _peer_candidates(code, data_dir, token):
+    """SRC-013 Stage 2：`peers` 未指定時，用同一批 `get_stock_info` 全量
+    查詢結果篩出同產業分類的其他股票代碼，只當「候選名單」給PO自己選，
+    **不對任何候選額外呼叫財務相關API**（2026-07-28 FinMind額度打光連累
+    正式排程的教訓，見專案CLAUDE.md教訓紀錄，避免同產業幾十檔被逐一查詢）。
+
+    只查一次 `get_stock_info` 全量（不帶stock_id，TaiwanStockInfo為靜態
+    參考表，單次API呼叫即可拿到全市場）。查無`code`對應的產業分類、或
+    該產業只有自己一檔時，`candidates`為空list，不視為錯誤中斷。
+    """
+    info = finmind_client.get_stock_info(data_dir=data_dir, token=token)
+    stocks = info.get("stocks") or []
+
+    industry = None
+    for row in stocks:
+        if row.get("stock_id") == code:
+            industry = row.get("industry_category")
+            break
+
+    if not industry:
+        return {"industry": industry, "candidates": []}
+
+    candidates = [
+        {"code": row.get("stock_id"), "name": row.get("stock_name")}
+        for row in stocks
+        if row.get("industry_category") == industry and row.get("stock_id") != code
+    ]
+    return {"industry": industry, "candidates": candidates}
+
+
+def _peer_comparison(peers, data_dir, token):
+    """SRC-013 Stage 2：`peers` 有指定時，對每個peer code重跑跟主標的一樣
+    的財務體檢五項（直接呼叫既有的 `_revenue_quality`／`_valuation`／
+    `_institutional_flow`／`_price_history_recent`／`_balance_sheet`，不
+    複製貼上邏輯）。純數字並排，不做任何評語/排名/「誰比較好」的判斷——
+    這是方向A的核心原則（SRC-013第2節），判斷留給PO與Claude對話決定。
+    """
+    return {
+        peer: {
+            "revenue_quality": _revenue_quality(peer, data_dir, token),
+            "valuation": _valuation(peer, data_dir, token),
+            "institutional_flow": _institutional_flow(peer, data_dir, token),
+            "price_history_recent": _price_history_recent(peer, data_dir, token),
+            "balance_sheet": _balance_sheet(peer, data_dir, token),
+        }
+        for peer in peers
+    }
+
+
+def prepare_research_brief(code, peers=None, data_dir=None, token=None):
     """組裝「研究啟動包」：財務體檢五個有資料源小節查實際數字，其餘三個
     財務小節與頂層六節固定佔位（見模組docstring status三分法）。不呼叫
     任何LLM，全部是既有工具回傳值的直接組裝或簡單機械運算。
+
+    `peers`（SRC-013 Stage 2，對照組交叉驗證，可選）：
+    - 未指定（None，預設）：不查任何額外財務資料，只用一次
+      `get_stock_info`全量查詢篩出同產業分類的候選代碼，放進
+      `peer_candidates`（`{"industry": ..., "candidates": [...]}`），
+      給PO自己決定要不要指定其中幾檔當對照組。
+    - 有指定（例如`["2303", "3711"]`）：對每個peer code重跑財務體檢
+      五項，並排放進`peer_comparison`（`{peer_code: {...五項...}, ...}`），
+      不做任何評語/排名判斷。
+    - 兩個欄位互斥，一次呼叫只產生其中一個，不會同時出現。
     """
     financial_check = {
         "revenue_quality": _revenue_quality(code, data_dir, token),
@@ -196,4 +263,10 @@ def prepare_research_brief(code, data_dir=None, token=None):
     }
     for section, note in NEEDS_DISCUSSION_SECTIONS.items():
         brief[section] = {"status": "needs_discussion", "note": note}
+
+    if peers:
+        brief["peer_comparison"] = _peer_comparison(peers, data_dir, token)
+    else:
+        brief["peer_candidates"] = _peer_candidates(code, data_dir, token)
+
     return brief
