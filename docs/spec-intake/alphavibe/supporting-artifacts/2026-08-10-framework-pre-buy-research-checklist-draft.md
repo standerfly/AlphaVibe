@@ -36,6 +36,33 @@ save_philosophy(module="framework_pre_buy_research_checklist",
 - 模組D FR-051 通用檢視層的三個質化欄位（財報兌現度／利多出盡／
   預期獲利能否持續上修）需要人工判斷時，可借用本框架「財務六面向」
   「預期差」兩節的提問方式
+- **PO手動觸發`prepare_research_brief`工具後**（SRC-013研究啟動包
+  Stage 1/2，2026-08-11起可用）——見下方「搭配 prepare_research_brief
+  使用」小節，這是本框架最常見的實際入口
+
+## 搭配 prepare_research_brief 使用（SRC-013 Stage 3 呈現規則）
+
+PO說「研究一下XXXX」「幫我拉XXXX的資料」這類話時，呼叫
+`prepare_research_brief(code, peers=...)` 工具（想指定對照組時直接把
+peers一併帶入，例如「研究2330，跟聯電比」）。拿到回傳的dict後，**不要
+原樣把JSON貼給PO看，也不要自動幫六個needs_discussion欄位生成答案**
+（那是方向B，已經評估並排除，見SRC-013）。應該：
+
+1. 把`financial_check`裡`ok`狀態的小節（營收品質/估值/法人籌碼/近期
+   股價/資產負債表，以及有給`peers`時的`peer_comparison`）整理成PO
+   看得懂的簡表；`query_failed`如實說明查詢失敗原因
+2. 三項`no_data_source`（毛利槓桿/現金流/法說會Q&A）如實標「目前查
+   不到」，不要用其他資料腦補
+3. 若沒給`peers`，`peer_candidates`列出的同產業候選名單原樣呈現給PO
+   參考，**不要**自己從候選裡挑一檔幫PO決定要不要比較——挑對照組是
+   PO的判斷，見SRC-013 Stage 2設計理由
+4. 六個`needs_discussion`欄位，各自換成本框架對應小節的一句引導提問
+   （業務理解→「這家公司的三句話你寫不寫得出來」；產業結構→本框架
+   「產業五問」；預期差→本框架「預期差」節的提問方式；以此類推），
+   不是給答案，是幫PO知道接下來該往哪個方向想
+5. 討論出的結論，照舊由PO確認後手動呼叫`save_stance`寫回`reason`／
+   `risk_factor`，本框架與`prepare_research_brief`都不會自動寫入
+   Layer 2
 
 **這份框架不管的事**：已經是持股、只是要決定加碼幾成／減碼幾成，
 那是 `framework_evidence_based_position_sizing`（部位管理框架）的
