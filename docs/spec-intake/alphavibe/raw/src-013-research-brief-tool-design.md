@@ -152,10 +152,12 @@ PO裁決：**PO手動觸發**（不併入FR-057排程自動跑）。
 差異**，讀者無法分辨哪個是即時查詢、哪個是舊記錄。已補上呈現規則
 第6條（見checklist草稿）：混用`get_stance`等其他工具的歷史資料時，
 必須標日期與來源，不能跟`prepare_research_brief`當天查詢結果混排。
-這個問題目前只寫進哲學文件草稿（尚未`save_philosophy`安裝），還沒有
-落到工具描述本身（`server.py`的`prepare_research_brief`
-description）——是否要在工具描述層也補一句提醒，待Stage 4評估或PO
-另外決定。
+**已於同日補上工具描述層**（`server.py`的`prepare_research_brief`
+description新增「呈現規則」段落，跟哲學文件草稿內容一致）——這是比
+哲學文件更保險的防線，任何session只要載入這個工具就看得到，不需要
+額外查philosophy模組。主對話獨立重跑測試確認637 tests仍全綠，描述
+文字改動未影響任何邏輯。哲學文件草稿（尚未`save_philosophy`安裝）
+留作對話時的完整版引導提問來源，兩者不衝突。
 
 ### Stage 4（視Stage 1-3使用狀況再評估）
 若留白欄位在實際使用中不夠好用，考慮要不要讓Claude在對話中直接讀取
