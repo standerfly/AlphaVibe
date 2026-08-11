@@ -312,3 +312,69 @@ def get_equity_attributable_to_owners(stock_id, data_dir=None, token=None):
     result["equity"] = latest.get("value")
     result["equity_date"] = latest.get("date")
     return result
+
+
+# SRC-013 Stage 1「研究啟動包」財務體檢／資產負債表小節用。2026-08-11
+# 對 2330（台積電，最新一期 date=2026-03-31）實際呼叫 TaiwanStockBalanceSheet
+# 查證，該期共 101 個 type（含每個科目的金額本身與其 `_per`＝佔資產總額
+# 百分比兩個變體，此處只列金額本體，`_per` 變體不使用）。與本函式選用欄位
+# 相關的實際 type 字串（非猜測，查證輸出見任務交付紀錄）：
+#   CashAndCashEquivalents               現金及約當現金
+#   CurrentLiabilities                   流動負債合計
+#   Liabilities                          負債總額
+#   TotalAssets                          資產總額
+# 另外查證到但本函式刻意不用的 type（留待未來若有需要再擴充，不在 MVP
+# 範圍內臆測要不要加）：CurrentAssets（流動資產合計）、NoncurrentLiabilities
+# （非流動負債合計）、Equity（權益總額，與既有 get_equity_attributable_
+# to_owners() 用的 EquityAttributableToOwnersOfParent 不同科目，不要混用）、
+# BondsPayable／LongtermBorrowings（有息負債細項）等。
+BALANCE_SHEET_TYPES = {
+    "cash_and_equivalents": "CashAndCashEquivalents",
+    "current_liabilities": "CurrentLiabilities",
+    "total_liabilities": "Liabilities",
+    "total_assets": "TotalAssets",
+}
+
+
+def get_balance_sheet_summary(stock_id, data_dir=None, token=None):
+    """查最近一期資產負債表的現金/負債概況（現金及約當現金／流動負債合計／
+    負債總額／資產總額），供研究啟動包「財務體檢：資產負債表」小節使用。
+
+    刻意獨立於 `get_equity_attributable_to_owners()`（後者專供興櫃股PBR
+    粗估用，抓的是 EquityAttributableToOwnersOfParent 這一種type，行為
+    不可修改——見該函式docstring），本函式抓另外四種type，互不影響。
+
+    抓近730天確保涵蓋到最新一期（財報為季/半年頻率）。四個type裡任一有
+    資料即視為查詢成功，個別缺漏的type該欄位維持None，不臆測補值；四個
+    type全部查無資料才記錄errors。debt_ratio（負債總額/資產總額）為簡單
+    機械運算，兩者皆有值時才計算，否則為None，不是查詢結果本身。
+    """
+    token = token or _read_token(data_dir)
+    result = {"stock_id": stock_id, "token_used": bool(token), "errors": [],
+              "balance_sheet_date": None, "cash_and_equivalents": None,
+              "current_liabilities": None, "total_liabilities": None,
+              "total_assets": None, "debt_ratio": None}
+
+    balance = _fetch("TaiwanStockBalanceSheet", stock_id, _days_ago(730), token)
+    if "error" in balance:
+        result["errors"].append(balance["error"])
+        return result
+
+    wanted_types = set(BALANCE_SHEET_TYPES.values())
+    rows = [row for row in balance["data"] if row.get("type") in wanted_types]
+    if not rows:
+        result["errors"].append(
+            "TaiwanStockBalanceSheet 無現金/負債相關資料（代碼是否正確？）")
+        return result
+
+    latest_date = max(row.get("date") or "" for row in rows)
+    latest_values = {row.get("type"): row.get("value")
+                     for row in rows if row.get("date") == latest_date}
+    result["balance_sheet_date"] = latest_date
+    for key, type_name in BALANCE_SHEET_TYPES.items():
+        result[key] = latest_values.get(type_name)
+
+    if result["total_liabilities"] is not None and result["total_assets"]:
+        result["debt_ratio"] = result["total_liabilities"] / result["total_assets"]
+
+    return result

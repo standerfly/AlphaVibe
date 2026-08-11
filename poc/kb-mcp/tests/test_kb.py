@@ -1001,6 +1001,79 @@ class FinMindClientTest(unittest.TestCase):
         self.assertIsNone(out["equity"])
         self.assertEqual(len(out["errors"]), 1)
 
+    def test_get_balance_sheet_summary_picks_latest_date_and_wanted_types(self):
+        # 欄位與type字串比照2026-08-11對2330實際查證結果（SRC-013任務），
+        # 混入不需要的type（PropertyPlantAndEquipment）與較舊一期，驗證
+        # 只挑最新日期＋只取四個目標type。
+        payload = [
+            {"date": "2025-12-31", "stock_id": "2330",
+             "type": "CashAndCashEquivalents", "value": 2000000000000.0},
+            {"date": "2026-03-31", "stock_id": "2330",
+             "type": "CashAndCashEquivalents", "value": 3035637228000.0},
+            {"date": "2026-03-31", "stock_id": "2330",
+             "type": "CurrentLiabilities", "value": 1714253448000.0},
+            {"date": "2026-03-31", "stock_id": "2330",
+             "type": "Liabilities", "value": 2728560764000.0},
+            {"date": "2026-03-31", "stock_id": "2330",
+             "type": "TotalAssets", "value": 8660949685000.0},
+            {"date": "2026-03-31", "stock_id": "2330",
+             "type": "PropertyPlantAndEquipment", "value": 3954679396000.0},  # 應被濾掉
+        ]
+
+        def fake_fetch(dataset, stock_id, start_date, token, end_date=None):
+            self.assertEqual(dataset, "TaiwanStockBalanceSheet")
+            return {"data": payload}
+
+        with unittest.mock.patch.object(finmind_client, "_fetch", fake_fetch):
+            out = finmind_client.get_balance_sheet_summary("2330")
+
+        self.assertEqual(out["errors"], [])
+        self.assertEqual(out["balance_sheet_date"], "2026-03-31")
+        self.assertEqual(out["cash_and_equivalents"], 3035637228000.0)
+        self.assertEqual(out["current_liabilities"], 1714253448000.0)
+        self.assertEqual(out["total_liabilities"], 2728560764000.0)
+        self.assertEqual(out["total_assets"], 8660949685000.0)
+        self.assertAlmostEqual(out["debt_ratio"], 2728560764000.0 / 8660949685000.0)
+
+    def test_get_balance_sheet_summary_no_matching_type(self):
+        payload = [{"date": "2025-12-31", "stock_id": "6826",
+                   "type": "Equity", "value": 1.0}]
+
+        def fake_fetch(dataset, stock_id, start_date, token, end_date=None):
+            return {"data": payload}
+
+        with unittest.mock.patch.object(finmind_client, "_fetch", fake_fetch):
+            out = finmind_client.get_balance_sheet_summary("6826")
+        self.assertIsNone(out["balance_sheet_date"])
+        self.assertIsNone(out["cash_and_equivalents"])
+        self.assertEqual(len(out["errors"]), 1)
+
+    def test_get_balance_sheet_summary_api_failure(self):
+        def fail(dataset, stock_id, start_date, token, end_date=None):
+            return {"error": "FinMind 呼叫失敗（%s）：模擬斷網" % dataset}
+
+        with unittest.mock.patch.object(finmind_client, "_fetch", fail):
+            out = finmind_client.get_balance_sheet_summary("6826")
+        self.assertIsNone(out["balance_sheet_date"])
+        self.assertEqual(len(out["errors"]), 1)
+
+    def test_get_balance_sheet_summary_partial_types_no_debt_ratio(self):
+        """只有部分type有資料時（例如只有現金，缺負債/資產），該欄位維持
+        None、debt_ratio也不計算，不臆測補值。"""
+        payload = [{"date": "2026-03-31", "stock_id": "1234",
+                   "type": "CashAndCashEquivalents", "value": 500.0}]
+
+        def fake_fetch(dataset, stock_id, start_date, token, end_date=None):
+            return {"data": payload}
+
+        with unittest.mock.patch.object(finmind_client, "_fetch", fake_fetch):
+            out = finmind_client.get_balance_sheet_summary("1234")
+        self.assertEqual(out["errors"], [])
+        self.assertEqual(out["cash_and_equivalents"], 500.0)
+        self.assertIsNone(out["total_liabilities"])
+        self.assertIsNone(out["total_assets"])
+        self.assertIsNone(out["debt_ratio"])
+
 
 class TPExClientTest(unittest.TestCase):
     """興櫃股估值粗估：mock TPEx 三端點＋FinMind 淨值，不打真實網路。"""

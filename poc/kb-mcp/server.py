@@ -18,6 +18,7 @@ import frameworks  # noqa: E402
 import fundamentals_client  # noqa: E402
 import holdings_parser  # noqa: E402
 import market_scan  # noqa: E402
+import research_brief  # noqa: E402
 import review_engine  # noqa: E402
 import screener  # noqa: E402
 import tpex_client  # noqa: E402
@@ -195,6 +196,35 @@ TOOLS = [
                 "end_date": {"type": "string", "description": "YYYY-MM-DD，預設今天"},
             },
             "required": ["stock_id"],
+        },
+    },
+    {
+        "name": "get_balance_sheet",
+        "description": ("查最近一期資產負債表的現金/負債概況：現金及約當現金／流動負債合計／"
+                        "負債總額／資產總額，附debt_ratio（負債總額/資產總額，簡單機械計算）。"
+                        "供研究啟動包／財務體檢「資產負債表」小節使用，只讀 FinMind "
+                        "TaiwanStockBalanceSheet，非官方優先來源（無對應官方API）。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"stock_id": {"type": "string", "description": "台股代碼，如 2330"}},
+            "required": ["stock_id"],
+        },
+    },
+    {
+        "name": "prepare_research_brief",
+        "description": ("SRC-013 Stage 1「研究啟動包」：機械蒐集AlphaVibe現有資料源＋依"
+                        "買進前研究checklist七節骨架排版，不含任何AI判斷或敘事生成。"
+                        "financial_check底下：營收品質/估值/法人籌碼/近90天股價/資產負債表"
+                        "五項有實際數字（查詢失敗時該項status為query_failed並附note說明，"
+                        "不是編造數字）；毛利與營業槓桿/現金流/法說會Q&A三項AlphaVibe目前"
+                        "無資料源，status固定為no_data_source。頂層業務理解/產業結構/預期差/"
+                        "破裂條件/估值敘事/收斂四問六節本質是判斷非查詢，status固定為"
+                        "needs_discussion，需另外與PO對話討論、結論寫回save_stance，"
+                        "本工具不會、也不應該幫這六節生成任何文字。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"code": {"type": "string", "description": "台股代碼，如 2330"}},
+            "required": ["code"],
         },
     },
     {
@@ -860,6 +890,12 @@ class Server:
             return finmind_client.get_institutional_trading(
                 args["stock_id"], start_date=args.get("start_date"),
                 end_date=args.get("end_date"), data_dir=self.data_dir)
+        if name == "get_balance_sheet":
+            return finmind_client.get_balance_sheet_summary(
+                args["stock_id"], data_dir=self.data_dir)
+        if name == "prepare_research_brief":
+            return research_brief.prepare_research_brief(
+                args["code"], data_dir=self.data_dir)
         if name == "save_snapshot":
             return self.store.save_snapshot(
                 code=args["code"], thesis=args["thesis"],

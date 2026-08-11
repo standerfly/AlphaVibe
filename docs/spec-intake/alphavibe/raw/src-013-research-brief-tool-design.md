@@ -56,7 +56,7 @@
 
 ## 4. 分階段建置計畫（逐步完成，每階段都有待PO裁決的開放問題）
 
-### Stage 1（MVP）
+### Stage 1（MVP）—— ✅ 已完成（2026-08-11）
 新增唯讀MCP工具（暫名 `prepare_research_brief(code)`），純組裝現有工具
 輸出：呼叫 `get_fundamentals`／`get_revenue_yoy`／`get_institutional_trading`／
 `get_stock_price_history`／`get_stock_alias`（視現有工具實際涵蓋範圍
@@ -65,6 +65,39 @@
 `_growth_deceleration`／`_downside_risk`。
 - 驗收：`prepare_research_brief("2330")` 輸出的財務數字與個別工具直接
   查詢結果一致，六個留白欄位正確出現且標註清楚。
+
+**Stage 1 完成紀錄（2026-08-11，實作＋獨立驗證）**：
+- 新增 `poc/kb-mcp/research_brief.py`（`prepare_research_brief()`）＋
+  `finmind_client.get_balance_sheet_summary()`（新函式，不動既有
+  `get_equity_attributable_to_owners()`）＋兩個對應MCP工具
+  `prepare_research_brief`／`get_balance_sheet`（server.py）
+- **status三分法**（本Stage核心設計，SRC-013第2節原則的具體落地）：
+  `ok`/`query_failed`（財務體檢五項有資料源小節，反映實際查詢結果）、
+  `no_data_source`（毛利槓桿/現金流/法說會Q&A，AlphaVibe已知資料邊界）、
+  `needs_discussion`（頂層六節，判斷性質非查詢）——三種狀態不互相混用
+- FinMind `TaiwanStockBalanceSheet` 實際查證（對2330單次呼叫，未重複
+  查詢消耗額度）：該API該期共101個type，選用
+  `CashAndCashEquivalents`／`CurrentLiabilities`／`Liabilities`／
+  `TotalAssets` 四項；`Equity`（權益總額）與既有函式用的
+  `EquityAttributableToOwnersOfParent` 是不同科目，未混用
+- 測試：改前605→改後623（新增18筆：`get_balance_sheet_summary` 4筆＋
+  `prepare_research_brief` 14筆），主對話獨立重跑
+  `python3 -m unittest discover -s poc/kb-mcp/tests` 確認 **623 tests OK**
+  （非採信subagent自報，已重新執行驗證）
+- 主對話另外獨立呼叫 `prepare_research_brief("2330")` 核對真實輸出：
+  財務體檢五項有數字（例：資產負債表 debt_ratio≈0.315）、三項
+  `no_data_source`、頂層六項 `needs_discussion`，結構與本文件設計一致
+- **已知取捨，非本次引入的問題**：`revenue_quality.recent_trend`
+  （FinMind多月序列）與`latest_yoy`（官方優先）在2330實測中月份口徑
+  對不齊（例如多月序列近5個月yoy_growth為null、latest卻有值）——這是
+  `fundamentals_client`/`finmind_client`既有的資料源口徑差異（`get_revenue_yoy`
+  工具本來就是同樣組合方式），不是Stage 1新增程式碼造成，維持現況呈現
+- 未加入 `server_readonly.py`（Cline唯讀白名單）——語意上屬唯讀查詢，
+  要不要開放給Cline查詢路徑待PO決定
+- 完整改動：`finmind_client.py`／`server.py`／`README.md`／
+  `tests/test_kb.py`／`tests/test_traceability.py`（既有 `test_tools_list_has_forty`
+  因新增2個工具改名`test_tools_list_has_forty_two`）／新檔案
+  `research_brief.py`／`tests/test_research_brief.py`
 
 ### Stage 2（交叉驗證擴充）
 支援選填「對照組」股票代碼（同產業鏈上下游/競爭者），並排呈現同一批
