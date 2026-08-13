@@ -18,6 +18,7 @@ import frameworks  # noqa: E402
 import fundamentals_client  # noqa: E402
 import holdings_parser  # noqa: E402
 import market_scan  # noqa: E402
+import research_brief  # noqa: E402
 import review_engine  # noqa: E402
 import screener  # noqa: E402
 import tpex_client  # noqa: E402
@@ -195,6 +196,71 @@ TOOLS = [
                 "end_date": {"type": "string", "description": "YYYY-MM-DD，預設今天"},
             },
             "required": ["stock_id"],
+        },
+    },
+    {
+        "name": "get_balance_sheet",
+        "description": ("查最近一期資產負債表的現金/負債概況：現金及約當現金／流動負債合計／"
+                        "負債總額／資產總額，附debt_ratio（負債總額/資產總額，簡單機械計算）。"
+                        "供研究啟動包／財務體檢「資產負債表」小節使用，只讀 FinMind "
+                        "TaiwanStockBalanceSheet，非官方優先來源（無對應官方API）。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"stock_id": {"type": "string", "description": "台股代碼，如 2330"}},
+            "required": ["stock_id"],
+        },
+    },
+    {
+        "name": "prepare_research_brief",
+        "description": ("SRC-013 Stage 1「研究啟動包」：機械蒐集AlphaVibe現有資料源＋依"
+                        "買進前研究checklist七節骨架排版，不含任何AI判斷或敘事生成。"
+                        "financial_check底下：營收品質/估值/法人籌碼/近90天股價/資產負債表"
+                        "五項有實際數字（查詢失敗時該項status為query_failed並附note說明，"
+                        "不是編造數字）；毛利與營業槓桿/現金流/法說會Q&A三項AlphaVibe目前"
+                        "無資料源，status固定為no_data_source。頂層業務理解/產業結構/預期差/"
+                        "破裂條件/估值敘事/收斂四問六節本質是判斷非查詢，status固定為"
+                        "needs_discussion，需另外與PO對話討論、結論寫回save_stance，"
+                        "本工具不會、也不應該幫這六節生成任何文字。"
+                        "SRC-013 Stage 2（對照組交叉驗證，可選）：不帶peers時，用一次"
+                        "get_stock_info全量查詢帶出同產業候選名單peer_candidates"
+                        "（不對候選逐檔查財務資料，避免浪費FinMind額度）；帶peers時（例如"
+                        "[\"2303\"]），對每個peer code重跑財務體檢五項並排放入"
+                        "peer_comparison，純數字不含任何評語/排名判斷。兩欄位互斥，"
+                        "一次呼叫只回傳其中一個。"
+                        "呈現規則（2026-08-11實測發現，見SRC-013）：若另外呼叫get_stance"
+                        "等工具取得歷史立場記錄，要跟本工具的查詢結果併呈時，每筆歷史記錄"
+                        "都必須標明日期與source_ref，獨立成段，不可跟financial_check的"
+                        "today查詢結果混排成同一段——尤其source_ref顯示是PO手動提供的"
+                        "截圖/資料（非AlphaVibe自己API查證），更要清楚標示，避免讀者誤以"
+                        "為是同等可信度的即時查詢結果。"
+                        "強制程式閘門（2026-08-11新增，非文字建議——純description提醒"
+                        "已實測會被繞過，見SRC-013）：若該標的已有持股或現行立場記錄，"
+                        "且本次呼叫未帶analysis_mode（或帶的值不是full/monitoring），"
+                        "本工具**不會產出任何分析**，只會回傳"
+                        "gate:\"confirm_analysis_mode_required\"與PO持股/立場摘要，"
+                        "financial_check等其餘欄位完全不會出現（連查詢都不會發生）。"
+                        "呼叫端看到這個gate必須先問PO要（a）完整研究checklist六問"
+                        "（analysis_mode=\"full\"）、還是（b）針對現有立場的持倉監控式"
+                        "檢視（analysis_mode=\"monitoring\"），拿到PO的答案後帶著"
+                        "analysis_mode參數再呼叫一次，不可自行判斷或代PO選。查無持股/"
+                        "立場記錄的全新標的不受此限，可省略analysis_mode直接取得完整"
+                        "結果（回傳的analysis_mode欄位會標示為n/a_no_existing_record）。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "台股代碼，如 2330"},
+                "analysis_mode": {"type": "string", "enum": ["full", "monitoring"],
+                                  "description": ("該標的已有持股/立場記錄時必填：\"full\"＝"
+                                                  "完整研究checklist六問，\"monitoring\"＝"
+                                                  "針對現有立場的持倉監控式檢視。由PO選定，"
+                                                  "不可自行判斷。全新標的（查無持股/立場）"
+                                                  "可省略。")},
+                "peers": {"type": "array", "items": {"type": "string"},
+                         "description": ("可選：對照組股票代碼清單（同產業鏈上下游/競爭者），"
+                                         "如 [\"2303\", \"3711\"]，建議1-3檔但不強制上限。"
+                                         "省略或空值時改回傳同產業候選名單peer_candidates。")},
+            },
+            "required": ["code"],
         },
     },
     {
@@ -860,6 +926,14 @@ class Server:
             return finmind_client.get_institutional_trading(
                 args["stock_id"], start_date=args.get("start_date"),
                 end_date=args.get("end_date"), data_dir=self.data_dir)
+        if name == "get_balance_sheet":
+            return finmind_client.get_balance_sheet_summary(
+                args["stock_id"], data_dir=self.data_dir)
+        if name == "prepare_research_brief":
+            return research_brief.prepare_research_brief(
+                args["code"], store=self.store,
+                analysis_mode=args.get("analysis_mode"),
+                peers=args.get("peers"), data_dir=self.data_dir)
         if name == "save_snapshot":
             return self.store.save_snapshot(
                 code=args["code"], thesis=args["thesis"],

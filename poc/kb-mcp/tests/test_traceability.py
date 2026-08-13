@@ -121,9 +121,11 @@ class ServerToolsTest(unittest.TestCase):
         self.server.store.close()
         shutil.rmtree(self.tmp)
 
-    def test_tools_list_has_forty(self):
+    def test_tools_list_has_forty_two(self):
+        # SRC-013 Stage 1（研究啟動包）新增 get_balance_sheet／
+        # prepare_research_brief 兩個工具，40 → 42。
         names = [t["name"] for t in server.TOOLS]
-        self.assertEqual(len(names), 40)
+        self.assertEqual(len(names), 42)
         for expected in ("save_snapshot", "get_snapshots",
                          "save_holdings", "get_holdings",
                          "save_stock_alias", "get_stock_alias",
@@ -131,6 +133,7 @@ class ServerToolsTest(unittest.TestCase):
                          "save_comments_batch",
                          "get_stock_info", "get_stock_price_history",
                          "get_revenue_yoy", "get_institutional_trading",
+                         "get_balance_sheet", "prepare_research_brief",
                          "parse_holdings_report",
                          "get_emerging_stock_valuation",
                          "refresh_holdings_prices",
