@@ -94,6 +94,14 @@ In-Scope（Q-042），不再屬於此清單**。
   （FR-051~055、FR-057）與 `poc/kb-mcp/module_d_scheduler.py`（CLI排程
   入口）。若要接手改動這塊：先讀 `review_engine.py` 檔頭docstring
   （每個FR的設計取捨都寫在裡面），不要憑product-spec.md文字重新設計。
+- **2026-08-16 補記**：「CLI排程入口」不是只有指令碼，2026-08-03起已
+  掛 launchd 每天17:00自動跑（`~/Library/LaunchAgents/com.alphavibe.
+  moduled.plist`，log證實8/1~8/17每天成功0失敗）——這件事本檔案跟
+  `poc/kb-mcp/README.md`都沒記過，一度在另一輪對話裡被誤判成「還沒排
+  程」。教訓同上：開發完成／launchd部署／文件記錄是三件可能各自落後
+  的事，接手前除了`git log`，`~/Library/LaunchAgents/`跟`launchctl list`
+  也要查，不要只看程式碼有沒有寫。詳見`poc/kb-mcp/README.md`「模組D每日
+  排程」節。
 
 ### 1f 模組F開發：儀表板方案A＋個股清單/詳情頁＋庫存買賣圖表 —— ✅ 已完成
 - **2026-08-09查證修正**：本節先前寫「待1e完成」是誤標。完整現況分三批：

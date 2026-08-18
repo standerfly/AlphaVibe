@@ -119,6 +119,19 @@ launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.alphavibe.marketscan.plis
 （這種情境不是要重讀時間，用 kickstart 沒問題）。log 在
 `~/Library/Logs/alphavibe-market-scan.log`。
 
+**模組D每日排程**：`~/Library/LaunchAgents/com.alphavibe.moduled.plist`，
+`StartCalendarInterval` 每天 17:00（跑 `module_d_scheduler.py --trigger
+scheduled`，對觀察名單＋庫存逐檔跑 `review_engine.run_module_d_review()`
+＋刷新價格/估值快取）。**2026-08-16 補記**：這個排程其實 2026-08-03
+就已經設好並持續穩定運作（log 顯示 8/1~8/17 每天成功、0 失敗），只是
+一直沒寫進這份 README，一度被誤認為「還沒接排程」——這正是 roadmap.md
+教訓紀錄提過的「開發完成／commit／文件記錄可能各自落後」的另一個實例。
+排程時間選在 17:00（收盤後、跟 02:00 的市場掃描錯開，避免搶
+FinMind 匿名額度）而非緊接在市場掃描之後，是刻意的設計，不是疏漏。
+改排程時間一樣要 `bootout`＋`bootstrap`（見上方，`kickstart -k` 不會
+重讀 plist 內容）；想立刻測試：`launchctl kickstart -k
+gui/501/com.alphavibe.moduled`。log 在 `~/Library/Logs/alphavibe-module-d.log`。
+
 ## 資料位置
 
 `poc/data/`：`alphavibe.db`（SQLite，已 gitignore）＋ `philosophy/*.md`。
