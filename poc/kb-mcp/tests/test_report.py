@@ -918,6 +918,60 @@ class StockDetailPageTest(unittest.TestCase):
         self.assertIn("conc-fill over", page)
         self.assertIn("100.0%", page)
 
+    def test_verdict_banner_appears_before_price_block(self):
+        """2026-08-19新增：Verdict 置於價格之前——詳情頁原本一打開先看到
+        現價/均價會觸發「跟成本比」的定錨慣性，結論置頂是刻意的版面決定，
+        不是排版巧合，所以用順序斷言鎖住。"""
+        self.store.upsert_stock_price("2330", 1000.0, "2026-08-14", prev_close=990.0)
+        page = report.render_stock_detail_page(self.store, "2330")
+        # 一律比對渲染出來的 class="..." 形式：CSS 常數整份內嵌在頁面裡，
+        # 直接搜 class 名稱會先命中樣式定義、拿到錯的位置
+        self.assertIn("<div class=\"verdict ", page)
+        self.assertLess(page.index("<div class=\"verdict "),
+                        page.index("<span class=\"stock-row__delta"))
+
+    def test_verdict_flags_gate_concern_as_alert(self):
+        """通用層有 concern → 紅色，且結論文字直接引用該筆發現。"""
+        self.store.save_module_d_result(
+            code="2330", trigger_type="通用層", finding="營收年增率連續三月下滑",
+            concern_flag=True, checked_at="2026-08-19T17:00:00")
+        page = report.render_stock_detail_page(self.store, "2330")
+        self.assertIn("verdict verdict--alert", page)
+        self.assertIn("Gate 有 1 項需留意", page)
+        self.assertIn("營收年增率連續三月下滑", page)
+
+    def test_verdict_does_not_treat_strategy_exit_as_gate_failure(self):
+        """核心修正的回歸測試：策略層失效（退出篩選候選）**不能**讓
+        verdict 變成 Gate 擋住——那是候選機制不是持有門檻。此時 Gate 全過、
+        集中度算不出來，結論應該是黃色的「集中度算不出來」，並附註篩選
+        框架退出候選不影響結論。"""
+        self.store.save_module_d_result(
+            code="2308", trigger_type="通用層", finding="PER在歷史合理區間",
+            concern_flag=False, checked_at="2026-08-19T17:00:00")
+        self.store.save_module_d_result(
+            code="2308", trigger_type="策略層",
+            strategy_id="peg_deep_dip_concentration",
+            finding="PEG已回升至1.26（門檻1.0）", concern_flag=True,
+            checked_at="2026-08-19T17:00:00")
+        page = report.render_stock_detail_page(self.store, "2308")
+        self.assertNotIn("verdict verdict--alert", page)
+        self.assertIn("verdict verdict--warn", page)
+        self.assertIn("集中度算不出來", page)
+        self.assertIn("不影響上面的結論", page)
+
+    def test_verdict_alerts_when_concentration_over_limit(self):
+        """Gate 全過但集中度頂格 → 紅色，且說明這是規則等級的擋點。"""
+        self.store.save_holdings([{"code": "8299", "name": "群聯", "shares": 6,
+                                    "avg_cost": 1535}])
+        self.store.upsert_stock_price("8299", 2080.0, "2026-08-14")
+        self.store.save_module_d_result(
+            code="8299", trigger_type="通用層", finding="PER遠低於歷史區間",
+            concern_flag=False, checked_at="2026-08-19T17:00:00")
+        page = report.render_stock_detail_page(self.store, "8299")
+        self.assertIn("verdict verdict--alert", page)
+        self.assertIn("集中度已達上限", page)
+        self.assertIn("規則等級的擋點", page)
+
     def test_position_plan_card_without_plan_shows_form_not_zero_progress(self):
         """2026-08-19新增：沒設定計畫總額度時不畫進度條（沒有分母就沒有
         百分比），改顯示設定表單＋說明，跟集中度卡同一個「算不出來就明講」
@@ -1033,9 +1087,17 @@ class StockDetailPageTest(unittest.TestCase):
         self.assertIn("下檔風險可控", page)
         self.assertIn("peg_deep_dip_concentration", page)
         self.assertIn("老芋頭賣出，你仍持有", page)
+        # 2026-08-19 重構：三層改為分區呈現，狀態語意各自不同
+        self.assertIn("Required・Gate", page)          # 通用層＝必過檢查
         self.assertIn("finding ok", page)
-        self.assertIn("finding alert", page)
-        self.assertIn("需留意", page)
+        # 策略層＝Reference only，用 ref（藍）不用紅綠，文字避開 PASS/FAIL
+        self.assertIn("Reference only", page)
+        self.assertIn("finding ref", page)
+        self.assertIn("仍符合候選", page)
+        # 老芋頭＝獨立訊號，刻意不再用 alert 紅色（工具設計本就是「純陳述
+        # 事實、不做判斷」），改中性呈現；它的 concern_flag 仍照舊驅動
+        # 清單頁「需留意」標記與今日重點，這裡只改詳情頁的呈現語意
+        self.assertIn("Status check", page)
 
     def test_holdings_card_shown_when_holding_exists(self):
         self.store.save_holdings([{"code": "2330", "name": "台積電", "shares": 100,

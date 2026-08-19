@@ -235,6 +235,14 @@ _MIGRATIONS = {
         # 既有「今日重點」（_render_today_highlights_section）改用
         # suggested_action 判斷、不受影響，這裡新增欄位不動它。
         ("concern_flag", "INTEGER DEFAULT 0"),
+        # trigger_label（2026-08-19 新增，個股詳情頁 Checks 分組用）：
+        # run_module_d_review() 內部 items 早就算出細分標籤（「通用層／
+        # 成長趨緩」「通用層／下檔風險」「策略層／<id>」），但先前只存了
+        # 粗分的 trigger_type（僅三個值）——導致頁面拿到兩筆都是「通用層」
+        # 的資料，分不出哪筆是成長趨緩、哪筆是下檔風險，只能靠解析 finding
+        # 文字硬猜（脆弱）。存下來才能把 Checks 依實際檢查項目分組呈現。
+        # 舊資料為 NULL，讀取端退回顯示 trigger_type，不用回填。
+        ("trigger_label", "TEXT"),
     ],
 }
 
@@ -854,11 +862,16 @@ class KBStore:
 
     def save_module_d_result(self, code, trigger_type, finding, strategy_id=None,
                              suggested_action=None, conflict_flag=False,
-                             concern_flag=False, checked_at=None):
+                             concern_flag=False, checked_at=None,
+                             trigger_label=None):
         """concern_flag（2026-08-01新增，見 _MIGRATIONS 註解）：這一項發現
         是否需要PO留意（對應 review_engine.run_module_d_review() 內部
         items/findings 清單的同名欄位）——跟 conflict_flag（自動回寫立場
-        跟既有記錄是否衝突，批次層級旗標）是兩個獨立概念，不要混淆。"""
+        跟既有記錄是否衝突，批次層級旗標）是兩個獨立概念，不要混淆。
+
+        trigger_label（2026-08-19新增）：細分標籤（「通用層／成長趨緩」等），
+        選填——`trigger_type` 只有三個值，同屬「通用層」的兩項檢查靠它才
+        分得開。不給就是 None，讀取端退回顯示 trigger_type。"""
         if not code:
             raise ValueError("code 為必填")
         if trigger_type not in MODULE_D_TRIGGER_TYPES:
@@ -869,9 +882,11 @@ class KBStore:
         checked_at = checked_at or _now()
         cur = self.conn.execute(
             "INSERT INTO module_d_results (code, strategy_id, trigger_type, finding,"
-            " suggested_action, conflict_flag, concern_flag, checked_at) VALUES (?,?,?,?,?,?,?,?)",
+            " suggested_action, conflict_flag, concern_flag, checked_at, trigger_label)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
             (code, strategy_id, trigger_type, finding, suggested_action,
-             1 if conflict_flag else 0, 1 if concern_flag else 0, checked_at),
+             1 if conflict_flag else 0, 1 if concern_flag else 0, checked_at,
+             trigger_label),
         )
         self.conn.commit()
         return {"saved": True, "id": cur.lastrowid, "code": code,

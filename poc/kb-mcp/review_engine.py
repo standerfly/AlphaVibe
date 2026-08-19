@@ -76,6 +76,32 @@ THEME_CONCENTRATION_WARN_PCT = 50.0
 # 成長趨緩：至少要有 3 個非 null 的月營收年增率數據點才判斷趨勢。
 MIN_YOY_POINTS = 3
 
+# ---- 加碼 Gate／Score 裡「系統目前算不出來」的項目清單（2026-08-19 新增，
+# 供個股詳情頁「待人工查證」區塊顯示）----
+#
+# 來源：Layer 1 哲學 `framework_evidence_based_position_sizing` 的
+# 「加碼：Gate」與「加碼：Score」兩節。這裡**只列系統沒有資料源、必須
+# 人工判斷的項目**——已經自動化的（Forward PE 合理性→通用層下檔風險、
+# 投資假說是否鬆動→通用層成長趨緩）不重複列，避免同一件事在頁面上出現
+# 兩次、還可能一綠一灰互相矛盾。
+#
+# 為什麼硬編在這裡而不是解析哲學 md：哲學文件是給人讀的散文格式，解析
+# 它比維護這份清單更脆弱。代價是兩邊可能漂移——改哲學文件的 Gate/Score
+# 項目時，記得回來同步這份清單（product-spec.md §5-K 也提過 Score 量化
+# 評分屬 Q-039 Deferred，本清單只負責「誠實揭露缺口」，不做評分）。
+MANUAL_GATE_ITEMS = (
+    ("EPS 沒有下修", "法人EPS預估修正無公開批次資料源，需自行查證"),
+    ("無重大治理問題", "無自動化查證方式，需人工判斷"),
+)
+MANUAL_SCORE_ITEMS = (
+    ("EPS 上修", "+3"),
+    ("毛利率提升", "+2"),
+    ("法人上修 EPS", "+2"),
+    ("新增大客戶／訂單", "+2"),
+    ("產業需求提升", "+2"),
+    ("ROE 改善", "+1"),
+)
+
 # 下檔風險：至少要有這麼多筆歷史 PER 才做評估（新股門檻，資料點太少時
 # 「歷史分布」沒有統計意義）。
 MIN_PER_HISTORY_POINTS = 6
@@ -728,7 +754,7 @@ def run_module_d_review(code, store, data_dir=None, token=None):
                 code=code, trigger_type=it["trigger_type"], finding=it["detail"],
                 strategy_id=it["strategy_id"], suggested_action=suggested_action,
                 conflict_flag=conflict_flag, concern_flag=it["concern_flag"],
-                checked_at=checked_at)
+                checked_at=checked_at, trigger_label=it["trigger_label"])
             saved_count += 1
         except Exception as exc:
             errors.setdefault("module_d_results_save", []).append(

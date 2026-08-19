@@ -251,6 +251,26 @@ details.section > summary h2 { margin-top: 0; display: inline-block; }
 .finding__stripe { flex-shrink: 0; width: 3px; border-radius: 3px; align-self: stretch; }
 .finding.ok .finding__stripe { background: var(--green); }
 .finding.alert .finding__stripe { background: var(--red); }
+/* ref＝參考用（策略層篩選比對／老芋頭訊號），刻意用 accent 藍而不是
+   紅綠——這些不是「過/不過」的判斷，用紅綠會被誤讀成 Gate 結果。
+   pending＝系統無資料源、待人工查證，用中性灰，不假裝有結論。 */
+.finding.ref .finding__stripe { background: var(--accent); }
+.finding.pending .finding__stripe { background: var(--rule-strong); }
+.pill.ref { color: var(--accent); background: var(--accent-soft); }
+.pill.pending { color: var(--ink-dim); background: var(--paper-sunken); }
+.group-label { font-size: .68rem; font-weight: 700; letter-spacing: .03em;
+  color: var(--ink-dim); margin: .9rem 0 .3rem; }
+.card__body > .group-label:first-child { margin-top: 0; }
+/* Verdict banner（2026-08-19）：結論置頂，先於價格出現——詳情頁原本
+   一打開先看到現價/均價，會觸發「跟成本比」的定錨慣性（PO 的 161→165
+   心魔）。左側 4px 色條沿用 tr.row-alert 既有語言，不新增配色。 */
+.verdict { border-radius: 10px; padding: .75rem .9rem; margin-bottom: 1rem; }
+.verdict__title { font-size: .95rem; font-weight: 700; margin-bottom: .2rem; }
+.verdict__detail { font-size: .82rem; color: var(--ink-dim); overflow-wrap: break-word; }
+.verdict--alert { background: var(--red-soft); box-shadow: inset 4px 0 0 var(--red); }
+.verdict--warn { background: var(--amber-soft); box-shadow: inset 4px 0 0 var(--amber); }
+.verdict--ok { background: var(--paper-raised); box-shadow: inset 4px 0 0 var(--green); }
+.verdict--neutral { background: var(--paper-sunken); box-shadow: inset 4px 0 0 var(--rule-strong); }
 .finding__label-row { display: flex; align-items: center; gap: .45rem; margin-bottom: .2rem; flex-wrap: wrap; }
 .finding__label { font-size: .82rem; font-weight: 700; }
 .pill { font-size: .68rem; font-weight: 700; padding: .1rem .55rem; border-radius: 999px; flex-shrink: 0; }
@@ -1207,41 +1227,164 @@ def _valuation_source_text(data_source):
     return mapping.get(data_source, "來源未知")
 
 
-def _module_d_card_html(latest_batch):
-    """Module D檢視結果卡：依trigger_type分組呈現（見派工說明），狀態
-    顏色二分（PO明確要求「有concern_flag的用警示色、沒有的用正常色」，
-    不細分mockup裡出現的warn第三種狀態）：concern_flag=True
-    →alert（var(--red)），否則→ok（var(--green)）。"""
-    parts = []
-    parts.append("<section class=\"card\"><div class=\"card__head\">"
-                 "<h2>Module D 檢視</h2>"
-                 "<span class=\"card__meta\">%s</span></div><div class=\"card__body\">"
-                 % ("%d 項" % len(latest_batch) if latest_batch else "尚無資料"))
-    if latest_batch:
-        groups = {}
-        order = []
-        for r in latest_batch:
-            key = r["trigger_type"]
-            if key not in groups:
-                groups[key] = []
-                order.append(key)
-            groups[key].append(r)
-        for trigger_type in order:
-            for r in groups[trigger_type]:
-                cls = "alert" if r.get("concern_flag") else "ok"
-                pill_text = "需留意" if r.get("concern_flag") else "正常"
-                label = trigger_type
-                if r.get("strategy_id"):
-                    label = "%s／%s" % (trigger_type, r["strategy_id"])
-                parts.append(
-                    "<div class=\"finding %s\"><span class=\"finding__stripe\"></span>"
-                    "<div class=\"finding__body\"><div class=\"finding__label-row\">"
-                    "<span class=\"finding__label\">%s</span>"
-                    "<span class=\"pill %s\">%s</span></div>"
-                    "<div class=\"finding__detail\">%s</div></div></div>"
-                    % (cls, esc(label), cls, pill_text, esc(r["finding"])))
+def _verdict_banner_html(store, code, latest_batch):
+    """Verdict banner（2026-08-19 依已核准 mockup 新增）：把「今天到底
+    該不該動」的結論放在頁面最上方，先於價格出現。
+
+    這塊的動機是 PO 明確指出的心魔：詳情頁一打開先看到價格與均價，會
+    觸發「跟成本比」的定錨慣性；把結論置頂，是要讓眼睛先接收「今天的
+    證據支不支持動作」再看價格。
+
+    結論由實際資料算出來，不是寫死的文案。優先序刻意如此（嚴重的先講）：
+    1. Gate 有 concern → 擋住，紅
+    2. 集中度已達上限 → 擋住，紅（規則等級的擋點，跟 Gate 獨立）
+    3. Gate 全過但集中度算不出來 → 黃：不是「沒問題」是「看不到」
+    4. 都過 → 綠
+    5. 尚無檢視資料 → 中性灰，不假裝有結論
+    """
+    import review_engine  # 延後匯入，理由同 _concentration_card_html()
+
+    gate, reference, _status = _split_module_d_batch(latest_batch or [])
+    gate_concerns = [r for r in gate if r.get("concern_flag")]
+    ref_out = [r for r in reference if r.get("concern_flag")]
+
+    pc = review_engine.position_control_suggestion(code, store)
+    conc_warning = pc.get("concentration_warning")
+    conc_unknown = pc.get("current_position_pct") is None
+
+    if not latest_batch:
+        tone, title = "neutral", "尚無檢視結果"
+        detail = "背景刷新完成後，這裡會顯示今天的加碼審查結論。"
+    elif gate_concerns:
+        tone, title = "alert", "Gate 有 %d 項需留意" % len(gate_concerns)
+        detail = "；".join(r["finding"] for r in gate_concerns)
+    elif conc_warning:
+        tone, title = "alert", "Gate 全過，但集中度已達上限"
+        detail = conc_warning + "——這是規則等級的擋點，需你自行確認後才繼續加碼。"
+    elif conc_unknown:
+        tone, title = "warn", "Gate 全過，但集中度算不出來"
+        detail = ("持股快照沒有這檔的市值紀錄，集中度是「看不到」不是「沒問題」，"
+                  "補齊後才能真正定案。")
     else:
+        tone, title = "ok", "Gate 全過，集中度未超標"
+        detail = "目前沒有擋住加碼的項目；Score 與部分 Gate 項仍需人工查證（見下方）。"
+
+    if ref_out and tone != "alert":
+        detail += ("　另：原篩選框架已退出候選，但那是候選機制、不是持有門檻，"
+                   "不影響上面的結論。")
+
+    return ("<div class=\"verdict verdict--%s\"><div class=\"verdict__title\">%s</div>"
+            "<div class=\"verdict__detail\">%s</div></div>"
+            % (tone, esc(title), esc(detail)))
+
+
+def _finding_row_html(label, detail, state, pill_text):
+    """Checks 卡裡的一列。state：ok／alert／ref（參考用，不是判斷）／
+    pending（待人工查證）。"""
+    return ("<div class=\"finding %s\"><span class=\"finding__stripe\"></span>"
+            "<div class=\"finding__body\"><div class=\"finding__label-row\">"
+            "<span class=\"finding__label\">%s</span>"
+            "<span class=\"pill %s\">%s</span></div>"
+            "<div class=\"finding__detail\">%s</div></div></div>"
+            % (state, esc(label), state, esc(pill_text), esc(detail)))
+
+
+def _split_module_d_batch(latest_batch):
+    """把最新一批檢視結果拆成三組，對應已核准 mockup 的 Checks 分區。
+
+    ⚠️ 這個拆法是 2026-08-16~19 討論的核心修正，不要合併回去：**策略層
+    不屬於 Gate**。策略層跑的是 `check_strategy_review`＝「這檔還符不符合
+    當初把它篩出來的框架門檻（PEG<1、回檔≥40% 之類）」，那是**候選篩選
+    機制**，不是持有／加碼的必要條件——框架文件自己就寫「換股不代表原
+    標的變差」。先前頁面把它跟通用層並列成同一串 finding，等於把「退出
+    便宜貨候選名單」呈現得像「投資假說被推翻」，這正是 PO 指出的混淆。
+
+    回傳 (gate_rows, reference_rows, status_rows)：
+    - gate：通用層（成長趨緩／下檔風險）——真正的必過檢查
+    - reference：策略層——僅供參考，不影響 Gate 判斷
+    - status：老芋頭動向——獨立訊號，純陳述事實
+    """
+    gate, reference, status = [], [], []
+    for r in latest_batch:
+        t = r.get("trigger_type")
+        if t == "策略層":
+            reference.append(r)
+        elif t == "老芋頭動向":
+            status.append(r)
+        else:
+            gate.append(r)
+    return gate, reference, status
+
+
+def _module_d_card_html(latest_batch):
+    """Checks 卡（2026-08-19 依已核准 mockup 重構，原「Module D 檢視」
+    單一清單改為分區呈現）。
+
+    分區與各自的狀態語意刻意不同，因為它們回答的是不同問題：
+    - **Required・Gate**（通用層）：必過檢查，二分 ok／alert，沿用 PO
+      先前明確要求的「有concern_flag用警示色、沒有的用正常色」。
+    - **Reference only**（策略層）：篩選候選資格比對，**不是 Gate**（見
+      `_split_module_d_batch()` docstring）。狀態文字刻意避開 PASS/FAIL
+      這套字眼，改用「已退出候選／仍符合候選」，並用 ref 樣式（藍）跟
+      Gate 的紅綠區隔，結構上就不可能被誤讀成「假說被推翻」。
+    - **Status check**（老芋頭）：獨立訊號，中性。
+    - **待人工查證**：Gate/Score 裡系統沒有資料源的項目（清單來自
+      `review_engine.MANUAL_GATE_ITEMS`／`MANUAL_SCORE_ITEMS`），預設收合
+      ——誠實揭露「系統沒算這些」，但不佔版面。
+    """
+    import review_engine  # 延後匯入，理由同 _concentration_card_html()
+
+    gate, reference, status = _split_module_d_batch(latest_batch or [])
+
+    parts = ["<section class=\"card\"><div class=\"card__head\"><h2>Checks・加碼審查</h2>"
+             "<span class=\"card__meta\">%s</span></div><div class=\"card__body\">"
+             % ("%d 項自動檢查" % len(latest_batch) if latest_batch else "尚無資料")]
+
+    if not latest_batch:
         parts.append("<p class=\"empty\">尚無檢視資料，背景刷新完成後會顯示在這裡。</p>")
+    else:
+        if gate:
+            parts.append("<div class=\"group-label\">Required・Gate（必過檢查）</div>")
+            for r in gate:
+                alert = bool(r.get("concern_flag"))
+                parts.append(_finding_row_html(
+                    r.get("trigger_label") or r["trigger_type"], r["finding"],
+                    "alert" if alert else "ok", "需留意" if alert else "正常"))
+        if reference:
+            parts.append("<div class=\"group-label\">Reference only・原篩選框架比對"
+                         "（不是 Gate，不影響上面判斷）</div>")
+            for r in reference:
+                out = bool(r.get("concern_flag"))
+                label = r.get("strategy_id") or r.get("trigger_label") or "篩選框架"
+                parts.append(_finding_row_html(
+                    label, r["finding"], "ref",
+                    "已退出候選" if out else "仍符合候選"))
+            parts.append("<p class=\"finding__detail\" style=\"margin-top:.5rem;\">"
+                         "篩選框架是「找候選」用的機制，不是持有／加碼門檻——"
+                         "退出候選只代表它不再是這個框架下的便宜標的，"
+                         "<b>不等於投資假說被推翻</b>。</p>")
+        if status:
+            parts.append("<div class=\"group-label\">Status check・老芋頭動向"
+                         "（獨立訊號，不參與判斷）</div>")
+            for r in status:
+                parts.append(_finding_row_html(
+                    r.get("trigger_label") or r["trigger_type"], r["finding"],
+                    "ref", "訊號"))
+
+    parts.append("<details class=\"trade-list-details\"><summary>待人工查證"
+                 "（%d 項系統無資料源）</summary>"
+                 % (len(review_engine.MANUAL_GATE_ITEMS)
+                    + len(review_engine.MANUAL_SCORE_ITEMS)))
+    parts.append("<div class=\"group-label\">Gate（必過，但無自動化查證）</div>")
+    for label, why in review_engine.MANUAL_GATE_ITEMS:
+        parts.append(_finding_row_html(label, why, "pending", "待查證"))
+    parts.append("<div class=\"group-label\">Score（加分項，Q-039 列 Deferred 未自動化）"
+                 "</div>")
+    for label, score in review_engine.MANUAL_SCORE_ITEMS:
+        parts.append(_finding_row_html(label, "無公開批次資料源，需自行查證",
+                                       "pending", score))
+    parts.append("</details>")
+
     parts.append("</div></section>")
     return "".join(parts)
 
@@ -1896,6 +2039,9 @@ def render_stock_detail_page(store, code, flash=None, refreshing=False):
         "<span style=\"font-size:.85rem;color:var(--ink-dim);\">%s</span>"
         "<h1 style=\"margin:0;\">%s</h1></div>"
         % (esc(code), esc(name) if name else "（尚無名稱）"))
+    # Verdict 置於價格之前（2026-08-19）：刻意讓「今天的證據支不支持動作」
+    # 先於「現價/漲跌」進入視線，見 _verdict_banner_html() docstring。
+    parts.append(_verdict_banner_html(store, code, latest_batch))
     parts.append(
         "<div style=\"display:flex;align-items:baseline;gap:.6rem;margin:.3rem 0 .5rem;\">"
         "<span style=\"font-size:1.3rem;font-weight:700;\">%s</span>"
