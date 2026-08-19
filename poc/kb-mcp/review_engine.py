@@ -93,13 +93,14 @@ MANUAL_GATE_ITEMS = (
     ("EPS 沒有下修", "法人EPS預估修正無公開批次資料源，需自行查證"),
     ("無重大治理問題", "無自動化查證方式，需人工判斷"),
 )
+# 2026-08-19 更新：EPS上修／毛利率提升／ROE改善／月營收YoY加速 四項已
+# 改為自動計算（見 auto_score_review），從這份人工清單移出；剩下三項是
+# 真的沒有免費資料源——法人預估修正要付費資料商，新客戶/產業需求是質化
+# 判斷，只能人工。
 MANUAL_SCORE_ITEMS = (
-    ("EPS 上修", "+3"),
-    ("毛利率提升", "+2"),
-    ("法人上修 EPS", "+2"),
-    ("新增大客戶／訂單", "+2"),
-    ("產業需求提升", "+2"),
-    ("ROE 改善", "+1"),
+    ("法人上修 EPS", "+2", "法人預估修正無免費資料源"),
+    ("新增大客戶／訂單", "+2", "質化事件，需人工判讀新聞"),
+    ("產業需求提升", "+2", "質化判斷"),
 )
 
 # 下檔風險：至少要有這麼多筆歷史 PER 才做評估（新股門檻，資料點太少時
@@ -871,6 +872,16 @@ def refresh_price_and_valuation(code, store, data_dir=None, token=None):
     except Exception as exc:  # 絕不丟例外中斷呼叫端
         errors["valuation"] = "估值刷新失敗：%s" % exc
 
+    # Score 自動化四項（2026-08-19）：在這條背景路徑算好並存結果，個股
+    # 詳情頁只讀 store.get_auto_score()，渲染時完全不碰網路（頁面既有原則
+    # 是「只讀快取不即時查外部API」）。財報部分內部走 30 天 TTL 快取，
+    # 不會每天多打 API；月營收部分每天重算（月頻資料，日更才不會落後）。
+    try:
+        score = auto_score_review(code, store=store, data_dir=data_dir, token=token)
+        store.save_auto_score(code, score, checked_at=checked_at)
+    except Exception as exc:  # 絕不丟例外中斷呼叫端
+        errors["auto_score"] = "Score 自動化計算失敗：%s" % exc
+
     return {"code": code, "checked_at": checked_at, "price_saved": price_saved,
             "valuation_saved": valuation_saved, "errors": errors}
 
@@ -893,3 +904,163 @@ def refresh_stock_snapshot(code, store, data_dir=None, token=None):
             "price_saved": snapshot["price_saved"],
             "valuation_saved": snapshot["valuation_saved"],
             "snapshot_errors": snapshot["errors"], "review": review}
+
+
+# Score 自動化項目的配分（來源同 MANUAL_SCORE_ITEMS：Layer 1 哲學
+# `framework_evidence_based_position_sizing`「加碼：Score」節）。
+# 「EPS 上修」的定義 PO 於 2026-08-19 裁決為**實際 EPS 成長**（最新一季
+# 對去年同季），與另一項「法人上修 EPS」（分析師預估修正，無免費資料源、
+# 仍列人工）明確區分——兩項若都指預估就會重複計分。
+AUTO_SCORE_WEIGHTS = {
+    "eps_growth": 3,        # EPS 上修（實際）
+    "revenue_yoy_accel": 2,  # 月營收 YoY 加速
+    "gross_margin_up": 2,    # 毛利率提升
+    "roe_up": 1,             # ROE 改善
+}
+
+
+def _same_quarter_last_year(quarters, idx):
+    """回傳 quarters[idx] 的「去年同季」那一筆；找不到回 None。台股財報有
+    明顯季節性，YoY（同季比）才是有意義的比較基準，不能拿前一季比。"""
+    target = quarters[idx]["date"]
+    if not target or len(target) < 4:
+        return None
+    want = "%d%s" % (int(target[:4]) - 1, target[4:])
+    for q in quarters:
+        if q["date"] == want:
+            return q
+    return None
+
+
+def _ttm(quarters, end_idx, field):
+    """近四季加總（TTM）。任一季缺值就回 None，不用三季硬湊。"""
+    if end_idx < 3:
+        return None
+    vals = [quarters[i].get(field) for i in range(end_idx - 3, end_idx + 1)]
+    if any(v is None for v in vals):
+        return None
+    return sum(vals)
+
+
+def auto_score_review(code, store=None, data_dir=None, token=None,
+                      revenue_result=None, max_cache_age_days=30,
+                      cache_only=False):
+    """Score 可自動化的四項（其餘三項無資料源，見 MANUAL_SCORE_ITEMS）。
+
+    每項回傳 {"key","label","weight","earned","detail"}：
+    - earned=True  → 條件成立，可計分
+    - earned=False → 條件不成立（已查證，不是沒查）
+    - earned=None  → 資料不足，無法判斷（誠實區分「沒過」與「算不出來」，
+                     跟集中度卡同一個原則）
+
+    財報資料走 store 的 TTL 快取（財報季頻、排程日跑，見
+    `kb_store.get_financial_metrics_cache()` 註解）；store 為 None 時直接
+    查 API，不快取（供一次性呼叫/測試用）。
+
+    cache_only=True：快取沒有就**不打 API**，該三項回 earned=None 並提示
+    按「更新」——給個股詳情頁用，因為那個頁面的既有原則是「所有資料都讀
+    快取，不即時查外部API」（見 render_stock_detail_page docstring），
+    在渲染路徑上打 FinMind 會讓開頁面變慢又吃額度。
+    """
+    items = []
+
+    # ---- 月營收 YoY 加速：不另外打 API，重用呼叫端已查好的 revenue_result ----
+    if revenue_result is None:
+        revenue_result = finmind_client.get_revenue_yoy(
+            code, data_dir=data_dir, token=token)
+    non_null = [r for r in (revenue_result.get("revenue_yoy") or [])
+                if r.get("yoy_growth") is not None]
+    if len(non_null) < 2:
+        items.append({"key": "revenue_yoy_accel", "label": "月營收 YoY 加速",
+                      "weight": AUTO_SCORE_WEIGHTS["revenue_yoy_accel"],
+                      "earned": None, "detail": "年增率資料不足兩期，無法比較是否加速"})
+    else:
+        cur, prev = non_null[-1]["yoy_growth"], non_null[-2]["yoy_growth"]
+        accel = cur > prev
+        items.append({
+            "key": "revenue_yoy_accel", "label": "月營收 YoY 加速",
+            "weight": AUTO_SCORE_WEIGHTS["revenue_yoy_accel"], "earned": accel,
+            "detail": "最新 %.1f%% vs 前期 %.1f%%（%s）"
+                      % (cur * 100, prev * 100, "加速" if accel else "未加速")})
+
+    # ---- 財報三項 ----
+    metrics, cache_note = None, ""
+    if store is not None:
+        cached, fetched_at = store.get_financial_metrics_cache(
+            code, max_age_days=max_cache_age_days)
+        if cached:
+            metrics, cache_note = cached, "（財報快取，%s 取得）" % fetched_at[:10]
+    if metrics is None and cache_only:
+        for key, label in (("eps_growth", "EPS 上修（實際）"),
+                           ("gross_margin_up", "毛利率提升"),
+                           ("roe_up", "ROE 改善")):
+            items.append({"key": key, "label": label,
+                          "weight": AUTO_SCORE_WEIGHTS[key], "earned": None,
+                          "detail": "尚未取得財報資料，按上方「更新」後顯示"})
+        return {"code": code, "items": items,
+                "checked_at": datetime.datetime.now().isoformat(timespec="seconds")}
+    if metrics is None:
+        fetched = finmind_client.get_financial_metrics(
+            code, data_dir=data_dir, token=token)
+        if fetched.get("quarters"):
+            metrics = fetched
+            if store is not None:
+                store.save_financial_metrics_cache(code, fetched)
+        else:
+            errs = "；".join(fetched.get("errors") or ["查無財報資料"])
+            for key, label in (("eps_growth", "EPS 上修（實際）"),
+                               ("gross_margin_up", "毛利率提升"),
+                               ("roe_up", "ROE 改善")):
+                items.append({"key": key, "label": label,
+                              "weight": AUTO_SCORE_WEIGHTS[key], "earned": None,
+                              "detail": "財報資料取得失敗：%s" % errs})
+            return {"code": code, "items": items,
+                    "checked_at": datetime.datetime.now().isoformat(timespec="seconds")}
+
+    quarters = metrics["quarters"]
+    last = len(quarters) - 1
+    prior = _same_quarter_last_year(quarters, last)
+    latest = quarters[last]
+
+    def _yoy_item(key, label, field, fmt, scale=1.0):
+        if prior is None or latest.get(field) is None or prior.get(field) is None:
+            return {"key": key, "label": label, "weight": AUTO_SCORE_WEIGHTS[key],
+                    "earned": None,
+                    "detail": "缺去年同季（%s）資料，無法比較%s"
+                              % (latest["date"][:7] if latest.get("date") else "?", cache_note)}
+        cur, prev = latest[field], prior[field]
+        up = cur > prev
+        return {"key": key, "label": label, "weight": AUTO_SCORE_WEIGHTS[key],
+                "earned": up,
+                "detail": "%s %s → %s（%s）%s"
+                          % (latest["date"][:7], fmt % (prev * scale),
+                             fmt % (cur * scale), "提升" if up else "未提升",
+                             cache_note)}
+
+    items.append(_yoy_item("eps_growth", "EPS 上修（實際，對去年同季）",
+                           "eps", "%.2f"))
+    items.append(_yoy_item("gross_margin_up", "毛利率提升", "gross_margin",
+                           "%.1f%%", scale=100))
+
+    # ---- ROE 改善：TTM 歸屬母公司淨利 ÷ 權益，今年 vs 去年同季 ----
+    prior_idx = next((i for i, q in enumerate(quarters)
+                      if prior is not None and q["date"] == prior["date"]), None)
+    roe_now = _ttm(quarters, last, "parent_net_income")
+    roe_prev = _ttm(quarters, prior_idx, "parent_net_income") if prior_idx is not None else None
+    eq_now = latest.get("equity")
+    eq_prev = prior.get("equity") if prior else None
+    if None in (roe_now, roe_prev, eq_now, eq_prev) or not eq_now or not eq_prev:
+        items.append({"key": "roe_up", "label": "ROE 改善",
+                      "weight": AUTO_SCORE_WEIGHTS["roe_up"], "earned": None,
+                      "detail": "近四季淨利或權益資料不足，無法計算 TTM ROE%s" % cache_note})
+    else:
+        now_pct, prev_pct = roe_now / eq_now * 100, roe_prev / eq_prev * 100
+        up = now_pct > prev_pct
+        items.append({"key": "roe_up", "label": "ROE 改善（TTM）",
+                      "weight": AUTO_SCORE_WEIGHTS["roe_up"], "earned": up,
+                      "detail": "%.1f%% → %.1f%%（%s）%s"
+                                % (prev_pct, now_pct, "改善" if up else "未改善",
+                                   cache_note)})
+
+    return {"code": code, "items": items,
+            "checked_at": datetime.datetime.now().isoformat(timespec="seconds")}

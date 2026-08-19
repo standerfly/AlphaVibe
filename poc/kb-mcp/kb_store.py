@@ -11,6 +11,7 @@ Layer 3 每日評論：SQLite FTS5 全文檢索，trigram tokenizer 支援中文
 限制：Python 3.9 相容、僅標準庫；FTS5 trigram 查詢至少 3 個字元。
 """
 import datetime
+import json
 import os
 import re
 import sqlite3
@@ -115,6 +116,16 @@ CREATE TABLE IF NOT EXISTS stock_themes (
     code TEXT PRIMARY KEY,
     theme TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS auto_score_cache (
+    code TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    checked_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS financial_metrics_cache (
+    code TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS position_plans (
     code TEXT PRIMARY KEY,
@@ -713,6 +724,78 @@ class KBStore:
         ).fetchall()
         return {r["code"]: {"theme": r["theme"],
                             "updated_at": r["updated_at"]} for r in rows}
+
+    # ---------- 季度財報指標快取（2026-08-19新增）：財報是**季頻**資料，
+    # 但模組D排程每天對全部觀察標的跑一次——若每次都重打 FinMind，等於
+    # 每天多消耗「標的數×2」次額度去換一批一季才變一次的數字。CLAUDE.md
+    # 2026-07-28 教訓明確記載匿名額度是全域共用池、被打光會連累當晚排程，
+    # 所以這裡用 TTL 快取（預設30天）：一季內最多重抓一次，仍能在一個月
+    # 內接到新一季財報。存整包 JSON 而非拆欄位，因為呼叫端要的是整段季度
+    # 序列（算同季去年比較與TTM），拆表反而要 join 回來。 ----------
+
+    def save_auto_score(self, code, payload, checked_at=None):
+        """存 Score 自動化四項的**計算結果**（不是原始財報）。
+
+        為什麼存結果而不是讓頁面現算：個股詳情頁的既有原則是「只讀快取、
+        不即時查外部API」，但 Score 的月營收加速項需要多月年增率序列（財報
+        快取涵蓋不到）。由背景刷新路徑算好存起來，頁面純讀取，渲染路徑就
+        完全不碰網路——這也是 2026-08-19 實測發現的問題：先前讓頁面現算，
+        單元測試從 6.5 秒變成 18.9 秒，就是渲染時打了 FinMind。"""
+        if not code:
+            raise ValueError("code 為必填")
+        checked_at = checked_at or _now()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO auto_score_cache (code, payload, checked_at)"
+            " VALUES (?,?,?)",
+            (code, json.dumps(payload, ensure_ascii=False), checked_at))
+        self.conn.commit()
+        return {"saved": True, "code": code, "checked_at": checked_at}
+
+    def get_auto_score(self, code):
+        """沒算過回 None——頁面據此顯示「按更新後顯示」，不要自己編分數。"""
+        row = self.conn.execute(
+            "SELECT payload, checked_at FROM auto_score_cache WHERE code = ?",
+            (code,)).fetchone()
+        if not row:
+            return None
+        try:
+            payload = json.loads(row["payload"])
+        except ValueError:
+            return None
+        payload["checked_at"] = row["checked_at"]
+        return payload
+
+    def save_financial_metrics_cache(self, code, payload):
+        if not code:
+            raise ValueError("code 為必填")
+        fetched_at = _now()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO financial_metrics_cache (code, payload, fetched_at)"
+            " VALUES (?,?,?)",
+            (code, json.dumps(payload, ensure_ascii=False), fetched_at))
+        self.conn.commit()
+        return {"saved": True, "code": code, "fetched_at": fetched_at}
+
+    def get_financial_metrics_cache(self, code, max_age_days=30):
+        """回傳 (payload, fetched_at)；沒有或已過期回傳 (None, fetched_at
+        或 None)——過期仍回傳 fetched_at，讓呼叫端可以在 API 失敗時決定
+        要不要退回用舊資料（有總比沒有好，但要標明是舊的）。"""
+        row = self.conn.execute(
+            "SELECT payload, fetched_at FROM financial_metrics_cache WHERE code = ?",
+            (code,)).fetchone()
+        if not row:
+            return None, None
+        try:
+            fetched = datetime.datetime.fromisoformat(row["fetched_at"])
+        except (ValueError, TypeError):
+            return None, row["fetched_at"]
+        age = (datetime.datetime.now() - fetched).days
+        if age > max_age_days:
+            return None, row["fetched_at"]
+        try:
+            return json.loads(row["payload"]), row["fetched_at"]
+        except ValueError:
+            return None, row["fetched_at"]
 
     # ---------- 加碼計畫總額度（2026-08-19新增）：補上 review_engine
     # `position_control_suggestion()` 的 `suggested_add_pct` 一直缺的分母

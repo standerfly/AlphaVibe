@@ -329,3 +329,73 @@ def get_equity_attributable_to_owners(stock_id, data_dir=None, token=None):
     result["equity"] = latest.get("value")
     result["equity_date"] = latest.get("date")
     return result
+
+
+# 財報抓取窗口：財報是季頻，要算「同季去年」比較＋TTM（近四季加總）需要
+# 至少 8 季；900 天≈10 季，留一點餘裕給公佈延遲。
+FINANCIAL_LOOKBACK_DAYS = 900
+
+
+def get_financial_metrics(stock_id, data_dir=None, token=None):
+    """查季度財報指標，供 review_engine 的 Score 自動化項目使用：
+    毛利率、EPS、歸屬母公司淨利（算 ROE 分子）、權益（算 ROE 分母）。
+
+    ⚠️ **同名欄位在兩個資料集意義完全不同，這是會算錯一個數量級的坑**：
+    - `TaiwanStockFinancialStatements`（損益表）的
+      `EquityAttributableToOwnersOfParent` 其實是「本期淨利**歸屬於母公司
+      業主**」——2026-08-19 對 2308 實測為 251 億／季，跟
+      `IncomeAfterTaxes`(272億) 減去少數股權(15億) 對得上。
+    - `TaiwanStockBalanceSheet`（資產負債表）的同名欄位才是真正的
+      **權益**——同期實測 2,937 億。
+    直接拿損益表那個當分母算 ROE 會得到 10 倍以上的假數字。既有的
+    `get_equity_attributable_to_owners()` 用資產負債表是對的。
+
+    另：FinMind 台股財報是**單季**數值不是累計（2026-08-19 對 2308 實測
+    Q1~Q4 各為 1189/1240/1503/1616 億，若為累計 Q4 應約 5548 億）。
+
+    回傳 quarters 依日期升冪；任一資料集失敗時該部分欄位為 None，不臆測。
+    """
+    token = token or _read_token(data_dir)
+    result = {"stock_id": stock_id, "token_used": bool(token), "errors": [],
+              "quarters": []}
+
+    income = _fetch("TaiwanStockFinancialStatements", stock_id,
+                    _days_ago(FINANCIAL_LOOKBACK_DAYS), token)
+    if "error" in income:
+        result["errors"].append(income["error"])
+        return result
+    if not income["data"]:
+        result["errors"].append("TaiwanStockFinancialStatements 無資料（代碼是否正確？）")
+        return result
+
+    by_date = {}
+    for row in income["data"]:
+        by_date.setdefault(row.get("date"), {})[row.get("type")] = row.get("value")
+
+    equity_by_date = {}
+    balance = _fetch("TaiwanStockBalanceSheet", stock_id,
+                     _days_ago(FINANCIAL_LOOKBACK_DAYS), token)
+    if "error" in balance:
+        result["errors"].append(balance["error"])
+    else:
+        for row in balance["data"]:
+            if row.get("type") == "EquityAttributableToOwnersOfParent":
+                equity_by_date[row.get("date")] = row.get("value")
+
+    for date in sorted(d for d in by_date if d):
+        vals = by_date[date]
+        revenue = vals.get("Revenue")
+        gross_profit = vals.get("GrossProfit")
+        gross_margin = (gross_profit / revenue) if revenue and gross_profit is not None else None
+        result["quarters"].append({
+            "date": date,
+            "revenue": revenue,
+            "gross_profit": gross_profit,
+            "gross_margin": gross_margin,
+            "eps": vals.get("EPS"),
+            # 損益表這個欄位是「淨利歸屬母公司」，見上方警告
+            "parent_net_income": vals.get("EquityAttributableToOwnersOfParent"),
+            # 權益只從資產負債表取
+            "equity": equity_by_date.get(date),
+        })
+    return result

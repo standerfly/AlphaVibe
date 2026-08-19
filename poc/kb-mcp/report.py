@@ -1316,7 +1316,7 @@ def _split_module_d_batch(latest_batch):
     return gate, reference, status
 
 
-def _module_d_card_html(latest_batch):
+def _module_d_card_html(latest_batch, score=None):
     """Checks 卡（2026-08-19 依已核准 mockup 重構，原「Module D 檢視」
     單一清單改為分區呈現）。
 
@@ -1371,6 +1371,24 @@ def _module_d_card_html(latest_batch):
                     r.get("trigger_label") or r["trigger_type"], r["finding"],
                     "ref", "訊號"))
 
+    if score and score.get("items"):
+        earned = sum(i["weight"] for i in score["items"] if i.get("earned"))
+        total = sum(i["weight"] for i in score["items"])
+        unknown = sum(1 for i in score["items"] if i.get("earned") is None)
+        parts.append("<div class=\"group-label\">Optional・Score（加分建議，不擋加碼）"
+                     "　自動化 4 項得 %d／%d 分%s</div>"
+                     % (earned, total,
+                        "，其中 %d 項資料不足" % unknown if unknown else ""))
+        for it in score["items"]:
+            got = it.get("earned")
+            if got is True:
+                state, pill = "ok", "+%d" % it["weight"]
+            elif got is False:
+                state, pill = "pending", "0／+%d" % it["weight"]
+            else:
+                state, pill = "pending", "資料不足"
+            parts.append(_finding_row_html(it["label"], it["detail"], state, pill))
+
     parts.append("<details class=\"trade-list-details\"><summary>待人工查證"
                  "（%d 項系統無資料源）</summary>"
                  % (len(review_engine.MANUAL_GATE_ITEMS)
@@ -1380,9 +1398,8 @@ def _module_d_card_html(latest_batch):
         parts.append(_finding_row_html(label, why, "pending", "待查證"))
     parts.append("<div class=\"group-label\">Score（加分項，Q-039 列 Deferred 未自動化）"
                  "</div>")
-    for label, score in review_engine.MANUAL_SCORE_ITEMS:
-        parts.append(_finding_row_html(label, "無公開批次資料源，需自行查證",
-                                       "pending", score))
+    for label, weight, why in review_engine.MANUAL_SCORE_ITEMS:
+        parts.append(_finding_row_html(label, why, "pending", weight))
     parts.append("</details>")
 
     parts.append("</div></section>")
@@ -2091,7 +2108,8 @@ def render_stock_detail_page(store, code, flash=None, refreshing=False):
                      "<p class=\"empty\">尚無估值資料，背景刷新完成後會顯示在這裡。</p>")
     parts.append("</div></section>")
 
-    parts.append(_module_d_card_html(latest_batch))
+    # 只讀背景刷新算好的結果，渲染路徑不查外部API（頁面既有原則）
+    parts.append(_module_d_card_html(latest_batch, score=store.get_auto_score(code)))
     parts.append(_concentration_card_html(store, code))
     parts.append(_position_plan_card_html(store, code, href_code))
 

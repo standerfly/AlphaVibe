@@ -982,6 +982,15 @@ class RefreshPriceAndValuationTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="alphavibe-refresh-price-test-")
         self.store = KBStore(self.tmp)
+        # 2026-08-19：refresh_price_and_valuation 新增了 Score 自動化計算，
+        # 那會查 FinMind 月營收＋財報。這個測試類別的重點是股價/估值寫入，
+        # 一律 mock 掉，避免單元測試打真實網路（實測未mock時整套測試從
+        # 6.5 秒變 11.5 秒）。
+        patcher = unittest.mock.patch.object(
+            review_engine, "auto_score_review",
+            return_value={"code": "TEST", "items": [], "checked_at": "2026-08-19T00:00:00"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def tearDown(self):
         self.store.close()
@@ -1134,3 +1143,93 @@ class RefreshStockSnapshotTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AutoScoreReviewTest(unittest.TestCase):
+    """2026-08-19新增：Score 自動化四項（PO 裁決「EPS 上修」＝實際 EPS
+    成長，與「法人上修 EPS」預估修正明確區分）。全部 mock 外部查詢。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="alphavibe-autoscore-test-")
+        self.store = KBStore(self.tmp)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp)
+
+    @staticmethod
+    def _quarters():
+        """兩年同季可比：2025Q2 與 2026Q2，各項都成長。
+
+        刻意給滿 8 季：ROE 要比「今年TTM vs 去年同期TTM」，兩個四季窗口
+        各需 4 季，少於 8 季時程式會（正確地）回報資料不足。"""
+        return {"quarters": [
+            {"date": "2024-09-30", "gross_margin": 0.28, "eps": 2.4,
+             "parent_net_income": 80, "equity": 900},
+            {"date": "2024-12-31", "gross_margin": 0.29, "eps": 2.6,
+             "parent_net_income": 85, "equity": 900},
+            {"date": "2025-03-31", "gross_margin": 0.30, "eps": 3.0,
+             "parent_net_income": 100, "equity": 1000},
+            {"date": "2025-06-30", "gross_margin": 0.31, "eps": 3.5,
+             "parent_net_income": 110, "equity": 1000},
+            {"date": "2025-09-30", "gross_margin": 0.32, "eps": 4.0,
+             "parent_net_income": 120, "equity": 1100},
+            {"date": "2025-12-31", "gross_margin": 0.33, "eps": 4.5,
+             "parent_net_income": 130, "equity": 1100},
+            {"date": "2026-03-31", "gross_margin": 0.34, "eps": 5.0,
+             "parent_net_income": 150, "equity": 1200},
+            {"date": "2026-06-30", "gross_margin": 0.36, "eps": 6.0,
+             "parent_net_income": 170, "equity": 1200},
+        ]}
+
+    def _run(self, yoy_values):
+        revenue = {"revenue_yoy": [{"yoy_growth": v} for v in yoy_values]}
+        with unittest.mock.patch.object(
+                finmind_client, "get_financial_metrics",
+                return_value=self._quarters()):
+            return review_engine.auto_score_review(
+                "2308", store=self.store, revenue_result=revenue)
+
+    def test_all_four_earned_when_everything_improves(self):
+        out = self._run([0.30, 0.50])       # 年增率加速
+        by_key = {i["key"]: i for i in out["items"]}
+        self.assertTrue(by_key["revenue_yoy_accel"]["earned"])
+        self.assertTrue(by_key["eps_growth"]["earned"])       # 3.5→6.0
+        self.assertTrue(by_key["gross_margin_up"]["earned"])  # 31%→36%
+        self.assertTrue(by_key["roe_up"]["earned"])           # TTM ROE 上升
+        self.assertEqual(sum(i["weight"] for i in out["items"] if i["earned"]), 8)
+
+    def test_revenue_decel_is_false_not_none(self):
+        """年增率下滑要回 earned=False（已查證、條件不成立），不是 None
+        （資料不足）——兩者意義不同，頁面呈現也不同。"""
+        out = self._run([0.55, 0.47])
+        item = next(i for i in out["items"] if i["key"] == "revenue_yoy_accel")
+        self.assertIs(item["earned"], False)
+        self.assertIn("未加速", item["detail"])
+
+    def test_single_yoy_point_reports_insufficient_not_false(self):
+        out = self._run([0.47])
+        item = next(i for i in out["items"] if i["key"] == "revenue_yoy_accel")
+        self.assertIsNone(item["earned"])
+        self.assertIn("不足兩期", item["detail"])
+
+    def test_financial_fetch_failure_marks_unknown_not_zero(self):
+        """財報查不到時三項回 None（資料不足），不能當成 0 分計入。"""
+        with unittest.mock.patch.object(
+                finmind_client, "get_financial_metrics",
+                return_value={"quarters": [], "errors": ["FinMind HTTP 402"]}):
+            out = review_engine.auto_score_review(
+                "2308", store=self.store,
+                revenue_result={"revenue_yoy": [{"yoy_growth": 0.3},
+                                                 {"yoy_growth": 0.5}]})
+        fin = [i for i in out["items"] if i["key"] != "revenue_yoy_accel"]
+        self.assertEqual(len(fin), 3)
+        self.assertTrue(all(i["earned"] is None for i in fin))
+        self.assertTrue(all("402" in i["detail"] for i in fin))
+
+    def test_result_cached_and_read_back(self):
+        out = self._run([0.30, 0.50])
+        self.store.save_auto_score("2308", out)
+        got = self.store.get_auto_score("2308")
+        self.assertEqual(len(got["items"]), 4)
+        self.assertIsNone(self.store.get_auto_score("9999"))

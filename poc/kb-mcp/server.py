@@ -331,6 +331,19 @@ TOOLS = [
         },
     },
     {
+        "name": "check_auto_score",
+        "description": ("Score 自動化四項評分（EPS實際成長+3／月營收YoY加速+2／毛利率提升+2／"
+                        "ROE改善+1，皆為最新一季對去年同季比較）。earned=true 計分、false 已"
+                        "查證但條件不成立、null 資料不足——三者意義不同，不要把 null 當 false。"
+                        "另有三項（法人上修EPS／新增大客戶訂單／產業需求提升）無免費資料源，"
+                        "不在本工具範圍，需人工判斷。財報走30天TTL快取，不會每次都打外部API。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"code": {"type": "string", "description": "股票代碼"}},
+            "required": ["code"],
+        },
+    },
+    {
         "name": "save_position_plan",
         "description": ("設定或調整一檔股票的「加碼計畫總額度」（單位：金額 NT$）。這是"
                         "`check_position_control` 的 suggested_add_pct（遞減式加碼比例）"
@@ -923,6 +936,9 @@ class Server:
             return self.store.save_stock_theme(code=args["code"], theme=args["theme"])
         if name == "get_stock_theme":
             return self.store.get_stock_theme()
+        if name == "check_auto_score":
+            return review_engine.auto_score_review(
+                args["code"], store=self.store, data_dir=self.data_dir)
         if name == "save_position_plan":
             return self.store.save_position_plan(
                 code=args["code"], plan_amount=args["plan_amount"],

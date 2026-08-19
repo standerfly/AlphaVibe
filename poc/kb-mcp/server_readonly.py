@@ -27,6 +27,7 @@ READONLY_TOOLS = {
     "get_laoyutou_trades", "get_trade_ledger", "check_general_review",
     "check_strategy_review", "check_laoyutou_signal",
     "check_position_control", "get_emerging_stock_valuation",
+    "check_auto_score",
     "parse_holdings_report", "screen_stocks", "get_market_scan",
 }
 
