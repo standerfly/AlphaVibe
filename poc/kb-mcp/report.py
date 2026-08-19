@@ -296,6 +296,24 @@ details.section > summary h2 { margin-top: 0; display: inline-block; }
 .chart-stats .stat span { font-size: .68rem; color: var(--ink-dim); }
 .chart-bar-label { font-size: 9px; font-weight: 700; text-anchor: middle;
                      font-variant-numeric: tabular-nums; }
+/* 集中度／部位控制卡（2026-08-19）：把 review_engine.position_control_
+   suggestion() 已經算出來、但先前只塞進其他 finding 的 suggested_action
+   欄位、頁面上完全看不到的集中度數字，做成可視化的進度條。上限虛線用
+   var(--ink)（中性、不搶紅色警示），超標時 fill 換成 var(--red)。 */
+.conc-row + .conc-row { margin-top: 1.1rem; }
+.conc-row__head { display: flex; justify-content: space-between; align-items: baseline;
+  gap: .5rem; font-size: .82rem; margin-bottom: .3rem; }
+.conc-row__name { font-weight: 600; }
+.conc-row__value { font-weight: 700; font-variant-numeric: tabular-nums; }
+.conc-row__value.over { color: var(--red); }
+.conc-track { position: relative; height: 16px; background: var(--paper-sunken);
+  border-radius: 6px; }
+.conc-fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 6px;
+  background: var(--accent); }
+.conc-fill.over { background: var(--red); }
+.conc-cap { position: absolute; top: -3px; bottom: -3px; width: 0;
+  border-left: 2px dashed var(--ink); }
+.conc-note { font-size: .7rem; color: var(--ink-dim); margin-top: .2rem; }
 .note { padding: .6rem 0; border-bottom: 1px solid var(--rule); }
 .note:last-child { border-bottom: none; padding-bottom: 0; }
 .note:first-child { padding-top: 0; }
@@ -1228,6 +1246,87 @@ def _module_d_card_html(latest_batch):
     return "".join(parts)
 
 
+def _concentration_bar_html(label, pct, cap_pct, unavailable_text):
+    """單一條集中度進度條。pct 為 None 時不畫條，改顯示 unavailable_text
+    ——刻意區分「看不到」與「沒問題」：算不出來就明講算不出來，不畫一條
+    0% 的空條讓人誤以為集中度很低。"""
+    if pct is None:
+        return ("<div class=\"conc-row\"><div class=\"conc-row__head\">"
+                "<span class=\"conc-row__name\">%s</span>"
+                "<span class=\"conc-row__value\" style=\"color:var(--ink-dim);\">—</span>"
+                "</div><div class=\"conc-note\">%s</div></div>"
+                % (esc(label), esc(unavailable_text)))
+    over = pct >= cap_pct
+    return ("<div class=\"conc-row\"><div class=\"conc-row__head\">"
+            "<span class=\"conc-row__name\">%s</span>"
+            "<span class=\"conc-row__value%s\">%.1f%%</span></div>"
+            "<div class=\"conc-track\"><div class=\"conc-fill%s\" style=\"width:%.1f%%;\"></div>"
+            "<div class=\"conc-cap\" style=\"left:%.1f%%;\"></div></div>"
+            "<div class=\"conc-note\">虛線＝參考上限 %.0f%%</div></div>"
+            % (esc(label), " over" if over else "", pct,
+               " over" if over else "", min(pct, 100.0), cap_pct, cap_pct))
+
+
+def _concentration_card_html(store, code):
+    """集中度／部位控制卡（2026-08-19新增，對應已核准的手機版mockup）。
+
+    這塊的資料 `review_engine.position_control_suggestion()` **本來就已經
+    算出來了**，但先前只被塞進「其他 finding」的 suggested_action 欄位，
+    `_module_d_card_html()` 從來沒讀過那個欄位——等於算了卻沒有任何地方
+    顯示。這裡直接重用該函式（不重寫計算邏輯，避免兩處算出不同答案，
+    見該函式 docstring 對一致性的要求），把單股／主題集中度畫成進度條。
+
+    狀態徽章三分（跟 `_module_d_card_html()` 的二分刻意不同，因為這裡
+    「算不出來」是有意義的第三種狀態，不能跟「沒超標」混為一談）：
+    已超標→alert；算得出來且未超標→ok；current_position_pct 為 None
+    （未持有或股價未更新）→中性的「無法判斷」。
+    """
+    import review_engine  # 延後匯入：避免 report.py 匯入時就拉進整條
+                          # finmind/fundamentals client 依賴鏈（只有詳情頁用得到）
+    pc = review_engine.position_control_suggestion(code, store)
+
+    single_pct = pc.get("current_position_pct")
+    theme = pc.get("theme")
+    theme_pct = pc.get("theme_concentration_pct")
+    single_cap = review_engine.SINGLE_STOCK_CONCENTRATION_WARN_PCT
+    theme_cap = review_engine.THEME_CONCENTRATION_WARN_PCT
+
+    if pc.get("concentration_warning"):
+        badge_cls, badge_text = "alert", "已達上限"
+    elif single_pct is None:
+        badge_cls, badge_text = "", "無法判斷"
+    else:
+        badge_cls, badge_text = "ok", "未超標"
+    badge_style = ("class=\"pill %s\"" % badge_cls) if badge_cls else \
+        "class=\"badge badge-neutral\""
+
+    parts = []
+    parts.append("<section class=\"card\"><div class=\"card__head\">"
+                 "<h2>集中度／部位控制</h2>"
+                 "<span %s>%s</span></div><div class=\"card__body\">"
+                 % (badge_style, badge_text))
+    parts.append(_concentration_bar_html(
+        "單股集中度", single_pct, single_cap,
+        "持股快照沒有這檔的市值紀錄，算不出佔投資組合比例——是「看不到」，不是「沒問題」"))
+    theme_label = ("主題集中度（%s）" % theme) if theme else "主題集中度"
+    theme_unavailable = ("尚未標記投資主題" if not theme
+                         else "該主題尚無市值資料，無法計算主題集中度")
+    parts.append(_concentration_bar_html(
+        theme_label, theme_pct, theme_cap, theme_unavailable))
+
+    seq = pc.get("next_add_sequence")
+    add_pct = pc.get("suggested_add_pct")
+    if add_pct is not None:
+        seq_text = ("這次是第 %d 次加碼，遞減式加碼表建議比例為此股加碼計畫總額度的 %.0f%%"
+                    "（非投資組合佔比）" % (seq, add_pct * 100))
+    else:
+        seq_text = ("這次是第 %d 次加碼，已超出預設遞減加碼表範圍（僅定義到第 5 次），"
+                    "建議依實際情況自行判斷" % seq)
+    parts.append("<p class=\"val-source\">%s</p>" % esc(seq_text))
+    parts.append("</div></section>")
+    return "".join(parts)
+
+
 def _portfolio_context(store):
     """跟 _render_holdings_section() 同一份市值計算邏輯（規格明講兩處
     不能算出不同答案，見該函式docstring）：市值＝股數×快取股價，查不到
@@ -1743,6 +1842,7 @@ def render_stock_detail_page(store, code, flash=None, refreshing=False):
     parts.append("</div></section>")
 
     parts.append(_module_d_card_html(latest_batch))
+    parts.append(_concentration_card_html(store, code))
 
     holdings_card = _holdings_card_html(store, code)
     if holdings_card:

@@ -892,6 +892,45 @@ class StockDetailPageTest(unittest.TestCase):
         page = report.render_stock_detail_page(self.store, "9999")
         self.assertIn("9999", page)
         self.assertIn("尚未產生分析", page)
+
+    def test_concentration_card_shows_unavailable_not_zero_without_holdings(self):
+        """2026-08-19新增：純研究標的（沒有庫存市值）算不出集中度時，要
+        明講「看不到」而不是畫一條0%的空條讓人誤以為集中度很低——這是
+        這張卡刻意跟「沒超標」區分開的第三種狀態。"""
+        page = report.render_stock_detail_page(self.store, "9999")
+        self.assertIn("集中度／部位控制", page)
+        self.assertIn("無法判斷", page)
+        self.assertIn("是「看不到」，不是「沒問題」", page)
+        # 只比對實際渲染出來的元素（class="conc-fill"），不是 CSS 裡的
+        # .conc-fill 規則定義——CSS 常數整份內嵌在頁面裡，直接搜字串會誤判
+        self.assertNotIn("class=\"conc-fill", page)
+
+    def test_concentration_card_flags_over_limit_single_and_theme(self):
+        """單一持股且已標記主題時，單股與主題集中度都是100%，雙雙超過
+        15%/50%上限——徽章要顯示「已達上限」，兩條進度條都要標成超標。"""
+        self.store.save_holdings([{"code": "8299", "name": "群聯", "shares": 6,
+                                    "avg_cost": 1535}])
+        self.store.upsert_stock_price("8299", 2080.0, "2026-08-14")
+        self.store.save_stock_theme("8299", "記憶體/NAND景氣循環")
+        page = report.render_stock_detail_page(self.store, "8299")
+        self.assertIn("已達上限", page)
+        self.assertIn("記憶體/NAND景氣循環", page)
+        self.assertIn("conc-fill over", page)
+        self.assertIn("100.0%", page)
+
+    def test_concentration_card_shows_next_add_sequence(self):
+        """加碼次序要顯示出來（遞減式加碼表定義到第5次）：已有2筆帶
+        add_sequence的買進，下一次就是第3次，建議比例15%。"""
+        self.store.save_holdings([{"code": "2308", "name": "台達電", "shares": 20,
+                                    "avg_cost": 1800}])
+        self.store.upsert_stock_price("2308", 1885.0, "2026-08-14")
+        self.store.save_trade_ledger_entry("2308", "台達電", "買", 10, 1830.0,
+                                           "2026-06-26", add_sequence=1)
+        self.store.save_trade_ledger_entry("2308", "台達電", "買", 10, 1790.0,
+                                           "2026-07-21", add_sequence=2)
+        page = report.render_stock_detail_page(self.store, "2308")
+        self.assertIn("第 3 次加碼", page)
+        self.assertIn("15%", page)
         self.assertIn("尚無估值資料", page)
         self.assertIn("尚未記錄買進理由", page)
 
