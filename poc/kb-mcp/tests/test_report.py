@@ -918,6 +918,60 @@ class StockDetailPageTest(unittest.TestCase):
         self.assertIn("conc-fill over", page)
         self.assertIn("100.0%", page)
 
+    def test_position_plan_card_without_plan_shows_form_not_zero_progress(self):
+        """2026-08-19新增：沒設定計畫總額度時不畫進度條（沒有分母就沒有
+        百分比），改顯示設定表單＋說明，跟集中度卡同一個「算不出來就明講」
+        的原則。"""
+        page = report.render_stock_detail_page(self.store, "9999")
+        self.assertIn("加碼進度", page)
+        self.assertIn("尚未設定計畫總額度", page)
+        self.assertIn("/dashboard/stock/9999/plan", page)
+        # 只比對實際渲染出來的進度條元素；「完成比例」四個字也出現在說明
+        # 文字「因此算不出完成比例」裡，直接搜字串會誤判
+        self.assertNotIn("conc-row__name\">完成比例", page)
+
+    def test_position_plan_card_computes_progress_from_holdings_snapshot(self):
+        """有庫存快照（股數＋均價）時，已投入＝股數×均價，完成比例與
+        還可投入金額都要算出來。6股×1535＝9,210，佔計畫30,000的30.7%。"""
+        self.store.save_holdings([{"code": "8299", "name": "群聯", "shares": 6,
+                                    "avg_cost": 1535}])
+        self.store.save_position_plan("8299", 30000)
+        page = report.render_stock_detail_page(self.store, "8299")
+        self.assertIn("9,210", page)
+        self.assertIn("完成比例", page)
+        self.assertIn("30.7%", page)
+        self.assertIn("還可投入 NT$20,790", page)
+        self.assertIn("庫存快照", page)
+
+    def test_position_plan_card_falls_back_to_ledger_when_snapshot_missing(self):
+        """庫存快照沒這檔（台達電實況）時退回交易流水表估算：60股買進、
+        加權平均1809.17→已投入約108,550，來源要標示「交易流水表估算」。"""
+        for shares, price, date, seq in ((10, 1830.0, "2026-06-26", 1),
+                                          (10, 1790.0, "2026-07-21", 2),
+                                          (10, 1905.0, "2026-07-22", 3),
+                                          (10, 1900.0, "2026-07-23", 4),
+                                          (5, 1870.0, "2026-07-24", 5),
+                                          (5, 1760.0, "2026-07-27", 6),
+                                          (5, 1580.0, "2026-07-28", 7),
+                                          (5, 1650.0, "2026-08-07", 8)):
+            self.store.save_trade_ledger_entry("2308", "台達電", "買", shares, price,
+                                               date, add_sequence=seq)
+        page = report.render_stock_detail_page(self.store, "2308")
+        self.assertIn("108,550", page)
+        self.assertIn("交易流水表估算", page)
+        self.assertIn("60 股", page)
+
+    def test_position_plan_card_excludes_sold_out_shares_from_invested(self):
+        """已投入是「目前部位成本」不是「歷史買進總額」：買10股又賣掉6股，
+        已投入只算剩下的4股，不是全部10股的買進金額。"""
+        self.store.save_trade_ledger_entry("3661", "世芯", "買", 10, 1000.0,
+                                           "2026-06-01", add_sequence=1)
+        self.store.save_trade_ledger_entry("3661", "世芯", "賣", 6, 1500.0,
+                                           "2026-07-01")
+        page = report.render_stock_detail_page(self.store, "3661")
+        self.assertIn("4,000", page)      # 4股×1000，不是10股的10,000
+        self.assertNotIn("10,000", page)
+
     def test_concentration_card_shows_next_add_sequence(self):
         """加碼次序要顯示出來（遞減式加碼表定義到第5次）：已有2筆帶
         add_sequence的買進，下一次就是第3次，建議比例15%。"""

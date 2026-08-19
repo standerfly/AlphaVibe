@@ -1327,6 +1327,110 @@ def _concentration_card_html(store, code):
     return "".join(parts)
 
 
+def _fmt_amount(value):
+    """金額顯示：四捨五入到整數元＋千分位。跟 `_fmt_price()`（股價，保留
+    小數）刻意分開——股價 93.6 元有意義，但「已投入 108,550.2 元」的小數
+    只是加權平均算出來的浮點殘留，對「還可投入多少預算」沒有意義。"""
+    if value is None:
+        return "—"
+    return format(int(round(value)), ",")
+
+
+def _invested_amount(store, code):
+    """加碼進度卡的「已投入」金額＝**目前部位的成本**，不是歷史買進總額
+    ——買了又賣掉的錢已經收回來了，不該還算在「這檔已經投入多少預算」裡
+    （否則出清過的標的會顯示投入滿額，明明手上一股都沒有）。
+
+    取值優先序（跟 `_avg_cost_for_chart()` 同一套「快照優先、流水表補位」
+    的既有慣例）：
+    1. 庫存快照 shares × avg_cost——最權威，但實測 avg_cost 常缺值
+    2. 快照缺值或整檔不在快照裡 → 用交易流水表的**淨股數**（買-賣）×
+       買進加權平均價估算
+    3. 都算不出來（純研究標的、或淨股數 ≤0）→ 回傳 None，呼叫端顯示
+       「尚未投入」，不要顯示 0 讓人以為是「投入了0元」
+
+    回傳 (金額, 股數, 來源說明)；金額為 None 時後兩者仍可能有值。
+    """
+    holding = next((h for h in store.get_holdings()["holdings"]
+                    if h["code"] == code), None)
+    entries = store.get_trade_ledger(code).get("entries") or []
+
+    if holding and holding.get("shares") and holding.get("avg_cost") is not None:
+        shares = holding["shares"]
+        return shares * holding["avg_cost"], shares, "庫存快照"
+
+    buy_shares = sum(e["shares"] for e in entries if e["action"] == "買")
+    sell_shares = sum(e["shares"] for e in entries if e["action"] == "賣")
+    net_shares = buy_shares - sell_shares
+    if holding and holding.get("shares"):
+        # 快照有股數但沒均價：股數以快照為準（權威），單價用流水表估
+        net_shares = holding["shares"]
+    if net_shares <= 0 or not buy_shares:
+        return None, (net_shares if net_shares > 0 else 0), None
+    avg = sum(e["shares"] * e["price"] for e in entries if e["action"] == "買") / buy_shares
+    return net_shares * avg, net_shares, "交易流水表估算"
+
+
+def _position_plan_card_html(store, code, href_code):
+    """加碼進度卡（2026-08-19新增，對應已核准的手機版mockup）：已投入
+    金額 vs 這檔的加碼計畫總額度，補上 roadmap.md 2026-08-16 記錄的
+    「計畫總額度無處可存」缺口。
+
+    未設定計畫額度時**不畫進度條**（沒有分母就沒有百分比可言），改顯示
+    設定表單——跟集中度卡同一個原則：算不出來就明講，不要畫一條看起來
+    像 0% 的空條。額度可隨時覆寫（PO：投資預算會變動）。
+    """
+    plan = store.get_position_plan(code)
+    invested, shares, source = _invested_amount(store, code)
+
+    parts = ["<section class=\"card\"><div class=\"card__head\"><h2>加碼進度</h2>"]
+    if plan:
+        parts.append("<span class=\"card__meta\">計畫 NT$%s</span>" % _fmt_amount(plan["plan_amount"]))
+    parts.append("</div><div class=\"card__body\">")
+
+    parts.append("<div class=\"val-grid\" style=\"grid-template-columns:repeat(2,1fr);\">"
+                 "<div class=\"val-item\"><div class=\"label\">已投入</div>"
+                 "<div class=\"value\">%s</div></div>"
+                 "<div class=\"val-item\"><div class=\"label\">股數</div>"
+                 "<div class=\"value\">%s</div></div></div>"
+                 % (("NT$" + _fmt_amount(invested)) if invested is not None else "尚未投入",
+                    ("%s 股" % _fmt_price(shares)) if shares else "—"))
+    if source:
+        parts.append("<div class=\"val-source\">已投入金額來源：%s（＝目前部位成本，"
+                     "已賣出部分不計入）</div>" % esc(source))
+
+    if plan and invested is not None:
+        pct = invested / plan["plan_amount"] * 100
+        over = pct >= 100
+        parts.append(
+            "<div class=\"conc-row\" style=\"margin-top:.9rem;\">"
+            "<div class=\"conc-row__head\"><span class=\"conc-row__name\">完成比例</span>"
+            "<span class=\"conc-row__value%s\">%.1f%%</span></div>"
+            "<div class=\"conc-track\"><div class=\"conc-fill%s\" style=\"width:%.1f%%;\"></div></div>"
+            "<div class=\"conc-note\">還可投入 NT$%s</div></div>"
+            % (" over" if over else "", pct, " over" if over else "",
+               min(pct, 100.0),
+               _fmt_amount(max(plan["plan_amount"] - invested, 0))))
+        if plan.get("note"):
+            parts.append("<div class=\"val-source\">備註：%s</div>" % esc(plan["note"]))
+
+    label = "調整計畫總額度" if plan else "設定計畫總額度"
+    parts.append(
+        "<form method=\"post\" action=\"/dashboard/stock/%s/plan\" class=\"section\" "
+        "style=\"display:flex;align-items:center;gap:.5rem;margin-top:.9rem;\">"
+        "<input type=\"number\" name=\"plan_amount\" min=\"1\" step=\"1\" required "
+        "placeholder=\"%s（NT$）\" value=\"%s\" style=\"flex:1;min-width:0;\">"
+        "<button type=\"submit\">%s</button></form>"
+        % (href_code, label,
+           ("%d" % plan["plan_amount"]) if plan else "",
+           "更新" if plan else "設定"))
+    if not plan:
+        parts.append("<div class=\"val-source\">尚未設定計畫總額度，因此算不出完成比例"
+                     "——設定後這裡會顯示進度條與還可投入金額。</div>")
+    parts.append("</div></section>")
+    return "".join(parts)
+
+
 def _portfolio_context(store):
     """跟 _render_holdings_section() 同一份市值計算邏輯（規格明講兩處
     不能算出不同答案，見該函式docstring）：市值＝股數×快取股價，查不到
@@ -1843,6 +1947,7 @@ def render_stock_detail_page(store, code, flash=None, refreshing=False):
 
     parts.append(_module_d_card_html(latest_batch))
     parts.append(_concentration_card_html(store, code))
+    parts.append(_position_plan_card_html(store, code, href_code))
 
     holdings_card = _holdings_card_html(store, code)
     if holdings_card:

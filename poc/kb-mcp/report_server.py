@@ -850,13 +850,35 @@ class ReportHandler(BaseHTTPRequestHandler):
             self._redirect("/dashboard/stock/%s?flash=%s"
                            % (urllib.parse.quote(code, safe=""), urllib.parse.quote(msg)))
             return
+        if path.startswith("/dashboard/stock/") and path.endswith("/plan"):
+            # 詳情頁「加碼進度」卡的計畫總額度表單（2026-08-19新增）：單位
+            # 是金額，PRIMARY KEY code 只留最新一筆、可隨時覆寫（PO：投資
+            # 預算會變動，預計買多少也可以調整）。
+            code = path[len("/dashboard/stock/"):-len("/plan")]
+            form = self._read_form()
+            raw_amount = (form.get("plan_amount") or [""])[0].strip()
+            if not code:
+                self._send(404, "text/plain; charset=utf-8",
+                           "404：找不到這檔股票".encode("utf-8"))
+                return
+            store = KBStore(self.data_dir)
+            try:
+                store.save_position_plan(code, raw_amount)
+                msg = "已設定計畫總額度 NT$%s" % raw_amount
+            except ValueError as exc:
+                msg = "⚠️ 設定失敗：%s" % exc
+            finally:
+                store.close()
+            self._redirect("/dashboard/stock/%s?flash=%s"
+                           % (urllib.parse.quote(code, safe=""), urllib.parse.quote(msg)))
+            return
         self._send(404, "text/plain; charset=utf-8",
                    "404：僅支援 POST /mcp、/screen、/market-scan、/market-scan/track、"
                    "/dashboard/watchlist、/dashboard/trade、/dashboard/laoyutou、"
                    "/dashboard/tradeledger、/dashboard/tradecsv、"
                    "/dashboard/holdings/preview、/dashboard/holdings/confirm、"
-                   "/dashboard/stocks/add、/dashboard/stock/<code>/refresh 或 "
-                   "/dashboard/stock/<code>/note"
+                   "/dashboard/stocks/add、/dashboard/stock/<code>/refresh、"
+                   "/dashboard/stock/<code>/note 或 /dashboard/stock/<code>/plan"
                    .encode("utf-8"))
 
     def log_message(self, fmt, *args):  # 安靜一點，只留到 stderr

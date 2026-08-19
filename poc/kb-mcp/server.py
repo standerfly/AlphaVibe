@@ -331,6 +331,34 @@ TOOLS = [
         },
     },
     {
+        "name": "save_position_plan",
+        "description": ("設定或調整一檔股票的「加碼計畫總額度」（單位：金額 NT$）。這是"
+                        "`check_position_control` 的 suggested_add_pct（遞減式加碼比例）"
+                        "一直缺的分母——有了它才算得出「加碼進度：已投入/計畫總額/完成"
+                        "幾成」。同代碼再存＝覆蓋（投資預算會變動，額度本來就該可調整）。"
+                        "經使用者確認金額後才呼叫，不要自己臆測額度。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "股票代碼"},
+                "plan_amount": {"type": "number",
+                                "description": "計畫總額度（新台幣，須大於0）"},
+                "note": {"type": "string", "description": "選填備註，如額度的訂定理由"},
+            },
+            "required": ["code", "plan_amount"],
+        },
+    },
+    {
+        "name": "get_position_plan",
+        "description": ("查詢一檔股票的加碼計畫總額度。沒設定過回傳 null——這代表「還沒"
+                        "設定」，不是「額度為0」，不要拿 null 當0計算完成比例。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"code": {"type": "string", "description": "股票代碼"}},
+            "required": ["code"],
+        },
+    },
+    {
         "name": "get_stock_theme",
         "description": "查詢所有股票的投資主題標籤（code→theme 對照）。不需參數。",
         "inputSchema": {"type": "object", "properties": {}},
@@ -895,6 +923,12 @@ class Server:
             return self.store.save_stock_theme(code=args["code"], theme=args["theme"])
         if name == "get_stock_theme":
             return self.store.get_stock_theme()
+        if name == "save_position_plan":
+            return self.store.save_position_plan(
+                code=args["code"], plan_amount=args["plan_amount"],
+                note=args.get("note"))
+        if name == "get_position_plan":
+            return self.store.get_position_plan(code=args["code"])
         if name == "save_laoyutou_trade":
             return self.store.save_laoyutou_trade(
                 code=args["code"], name=args.get("name"), action=args["action"],

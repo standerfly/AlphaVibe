@@ -121,9 +121,12 @@ class ServerToolsTest(unittest.TestCase):
         self.server.store.close()
         shutil.rmtree(self.tmp)
 
-    def test_tools_list_has_forty(self):
+    def test_tools_list_has_forty_two(self):
+        """2026-08-19：40→42，新增 save_position_plan／get_position_plan
+        （加碼計畫總額度，補上 check_position_control 的 suggested_add_pct
+        一直缺的分母）。"""
         names = [t["name"] for t in server.TOOLS]
-        self.assertEqual(len(names), 40)
+        self.assertEqual(len(names), 42)
         for expected in ("save_snapshot", "get_snapshots",
                          "save_holdings", "get_holdings",
                          "save_stock_alias", "get_stock_alias",
@@ -143,7 +146,8 @@ class ServerToolsTest(unittest.TestCase):
                          "record_module_d_findings", "run_module_d_check",
                          "parse_and_save_laoyutou_trades",
                          "parse_and_save_trade_ledger",
-                         "parse_and_save_trade_csv"):
+                         "parse_and_save_trade_csv",
+                         "save_position_plan", "get_position_plan"):
             self.assertIn(expected, names)
 
     def test_check_laoyutou_signal_tool_dispatch_wires_args(self):

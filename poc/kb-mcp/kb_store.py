@@ -116,6 +116,12 @@ CREATE TABLE IF NOT EXISTS stock_themes (
     theme TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS position_plans (
+    code TEXT PRIMARY KEY,
+    plan_amount REAL NOT NULL,
+    note TEXT,
+    updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS market_scan_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     framework_id TEXT NOT NULL,
@@ -699,6 +705,52 @@ class KBStore:
         ).fetchall()
         return {r["code"]: {"theme": r["theme"],
                             "updated_at": r["updated_at"]} for r in rows}
+
+    # ---------- 加碼計畫總額度（2026-08-19新增）：補上 review_engine
+    # `position_control_suggestion()` 的 `suggested_add_pct` 一直缺的分母
+    # ——那個比例的定義是「這次加碼佔**此股加碼計畫總額度**的比例」，但
+    # 「加碼計畫總額度」先前在整個系統裡沒有任何地方存得下來（見
+    # roadmap.md「已知限制／待辦」2026-08-16 條目），導致「加碼進度
+    # （已投入/計畫總額/完成幾成）」算不出來，只能人工心算。
+    #
+    # 單位是**金額**（PO 2026-08-19 決定）：跟「預計買多少、已經買多少」
+    # 的語感一致，且已投入金額本來就能從 trade_ledger 加總算出，同單位
+    # 才能直接算進度百分比（換成股數或投組佔比都得再換算一次，量綱不同）。
+    # PRIMARY KEY code 只留最新一筆、可隨時覆寫——PO 明確要求「投資預算
+    # 會變動，預計買多少也可以調整」，不需要保留歷次計畫的歷史。 ----------
+
+    def save_position_plan(self, code, plan_amount, note=None):
+        if not code:
+            raise ValueError("code 為必填")
+        try:
+            plan_amount = float(plan_amount)
+        except (TypeError, ValueError):
+            raise ValueError("plan_amount 必須是數字：%r" % (plan_amount,))
+        if plan_amount <= 0:
+            raise ValueError("plan_amount 必須大於 0：%r" % (plan_amount,))
+        updated_at = _now()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO position_plans"
+            " (code, plan_amount, note, updated_at) VALUES (?,?,?,?)",
+            (code, plan_amount, note, updated_at),
+        )
+        self.conn.commit()
+        return {"saved": True, "code": code, "plan_amount": plan_amount,
+                "note": note, "updated_at": updated_at}
+
+    def get_position_plan(self, code):
+        """回傳單一標的的加碼計畫；沒設定過回傳 None（呼叫端據此顯示
+        「尚未設定」，不要自己編一個預設額度）。"""
+        row = self.conn.execute(
+            "SELECT code, plan_amount, note, updated_at FROM position_plans"
+            " WHERE code = ?", (code,)).fetchone()
+        return dict(row) if row else None
+
+    def delete_position_plan(self, code):
+        cur = self.conn.execute(
+            "DELETE FROM position_plans WHERE code = ?", (code,))
+        self.conn.commit()
+        return {"deleted": cur.rowcount > 0, "code": code}
 
     # ---------- 老芋頭交易表（FR-044）：老芋頭是PO信任的資深投資朋友／
     # 導師（非系統使用者，屬訊號來源），這裡結構化記錄他的進出，供模組D
