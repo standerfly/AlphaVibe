@@ -76,6 +76,17 @@ In-Scope（Q-042），不再屬於此清單**。
   `git status`／`git diff --stat` 確認本機有沒有未commit的東西，
   不要假設乾淨。
 
+- ~~**2026-08-16 記錄：「加碼計畫總額度」欄位缺失**~~ → **✅ 2026-08-19 已完成**
+  （commit `658438b`，分支 `claude/delta-electronics-research-6lr0qx`）：
+  已新增 `position_plans` 表＋`save_position_plan`/`get_position_plan`
+  兩個 MCP 工具（工具總數 40→42，get_ 版本已加進 `server_readonly.py`
+  白名單）＋個股詳情頁「加碼進度」卡（含網頁設定表單
+  `POST /dashboard/stock/<code>/plan`）。**單位是金額**（PO 2026-08-19
+  決定）。實作時的兩個定義取捨值得留意：(1)「已投入」＝**目前部位成本**
+  不是歷史買進總額（買了又賣掉的錢已收回，否則出清過的標的會顯示投入
+  滿額）；取值優先序為庫存快照→交易流水表淨股數估算→None。(2) 未設定
+  額度時**不畫進度條**，跟集中度卡同一個「算不出來就明講、不要畫 0%
+  空條」原則。下方原始記錄保留供追溯：
 - **2026-08-16 記錄：「加碼計畫總額度」欄位缺失**（雲端session做PR-review
   視覺化demo時，PO提出「應該看得到預計買多少、已買多少、佔比多少，且
   預計買多少可調整」而發現）：`check_position_control` 回傳的
