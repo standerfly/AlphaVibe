@@ -672,28 +672,37 @@ def _render_today_highlights_section(store, date):
     不為空的記錄——依 review_engine.run_module_d_batch() 的設計，這代表
     concern_flag=True 且算得出部位控制建議的項目，才是真正需要PO留意的
     （沒觸發任何檢視規則的「正常」記錄 suggested_action 恆為 None，不顯示
-    在這裡，避免每天一堆正常結果淹沒真正的重點）。conflict_flag=True
-    （跟既有立場或其他策略衝突）的記錄排最前面。"""
+    在這裡，避免每天一堆正常結果淹沒真正的重點）。
+
+    排序（2026-08-19，依PO確認的「存股>觀察中>新的>對話」風險敞口優先序
+    調整）：**是否持有是第一排序鍵**，立場衝突（conflict_flag）降為同一層
+    級內的次要排序——已經花出去的錢，優先權蓋過「有沒有立場衝突」這種
+    資料完整性提醒；純觀察標的衝突再嚴重，也不該排到持股前面。另外新增
+    「類型」欄直接標示存股／觀察中，不用點進去查才知道分類。"""
     results = store.get_module_d_results(date=date)["results"]
     highlights = [r for r in results if r.get("suggested_action") is not None]
-    highlights.sort(key=lambda r: not r.get("conflict_flag"))
+    held_codes = {h["code"] for h in store.get_holdings()["holdings"]}
+    highlights.sort(key=lambda r: (r["code"] not in held_codes, not r.get("conflict_flag")))
 
     parts = []
     parts.append("<details class=\"section\" id=\"section-today-highlights\" open>"
                  "<summary><h2>今日重點</h2></summary>")
     if highlights:
         parts.append("<div class=\"tablewrap\"><table><thead><tr>"
-                     "<th>代碼</th><th>檢視層</th><th>發現</th><th>建議動作</th>"
-                     "<th>提醒</th></tr></thead><tbody>")
+                     "<th>代碼</th><th>類型</th><th>檢視層</th><th>發現</th>"
+                     "<th>建議動作</th><th>提醒</th></tr></thead><tbody>")
         for r in highlights:
             conflict = bool(r.get("conflict_flag"))
+            is_held = r["code"] in held_codes
             row_style = " class=\"row-alert\"" if conflict else ""
             conflict_text = "⚠️ 立場衝突" if conflict else "—"
+            type_text = "存股" if is_held else "觀察中"
             parts.append(
-                "<tr%s><td data-label=\"代碼\">%s</td><td data-label=\"檢視層\">%s</td>"
+                "<tr%s><td data-label=\"代碼\">%s</td><td data-label=\"類型\">%s</td>"
+                "<td data-label=\"檢視層\">%s</td>"
                 "<td data-label=\"發現\">%s</td><td data-label=\"建議動作\">%s</td>"
                 "<td data-label=\"提醒\">%s</td></tr>"
-                % (row_style, esc(r["code"]), esc(r["trigger_type"]),
+                % (row_style, esc(r["code"]), type_text, esc(r["trigger_type"]),
                    esc(r["finding"]), esc(r["suggested_action"]), conflict_text))
         parts.append("</tbody></table></div>")
     else:

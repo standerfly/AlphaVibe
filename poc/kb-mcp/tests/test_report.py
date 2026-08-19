@@ -396,6 +396,27 @@ class DashboardTest(unittest.TestCase):
         # conflict_flag=True（2454）排最前面，即使checked_at較晚
         self.assertLess(page.index("2454"), page.index("3661"))
 
+    def test_today_highlights_sorts_holdings_before_watchlist_even_with_conflict(self):
+        """2026-08-19新增（PO確認優先序「存股>觀察中>新的>對話」）：3661是
+        持股、2454是純觀察且有立場衝突——即使2454衝突、checked_at較早，
+        「是否持有」仍是第一排序鍵，3661該排在2454前面；「類型」欄要正確
+        標示存股／觀察中。"""
+        today = report.datetime.date.today().isoformat()
+        self.store.save_holdings([{"code": "3661", "name": "世芯", "shares": 10,
+                                    "avg_cost": 1000}])
+        self.store.save_module_d_result(
+            "2454", "老芋頭動向", "老芋頭賣出但基本面未變差",
+            suggested_action="建議觀察，暫不跟進", conflict_flag=True,
+            checked_at=today + "T09:00:00")
+        self.store.save_module_d_result(
+            "3661", "策略層", "PEG回升，假說可能失效",
+            suggested_action="建議減碼30%", conflict_flag=False,
+            checked_at=today + "T09:01:00")
+        page = report.render_dashboard(self.store)
+        self.assertLess(page.index("3661"), page.index("2454"))
+        self.assertIn("存股", page)
+        self.assertIn("觀察中", page)
+
     def test_no_highlights_today_shows_empty_state(self):
         page = report.render_dashboard(self.store)
         self.assertIn("今日無需特別留意的標的", page)
