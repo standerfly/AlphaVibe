@@ -172,16 +172,33 @@ def get_stock_price_history(stock_id, start_date=None, end_date=None, data_dir=N
     return result
 
 
+# 月營收年增率的抓取窗口（2026-08-19 修正，原為 400 天）：年增率要拿「去年
+# 同月」比，窗口 N 個月只能算出 (N-12) 筆 YoY。400 天≈13 個月 → 只有 1 筆，
+# 不足 review_engine.MIN_YOY_POINTS(3)，導致成長趨緩檢查從未真正運作過。
+# 800 天≈26 個月 → 實測可算出 14 筆。改窄前請先確認 MIN_YOY_POINTS。
+REVENUE_YOY_LOOKBACK_DAYS = 800
+
+
 def get_revenue_yoy(stock_id, data_dir=None, token=None):
     """查個股月營收年增率（FinMind 不提供年增率欄位，自行以去年同月比對計算）。
 
-    抓近 400 天（至少 13 個月）才能算出每個月的年增率；找不到去年同月資料的
-    月份，yoy_growth 標 null，不臆測。
+    抓近 800 天（約 26 個月）；找不到去年同月資料的月份，yoy_growth 標 null，
+    不臆測。
+
+    ⚠️ 2026-08-19 修正（原本抓 400 天）：400 天≈13 個月，但年增率要拿「去年
+    同月」比，13 個月的窗口裡**只有最新那 1 個月**找得到對應的去年同月——
+    實測 2308 只算得出 1 筆 YoY。原註解寫「至少 13 個月才能算出每個月的年增率」
+    是推理錯誤，13 個月只夠算 1 個月。後果是 `review_engine._growth_deceleration`
+    要求至少 MIN_YOY_POINTS(3) 筆才判斷趨勢，永遠拿不到 → 這個檢查上線以來
+    **從未真正運作過**，一律回「資料不足，無法判斷趨勢」。改抓 800 天後實測
+    同一檔可算出 14 筆 YoY，趨勢判斷與「年增率是否加速」才有資料基礎。
+    每次仍只打一次 API，不增加 FinMind 額度消耗（見 CLAUDE.md 2026-07-28 教訓）。
     """
     token = token or _read_token(data_dir)
     result = {"stock_id": stock_id, "token_used": bool(token), "errors": []}
 
-    revenue = _fetch("TaiwanStockMonthRevenue", stock_id, _days_ago(400), token)
+    revenue = _fetch("TaiwanStockMonthRevenue", stock_id,
+                     _days_ago(REVENUE_YOY_LOOKBACK_DAYS), token)
     if "error" in revenue:
         result["errors"].append(revenue["error"])
         return result
