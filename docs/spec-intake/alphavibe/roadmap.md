@@ -79,8 +79,8 @@ In-Scope（Q-042），不再屬於此清單**。
 - ~~**2026-08-16 記錄：「加碼計畫總額度」欄位缺失**~~ → **✅ 2026-08-19 已完成**
   （commit `658438b`，分支 `claude/delta-electronics-research-6lr0qx`）：
   已新增 `position_plans` 表＋`save_position_plan`/`get_position_plan`
-  兩個 MCP 工具（工具總數 40→42，get_ 版本已加進 `server_readonly.py`
-  白名單）＋個股詳情頁「加碼進度」卡（含網頁設定表單
+  兩個 MCP 工具（get_ 版本已加進 `server_readonly.py` 白名單；工具總數
+  當時 40→42，同日稍晚再加 `check_auto_score` 成為 43）＋個股詳情頁「加碼進度」卡（含網頁設定表單
   `POST /dashboard/stock/<code>/plan`）。**單位是金額**（PO 2026-08-19
   決定）。實作時的兩個定義取捨值得留意：(1)「已投入」＝**目前部位成本**
   不是歷史買進總額（買了又賣掉的錢已收回，否則出清過的標的會顯示投入
