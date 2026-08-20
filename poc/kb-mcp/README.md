@@ -42,6 +42,8 @@ Claude Code session**，首次會詢問是否啟用 `alphavibe-kb`——允許�
 | save_comments_batch | L3 | 一次存入多筆評論（欄位同 save_comment）；個別筆缺必填欄位只該筆失敗，不影響其餘筆數存入 |
 | save_philosophy / get_philosophy | L1 | 投資哲學模組 md 檔（append/replace）；篩選框架（如 framework_v1）也存這裡 |
 | save_snapshot / get_snapshots | 追溯 | 分析結論凍結（當時價/估值/三段式結論/框架版本）＋引用來源；歷次快照供 diff（FR-026~028） |
+| save_position_plan / get_position_plan | 部位 | 這檔的**加碼計畫總額度**（單位：金額 NT$，可隨時覆寫）。補上 check_position_control 的 suggested_add_pct 一直缺的分母，有它才算得出「加碼進度：已投入／計畫總額／完成幾成」 |
+| check_auto_score | 檢視 | Score 自動化四項（EPS實際成長+3／月營收YoY加速+2／毛利率提升+2／ROE改善+1，皆為最新一季對去年同季）。**earned 三態**：true 計分、false 已查證但不成立、null 資料不足——不要把 null 當 false。另三項（法人上修EPS／新增大客戶訂單／產業需求提升）無免費資料源，需人工判斷 |
 | save_holdings / get_holdings | 追溯 | 持股快照 {code, shares, avg_cost, date}——不含損益計算（FR-029、Q-035 邊界） |
 | refresh_holdings_prices | 快取 | 批次更新目前庫存每檔的股價（近 7 天最新收盤價）與產業別快取，供檢視頁算市值/持股比例、顯示產業別；不帶參數，個別代碼失敗只記入 failed 不中斷整批。檢視頁本身不即時呼叫外部 API，靠這個工具定期寫入快取——建議每個交易日跑一次 |
 | save_stock_alias / get_stock_alias | 輔助 | 股票名稱→代碼查證快取，避免同一檔股票重複查證（同名再存＝更新） |
@@ -137,6 +139,18 @@ gui/501/com.alphavibe.moduled`。log 在 `~/Library/Logs/alphavibe-module-d.log`
 `poc/data/`：`alphavibe.db`（SQLite，已 gitignore）＋ `philosophy/*.md`。
 可用環境變數 `ALPHAVIBE_DATA_DIR` 覆寫。
 
+**FinMind 額度控制用的三張快取表（2026-08-19 新增）**——匿名額度是全域
+共用池，打光會連累當晚排程（見 CLAUDE.md 2026-07-28 教訓），所以會重複
+用到的外部資料一律先進快取：
+
+| 表 | TTL | 為什麼需要 |
+|---|---|---|
+| `revenue_yoy_cache` | 20 小時 | **去重**：每日排程對同一檔會走兩條都需要月營收多月序列的路徑（`general_review` 成長趨緩／`auto_score_review` 月營收加速），不共用就是一天抓兩次。TTL 選 20 小時＝涵蓋同一次排程、又保證隔天必重抓 |
+| `financial_metrics_cache` | 30 天 | 財報是**季頻**資料，沒必要天天重抓；一個月內仍接得到新一季 |
+| `auto_score_cache` | 無（存結果） | Score 由背景刷新算好存起來，個股詳情頁**純讀取**——頁面既有原則是「只讀快取不即時查外部API」，實測讓頁面現算會使測試從 6.5 秒變 18.9 秒 |
+
+查詢失敗一律不寫快取，避免把錯誤結果鎖住整個 TTL。
+
 ## FinMind token（可選）
 
 匿名呼叫已實測可用（2026-07-08），額度較低。頻繁使用時到
@@ -158,5 +172,6 @@ python3 -m unittest discover -s poc/kb-mcp/tests -v
 CLI 入口）、/market-scan 網頁表單（GET/POST，mock）、server.py MCP dispatch
 （screen_stocks 門檻覆寫語意、無效框架代號不打 API、run_market_scan／
 get_market_scan 輸出瘦身與 total_results/returned/omitted 計數）、
-`test_traceability.py` 對 `TOOLS` 固定 32 個工具的斷言（含 FR-044 老芋頭
-交易表、FR-056 交易流水表的 4 個工具、FR-051 通用檢視層的 check_general_review）。
+`test_traceability.py` 對 `TOOLS` 固定 **43** 個工具的斷言（2026-08-19：新增
+save_position_plan／get_position_plan／check_auto_score）。改動工具清單時
+記得同步這個守門測試與 `server_readonly.py` 的唯讀白名單。
