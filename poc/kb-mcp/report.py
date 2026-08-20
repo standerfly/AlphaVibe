@@ -1371,6 +1371,13 @@ def _module_d_card_html(latest_batch, score=None):
                     r.get("trigger_label") or r["trigger_type"], r["finding"],
                     "ref", "訊號"))
 
+    if latest_batch and not (score and score.get("items")):
+        # 跟集中度卡／加碼進度卡同一個原則：算不出來就明講，不要讓區塊
+        # 整個消失——否則使用者只會看到「有些股票有 Score 有些沒有」，
+        # 分不出是「這檔沒得分」還是「還沒算」。
+        parts.append("<div class=\"group-label\">Optional・Score（加分建議）</div>")
+        parts.append("<p class=\"finding__detail\">尚未計算——每日排程刷新後顯示，"
+                     "或按上方「更新」立即重算。</p>")
     if score and score.get("items"):
         earned = sum(i["weight"] for i in score["items"] if i.get("earned"))
         total = sum(i["weight"] for i in score["items"])
