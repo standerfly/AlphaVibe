@@ -117,6 +117,11 @@ CREATE TABLE IF NOT EXISTS stock_themes (
     theme TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS revenue_yoy_cache (
+    code TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS auto_score_cache (
     code TEXT PRIMARY KEY,
     payload TEXT NOT NULL,
@@ -732,6 +737,43 @@ class KBStore:
     # 所以這裡用 TTL 快取（預設30天）：一季內最多重抓一次，仍能在一個月
     # 內接到新一季財報。存整包 JSON 而非拆欄位，因為呼叫端要的是整段季度
     # 序列（算同季去年比較與TTM），拆表反而要 join 回來。 ----------
+
+    def save_revenue_yoy_cache(self, code, payload):
+        """月營收年增率序列快取（2026-08-19新增）。
+
+        動機是**去重**不是加速：每日排程對同一檔會走兩條路徑——
+        `run_module_d_review`→`general_review`（成長趨緩要多月序列）與
+        `refresh_price_and_valuation`→`auto_score_review`（月營收加速也要
+        同一份序列）。沒有快取的話同一份資料一天抓兩次，31 檔就是 62 次
+        FinMind 呼叫（CLAUDE.md 2026-07-28 教訓：匿名額度是全域共用池，
+        打光會連累當晚排程）。TTL 預設 20 小時：足以涵蓋同一次排程的兩條
+        路徑，又保證隔天一定重抓（月營收約每月10日更新，日更綽綽有餘）。"""
+        if not code:
+            raise ValueError("code 為必填")
+        fetched_at = _now()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO revenue_yoy_cache (code, payload, fetched_at)"
+            " VALUES (?,?,?)",
+            (code, json.dumps(payload, ensure_ascii=False), fetched_at))
+        self.conn.commit()
+        return {"saved": True, "code": code, "fetched_at": fetched_at}
+
+    def get_revenue_yoy_cache(self, code, max_age_hours=20):
+        row = self.conn.execute(
+            "SELECT payload, fetched_at FROM revenue_yoy_cache WHERE code = ?",
+            (code,)).fetchone()
+        if not row:
+            return None
+        try:
+            fetched = datetime.datetime.fromisoformat(row["fetched_at"])
+        except (ValueError, TypeError):
+            return None
+        if (datetime.datetime.now() - fetched).total_seconds() > max_age_hours * 3600:
+            return None
+        try:
+            return json.loads(row["payload"])
+        except ValueError:
+            return None
 
     def save_auto_score(self, code, payload, checked_at=None):
         """存 Score 自動化四項的**計算結果**（不是原始財報）。

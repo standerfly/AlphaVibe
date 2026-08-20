@@ -225,7 +225,24 @@ def _percentile(values, pct):
     return ordered[lower] + (ordered[upper] - ordered[lower]) * frac
 
 
-def general_review(code, data_dir=None, token=None):
+def fetch_revenue_yoy(code, store=None, data_dir=None, token=None):
+    """取月營收年增率序列，有 store 就走 20 小時快取。
+
+    每日排程對同一檔會經過兩條需要這份序列的路徑（general_review 的成長
+    趨緩、auto_score_review 的月營收加速），不共用快取的話同一份資料一天
+    抓兩次。store 為 None（一次性呼叫/測試）時直接查，不快取。
+    """
+    if store is not None:
+        cached = store.get_revenue_yoy_cache(code)
+        if cached is not None:
+            return cached
+    result = finmind_client.get_revenue_yoy(code, data_dir=data_dir, token=token)
+    if store is not None and result.get("revenue_yoy"):
+        store.save_revenue_yoy_cache(code, result)
+    return result
+
+
+def general_review(code, data_dir=None, token=None, store=None):
     """FR-051 通用檢視層：不管哪個策略篩進來的標的，每檔都要過的檢查。
 
     這次只做 2 項可自動計算（成長趨緩／下檔風險）；財報兌現度／利多出盡／
@@ -234,7 +251,7 @@ def general_review(code, data_dir=None, token=None):
     """
     # 月營收多月序列：維持直接呼叫 finmind_client（見模組docstring說明，
     # 官方無對應多月歷史來源，不套用官方優先包裝）。
-    revenue_result = finmind_client.get_revenue_yoy(code, data_dir=data_dir, token=token)
+    revenue_result = fetch_revenue_yoy(code, store=store, data_dir=data_dir, token=token)
     # 歷史PER序列：官方優先（TWSE BWIBBU逐月合併），FinMind降級為備援
     # （2026-08-01 來源選用邏輯稽核修正，見模組docstring）。
     per_result = fundamentals_client.get_per_history(code, data_dir=data_dir, token=token)
@@ -675,7 +692,7 @@ def run_module_d_review(code, store, data_dir=None, token=None):
     # ---- FR-051 通用層：固定產生2筆，無論 flagged 是否為 True ----
     general = None
     try:
-        general = general_review(code, data_dir=data_dir, token=token)
+        general = general_review(code, data_dir=data_dir, token=token, store=store)
         gd = general["growth_deceleration"]
         items.append({"trigger_type": "通用層", "strategy_id": None,
                       "trigger_label": "通用層／成長趨緩",
@@ -966,8 +983,8 @@ def auto_score_review(code, store=None, data_dir=None, token=None,
 
     # ---- 月營收 YoY 加速：不另外打 API，重用呼叫端已查好的 revenue_result ----
     if revenue_result is None:
-        revenue_result = finmind_client.get_revenue_yoy(
-            code, data_dir=data_dir, token=token)
+        revenue_result = fetch_revenue_yoy(
+            code, store=store, data_dir=data_dir, token=token)
     non_null = [r for r in (revenue_result.get("revenue_yoy") or [])
                 if r.get("yoy_growth") is not None]
     if len(non_null) < 2:

@@ -1233,3 +1233,44 @@ class AutoScoreReviewTest(unittest.TestCase):
         got = self.store.get_auto_score("2308")
         self.assertEqual(len(got["items"]), 4)
         self.assertIsNone(self.store.get_auto_score("9999"))
+
+
+class RevenueYoyCacheTest(unittest.TestCase):
+    """2026-08-19新增：月營收序列快取的目的是**去重**——每日排程對同一檔
+    會走兩條都需要這份序列的路徑（general_review 成長趨緩／auto_score_review
+    月營收加速），沒快取就是一天抓兩次、31檔62次 FinMind 呼叫。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="alphavibe-revcache-test-")
+        self.store = KBStore(self.tmp)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp)
+
+    def test_second_path_same_day_hits_cache(self):
+        fake = {"revenue_yoy": [{"yoy_growth": 0.3}, {"yoy_growth": 0.5}]}
+        with unittest.mock.patch.object(
+                finmind_client, "get_revenue_yoy", return_value=fake) as mock_fetch:
+            first = review_engine.fetch_revenue_yoy("2308", store=self.store)
+            second = review_engine.fetch_revenue_yoy("2308", store=self.store)
+        self.assertEqual(mock_fetch.call_count, 1)
+        self.assertEqual(first, second)
+
+    def test_without_store_does_not_cache(self):
+        """一次性呼叫／測試路徑不帶 store 時維持直接查，不隱式寫入資料庫。"""
+        fake = {"revenue_yoy": [{"yoy_growth": 0.3}]}
+        with unittest.mock.patch.object(
+                finmind_client, "get_revenue_yoy", return_value=fake) as mock_fetch:
+            review_engine.fetch_revenue_yoy("2308")
+            review_engine.fetch_revenue_yoy("2308")
+        self.assertEqual(mock_fetch.call_count, 2)
+
+    def test_failed_fetch_not_cached(self):
+        """查失敗（無 revenue_yoy）不寫快取，否則會把錯誤結果鎖住20小時。"""
+        with unittest.mock.patch.object(
+                finmind_client, "get_revenue_yoy",
+                return_value={"errors": ["FinMind HTTP 402"]}) as mock_fetch:
+            review_engine.fetch_revenue_yoy("2308", store=self.store)
+            review_engine.fetch_revenue_yoy("2308", store=self.store)
+        self.assertEqual(mock_fetch.call_count, 2)
