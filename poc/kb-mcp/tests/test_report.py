@@ -396,6 +396,27 @@ class DashboardTest(unittest.TestCase):
         # conflict_flag=True（2454）排最前面，即使checked_at較晚
         self.assertLess(page.index("2454"), page.index("3661"))
 
+    def test_today_highlights_sorts_holdings_before_watchlist_even_with_conflict(self):
+        """2026-08-19新增（PO確認優先序「存股>觀察中>新的>對話」）：3661是
+        持股、2454是純觀察且有立場衝突——即使2454衝突、checked_at較早，
+        「是否持有」仍是第一排序鍵，3661該排在2454前面；「類型」欄要正確
+        標示存股／觀察中。"""
+        today = report.datetime.date.today().isoformat()
+        self.store.save_holdings([{"code": "3661", "name": "世芯", "shares": 10,
+                                    "avg_cost": 1000}])
+        self.store.save_module_d_result(
+            "2454", "老芋頭動向", "老芋頭賣出但基本面未變差",
+            suggested_action="建議觀察，暫不跟進", conflict_flag=True,
+            checked_at=today + "T09:00:00")
+        self.store.save_module_d_result(
+            "3661", "策略層", "PEG回升，假說可能失效",
+            suggested_action="建議減碼30%", conflict_flag=False,
+            checked_at=today + "T09:01:00")
+        page = report.render_dashboard(self.store)
+        self.assertLess(page.index("3661"), page.index("2454"))
+        self.assertIn("存股", page)
+        self.assertIn("觀察中", page)
+
     def test_no_highlights_today_shows_empty_state(self):
         page = report.render_dashboard(self.store)
         self.assertIn("今日無需特別留意的標的", page)
@@ -871,6 +892,153 @@ class StockDetailPageTest(unittest.TestCase):
         page = report.render_stock_detail_page(self.store, "9999")
         self.assertIn("9999", page)
         self.assertIn("尚未產生分析", page)
+
+    def test_concentration_card_shows_unavailable_not_zero_without_holdings(self):
+        """2026-08-19新增：純研究標的（沒有庫存市值）算不出集中度時，要
+        明講「看不到」而不是畫一條0%的空條讓人誤以為集中度很低——這是
+        這張卡刻意跟「沒超標」區分開的第三種狀態。"""
+        page = report.render_stock_detail_page(self.store, "9999")
+        self.assertIn("集中度／部位控制", page)
+        self.assertIn("無法判斷", page)
+        self.assertIn("是「看不到」，不是「沒問題」", page)
+        # 只比對實際渲染出來的元素（class="conc-fill"），不是 CSS 裡的
+        # .conc-fill 規則定義——CSS 常數整份內嵌在頁面裡，直接搜字串會誤判
+        self.assertNotIn("class=\"conc-fill", page)
+
+    def test_concentration_card_flags_over_limit_single_and_theme(self):
+        """單一持股且已標記主題時，單股與主題集中度都是100%，雙雙超過
+        15%/50%上限——徽章要顯示「已達上限」，兩條進度條都要標成超標。"""
+        self.store.save_holdings([{"code": "8299", "name": "群聯", "shares": 6,
+                                    "avg_cost": 1535}])
+        self.store.upsert_stock_price("8299", 2080.0, "2026-08-14")
+        self.store.save_stock_theme("8299", "記憶體/NAND景氣循環")
+        page = report.render_stock_detail_page(self.store, "8299")
+        self.assertIn("已達上限", page)
+        self.assertIn("記憶體/NAND景氣循環", page)
+        self.assertIn("conc-fill over", page)
+        self.assertIn("100.0%", page)
+
+    def test_verdict_banner_appears_before_price_block(self):
+        """2026-08-19新增：Verdict 置於價格之前——詳情頁原本一打開先看到
+        現價/均價會觸發「跟成本比」的定錨慣性，結論置頂是刻意的版面決定，
+        不是排版巧合，所以用順序斷言鎖住。"""
+        self.store.upsert_stock_price("2330", 1000.0, "2026-08-14", prev_close=990.0)
+        page = report.render_stock_detail_page(self.store, "2330")
+        # 一律比對渲染出來的 class="..." 形式：CSS 常數整份內嵌在頁面裡，
+        # 直接搜 class 名稱會先命中樣式定義、拿到錯的位置
+        self.assertIn("<div class=\"verdict ", page)
+        self.assertLess(page.index("<div class=\"verdict "),
+                        page.index("<span class=\"stock-row__delta"))
+
+    def test_verdict_flags_gate_concern_as_alert(self):
+        """通用層有 concern → 紅色，且結論文字直接引用該筆發現。"""
+        self.store.save_module_d_result(
+            code="2330", trigger_type="通用層", finding="營收年增率連續三月下滑",
+            concern_flag=True, checked_at="2026-08-19T17:00:00")
+        page = report.render_stock_detail_page(self.store, "2330")
+        self.assertIn("verdict verdict--alert", page)
+        self.assertIn("Gate 有 1 項需留意", page)
+        self.assertIn("營收年增率連續三月下滑", page)
+
+    def test_verdict_does_not_treat_strategy_exit_as_gate_failure(self):
+        """核心修正的回歸測試：策略層失效（退出篩選候選）**不能**讓
+        verdict 變成 Gate 擋住——那是候選機制不是持有門檻。此時 Gate 全過、
+        集中度算不出來，結論應該是黃色的「集中度算不出來」，並附註篩選
+        框架退出候選不影響結論。"""
+        self.store.save_module_d_result(
+            code="2308", trigger_type="通用層", finding="PER在歷史合理區間",
+            concern_flag=False, checked_at="2026-08-19T17:00:00")
+        self.store.save_module_d_result(
+            code="2308", trigger_type="策略層",
+            strategy_id="peg_deep_dip_concentration",
+            finding="PEG已回升至1.26（門檻1.0）", concern_flag=True,
+            checked_at="2026-08-19T17:00:00")
+        page = report.render_stock_detail_page(self.store, "2308")
+        self.assertNotIn("verdict verdict--alert", page)
+        self.assertIn("verdict verdict--warn", page)
+        self.assertIn("集中度算不出來", page)
+        self.assertIn("不影響上面的結論", page)
+
+    def test_verdict_alerts_when_concentration_over_limit(self):
+        """Gate 全過但集中度頂格 → 紅色，且說明這是規則等級的擋點。"""
+        self.store.save_holdings([{"code": "8299", "name": "群聯", "shares": 6,
+                                    "avg_cost": 1535}])
+        self.store.upsert_stock_price("8299", 2080.0, "2026-08-14")
+        self.store.save_module_d_result(
+            code="8299", trigger_type="通用層", finding="PER遠低於歷史區間",
+            concern_flag=False, checked_at="2026-08-19T17:00:00")
+        page = report.render_stock_detail_page(self.store, "8299")
+        self.assertIn("verdict verdict--alert", page)
+        self.assertIn("集中度已達上限", page)
+        self.assertIn("規則等級的擋點", page)
+
+    def test_position_plan_card_without_plan_shows_form_not_zero_progress(self):
+        """2026-08-19新增：沒設定計畫總額度時不畫進度條（沒有分母就沒有
+        百分比），改顯示設定表單＋說明，跟集中度卡同一個「算不出來就明講」
+        的原則。"""
+        page = report.render_stock_detail_page(self.store, "9999")
+        self.assertIn("加碼進度", page)
+        self.assertIn("尚未設定計畫總額度", page)
+        self.assertIn("/dashboard/stock/9999/plan", page)
+        # 只比對實際渲染出來的進度條元素；「完成比例」四個字也出現在說明
+        # 文字「因此算不出完成比例」裡，直接搜字串會誤判
+        self.assertNotIn("conc-row__name\">完成比例", page)
+
+    def test_position_plan_card_computes_progress_from_holdings_snapshot(self):
+        """有庫存快照（股數＋均價）時，已投入＝股數×均價，完成比例與
+        還可投入金額都要算出來。6股×1535＝9,210，佔計畫30,000的30.7%。"""
+        self.store.save_holdings([{"code": "8299", "name": "群聯", "shares": 6,
+                                    "avg_cost": 1535}])
+        self.store.save_position_plan("8299", 30000)
+        page = report.render_stock_detail_page(self.store, "8299")
+        self.assertIn("9,210", page)
+        self.assertIn("完成比例", page)
+        self.assertIn("30.7%", page)
+        self.assertIn("還可投入 NT$20,790", page)
+        self.assertIn("庫存快照", page)
+
+    def test_position_plan_card_falls_back_to_ledger_when_snapshot_missing(self):
+        """庫存快照沒這檔（台達電實況）時退回交易流水表估算：60股買進、
+        加權平均1809.17→已投入約108,550，來源要標示「交易流水表估算」。"""
+        for shares, price, date, seq in ((10, 1830.0, "2026-06-26", 1),
+                                          (10, 1790.0, "2026-07-21", 2),
+                                          (10, 1905.0, "2026-07-22", 3),
+                                          (10, 1900.0, "2026-07-23", 4),
+                                          (5, 1870.0, "2026-07-24", 5),
+                                          (5, 1760.0, "2026-07-27", 6),
+                                          (5, 1580.0, "2026-07-28", 7),
+                                          (5, 1650.0, "2026-08-07", 8)):
+            self.store.save_trade_ledger_entry("2308", "台達電", "買", shares, price,
+                                               date, add_sequence=seq)
+        page = report.render_stock_detail_page(self.store, "2308")
+        self.assertIn("108,550", page)
+        self.assertIn("交易流水表估算", page)
+        self.assertIn("60 股", page)
+
+    def test_position_plan_card_excludes_sold_out_shares_from_invested(self):
+        """已投入是「目前部位成本」不是「歷史買進總額」：買10股又賣掉6股，
+        已投入只算剩下的4股，不是全部10股的買進金額。"""
+        self.store.save_trade_ledger_entry("3661", "世芯", "買", 10, 1000.0,
+                                           "2026-06-01", add_sequence=1)
+        self.store.save_trade_ledger_entry("3661", "世芯", "賣", 6, 1500.0,
+                                           "2026-07-01")
+        page = report.render_stock_detail_page(self.store, "3661")
+        self.assertIn("4,000", page)      # 4股×1000，不是10股的10,000
+        self.assertNotIn("10,000", page)
+
+    def test_concentration_card_shows_next_add_sequence(self):
+        """加碼次序要顯示出來（遞減式加碼表定義到第5次）：已有2筆帶
+        add_sequence的買進，下一次就是第3次，建議比例15%。"""
+        self.store.save_holdings([{"code": "2308", "name": "台達電", "shares": 20,
+                                    "avg_cost": 1800}])
+        self.store.upsert_stock_price("2308", 1885.0, "2026-08-14")
+        self.store.save_trade_ledger_entry("2308", "台達電", "買", 10, 1830.0,
+                                           "2026-06-26", add_sequence=1)
+        self.store.save_trade_ledger_entry("2308", "台達電", "買", 10, 1790.0,
+                                           "2026-07-21", add_sequence=2)
+        page = report.render_stock_detail_page(self.store, "2308")
+        self.assertIn("第 3 次加碼", page)
+        self.assertIn("15%", page)
         self.assertIn("尚無估值資料", page)
         self.assertIn("尚未記錄買進理由", page)
 
@@ -919,9 +1087,17 @@ class StockDetailPageTest(unittest.TestCase):
         self.assertIn("下檔風險可控", page)
         self.assertIn("peg_deep_dip_concentration", page)
         self.assertIn("老芋頭賣出，你仍持有", page)
+        # 2026-08-19 重構：三層改為分區呈現，狀態語意各自不同
+        self.assertIn("Required・Gate", page)          # 通用層＝必過檢查
         self.assertIn("finding ok", page)
-        self.assertIn("finding alert", page)
-        self.assertIn("需留意", page)
+        # 策略層＝Reference only，用 ref（藍）不用紅綠，文字避開 PASS/FAIL
+        self.assertIn("Reference only", page)
+        self.assertIn("finding ref", page)
+        self.assertIn("仍符合候選", page)
+        # 老芋頭＝獨立訊號，刻意不再用 alert 紅色（工具設計本就是「純陳述
+        # 事實、不做判斷」），改中性呈現；它的 concern_flag 仍照舊驅動
+        # 清單頁「需留意」標記與今日重點，這裡只改詳情頁的呈現語意
+        self.assertIn("Status check", page)
 
     def test_holdings_card_shown_when_holding_exists(self):
         self.store.save_holdings([{"code": "2330", "name": "台積電", "shares": 100,

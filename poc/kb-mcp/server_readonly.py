@@ -23,10 +23,11 @@ READONLY_TOOLS = {
     "get_stance", "list_stances", "search_comments", "get_philosophy",
     "get_fundamentals", "get_stock_info", "get_stock_price_history",
     "get_revenue_yoy", "get_institutional_trading", "get_snapshots",
-    "get_holdings", "get_stock_alias", "get_stock_theme",
+    "get_holdings", "get_stock_alias", "get_stock_theme", "get_position_plan",
     "get_laoyutou_trades", "get_trade_ledger", "check_general_review",
     "check_strategy_review", "check_laoyutou_signal",
     "check_position_control", "get_emerging_stock_valuation",
+    "check_auto_score",
     "parse_holdings_report", "screen_stocks", "get_market_scan",
 }
 

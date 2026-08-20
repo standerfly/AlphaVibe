@@ -251,6 +251,26 @@ details.section > summary h2 { margin-top: 0; display: inline-block; }
 .finding__stripe { flex-shrink: 0; width: 3px; border-radius: 3px; align-self: stretch; }
 .finding.ok .finding__stripe { background: var(--green); }
 .finding.alert .finding__stripe { background: var(--red); }
+/* ref＝參考用（策略層篩選比對／老芋頭訊號），刻意用 accent 藍而不是
+   紅綠——這些不是「過/不過」的判斷，用紅綠會被誤讀成 Gate 結果。
+   pending＝系統無資料源、待人工查證，用中性灰，不假裝有結論。 */
+.finding.ref .finding__stripe { background: var(--accent); }
+.finding.pending .finding__stripe { background: var(--rule-strong); }
+.pill.ref { color: var(--accent); background: var(--accent-soft); }
+.pill.pending { color: var(--ink-dim); background: var(--paper-sunken); }
+.group-label { font-size: .68rem; font-weight: 700; letter-spacing: .03em;
+  color: var(--ink-dim); margin: .9rem 0 .3rem; }
+.card__body > .group-label:first-child { margin-top: 0; }
+/* Verdict banner（2026-08-19）：結論置頂，先於價格出現——詳情頁原本
+   一打開先看到現價/均價，會觸發「跟成本比」的定錨慣性（PO 的 161→165
+   心魔）。左側 4px 色條沿用 tr.row-alert 既有語言，不新增配色。 */
+.verdict { border-radius: 10px; padding: .75rem .9rem; margin-bottom: 1rem; }
+.verdict__title { font-size: .95rem; font-weight: 700; margin-bottom: .2rem; }
+.verdict__detail { font-size: .82rem; color: var(--ink-dim); overflow-wrap: break-word; }
+.verdict--alert { background: var(--red-soft); box-shadow: inset 4px 0 0 var(--red); }
+.verdict--warn { background: var(--amber-soft); box-shadow: inset 4px 0 0 var(--amber); }
+.verdict--ok { background: var(--paper-raised); box-shadow: inset 4px 0 0 var(--green); }
+.verdict--neutral { background: var(--paper-sunken); box-shadow: inset 4px 0 0 var(--rule-strong); }
 .finding__label-row { display: flex; align-items: center; gap: .45rem; margin-bottom: .2rem; flex-wrap: wrap; }
 .finding__label { font-size: .82rem; font-weight: 700; }
 .pill { font-size: .68rem; font-weight: 700; padding: .1rem .55rem; border-radius: 999px; flex-shrink: 0; }
@@ -296,6 +316,24 @@ details.section > summary h2 { margin-top: 0; display: inline-block; }
 .chart-stats .stat span { font-size: .68rem; color: var(--ink-dim); }
 .chart-bar-label { font-size: 9px; font-weight: 700; text-anchor: middle;
                      font-variant-numeric: tabular-nums; }
+/* 集中度／部位控制卡（2026-08-19）：把 review_engine.position_control_
+   suggestion() 已經算出來、但先前只塞進其他 finding 的 suggested_action
+   欄位、頁面上完全看不到的集中度數字，做成可視化的進度條。上限虛線用
+   var(--ink)（中性、不搶紅色警示），超標時 fill 換成 var(--red)。 */
+.conc-row + .conc-row { margin-top: 1.1rem; }
+.conc-row__head { display: flex; justify-content: space-between; align-items: baseline;
+  gap: .5rem; font-size: .82rem; margin-bottom: .3rem; }
+.conc-row__name { font-weight: 600; }
+.conc-row__value { font-weight: 700; font-variant-numeric: tabular-nums; }
+.conc-row__value.over { color: var(--red); }
+.conc-track { position: relative; height: 16px; background: var(--paper-sunken);
+  border-radius: 6px; }
+.conc-fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 6px;
+  background: var(--accent); }
+.conc-fill.over { background: var(--red); }
+.conc-cap { position: absolute; top: -3px; bottom: -3px; width: 0;
+  border-left: 2px dashed var(--ink); }
+.conc-note { font-size: .7rem; color: var(--ink-dim); margin-top: .2rem; }
 .note { padding: .6rem 0; border-bottom: 1px solid var(--rule); }
 .note:last-child { border-bottom: none; padding-bottom: 0; }
 .note:first-child { padding-top: 0; }
@@ -672,28 +710,37 @@ def _render_today_highlights_section(store, date):
     不為空的記錄——依 review_engine.run_module_d_batch() 的設計，這代表
     concern_flag=True 且算得出部位控制建議的項目，才是真正需要PO留意的
     （沒觸發任何檢視規則的「正常」記錄 suggested_action 恆為 None，不顯示
-    在這裡，避免每天一堆正常結果淹沒真正的重點）。conflict_flag=True
-    （跟既有立場或其他策略衝突）的記錄排最前面。"""
+    在這裡，避免每天一堆正常結果淹沒真正的重點）。
+
+    排序（2026-08-19，依PO確認的「存股>觀察中>新的>對話」風險敞口優先序
+    調整）：**是否持有是第一排序鍵**，立場衝突（conflict_flag）降為同一層
+    級內的次要排序——已經花出去的錢，優先權蓋過「有沒有立場衝突」這種
+    資料完整性提醒；純觀察標的衝突再嚴重，也不該排到持股前面。另外新增
+    「類型」欄直接標示存股／觀察中，不用點進去查才知道分類。"""
     results = store.get_module_d_results(date=date)["results"]
     highlights = [r for r in results if r.get("suggested_action") is not None]
-    highlights.sort(key=lambda r: not r.get("conflict_flag"))
+    held_codes = {h["code"] for h in store.get_holdings()["holdings"]}
+    highlights.sort(key=lambda r: (r["code"] not in held_codes, not r.get("conflict_flag")))
 
     parts = []
     parts.append("<details class=\"section\" id=\"section-today-highlights\" open>"
                  "<summary><h2>今日重點</h2></summary>")
     if highlights:
         parts.append("<div class=\"tablewrap\"><table><thead><tr>"
-                     "<th>代碼</th><th>檢視層</th><th>發現</th><th>建議動作</th>"
-                     "<th>提醒</th></tr></thead><tbody>")
+                     "<th>代碼</th><th>類型</th><th>檢視層</th><th>發現</th>"
+                     "<th>建議動作</th><th>提醒</th></tr></thead><tbody>")
         for r in highlights:
             conflict = bool(r.get("conflict_flag"))
+            is_held = r["code"] in held_codes
             row_style = " class=\"row-alert\"" if conflict else ""
             conflict_text = "⚠️ 立場衝突" if conflict else "—"
+            type_text = "存股" if is_held else "觀察中"
             parts.append(
-                "<tr%s><td data-label=\"代碼\">%s</td><td data-label=\"檢視層\">%s</td>"
+                "<tr%s><td data-label=\"代碼\">%s</td><td data-label=\"類型\">%s</td>"
+                "<td data-label=\"檢視層\">%s</td>"
                 "<td data-label=\"發現\">%s</td><td data-label=\"建議動作\">%s</td>"
                 "<td data-label=\"提醒\">%s</td></tr>"
-                % (row_style, esc(r["code"]), esc(r["trigger_type"]),
+                % (row_style, esc(r["code"]), type_text, esc(r["trigger_type"]),
                    esc(r["finding"]), esc(r["suggested_action"]), conflict_text))
         parts.append("</tbody></table></div>")
     else:
@@ -1180,41 +1227,373 @@ def _valuation_source_text(data_source):
     return mapping.get(data_source, "來源未知")
 
 
-def _module_d_card_html(latest_batch):
-    """Module D檢視結果卡：依trigger_type分組呈現（見派工說明），狀態
-    顏色二分（PO明確要求「有concern_flag的用警示色、沒有的用正常色」，
-    不細分mockup裡出現的warn第三種狀態）：concern_flag=True
-    →alert（var(--red)），否則→ok（var(--green)）。"""
+def _verdict_banner_html(store, code, latest_batch):
+    """Verdict banner（2026-08-19 依已核准 mockup 新增）：把「今天到底
+    該不該動」的結論放在頁面最上方，先於價格出現。
+
+    這塊的動機是 PO 明確指出的心魔：詳情頁一打開先看到價格與均價，會
+    觸發「跟成本比」的定錨慣性；把結論置頂，是要讓眼睛先接收「今天的
+    證據支不支持動作」再看價格。
+
+    結論由實際資料算出來，不是寫死的文案。優先序刻意如此（嚴重的先講）：
+    1. Gate 有 concern → 擋住，紅
+    2. 集中度已達上限 → 擋住，紅（規則等級的擋點，跟 Gate 獨立）
+    3. Gate 全過但集中度算不出來 → 黃：不是「沒問題」是「看不到」
+    4. 都過 → 綠
+    5. 尚無檢視資料 → 中性灰，不假裝有結論
+    """
+    import review_engine  # 延後匯入，理由同 _concentration_card_html()
+
+    gate, reference, _status = _split_module_d_batch(latest_batch or [])
+    gate_concerns = [r for r in gate if r.get("concern_flag")]
+    ref_out = [r for r in reference if r.get("concern_flag")]
+
+    pc = review_engine.position_control_suggestion(code, store)
+    conc_warning = pc.get("concentration_warning")
+    conc_unknown = pc.get("current_position_pct") is None
+
+    if not latest_batch:
+        tone, title = "neutral", "尚無檢視結果"
+        detail = "背景刷新完成後，這裡會顯示今天的加碼審查結論。"
+    elif gate_concerns:
+        tone, title = "alert", "Gate 有 %d 項需留意" % len(gate_concerns)
+        detail = "；".join(r["finding"] for r in gate_concerns)
+    elif conc_warning:
+        tone, title = "alert", "Gate 全過，但集中度已達上限"
+        detail = conc_warning + "——這是規則等級的擋點，需你自行確認後才繼續加碼。"
+    elif conc_unknown:
+        tone, title = "warn", "Gate 全過，但集中度算不出來"
+        detail = ("持股快照沒有這檔的市值紀錄，集中度是「看不到」不是「沒問題」，"
+                  "補齊後才能真正定案。")
+    else:
+        tone, title = "ok", "Gate 全過，集中度未超標"
+        detail = "目前沒有擋住加碼的項目；Score 與部分 Gate 項仍需人工查證（見下方）。"
+
+    if ref_out and tone != "alert":
+        detail += ("　另：原篩選框架已退出候選，但那是候選機制、不是持有門檻，"
+                   "不影響上面的結論。")
+
+    return ("<div class=\"verdict verdict--%s\"><div class=\"verdict__title\">%s</div>"
+            "<div class=\"verdict__detail\">%s</div></div>"
+            % (tone, esc(title), esc(detail)))
+
+
+def _finding_row_html(label, detail, state, pill_text):
+    """Checks 卡裡的一列。state：ok／alert／ref（參考用，不是判斷）／
+    pending（待人工查證）。"""
+    return ("<div class=\"finding %s\"><span class=\"finding__stripe\"></span>"
+            "<div class=\"finding__body\"><div class=\"finding__label-row\">"
+            "<span class=\"finding__label\">%s</span>"
+            "<span class=\"pill %s\">%s</span></div>"
+            "<div class=\"finding__detail\">%s</div></div></div>"
+            % (state, esc(label), state, esc(pill_text), esc(detail)))
+
+
+def _split_module_d_batch(latest_batch):
+    """把最新一批檢視結果拆成三組，對應已核准 mockup 的 Checks 分區。
+
+    ⚠️ 這個拆法是 2026-08-16~19 討論的核心修正，不要合併回去：**策略層
+    不屬於 Gate**。策略層跑的是 `check_strategy_review`＝「這檔還符不符合
+    當初把它篩出來的框架門檻（PEG<1、回檔≥40% 之類）」，那是**候選篩選
+    機制**，不是持有／加碼的必要條件——框架文件自己就寫「換股不代表原
+    標的變差」。先前頁面把它跟通用層並列成同一串 finding，等於把「退出
+    便宜貨候選名單」呈現得像「投資假說被推翻」，這正是 PO 指出的混淆。
+
+    回傳 (gate_rows, reference_rows, status_rows)：
+    - gate：通用層（成長趨緩／下檔風險）——真正的必過檢查
+    - reference：策略層——僅供參考，不影響 Gate 判斷
+    - status：老芋頭動向——獨立訊號，純陳述事實
+    """
+    gate, reference, status = [], [], []
+    for r in latest_batch:
+        t = r.get("trigger_type")
+        if t == "策略層":
+            reference.append(r)
+        elif t == "老芋頭動向":
+            status.append(r)
+        else:
+            gate.append(r)
+    return gate, reference, status
+
+
+def _module_d_card_html(latest_batch, score=None):
+    """Checks 卡（2026-08-19 依已核准 mockup 重構，原「Module D 檢視」
+    單一清單改為分區呈現）。
+
+    分區與各自的狀態語意刻意不同，因為它們回答的是不同問題：
+    - **Required・Gate**（通用層）：必過檢查，二分 ok／alert，沿用 PO
+      先前明確要求的「有concern_flag用警示色、沒有的用正常色」。
+    - **Reference only**（策略層）：篩選候選資格比對，**不是 Gate**（見
+      `_split_module_d_batch()` docstring）。狀態文字刻意避開 PASS/FAIL
+      這套字眼，改用「已退出候選／仍符合候選」，並用 ref 樣式（藍）跟
+      Gate 的紅綠區隔，結構上就不可能被誤讀成「假說被推翻」。
+    - **Status check**（老芋頭）：獨立訊號，中性。
+    - **待人工查證**：Gate/Score 裡系統沒有資料源的項目（清單來自
+      `review_engine.MANUAL_GATE_ITEMS`／`MANUAL_SCORE_ITEMS`），預設收合
+      ——誠實揭露「系統沒算這些」，但不佔版面。
+    """
+    import review_engine  # 延後匯入，理由同 _concentration_card_html()
+
+    gate, reference, status = _split_module_d_batch(latest_batch or [])
+
+    parts = ["<section class=\"card\"><div class=\"card__head\"><h2>Checks・加碼審查</h2>"
+             "<span class=\"card__meta\">%s</span></div><div class=\"card__body\">"
+             % ("%d 項自動檢查" % len(latest_batch) if latest_batch else "尚無資料")]
+
+    if not latest_batch:
+        parts.append("<p class=\"empty\">尚無檢視資料，背景刷新完成後會顯示在這裡。</p>")
+    else:
+        if gate:
+            parts.append("<div class=\"group-label\">Required・Gate（必過檢查）</div>")
+            for r in gate:
+                alert = bool(r.get("concern_flag"))
+                parts.append(_finding_row_html(
+                    r.get("trigger_label") or r["trigger_type"], r["finding"],
+                    "alert" if alert else "ok", "需留意" if alert else "正常"))
+        if reference:
+            parts.append("<div class=\"group-label\">Reference only・原篩選框架比對"
+                         "（不是 Gate，不影響上面判斷）</div>")
+            for r in reference:
+                out = bool(r.get("concern_flag"))
+                label = r.get("strategy_id") or r.get("trigger_label") or "篩選框架"
+                parts.append(_finding_row_html(
+                    label, r["finding"], "ref",
+                    "已退出候選" if out else "仍符合候選"))
+            parts.append("<p class=\"finding__detail\" style=\"margin-top:.5rem;\">"
+                         "篩選框架是「找候選」用的機制，不是持有／加碼門檻——"
+                         "退出候選只代表它不再是這個框架下的便宜標的，"
+                         "<b>不等於投資假說被推翻</b>。</p>")
+        if status:
+            parts.append("<div class=\"group-label\">Status check・老芋頭動向"
+                         "（獨立訊號，不參與判斷）</div>")
+            for r in status:
+                parts.append(_finding_row_html(
+                    r.get("trigger_label") or r["trigger_type"], r["finding"],
+                    "ref", "訊號"))
+
+    if latest_batch and not (score and score.get("items")):
+        # 跟集中度卡／加碼進度卡同一個原則：算不出來就明講，不要讓區塊
+        # 整個消失——否則使用者只會看到「有些股票有 Score 有些沒有」，
+        # 分不出是「這檔沒得分」還是「還沒算」。
+        parts.append("<div class=\"group-label\">Optional・Score（加分建議）</div>")
+        parts.append("<p class=\"finding__detail\">尚未計算——每日排程刷新後顯示，"
+                     "或按上方「更新」立即重算。</p>")
+    if score and score.get("items"):
+        earned = sum(i["weight"] for i in score["items"] if i.get("earned"))
+        total = sum(i["weight"] for i in score["items"])
+        unknown = sum(1 for i in score["items"] if i.get("earned") is None)
+        parts.append("<div class=\"group-label\">Optional・Score（加分建議，不擋加碼）"
+                     "　自動化 4 項得 %d／%d 分%s</div>"
+                     % (earned, total,
+                        "，其中 %d 項資料不足" % unknown if unknown else ""))
+        for it in score["items"]:
+            got = it.get("earned")
+            if got is True:
+                state, pill = "ok", "+%d" % it["weight"]
+            elif got is False:
+                state, pill = "pending", "0／+%d" % it["weight"]
+            else:
+                state, pill = "pending", "資料不足"
+            parts.append(_finding_row_html(it["label"], it["detail"], state, pill))
+
+    parts.append("<details class=\"trade-list-details\"><summary>待人工查證"
+                 "（%d 項系統無資料源）</summary>"
+                 % (len(review_engine.MANUAL_GATE_ITEMS)
+                    + len(review_engine.MANUAL_SCORE_ITEMS)))
+    parts.append("<div class=\"group-label\">Gate（必過，但無自動化查證）</div>")
+    for label, why in review_engine.MANUAL_GATE_ITEMS:
+        parts.append(_finding_row_html(label, why, "pending", "待查證"))
+    parts.append("<div class=\"group-label\">Score（加分項，Q-039 列 Deferred 未自動化）"
+                 "</div>")
+    for label, weight, why in review_engine.MANUAL_SCORE_ITEMS:
+        parts.append(_finding_row_html(label, why, "pending", weight))
+    parts.append("</details>")
+
+    parts.append("</div></section>")
+    return "".join(parts)
+
+
+def _concentration_bar_html(label, pct, cap_pct, unavailable_text):
+    """單一條集中度進度條。pct 為 None 時不畫條，改顯示 unavailable_text
+    ——刻意區分「看不到」與「沒問題」：算不出來就明講算不出來，不畫一條
+    0% 的空條讓人誤以為集中度很低。"""
+    if pct is None:
+        return ("<div class=\"conc-row\"><div class=\"conc-row__head\">"
+                "<span class=\"conc-row__name\">%s</span>"
+                "<span class=\"conc-row__value\" style=\"color:var(--ink-dim);\">—</span>"
+                "</div><div class=\"conc-note\">%s</div></div>"
+                % (esc(label), esc(unavailable_text)))
+    over = pct >= cap_pct
+    return ("<div class=\"conc-row\"><div class=\"conc-row__head\">"
+            "<span class=\"conc-row__name\">%s</span>"
+            "<span class=\"conc-row__value%s\">%.1f%%</span></div>"
+            "<div class=\"conc-track\"><div class=\"conc-fill%s\" style=\"width:%.1f%%;\"></div>"
+            "<div class=\"conc-cap\" style=\"left:%.1f%%;\"></div></div>"
+            "<div class=\"conc-note\">虛線＝參考上限 %.0f%%</div></div>"
+            % (esc(label), " over" if over else "", pct,
+               " over" if over else "", min(pct, 100.0), cap_pct, cap_pct))
+
+
+def _concentration_card_html(store, code):
+    """集中度／部位控制卡（2026-08-19新增，對應已核准的手機版mockup）。
+
+    這塊的資料 `review_engine.position_control_suggestion()` **本來就已經
+    算出來了**，但先前只被塞進「其他 finding」的 suggested_action 欄位，
+    `_module_d_card_html()` 從來沒讀過那個欄位——等於算了卻沒有任何地方
+    顯示。這裡直接重用該函式（不重寫計算邏輯，避免兩處算出不同答案，
+    見該函式 docstring 對一致性的要求），把單股／主題集中度畫成進度條。
+
+    狀態徽章三分（跟 `_module_d_card_html()` 的二分刻意不同，因為這裡
+    「算不出來」是有意義的第三種狀態，不能跟「沒超標」混為一談）：
+    已超標→alert；算得出來且未超標→ok；current_position_pct 為 None
+    （未持有或股價未更新）→中性的「無法判斷」。
+    """
+    import review_engine  # 延後匯入：避免 report.py 匯入時就拉進整條
+                          # finmind/fundamentals client 依賴鏈（只有詳情頁用得到）
+    pc = review_engine.position_control_suggestion(code, store)
+
+    single_pct = pc.get("current_position_pct")
+    theme = pc.get("theme")
+    theme_pct = pc.get("theme_concentration_pct")
+    single_cap = review_engine.SINGLE_STOCK_CONCENTRATION_WARN_PCT
+    theme_cap = review_engine.THEME_CONCENTRATION_WARN_PCT
+
+    if pc.get("concentration_warning"):
+        badge_cls, badge_text = "alert", "已達上限"
+    elif single_pct is None:
+        badge_cls, badge_text = "", "無法判斷"
+    else:
+        badge_cls, badge_text = "ok", "未超標"
+    badge_style = ("class=\"pill %s\"" % badge_cls) if badge_cls else \
+        "class=\"badge badge-neutral\""
+
     parts = []
     parts.append("<section class=\"card\"><div class=\"card__head\">"
-                 "<h2>Module D 檢視</h2>"
-                 "<span class=\"card__meta\">%s</span></div><div class=\"card__body\">"
-                 % ("%d 項" % len(latest_batch) if latest_batch else "尚無資料"))
-    if latest_batch:
-        groups = {}
-        order = []
-        for r in latest_batch:
-            key = r["trigger_type"]
-            if key not in groups:
-                groups[key] = []
-                order.append(key)
-            groups[key].append(r)
-        for trigger_type in order:
-            for r in groups[trigger_type]:
-                cls = "alert" if r.get("concern_flag") else "ok"
-                pill_text = "需留意" if r.get("concern_flag") else "正常"
-                label = trigger_type
-                if r.get("strategy_id"):
-                    label = "%s／%s" % (trigger_type, r["strategy_id"])
-                parts.append(
-                    "<div class=\"finding %s\"><span class=\"finding__stripe\"></span>"
-                    "<div class=\"finding__body\"><div class=\"finding__label-row\">"
-                    "<span class=\"finding__label\">%s</span>"
-                    "<span class=\"pill %s\">%s</span></div>"
-                    "<div class=\"finding__detail\">%s</div></div></div>"
-                    % (cls, esc(label), cls, pill_text, esc(r["finding"])))
+                 "<h2>集中度／部位控制</h2>"
+                 "<span %s>%s</span></div><div class=\"card__body\">"
+                 % (badge_style, badge_text))
+    parts.append(_concentration_bar_html(
+        "單股集中度", single_pct, single_cap,
+        "持股快照沒有這檔的市值紀錄，算不出佔投資組合比例——是「看不到」，不是「沒問題」"))
+    theme_label = ("主題集中度（%s）" % theme) if theme else "主題集中度"
+    theme_unavailable = ("尚未標記投資主題" if not theme
+                         else "該主題尚無市值資料，無法計算主題集中度")
+    parts.append(_concentration_bar_html(
+        theme_label, theme_pct, theme_cap, theme_unavailable))
+
+    seq = pc.get("next_add_sequence")
+    add_pct = pc.get("suggested_add_pct")
+    if add_pct is not None:
+        seq_text = ("這次是第 %d 次加碼，遞減式加碼表建議比例為此股加碼計畫總額度的 %.0f%%"
+                    "（非投資組合佔比）" % (seq, add_pct * 100))
     else:
-        parts.append("<p class=\"empty\">尚無檢視資料，背景刷新完成後會顯示在這裡。</p>")
+        seq_text = ("這次是第 %d 次加碼，已超出預設遞減加碼表範圍（僅定義到第 5 次），"
+                    "建議依實際情況自行判斷" % seq)
+    parts.append("<p class=\"val-source\">%s</p>" % esc(seq_text))
+    parts.append("</div></section>")
+    return "".join(parts)
+
+
+def _fmt_amount(value):
+    """金額顯示：四捨五入到整數元＋千分位。跟 `_fmt_price()`（股價，保留
+    小數）刻意分開——股價 93.6 元有意義，但「已投入 108,550.2 元」的小數
+    只是加權平均算出來的浮點殘留，對「還可投入多少預算」沒有意義。"""
+    if value is None:
+        return "—"
+    return format(int(round(value)), ",")
+
+
+def _invested_amount(store, code):
+    """加碼進度卡的「已投入」金額＝**目前部位的成本**，不是歷史買進總額
+    ——買了又賣掉的錢已經收回來了，不該還算在「這檔已經投入多少預算」裡
+    （否則出清過的標的會顯示投入滿額，明明手上一股都沒有）。
+
+    取值優先序（跟 `_avg_cost_for_chart()` 同一套「快照優先、流水表補位」
+    的既有慣例）：
+    1. 庫存快照 shares × avg_cost——最權威，但實測 avg_cost 常缺值
+    2. 快照缺值或整檔不在快照裡 → 用交易流水表的**淨股數**（買-賣）×
+       買進加權平均價估算
+    3. 都算不出來（純研究標的、或淨股數 ≤0）→ 回傳 None，呼叫端顯示
+       「尚未投入」，不要顯示 0 讓人以為是「投入了0元」
+
+    回傳 (金額, 股數, 來源說明)；金額為 None 時後兩者仍可能有值。
+    """
+    holding = next((h for h in store.get_holdings()["holdings"]
+                    if h["code"] == code), None)
+    entries = store.get_trade_ledger(code).get("entries") or []
+
+    if holding and holding.get("shares") and holding.get("avg_cost") is not None:
+        shares = holding["shares"]
+        return shares * holding["avg_cost"], shares, "庫存快照"
+
+    buy_shares = sum(e["shares"] for e in entries if e["action"] == "買")
+    sell_shares = sum(e["shares"] for e in entries if e["action"] == "賣")
+    net_shares = buy_shares - sell_shares
+    if holding and holding.get("shares"):
+        # 快照有股數但沒均價：股數以快照為準（權威），單價用流水表估
+        net_shares = holding["shares"]
+    if net_shares <= 0 or not buy_shares:
+        return None, (net_shares if net_shares > 0 else 0), None
+    avg = sum(e["shares"] * e["price"] for e in entries if e["action"] == "買") / buy_shares
+    return net_shares * avg, net_shares, "交易流水表估算"
+
+
+def _position_plan_card_html(store, code, href_code):
+    """加碼進度卡（2026-08-19新增，對應已核准的手機版mockup）：已投入
+    金額 vs 這檔的加碼計畫總額度，補上 roadmap.md 2026-08-16 記錄的
+    「計畫總額度無處可存」缺口。
+
+    未設定計畫額度時**不畫進度條**（沒有分母就沒有百分比可言），改顯示
+    設定表單——跟集中度卡同一個原則：算不出來就明講，不要畫一條看起來
+    像 0% 的空條。額度可隨時覆寫（PO：投資預算會變動）。
+    """
+    plan = store.get_position_plan(code)
+    invested, shares, source = _invested_amount(store, code)
+
+    parts = ["<section class=\"card\"><div class=\"card__head\"><h2>加碼進度</h2>"]
+    if plan:
+        parts.append("<span class=\"card__meta\">計畫 NT$%s</span>" % _fmt_amount(plan["plan_amount"]))
+    parts.append("</div><div class=\"card__body\">")
+
+    parts.append("<div class=\"val-grid\" style=\"grid-template-columns:repeat(2,1fr);\">"
+                 "<div class=\"val-item\"><div class=\"label\">已投入</div>"
+                 "<div class=\"value\">%s</div></div>"
+                 "<div class=\"val-item\"><div class=\"label\">股數</div>"
+                 "<div class=\"value\">%s</div></div></div>"
+                 % (("NT$" + _fmt_amount(invested)) if invested is not None else "尚未投入",
+                    ("%s 股" % _fmt_price(shares)) if shares else "—"))
+    if source:
+        parts.append("<div class=\"val-source\">已投入金額來源：%s（＝目前部位成本，"
+                     "已賣出部分不計入）</div>" % esc(source))
+
+    if plan and invested is not None:
+        pct = invested / plan["plan_amount"] * 100
+        over = pct >= 100
+        parts.append(
+            "<div class=\"conc-row\" style=\"margin-top:.9rem;\">"
+            "<div class=\"conc-row__head\"><span class=\"conc-row__name\">完成比例</span>"
+            "<span class=\"conc-row__value%s\">%.1f%%</span></div>"
+            "<div class=\"conc-track\"><div class=\"conc-fill%s\" style=\"width:%.1f%%;\"></div></div>"
+            "<div class=\"conc-note\">還可投入 NT$%s</div></div>"
+            % (" over" if over else "", pct, " over" if over else "",
+               min(pct, 100.0),
+               _fmt_amount(max(plan["plan_amount"] - invested, 0))))
+        if plan.get("note"):
+            parts.append("<div class=\"val-source\">備註：%s</div>" % esc(plan["note"]))
+
+    label = "調整計畫總額度" if plan else "設定計畫總額度"
+    parts.append(
+        "<form method=\"post\" action=\"/dashboard/stock/%s/plan\" class=\"section\" "
+        "style=\"display:flex;align-items:center;gap:.5rem;margin-top:.9rem;\">"
+        "<input type=\"number\" name=\"plan_amount\" min=\"1\" step=\"1\" required "
+        "placeholder=\"%s（NT$）\" value=\"%s\" style=\"flex:1;min-width:0;\">"
+        "<button type=\"submit\">%s</button></form>"
+        % (href_code, label,
+           ("%d" % plan["plan_amount"]) if plan else "",
+           "更新" if plan else "設定"))
+    if not plan:
+        parts.append("<div class=\"val-source\">尚未設定計畫總額度，因此算不出完成比例"
+                     "——設定後這裡會顯示進度條與還可投入金額。</div>")
     parts.append("</div></section>")
     return "".join(parts)
 
@@ -1684,6 +2063,9 @@ def render_stock_detail_page(store, code, flash=None, refreshing=False):
         "<span style=\"font-size:.85rem;color:var(--ink-dim);\">%s</span>"
         "<h1 style=\"margin:0;\">%s</h1></div>"
         % (esc(code), esc(name) if name else "（尚無名稱）"))
+    # Verdict 置於價格之前（2026-08-19）：刻意讓「今天的證據支不支持動作」
+    # 先於「現價/漲跌」進入視線，見 _verdict_banner_html() docstring。
+    parts.append(_verdict_banner_html(store, code, latest_batch))
     parts.append(
         "<div style=\"display:flex;align-items:baseline;gap:.6rem;margin:.3rem 0 .5rem;\">"
         "<span style=\"font-size:1.3rem;font-weight:700;\">%s</span>"
@@ -1733,7 +2115,10 @@ def render_stock_detail_page(store, code, flash=None, refreshing=False):
                      "<p class=\"empty\">尚無估值資料，背景刷新完成後會顯示在這裡。</p>")
     parts.append("</div></section>")
 
-    parts.append(_module_d_card_html(latest_batch))
+    # 只讀背景刷新算好的結果，渲染路徑不查外部API（頁面既有原則）
+    parts.append(_module_d_card_html(latest_batch, score=store.get_auto_score(code)))
+    parts.append(_concentration_card_html(store, code))
+    parts.append(_position_plan_card_html(store, code, href_code))
 
     holdings_card = _holdings_card_html(store, code)
     if holdings_card:

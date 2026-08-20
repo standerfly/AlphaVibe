@@ -11,6 +11,7 @@ Layer 3 每日評論：SQLite FTS5 全文檢索，trigram tokenizer 支援中文
 限制：Python 3.9 相容、僅標準庫；FTS5 trigram 查詢至少 3 個字元。
 """
 import datetime
+import json
 import os
 import re
 import sqlite3
@@ -114,6 +115,27 @@ CREATE TABLE IF NOT EXISTS stock_industries (
 CREATE TABLE IF NOT EXISTS stock_themes (
     code TEXT PRIMARY KEY,
     theme TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS revenue_yoy_cache (
+    code TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS auto_score_cache (
+    code TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    checked_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS financial_metrics_cache (
+    code TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS position_plans (
+    code TEXT PRIMARY KEY,
+    plan_amount REAL NOT NULL,
+    note TEXT,
     updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS market_scan_runs (
@@ -229,6 +251,14 @@ _MIGRATIONS = {
         # 既有「今日重點」（_render_today_highlights_section）改用
         # suggested_action 判斷、不受影響，這裡新增欄位不動它。
         ("concern_flag", "INTEGER DEFAULT 0"),
+        # trigger_label（2026-08-19 新增，個股詳情頁 Checks 分組用）：
+        # run_module_d_review() 內部 items 早就算出細分標籤（「通用層／
+        # 成長趨緩」「通用層／下檔風險」「策略層／<id>」），但先前只存了
+        # 粗分的 trigger_type（僅三個值）——導致頁面拿到兩筆都是「通用層」
+        # 的資料，分不出哪筆是成長趨緩、哪筆是下檔風險，只能靠解析 finding
+        # 文字硬猜（脆弱）。存下來才能把 Checks 依實際檢查項目分組呈現。
+        # 舊資料為 NULL，讀取端退回顯示 trigger_type，不用回填。
+        ("trigger_label", "TEXT"),
     ],
 }
 
@@ -700,6 +730,161 @@ class KBStore:
         return {r["code"]: {"theme": r["theme"],
                             "updated_at": r["updated_at"]} for r in rows}
 
+    # ---------- 季度財報指標快取（2026-08-19新增）：財報是**季頻**資料，
+    # 但模組D排程每天對全部觀察標的跑一次——若每次都重打 FinMind，等於
+    # 每天多消耗「標的數×2」次額度去換一批一季才變一次的數字。CLAUDE.md
+    # 2026-07-28 教訓明確記載匿名額度是全域共用池、被打光會連累當晚排程，
+    # 所以這裡用 TTL 快取（預設30天）：一季內最多重抓一次，仍能在一個月
+    # 內接到新一季財報。存整包 JSON 而非拆欄位，因為呼叫端要的是整段季度
+    # 序列（算同季去年比較與TTM），拆表反而要 join 回來。 ----------
+
+    def save_revenue_yoy_cache(self, code, payload):
+        """月營收年增率序列快取（2026-08-19新增）。
+
+        動機是**去重**不是加速：每日排程對同一檔會走兩條路徑——
+        `run_module_d_review`→`general_review`（成長趨緩要多月序列）與
+        `refresh_price_and_valuation`→`auto_score_review`（月營收加速也要
+        同一份序列）。沒有快取的話同一份資料一天抓兩次，31 檔就是 62 次
+        FinMind 呼叫（CLAUDE.md 2026-07-28 教訓：匿名額度是全域共用池，
+        打光會連累當晚排程）。TTL 預設 20 小時：足以涵蓋同一次排程的兩條
+        路徑，又保證隔天一定重抓（月營收約每月10日更新，日更綽綽有餘）。"""
+        if not code:
+            raise ValueError("code 為必填")
+        fetched_at = _now()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO revenue_yoy_cache (code, payload, fetched_at)"
+            " VALUES (?,?,?)",
+            (code, json.dumps(payload, ensure_ascii=False), fetched_at))
+        self.conn.commit()
+        return {"saved": True, "code": code, "fetched_at": fetched_at}
+
+    def get_revenue_yoy_cache(self, code, max_age_hours=20):
+        row = self.conn.execute(
+            "SELECT payload, fetched_at FROM revenue_yoy_cache WHERE code = ?",
+            (code,)).fetchone()
+        if not row:
+            return None
+        try:
+            fetched = datetime.datetime.fromisoformat(row["fetched_at"])
+        except (ValueError, TypeError):
+            return None
+        if (datetime.datetime.now() - fetched).total_seconds() > max_age_hours * 3600:
+            return None
+        try:
+            return json.loads(row["payload"])
+        except ValueError:
+            return None
+
+    def save_auto_score(self, code, payload, checked_at=None):
+        """存 Score 自動化四項的**計算結果**（不是原始財報）。
+
+        為什麼存結果而不是讓頁面現算：個股詳情頁的既有原則是「只讀快取、
+        不即時查外部API」，但 Score 的月營收加速項需要多月年增率序列（財報
+        快取涵蓋不到）。由背景刷新路徑算好存起來，頁面純讀取，渲染路徑就
+        完全不碰網路——這也是 2026-08-19 實測發現的問題：先前讓頁面現算，
+        單元測試從 6.5 秒變成 18.9 秒，就是渲染時打了 FinMind。"""
+        if not code:
+            raise ValueError("code 為必填")
+        checked_at = checked_at or _now()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO auto_score_cache (code, payload, checked_at)"
+            " VALUES (?,?,?)",
+            (code, json.dumps(payload, ensure_ascii=False), checked_at))
+        self.conn.commit()
+        return {"saved": True, "code": code, "checked_at": checked_at}
+
+    def get_auto_score(self, code):
+        """沒算過回 None——頁面據此顯示「按更新後顯示」，不要自己編分數。"""
+        row = self.conn.execute(
+            "SELECT payload, checked_at FROM auto_score_cache WHERE code = ?",
+            (code,)).fetchone()
+        if not row:
+            return None
+        try:
+            payload = json.loads(row["payload"])
+        except ValueError:
+            return None
+        payload["checked_at"] = row["checked_at"]
+        return payload
+
+    def save_financial_metrics_cache(self, code, payload):
+        if not code:
+            raise ValueError("code 為必填")
+        fetched_at = _now()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO financial_metrics_cache (code, payload, fetched_at)"
+            " VALUES (?,?,?)",
+            (code, json.dumps(payload, ensure_ascii=False), fetched_at))
+        self.conn.commit()
+        return {"saved": True, "code": code, "fetched_at": fetched_at}
+
+    def get_financial_metrics_cache(self, code, max_age_days=30):
+        """回傳 (payload, fetched_at)；沒有或已過期回傳 (None, fetched_at
+        或 None)——過期仍回傳 fetched_at，讓呼叫端可以在 API 失敗時決定
+        要不要退回用舊資料（有總比沒有好，但要標明是舊的）。"""
+        row = self.conn.execute(
+            "SELECT payload, fetched_at FROM financial_metrics_cache WHERE code = ?",
+            (code,)).fetchone()
+        if not row:
+            return None, None
+        try:
+            fetched = datetime.datetime.fromisoformat(row["fetched_at"])
+        except (ValueError, TypeError):
+            return None, row["fetched_at"]
+        age = (datetime.datetime.now() - fetched).days
+        if age > max_age_days:
+            return None, row["fetched_at"]
+        try:
+            return json.loads(row["payload"]), row["fetched_at"]
+        except ValueError:
+            return None, row["fetched_at"]
+
+    # ---------- 加碼計畫總額度（2026-08-19新增）：補上 review_engine
+    # `position_control_suggestion()` 的 `suggested_add_pct` 一直缺的分母
+    # ——那個比例的定義是「這次加碼佔**此股加碼計畫總額度**的比例」，但
+    # 「加碼計畫總額度」先前在整個系統裡沒有任何地方存得下來（見
+    # roadmap.md「已知限制／待辦」2026-08-16 條目），導致「加碼進度
+    # （已投入/計畫總額/完成幾成）」算不出來，只能人工心算。
+    #
+    # 單位是**金額**（PO 2026-08-19 決定）：跟「預計買多少、已經買多少」
+    # 的語感一致，且已投入金額本來就能從 trade_ledger 加總算出，同單位
+    # 才能直接算進度百分比（換成股數或投組佔比都得再換算一次，量綱不同）。
+    # PRIMARY KEY code 只留最新一筆、可隨時覆寫——PO 明確要求「投資預算
+    # 會變動，預計買多少也可以調整」，不需要保留歷次計畫的歷史。 ----------
+
+    def save_position_plan(self, code, plan_amount, note=None):
+        if not code:
+            raise ValueError("code 為必填")
+        try:
+            plan_amount = float(plan_amount)
+        except (TypeError, ValueError):
+            raise ValueError("plan_amount 必須是數字：%r" % (plan_amount,))
+        if plan_amount <= 0:
+            raise ValueError("plan_amount 必須大於 0：%r" % (plan_amount,))
+        updated_at = _now()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO position_plans"
+            " (code, plan_amount, note, updated_at) VALUES (?,?,?,?)",
+            (code, plan_amount, note, updated_at),
+        )
+        self.conn.commit()
+        return {"saved": True, "code": code, "plan_amount": plan_amount,
+                "note": note, "updated_at": updated_at}
+
+    def get_position_plan(self, code):
+        """回傳單一標的的加碼計畫；沒設定過回傳 None（呼叫端據此顯示
+        「尚未設定」，不要自己編一個預設額度）。"""
+        row = self.conn.execute(
+            "SELECT code, plan_amount, note, updated_at FROM position_plans"
+            " WHERE code = ?", (code,)).fetchone()
+        return dict(row) if row else None
+
+    def delete_position_plan(self, code):
+        cur = self.conn.execute(
+            "DELETE FROM position_plans WHERE code = ?", (code,))
+        self.conn.commit()
+        return {"deleted": cur.rowcount > 0, "code": code}
+
     # ---------- 老芋頭交易表（FR-044）：老芋頭是PO信任的資深投資朋友／
     # 導師（非系統使用者，屬訊號來源），這裡結構化記錄他的進出，供模組D
     # FR-053「老芋頭動向比對」與模組G策略對照使用。他不一定每次都寫
@@ -802,11 +987,16 @@ class KBStore:
 
     def save_module_d_result(self, code, trigger_type, finding, strategy_id=None,
                              suggested_action=None, conflict_flag=False,
-                             concern_flag=False, checked_at=None):
+                             concern_flag=False, checked_at=None,
+                             trigger_label=None):
         """concern_flag（2026-08-01新增，見 _MIGRATIONS 註解）：這一項發現
         是否需要PO留意（對應 review_engine.run_module_d_review() 內部
         items/findings 清單的同名欄位）——跟 conflict_flag（自動回寫立場
-        跟既有記錄是否衝突，批次層級旗標）是兩個獨立概念，不要混淆。"""
+        跟既有記錄是否衝突，批次層級旗標）是兩個獨立概念，不要混淆。
+
+        trigger_label（2026-08-19新增）：細分標籤（「通用層／成長趨緩」等），
+        選填——`trigger_type` 只有三個值，同屬「通用層」的兩項檢查靠它才
+        分得開。不給就是 None，讀取端退回顯示 trigger_type。"""
         if not code:
             raise ValueError("code 為必填")
         if trigger_type not in MODULE_D_TRIGGER_TYPES:
@@ -817,9 +1007,11 @@ class KBStore:
         checked_at = checked_at or _now()
         cur = self.conn.execute(
             "INSERT INTO module_d_results (code, strategy_id, trigger_type, finding,"
-            " suggested_action, conflict_flag, concern_flag, checked_at) VALUES (?,?,?,?,?,?,?,?)",
+            " suggested_action, conflict_flag, concern_flag, checked_at, trigger_label)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
             (code, strategy_id, trigger_type, finding, suggested_action,
-             1 if conflict_flag else 0, 1 if concern_flag else 0, checked_at),
+             1 if conflict_flag else 0, 1 if concern_flag else 0, checked_at,
+             trigger_label),
         )
         self.conn.commit()
         return {"saved": True, "id": cur.lastrowid, "code": code,

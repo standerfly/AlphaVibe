@@ -121,9 +121,11 @@ class ServerToolsTest(unittest.TestCase):
         self.server.store.close()
         shutil.rmtree(self.tmp)
 
-    def test_tools_list_has_forty(self):
+    def test_tools_list_has_forty_three(self):
+        """2026-08-19：40→43。save_position_plan／get_position_plan（加碼
+        計畫總額度）＋check_auto_score（Score自動化四項評分）。"""
         names = [t["name"] for t in server.TOOLS]
-        self.assertEqual(len(names), 40)
+        self.assertEqual(len(names), 43)
         for expected in ("save_snapshot", "get_snapshots",
                          "save_holdings", "get_holdings",
                          "save_stock_alias", "get_stock_alias",
@@ -143,7 +145,9 @@ class ServerToolsTest(unittest.TestCase):
                          "record_module_d_findings", "run_module_d_check",
                          "parse_and_save_laoyutou_trades",
                          "parse_and_save_trade_ledger",
-                         "parse_and_save_trade_csv"):
+                         "parse_and_save_trade_csv",
+                         "save_position_plan", "get_position_plan",
+                         "check_auto_score"):
             self.assertIn(expected, names)
 
     def test_check_laoyutou_signal_tool_dispatch_wires_args(self):
@@ -898,3 +902,24 @@ class ReportTraceabilityTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RevenueYoyLookbackTest(unittest.TestCase):
+    """2026-08-19：月營收年增率抓取窗口的守門測試。
+
+    背景：原本抓 400 天≈13 個月，但年增率要拿「去年同月」比，13 個月的
+    窗口只算得出 1 筆 YoY——不足 review_engine.MIN_YOY_POINTS(3)，導致
+    成長趨緩檢查上線以來從未真正運作過（一律回「資料不足」）。這個測試
+    不打網路，只鎖住「窗口必須寬到足以產生 MIN_YOY_POINTS 筆 YoY」這個
+    不變式，避免日後有人為了省流量又把窗口改窄、悄悄讓檢查再次失效。
+    """
+
+    def test_window_wide_enough_for_min_yoy_points(self):
+        months = finmind_client.REVENUE_YOY_LOOKBACK_DAYS / 30.4
+        usable_yoy_points = months - 12  # 前 12 個月只能當比較基期
+        self.assertGreaterEqual(
+            usable_yoy_points, review_engine.MIN_YOY_POINTS,
+            "抓取窗口 %d 天約 %.1f 個月，只能算出 %.1f 筆年增率，不足 "
+            "MIN_YOY_POINTS=%d——成長趨緩檢查會永遠回「資料不足」"
+            % (finmind_client.REVENUE_YOY_LOOKBACK_DAYS, months,
+               usable_yoy_points, review_engine.MIN_YOY_POINTS))

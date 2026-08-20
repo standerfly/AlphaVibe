@@ -172,16 +172,33 @@ def get_stock_price_history(stock_id, start_date=None, end_date=None, data_dir=N
     return result
 
 
+# 月營收年增率的抓取窗口（2026-08-19 修正，原為 400 天）：年增率要拿「去年
+# 同月」比，窗口 N 個月只能算出 (N-12) 筆 YoY。400 天≈13 個月 → 只有 1 筆，
+# 不足 review_engine.MIN_YOY_POINTS(3)，導致成長趨緩檢查從未真正運作過。
+# 800 天≈26 個月 → 實測可算出 14 筆。改窄前請先確認 MIN_YOY_POINTS。
+REVENUE_YOY_LOOKBACK_DAYS = 800
+
+
 def get_revenue_yoy(stock_id, data_dir=None, token=None):
     """查個股月營收年增率（FinMind 不提供年增率欄位，自行以去年同月比對計算）。
 
-    抓近 400 天（至少 13 個月）才能算出每個月的年增率；找不到去年同月資料的
-    月份，yoy_growth 標 null，不臆測。
+    抓近 800 天（約 26 個月）；找不到去年同月資料的月份，yoy_growth 標 null，
+    不臆測。
+
+    ⚠️ 2026-08-19 修正（原本抓 400 天）：400 天≈13 個月，但年增率要拿「去年
+    同月」比，13 個月的窗口裡**只有最新那 1 個月**找得到對應的去年同月——
+    實測 2308 只算得出 1 筆 YoY。原註解寫「至少 13 個月才能算出每個月的年增率」
+    是推理錯誤，13 個月只夠算 1 個月。後果是 `review_engine._growth_deceleration`
+    要求至少 MIN_YOY_POINTS(3) 筆才判斷趨勢，永遠拿不到 → 這個檢查上線以來
+    **從未真正運作過**，一律回「資料不足，無法判斷趨勢」。改抓 800 天後實測
+    同一檔可算出 14 筆 YoY，趨勢判斷與「年增率是否加速」才有資料基礎。
+    每次仍只打一次 API，不增加 FinMind 額度消耗（見 CLAUDE.md 2026-07-28 教訓）。
     """
     token = token or _read_token(data_dir)
     result = {"stock_id": stock_id, "token_used": bool(token), "errors": []}
 
-    revenue = _fetch("TaiwanStockMonthRevenue", stock_id, _days_ago(400), token)
+    revenue = _fetch("TaiwanStockMonthRevenue", stock_id,
+                     _days_ago(REVENUE_YOY_LOOKBACK_DAYS), token)
     if "error" in revenue:
         result["errors"].append(revenue["error"])
         return result
@@ -311,4 +328,74 @@ def get_equity_attributable_to_owners(stock_id, data_dir=None, token=None):
     latest = max(rows, key=lambda row: row.get("date") or "")
     result["equity"] = latest.get("value")
     result["equity_date"] = latest.get("date")
+    return result
+
+
+# 財報抓取窗口：財報是季頻，要算「同季去年」比較＋TTM（近四季加總）需要
+# 至少 8 季；900 天≈10 季，留一點餘裕給公佈延遲。
+FINANCIAL_LOOKBACK_DAYS = 900
+
+
+def get_financial_metrics(stock_id, data_dir=None, token=None):
+    """查季度財報指標，供 review_engine 的 Score 自動化項目使用：
+    毛利率、EPS、歸屬母公司淨利（算 ROE 分子）、權益（算 ROE 分母）。
+
+    ⚠️ **同名欄位在兩個資料集意義完全不同，這是會算錯一個數量級的坑**：
+    - `TaiwanStockFinancialStatements`（損益表）的
+      `EquityAttributableToOwnersOfParent` 其實是「本期淨利**歸屬於母公司
+      業主**」——2026-08-19 對 2308 實測為 251 億／季，跟
+      `IncomeAfterTaxes`(272億) 減去少數股權(15億) 對得上。
+    - `TaiwanStockBalanceSheet`（資產負債表）的同名欄位才是真正的
+      **權益**——同期實測 2,937 億。
+    直接拿損益表那個當分母算 ROE 會得到 10 倍以上的假數字。既有的
+    `get_equity_attributable_to_owners()` 用資產負債表是對的。
+
+    另：FinMind 台股財報是**單季**數值不是累計（2026-08-19 對 2308 實測
+    Q1~Q4 各為 1189/1240/1503/1616 億，若為累計 Q4 應約 5548 億）。
+
+    回傳 quarters 依日期升冪；任一資料集失敗時該部分欄位為 None，不臆測。
+    """
+    token = token or _read_token(data_dir)
+    result = {"stock_id": stock_id, "token_used": bool(token), "errors": [],
+              "quarters": []}
+
+    income = _fetch("TaiwanStockFinancialStatements", stock_id,
+                    _days_ago(FINANCIAL_LOOKBACK_DAYS), token)
+    if "error" in income:
+        result["errors"].append(income["error"])
+        return result
+    if not income["data"]:
+        result["errors"].append("TaiwanStockFinancialStatements 無資料（代碼是否正確？）")
+        return result
+
+    by_date = {}
+    for row in income["data"]:
+        by_date.setdefault(row.get("date"), {})[row.get("type")] = row.get("value")
+
+    equity_by_date = {}
+    balance = _fetch("TaiwanStockBalanceSheet", stock_id,
+                     _days_ago(FINANCIAL_LOOKBACK_DAYS), token)
+    if "error" in balance:
+        result["errors"].append(balance["error"])
+    else:
+        for row in balance["data"]:
+            if row.get("type") == "EquityAttributableToOwnersOfParent":
+                equity_by_date[row.get("date")] = row.get("value")
+
+    for date in sorted(d for d in by_date if d):
+        vals = by_date[date]
+        revenue = vals.get("Revenue")
+        gross_profit = vals.get("GrossProfit")
+        gross_margin = (gross_profit / revenue) if revenue and gross_profit is not None else None
+        result["quarters"].append({
+            "date": date,
+            "revenue": revenue,
+            "gross_profit": gross_profit,
+            "gross_margin": gross_margin,
+            "eps": vals.get("EPS"),
+            # 損益表這個欄位是「淨利歸屬母公司」，見上方警告
+            "parent_net_income": vals.get("EquityAttributableToOwnersOfParent"),
+            # 權益只從資產負債表取
+            "equity": equity_by_date.get(date),
+        })
     return result
