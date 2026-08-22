@@ -34,6 +34,10 @@ _PRODUCTION_DATA_DIR = os.path.abspath(
 _PORT = 8091  # 刻意跟人工測試常用的 8090 錯開，避免撞號
 _BASE = "http://127.0.0.1:%d" % _PORT
 
+_KB_MCP_DIR = os.path.join(_APP_ROOT, "poc", "kb-mcp")
+if _KB_MCP_DIR not in sys.path:
+    sys.path.insert(0, _KB_MCP_DIR)
+
 
 def _guard_data_dir() -> str:
     data_dir = os.environ.get("ALPHAVIBE_DATA_DIR")
@@ -50,10 +54,10 @@ def _guard_data_dir() -> str:
     return resolved
 
 
-def _get(path: str):
+def _get(path: str, timeout: float = 5.0):
     req = urllib.request.Request(_BASE + path)
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         return exc.code, None
@@ -127,6 +131,46 @@ def main() -> int:
         else:
             print("FAIL assets/pockets 預期 4 筆，實際 %d 筆" % pocket_count)
             failures.append("assets seed count mismatch")
+
+        # ---- 功能正確性比對：API 回傳是否跟直接呼叫底層共用函式一致 ----
+        # 這幾支 router 的設計是「原封不動轉手底層函式的 dict，不重新
+        #定義 schema」（見各 router docstring），所以「新 API 有沒有
+        # 引入 bug」等同「跟直接呼叫底層函式的結果比對是否一致」——
+        # 底層演算法本身（screener.py／kb_store.py）新舊共用、不重寫，
+        # 不在這裡的驗證範圍內。
+        import screener  # noqa: E402
+        from kb_store import KBStore  # noqa: E402
+        import frameworks  # noqa: E402
+
+        test_codes = ["2330", "3008"]
+        expected_screen = screener.screen_stocks(test_codes, data_dir=data_dir)
+        status, actual_screen = _get("/api/screen?codes=2330,3008", timeout=30)
+        # 透過 json 往返一次消除 float repr 差異（例如 5610 vs 5610.0）
+        # 造成的假陽性，只比對「resolve 後的資料值」是否一致。
+        norm_expected = json.loads(json.dumps(expected_screen))
+        if norm_expected == actual_screen:
+            print("PASS /api/screen 輸出跟直接呼叫 screener.screen_stocks() 一致")
+        else:
+            print("FAIL /api/screen 輸出跟底層函式不一致")
+            print("  expected:", json.dumps(norm_expected)[:300])
+            print("  actual  :", json.dumps(actual_screen)[:300])
+            failures.append("screen output mismatch")
+
+        fw_id = frameworks.default_framework_id()
+        store = KBStore(data_dir)
+        try:
+            expected_scan = store.get_latest_market_scan(framework_id=fw_id)
+        finally:
+            store.close()
+        status, actual_scan = _get("/api/market-scan?framework=%s" % fw_id, timeout=30)
+        norm_expected_scan = json.loads(json.dumps(expected_scan))
+        actual_scan_stripped = dict(actual_scan or {})
+        actual_scan_stripped.pop("framework_id", None)  # API 多加的欄位，預期差異
+        if norm_expected_scan == actual_scan_stripped:
+            print("PASS /api/market-scan 輸出跟直接呼叫 get_latest_market_scan() 一致")
+        else:
+            print("FAIL /api/market-scan 輸出跟底層函式不一致")
+            failures.append("market-scan output mismatch")
 
     finally:
         proc.terminate()
