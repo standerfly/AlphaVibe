@@ -1,0 +1,214 @@
+/* App Shell / Nav（2026-08-21 新增，Q-046 第5節 Step 3）：既有
+   report.py 沒有導覽列（各頁各自獨立），這裡是新設計的共用外殼，刻意
+   沿用既有 token（--paper/--ink/--accent/--rule/--shadow）與
+   .filter-tab/.filter-tab.active 的 pill 樣式邏輯，不引入新配色。 */
+.app-shell {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.topnav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  padding: .7rem 1.2rem;
+  background: var(--paper);
+  border-bottom: 1px solid var(--rule);
+  box-shadow: var(--shadow);
+}
+.topnav__brand {
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--ink);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.topnav__tabs {
+  display: flex;
+  gap: .4rem;
+  flex-wrap: wrap;
+}
+/* .tab-link 沿用 .filter-tab 的 pill 造型（邊框+文字+底色三段式 active
+   語言），差別只在多放一個 icon，所以另外命名而不是直接重用
+   .filter-tab，避免以後兩邊各自演化時互相牽動。 */
+.tab-link {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  font-size: .85rem;
+  font-weight: 600;
+  padding: .4rem .85rem;
+  border-radius: 999px;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink-dim);
+  text-decoration: none;
+}
+.tab-link svg { flex-shrink: 0; }
+.tab-link.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.app-main {
+  flex: 1;
+  max-width: 1040px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 4rem;
+}
+.page-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .75rem;
+  flex-wrap: wrap;
+  margin-bottom: .3rem;
+}
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: .6rem;
+  margin: 1rem 0 1.4rem;
+}
+.stat-tile {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: .8rem .9rem;
+}
+.stat-tile .stat-tile__label { font-size: .72rem; color: var(--ink-dim); }
+.stat-tile .stat-tile__value {
+  font-size: 1.3rem; font-weight: 700; margin-top: .2rem;
+  font-variant-numeric: tabular-nums;
+}
+.stat-tile .stat-tile__value.is-attention { color: var(--red-ink); }
+.placeholder-box {
+  border: 1px dashed var(--rule-strong);
+  border-radius: 12px;
+  background: var(--paper-raised);
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  color: var(--ink-dim);
+}
+.placeholder-box__icon { color: var(--rule-strong); margin-bottom: .8rem; }
+.placeholder-box__title { font-size: 1.05rem; font-weight: 700; color: var(--ink); margin-bottom: .4rem; }
+.placeholder-box__text { font-size: .9rem; line-height: 1.7; max-width: 32rem; margin: 0 auto; }
+.loading-box, .error-box { padding: 1.2rem 0; color: var(--ink-dim); font-size: .9rem; }
+.error-box { color: var(--red-ink); }
+.back-link {
+  display: inline-flex; align-items: center; gap: .3rem;
+  font-size: .85rem; font-weight: 600; color: var(--accent);
+  text-decoration: none; margin-bottom: .8rem;
+}
+.detail-header {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: .75rem; flex-wrap: wrap; margin-bottom: .2rem;
+}
+.detail-header__name { font-size: 1.3rem; font-weight: 700; }
+.detail-header__code { font-size: .82rem; color: var(--ink-dim); font-variant-numeric: tabular-nums; margin-left: .4rem; }
+.detail-header__price { text-align: right; font-variant-numeric: tabular-nums; }
+.detail-header__now { font-size: 1.35rem; font-weight: 700; }
+.detail-header__delta { font-size: .85rem; font-weight: 700; margin-left: .4rem; }
+.detail-header__delta.is-up { color: var(--red); }
+.detail-header__delta.is-down { color: var(--green); }
+details.collapse { border: 1px solid var(--rule); border-radius: 8px;
+  margin: .6rem 0; padding: .5rem .8rem; background: var(--paper-raised); }
+details.collapse summary { cursor: pointer; font-weight: 600; font-size: .82rem; }
+details.collapse summary::marker { color: var(--accent); }
+.manual-item { padding: .4rem 0; border-bottom: 1px solid var(--rule); font-size: .82rem; }
+.manual-item:last-child { border-bottom: none; }
+.manual-item__label { font-weight: 700; }
+.manual-item__why { color: var(--ink-dim); }
+
+/* 資產分頁（2026-08-21 新增，Q-046 第5節 Step 4）：口袋卡片／進度條／
+   表單／建倉月曆格／情境試算揭露框。沿用既有 token，不發明新配色。 */
+.progress-track {
+  background: var(--paper-sunken); border-radius: 999px; height: 8px;
+  overflow: hidden; margin: .5rem 0;
+}
+.progress-fill {
+  height: 100%; background: var(--accent); border-radius: 999px;
+  transition: width .2s ease;
+}
+.progress-fill.is-over { background: var(--green); }
+
+.pocket-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: .75rem; margin-bottom: 1.4rem;
+}
+.pocket-card {
+  background: var(--paper); border: 1px solid var(--rule); border-radius: 10px;
+  box-shadow: var(--shadow); padding: .9rem 1rem;
+}
+.pocket-card__head { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; }
+.pocket-card__name { font-size: .98rem; font-weight: 700; }
+.pocket-card__amounts { display: flex; justify-content: space-between; align-items: baseline;
+  font-size: .78rem; color: var(--ink-dim); margin-top: .3rem; }
+.pocket-card__current { font-size: 1.05rem; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+.pocket-card__pct { font-size: .74rem; color: var(--ink-dim); margin-top: .1rem; text-align: right; }
+.pocket-card__accounts { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .7rem; }
+.account-chip { font-size: .7rem; background: var(--paper-sunken); color: var(--ink-dim);
+  border-radius: 999px; padding: .15rem .6rem; white-space: nowrap; }
+.account-chip__amount { font-weight: 700; color: var(--ink); margin-left: .3rem; font-variant-numeric: tabular-nums; }
+
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: .6rem .8rem; align-items: end; }
+.form-field { display: flex; flex-direction: column; gap: .25rem; min-width: 0; }
+.form-field label { font-size: .74rem; font-weight: 600; color: var(--ink-dim); }
+.form-field input, .form-field select {
+  border: 1px solid var(--rule); border-radius: 6px; background: var(--paper);
+  color: var(--ink); font: inherit; font-size: .88rem; padding: .45rem .55rem;
+  width: 100%;
+}
+.form-field input:focus, .form-field select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.form-actions { display: flex; align-items: center; gap: .6rem; margin-top: .2rem; flex-wrap: wrap; }
+.form-note { font-size: .76rem; color: var(--ink-dim); }
+.subform { padding: .8rem 0; border-bottom: 1px solid var(--rule); }
+.subform:last-child { border-bottom: none; padding-bottom: 0; }
+.subform:first-child { padding-top: 0; }
+.subform__title { font-size: .82rem; font-weight: 700; margin-bottom: .5rem; }
+
+.manage-list { display: flex; flex-direction: column; gap: 0; margin-top: .3rem; }
+.manage-row { display: flex; align-items: center; justify-content: space-between; gap: .6rem;
+  padding: .45rem 0; border-bottom: 1px solid var(--rule); font-size: .84rem; }
+.manage-row:last-child { border-bottom: none; }
+.manage-row__name { font-weight: 600; }
+.manage-row__meta { color: var(--ink-dim); font-size: .74rem; margin-left: .4rem; }
+.btn-sm { font-size: .76rem; padding: .3rem .7rem; margin: 0; }
+.btn-danger-outline { background: none; border: 1px solid var(--rule); color: var(--red-ink);
+  border-radius: 6px; padding: .3rem .7rem; font-size: .76rem; cursor: pointer; font-family: inherit; }
+.btn-danger-outline:hover { border-color: var(--red); background: var(--red-soft); }
+.btn-danger-outline:disabled { opacity: .5; cursor: not-allowed; }
+
+.buildup-summary { display: flex; justify-content: space-between; align-items: baseline;
+  flex-wrap: wrap; gap: .4rem; margin-bottom: .8rem; }
+.buildup-summary__label { font-size: .84rem; color: var(--ink-dim); }
+.buildup-summary__value { font-size: 1.1rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.buildup-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: .5rem; }
+.buildup-cell { border: 1px solid var(--rule); border-radius: 8px; padding: .55rem .5rem;
+  text-align: center; background: var(--paper-raised); cursor: pointer; }
+.buildup-cell.is-done { border-color: var(--green); background: var(--paper); }
+.buildup-cell__month { font-size: .72rem; color: var(--ink-dim); font-weight: 600; }
+.buildup-cell__check { font-size: 1.1rem; margin: .2rem 0; color: var(--rule-strong); }
+.buildup-cell.is-done .buildup-cell__check { color: var(--green); }
+.buildup-cell__amount { font-size: .74rem; font-variant-numeric: tabular-nums; color: var(--ink); }
+.buildup-cell__planned { font-size: .68rem; color: var(--ink-dim); }
+.buildup-input-row { display: flex; gap: .3rem; margin-top: .5rem; }
+.buildup-input-row input { width: 100%; border: 1px solid var(--rule); border-radius: 6px;
+  padding: .35rem .4rem; font: inherit; font-size: .82rem; background: var(--paper); color: var(--ink); }
+
+.disclaimer-box { background: var(--amber-soft); border: 1px solid var(--amber);
+  border-radius: 8px; padding: .7rem .85rem; font-size: .82rem; color: var(--ink);
+  line-height: 1.6; margin-top: .8rem; }
+.disclaimer-box__label { font-weight: 700; color: var(--amber); margin-right: .3rem; }
+.simulate-result-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: .6rem; margin-top: .9rem; }
+@media (max-width: 640px) {
+  .pocket-grid { grid-template-columns: 1fr; }
+  .buildup-grid { grid-template-columns: repeat(3, 1fr); }
+  .simulate-result-grid { grid-template-columns: 1fr; }
+}
