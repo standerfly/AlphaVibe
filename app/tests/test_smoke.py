@@ -12,7 +12,18 @@ uvicorn，urllib 發請求，跟正式部署路徑一致（黑箱煙霧測試，
 in-process TestClient 那種可能繞過中介層/生命週期邏輯的測試）。
 
 用法：
-    ALPHAVIBE_DATA_DIR=<獨立測試資料夾> python3 -m app.tests.test_smoke
+    rm -rf poc/data-test && cp -R poc/data poc/data-test
+    sqlite3 poc/data-test/alphavibe.db "DELETE FROM asset_buildup_entries;
+      DELETE FROM asset_buildup_plans; DELETE FROM asset_holdings;
+      DELETE FROM asset_accounts; DELETE FROM asset_pockets;
+      DELETE FROM sqlite_sequence WHERE name LIKE 'asset_%';"
+    ALPHAVIBE_DATA_DIR=poc/data-test python3 -m app.tests.test_smoke
+
+2026-08-22 追加：正式庫種了真實資產資料後，複製正式庫當測試底本時
+「資產表清空＋sqlite_sequence 歸零」這兩步變成必要——這份測試假設
+資產表從空的開始（要驗證「不會自動種子」與「種子後 id=1」），複製
+正式庫過來如果不清空，會拿到已經有資料、id 也不是從 1 開始的測試庫，
+上面兩項驗證都會失真。
 
 安全機制：腳本啟動前會自行檢查 ALPHAVIBE_DATA_DIR 不等於正式路徑
 poc/data/，避免重蹈覆轍；沒設定或設定成正式路徑會直接拒絕執行。
@@ -170,6 +181,23 @@ def main() -> int:
         else:
             print("FAIL 明確呼叫後預期 4 筆，實際 %d 筆" % pocket_count)
             failures.append("explicit seed count mismatch")
+
+        # 2026-08-22 教訓（切換上線後又追加一次）：web/src/pages/Assets.jsx
+        # 把唯一的建倉計畫 ID 寫死成 BUILDUP_PLAN_ID = 1，這個假設只有在
+        # sqlite_sequence 沒被之前的污染/重跑弄跳號時才成立——PO 實際使用
+        # 時就因為前兩次污染事故讓 asset_buildup_plans 的計數器跳到 2，
+        # 種子資料生出來變成 id=3，前端打 /api/assets/buildup/1 變成
+        # 404。這裡直接驗證種子資料生出來的 plan id 就是 1，這個假設
+        # 才立得住；如果哪天又跳號，這個檢查要先炸，不要等 PO 真的用
+        # 才發現。
+        status, buildup_body = _get("/api/assets/buildup/1")
+        if status == 200 and buildup_body and buildup_body.get("id") == 1:
+            print("PASS 種子資料的建倉計畫 id=1，跟前端寫死的 BUILDUP_PLAN_ID 對得上")
+        else:
+            print("FAIL /api/assets/buildup/1 -> %s（前端會 404，多半是 "
+                  "sqlite_sequence 跳號，檢查 poc/data*/alphavibe.db 的 "
+                  "sqlite_sequence 表）" % status)
+            failures.append("buildup plan id mismatch")
 
         # ---- 功能正確性比對：API 回傳是否跟直接呼叫底層共用函式一致 ----
         # 這幾支 router 的設計是「原封不動轉手底層函式的 dict，不重新
