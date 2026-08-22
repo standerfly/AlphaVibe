@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { HomeIcon, DashboardIcon, AssetsIcon, PhotosIcon } from './icons.jsx'
+import ThemeToggle from './ThemeToggle.jsx'
 
 const TABS = [
   { to: '/', label: '首頁', icon: HomeIcon, end: true },
@@ -31,6 +32,7 @@ export default function AppShell() {
             </NavLink>
           ))}
         </nav>
+        <ThemeToggle />
       </header>
       <main className="app-main">
         <Outlet />

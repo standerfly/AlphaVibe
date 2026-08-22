@@ -53,6 +53,28 @@
   color: var(--accent);
   background: var(--accent-soft);
 }
+/* 2026-08-22 新增：主題切換鈕，靠右對齊（topnav 目前只有 brand/tabs
+   兩個 flex 子項、沒設 justify-content，這裡用 margin-left: auto
+   把它推到最右邊，不影響 brand/tabs 原本的排列）。 */
+.theme-toggle {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 50%;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+.theme-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
 .app-main {
   flex: 1;
   max-width: 1040px;

@@ -79,3 +79,29 @@ export function ChevronLeftIcon(props) {
     </svg>
   )
 }
+
+export function SunIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <circle cx="12" cy="12" r="4.2" />
+      <path d="M12 3v2.2M12 18.8V21M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M3 12h2.2M18.8 12H21M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6" />
+    </svg>
+  )
+}
+
+export function MoonIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" />
+    </svg>
+  )
+}
+
+export function SystemIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <rect x="3" y="4.5" width="18" height="12" rx="1.5" />
+      <path d="M9 20h6M12 16.5V20" />
+    </svg>
+  )
+}

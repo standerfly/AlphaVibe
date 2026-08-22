@@ -21,8 +21,13 @@
   --amber-soft: #fff4e6;
   --shadow: 0 1px 2px rgba(0,0,0,.06);
 }
+/* 2026-08-22 新增手動切換（見 ThemeToggle）：跟隨系統仍是預設行為
+   （沒手動選過時走這個 media query），但手動選了「亮/暗」之後要能
+   蓋過系統設定，所以這裡要排除掉 [data-theme="light"] 的情況；反向
+   （手動選「暗」但系統是亮）則靠下面的 [data-theme="dark"] 區塊。
+   兩個區塊 token 定義完全一致，只是套用條件不同，改動時要同步改。 */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --paper: #16181c;
     --paper-raised: #1d2024;
     --paper-sunken: #24272c;
@@ -40,6 +45,24 @@
     --amber-soft: #3a2a17;
     --shadow: 0 1px 2px rgba(0,0,0,.4);
   }
+}
+:root[data-theme="dark"] {
+  --paper: #16181c;
+  --paper-raised: #1d2024;
+  --paper-sunken: #24272c;
+  --ink: #e9ecef;
+  --ink-dim: #9298a0;
+  --rule: #33373d;
+  --rule-strong: #474c53;
+  --accent: #6fb1f0;
+  --accent-soft: #17273a;
+  --red: #ff8a8a;
+  --red-soft: #3a1f20;
+  --red-ink: #ffc2c2;
+  --green: #6fcf87;
+  --amber: #ffa94d;
+  --amber-soft: #3a2a17;
+  --shadow: 0 1px 2px rgba(0,0,0,.4);
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
