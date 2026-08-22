@@ -123,14 +123,32 @@ def main() -> int:
             print("FAIL whoami.data_dir 跟指定的測試路徑不一致：%r" % whoami_body)
             failures.append("whoami.data_dir mismatch")
 
-        # 資產分頁的 4 個口袋應該已經自動種子出來（因為這是全新的隔離庫）。
+        # 2026-08-22 教訓（見 kb_store.py 同日教訓紀錄）：KBStore 不再
+        # 自動種子任何資料，這裡反過來明確驗證「不會自動生資料」，
+        # 再驗證「明確呼叫 seed_asset_defaults() 才會生資料」——兩段
+        # 都要驗，只驗其中一段沒辦法證明修復是正確的。
+        status, pockets_body = _get("/api/assets/pockets")
+        pocket_count = len(pockets_body.get("pockets", [])) if pockets_body else 0
+        if pocket_count == 0:
+            print("PASS assets/pockets 沒有被自動種子（修復生效）")
+        else:
+            print("FAIL assets/pockets 預期 0 筆（不該自動種子），實際 %d 筆"
+                  % pocket_count)
+            failures.append("unexpected auto-seed")
+
+        from kb_store import KBStore  # noqa: E402
+        seed_store = KBStore(data_dir)
+        try:
+            seed_store.seed_asset_defaults()
+        finally:
+            seed_store.close()
         status, pockets_body = _get("/api/assets/pockets")
         pocket_count = len(pockets_body.get("pockets", [])) if pockets_body else 0
         if pocket_count == 4:
-            print("PASS assets/pockets 自動種子出 4 筆")
+            print("PASS 明確呼叫 seed_asset_defaults() 後正確生出 4 筆")
         else:
-            print("FAIL assets/pockets 預期 4 筆，實際 %d 筆" % pocket_count)
-            failures.append("assets seed count mismatch")
+            print("FAIL 明確呼叫後預期 4 筆，實際 %d 筆" % pocket_count)
+            failures.append("explicit seed count mismatch")
 
         # ---- 功能正確性比對：API 回傳是否跟直接呼叫底層共用函式一致 ----
         # 這幾支 router 的設計是「原封不動轉手底層函式的 dict，不重新

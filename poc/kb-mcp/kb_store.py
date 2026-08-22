@@ -336,14 +336,25 @@ class KBStore:
         self.conn.executescript(SCHEMA)
         self.conn.commit()
         self._migrate()
-        self._seed_asset_defaults()
+        # 2026-08-22 教訓：這裡原本無條件呼叫 self._seed_asset_defaults()，
+        # 導致「任何」建立 KBStore 的呼叫端都會觸發種子資料寫入——不只是
+        # 新 app/ 的測試埠，連 market_scan.py 這種每天 02:00 排程、每次
+        # 都重新讀取磁碟上最新 kb_store.py 的既有腳本也會中招（排程本身
+        # 沒有錯，錯在這裡把「使用者資料初始化」跟「物件建構」綁在一起）。
+        # 修正：種子資料改成完全獨立、需要明確呼叫的動作，見
+        # seed_asset_defaults()（已移除前導底線，開放給外部明確呼叫）與
+        # poc/kb-mcp/seed_assets_once.py。KBStore.__init__() 之後不會再
+        # 因為「表是空的」就自動寫入任何資料。
 
-    def _seed_asset_defaults(self):
+    def seed_asset_defaults(self):
         """資產分頁初始種子資料（Q-046 第5節 Step 4）：只在 asset_pockets
-        表完全空的時候寫入一次，避免每次啟動（每次 KBStore() 都會執行）
-        重複塞資料——這是使用者現在的真實現況（口袋/帳戶/初始餘額/建倉
-        計畫進度），不是 demo 假資料，改動前請先跟需求方（roadmap.md
-        Q-046）核對數字。
+        表完全空的時候寫入一次，重複呼叫不會重複塞資料——這是使用者現在
+        的真實現況（口袋/帳戶/初始餘額/建倉計畫進度），不是 demo 假資料，
+        改動前請先跟需求方（roadmap.md Q-046）核對數字。
+
+        **這個方法不會被 KBStore.__init__() 自動呼叫**（2026-08-22 教訓，
+        見 __init__ 內的說明）——只能由呼叫端明確呼叫，目前唯一的呼叫點
+        是 poc/kb-mcp/seed_assets_once.py，一次性、由人手動執行。
 
         寫入順序：口袋 → 帳戶 → 餘額 → 建倉計畫 → 10 筆進度 entries，
         全部在同一個 transaction 內完成（任何一步失敗就整批不寫入，避免
