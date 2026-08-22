@@ -185,6 +185,29 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
   （16 項，含 4 個既有路由跟底層函式的輸出比對，非僅「回 200」的淺層
   檢查）。CLAUDE.md 本節與上方「STND 分頁與程式碼位置」同天新增。
 
+- 2026-08-22（切換上線後追加）｜情境：正式上線後 PO 實際使用資產頁面時
+  回報 `/api/assets/holdings` 500，查證是 `get_kb_store()`（FastAPI sync
+  generator dependency）由 anyio thread pool 執行，同一個 request 的
+  「建立 KBStore」與「關閉 KBStore」不保證同一條 worker thread，正式
+  環境併發測試 30 個 request 有 23 個因 `sqlite3.ProgrammingError` 500。
+  `report_server.py`（`ThreadingHTTPServer`，整個 request 在同一條
+  thread 處理完）沒有這個問題，是這次遷移到 FastAPI 才暴露的既有
+  SQLite 用法在新框架下的不相容，影響 7 個用 `Depends(get_kb_store)`
+  的 router
+  ｜教訓：(1) 深度測試（跟底層函式輸出比對）跟**併發測試**是兩回事——
+  這次的 4 個深度比對測試全部用「依序單一請求」，完全沒測到這個只有
+  併發才會踩到的 race，切換上線後才被 PO 真實使用抓到，證明「切正式
+  服務前的驗收」跟「正式使用後的觀察」都需要，前者不能完全取代後者。
+  (2) 修 bug 時新增的回歸測試本身也可能有 bug——這次併發測試第一版
+  誤放在 `finally:`／`proc.terminate()` 之後，等於對已關閉的 server
+  發請求，得到的 `ConnectionRefused` 一度被誤以為是修復沒生效，實際上
+  是測試腳本自己的位置錯誤；另外啟動 server 用 `subprocess.PIPE` 接
+  stdout 卻從未讀取，也曾導致 pipe buffer 滿了讓 child process 卡死
+  ｜動作：`kb_store.py` 的 `sqlite3.connect()` 加
+  `check_same_thread=False`；`test_smoke.py` 補上 30 併發請求的回歸
+  測試（位置修正在 `finally:` 之前）＋ server log 改導向暫存檔不阻塞；
+  正式服務已重啟套用修復並在真實 ngrok 網址驗證 30/30 通過
+
 - 2026-08-19｜情境：為個股詳情頁新增卡片時，連續四次寫出會誤判的測試斷言——`assertNotIn("conc-fill", page)`、`assertNotIn("完成比例", page)`、`assertIn("verdict--alert", page)`、`page.index("stock-row__delta")` 全都命中了頁面裡的 CSS 定義或說明文字，而不是實際渲染出來的元素
   ｜教訓：`report.py` 把整份 `CSS` 常數**內嵌進每一個頁面**（`<style>%s</style>` % CSS），所以任何拿 class 名稱或 CSS 片語去 grep 頁面字串的斷言，都會先命中樣式定義，位置與存在性判斷全錯。同理，說明文字裡也常包含 UI 標籤字（例：「因此算不出**完成比例**」會讓 `assertNotIn("完成比例")` 失敗）
   ｜動作：測 `report.py` 產出的頁面時，一律斷言**渲染形式**而非裸字串——用 `class="conc-fill`、`<div class="verdict `、`<span class="stock-row__delta` 這種帶 `class="` 前綴或帶標籤的比對；順序比較（assertLess）更要如此，否則比到的是 CSS 區塊的位置
