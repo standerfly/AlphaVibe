@@ -1,4 +1,4 @@
-# AlphaVibe 專案指南（v2，2026-07-08；v2：主軸重塑＋Phase 1 PoC 上線）
+# AlphaVibe 專案指南（v3，2026-08-22；v3：STND 個人主控台正式上線）
 
 ## 這個 repo 是什麼
 
@@ -6,13 +6,38 @@
 估值→交易紀錄；引擎＝Claude 聊天思考＋Cline 粗活、local-first，Q-028~032）。
 需求基線 product-spec 已 **Accepted**（2026-07-08）。
 
-**code 現況**：唯一可跑的是 `poc/kb-mcp/`（三層知識庫 MCP server，
-Phase 1 PoC，零外部依賴）；**正式 production code 尚未開始**（屬 Phase 2，
-走 speckit）。`docs/swagger.yaml`、`docs/docs.go` 是模板殘留，不代表有後端；
-`frontend_mockup.html` 是純靜態 mockup。
+**code 現況（2026-08-22 更新）**：正式對外服務是 **STND**（個人遠端主控台，
+UI 品牌名；技術/repo 層級仍叫 AlphaVibe），FastAPI（`app/`）+ React
+（`web/`），已於 2026-08-22 正式取代 `poc/kb-mcp/report_server.py` 常駐
+在 `:8080`／ngrok 固定網址 `chancefully-erosive-lilian.ngrok-free.dev`。
+`poc/kb-mcp/` 不再是唯一可跑的東西，但**底層演算法/資料層仍是它**——
+`app/` 的所有 router 都是直接 import `poc/kb-mcp/*.py` 既有函式，沒有
+重寫任何商業邏輯，`poc/kb-mcp/` 因此仍是查證計算邏輯的地方。
+`docs/swagger.yaml`、`docs/docs.go`、`frontend_mockup.html` 仍是模板/
+mockup 殘留，不代表這些。分頁對照見下方「STND 分頁與程式碼位置」。
 
-**目前階段：Phase 1b 試用累積**——完整進度與各階段接手指南見
-`docs/spec-intake/alphavibe/roadmap.md`（接手任何開發工作前先讀它）。
+**目前階段：STND 骨架已上線，功能持續擴充中**——完整進度與各階段接手
+指南見 `docs/spec-intake/alphavibe/roadmap.md`（接手任何開發工作前先讀
+它，尤其 Q-046）。
+
+## STND 分頁與程式碼位置（2026-08-22 新增，避免接手時找錯地方）
+
+STND 是「個人一站入口」的定位（不只投資），會隨時間長出更多分頁。每個
+分頁的程式碼**全部住在這個 repo**（`app/` + `web/`），不會因為分頁主題
+不同就分散到別的 repo；但分頁背後的**內容/資料**可能來自其他獨立專案，
+兩者是分開的兩件事：
+
+| 分頁 | 前端頁面 | 後端 router | 內容/資料來源 |
+|---|---|---|---|
+| 首頁 | `web/src/pages/Home.jsx` | 彙總其他分頁 API | 本 repo |
+| 儀表板 | `Dashboard.jsx`／`StockDetail.jsx` | `dashboard.py`／`screen.py`／`market_scan.py`／`holdings.py`／`stock_detail.py`／`actions.py` | `poc/kb-mcp/`（report.py／screener.py／frameworks.py，未重寫） |
+| 資產 | `Assets.jsx` | `assets.py` | `kb_store.py` 新增 5 張表，手動輸入，無外部依賴 |
+| 相簿 | `Photos.jsx`（MVP 僅入口） | 尚無 | 未來：AutoGallery 資料模型參考（僅有 README 內容，本機實際 repo 路徑未定位到，見 clarification-log） |
+| 旅遊（未來，尚未建立） | — | — | 內容/研究在**另一個獨立專案** `/Users/stander/My_project/mytravel/`——若要做這個分頁，程式碼仍會建在這個 repo，但要不要整合 mytravel 的資料、整合到多深，屬於獨立待討論的範圍決策，不要預設 |
+
+新增分頁前的判斷順序：(1) 先跟 PO 討論這個領域要不要進 STND、做到多深
+（純導覽連結 vs 完整資料整合）——不要預設「以後什麼都變一個分頁」；
+(2) 決定後才動工，程式碼一律加進本 repo 的 `app/`／`web/`，不另開新 repo。
 
 使用者 Stander 在此專案的角色是 PO/TPM：需求釐清、規格文件、決策；
 不以寫碼為日常。
@@ -74,6 +99,17 @@ Phase 1 PoC，零外部依賴）；**正式 production code 尚未開始**（屬
 - 範圍決策：`docs/spec-intake/alphavibe/scope-decision.md`
 - PoC 驗證：`python3 -m unittest discover -s poc/kb-mcp/tests`
   （2026-07-08 實測 10/10 綠）；用法見 `poc/kb-mcp/README.md`
+- **STND（app/）驗證**：`ALPHAVIBE_DATA_DIR=<獨立測試庫路徑>
+  .venv/bin/python3 -m app.tests.test_smoke`——**一定要**明確指定
+  `ALPHAVIBE_DATA_DIR` 指向獨立複製出來的測試庫（例如 `poc/data-test/`，
+  已 gitignore），絕對不要指向 `poc/data/`（正式庫），見下方 2026-08-22
+  教訓紀錄。真正要對正式庫寫入資產種子資料，用
+  `poc/kb-mcp/seed_assets_once.py --data-dir poc/data`，一次性、需要
+  人手動執行。
+- 正式服務常駐設定：`~/Library/LaunchAgents/com.alphavibe.reportserver.plist`
+  （現在跑 `uvicorn app.main:app`，不是 `report_server.py`）；舊版 plist
+  備份在 `~/Library/LaunchAgents/backup-20260822/`，回滾步驟見同一天
+  教訓紀錄。
 - 加碼/減碼決策原則：`poc/data/philosophy/framework_evidence_based_position_sizing.md`
   （或呼叫 `get_philosophy`）——**不會自動載入**，討論加碼/減碼前主動查
   （Layer 1「啟動時拼接進 system prompt」的 FR-014 尚未實作，見下方教訓紀錄）
@@ -113,6 +149,41 @@ Phase 1 PoC，零外部依賴）；**正式 production code 尚未開始**（屬
 - 2026-08-12｜情境：某個 Claude Code 對話面板固定顯示「Something went wrong / React error #185」，Reload Window、完全 Cmd+Q 重開 VS Code 都排除不了；一度誤判是當天自動更新到的 extension 2.1.228 版 regression
   ｜教訓：(1) 遇到「重開也沒用」的面板崩潰，先測「開一個全新對話是否也壞」就能秒判是 extension 版本問題還是單一 session 壞掉（本例是後者，新對話正常）——比先查版本號更快定位，別急著降版。(2) 可查 `~/.claude/projects/<workspace-slug>/<sessionId>.jsonl`（sessionId 從 scratchpad 目錄路徑取得，或用錯誤畫面文字 grep 全部 session 檔案反查）看該 session 的原始事件；這次發現壞掉的 session 一開場就是「崩潰畫面文字」被存成第一則 user 訊息，前面只有兩筆 `deferred_tools_delta`／`agent_listing_delta` UI 初始化事件——判斷是還原/重放這批初始化事件時觸發畫面無限重繪，與版本、對話內容量都無關。(3) extension 是編譯過的 bundle，這類渲染 bug 沒有原始碼可以從外部修，該 session 的資料仍完整留在 jsonl（不會遺失），但面板本身救不回來，只能放棄、開新對話繼續。
   ｜動作：無條文修改，僅記錄；曾降版 `anthropic.claude-code` 2.1.228→2.1.227＋關閉 `extensions.autoUpdate` 排除版本假設，確認與版本無關後已把 `extensions.autoUpdate` 還原回預設值（未設定＝開啟），版本維持在降版後的 2.1.227，之後會隨自動更新回到最新版，不用手動處理
+
+- 2026-08-22｜情境：STND（`app/`+`web/`）從規劃到正式上線同一天發生
+  三件事：(1) 同一個 Claude Code session ID 因 VSCode `--resume` 機制
+  被開成兩個獨立行程（同一份工作目錄 `AI/harness`），各自不知道對方
+  存在地平行發展，一個做完整實作＋自我測試，一個完全不知情，直到人工
+  要求排查（`ListAgents`＋`SendMessage` 逐一問過 6 個 peer session）才
+  查清楚；(2) `kb_store.py` 的 `_seed_asset_defaults()` 原本綁在
+  `KBStore.__init__()`，導致任何建立 `KBStore` 的呼叫端都會觸發種子
+  寫入——不只新 app 的測試埠會中招，連 `market_scan.py` 這種每天
+  02:00 排程、每次都重新讀取磁碟最新 `kb_store.py` 的既有腳本也會，
+  正式資料庫的資產表因此**被污染兩次**（各自清空後又被觸發一次）；
+  (3) 這兩件事都發生在 `AI/harness` 這個資料夾底下的 session 裡，但
+  `harness` 實際上是完全不相關的另一個框架（Cline_DevFlow），不是給
+  Claude Code 開對話管理其他專案用的
+  ｜教訓：(1) 開發某個 repo 的工作，session 的工作目錄就該是那個
+  repo，不要因為「反正跨資料夾讀寫也做得到」就圖方便留在別的專案資料夾
+  底下——同名/同工作目錄的多個 session 會導致身份難以分辨，這正是
+  (a) 項花大力氣才查清楚的根本原因。(2) 「初始化時自動做有副作用的
+  動作（寫資料）」這種設計，只要有任何呼叫端會在非預期情境下建構這個
+  物件，副作用就會失控觸發——凡是「這個函式只在特定情境該執行一次」的
+  邏輯，都不該掛在建構子，要改成需要明確呼叫的獨立方法/腳本。(3) 正式
+  服務切換前的獨立驗收（fresh subagent，不信任開發者自己的測試宣稱）
+  抓到了 (2)——這再次證實「驗證不能由產出者自己做」在高風險場景
+  （會動到正式資料）不是形式主義，是真的會抓到問題。
+  ｜動作：`_seed_asset_defaults()` 移出 `__init__()`、更名為公開方法
+  `seed_asset_defaults()`，新增 `poc/kb-mcp/seed_assets_once.py`
+  一次性種子腳本；`app/deps.py::_resolve_data_dir()` 改成沒明確設定
+  `ALPHAVIBE_DATA_DIR` 就拒絕啟動，且指向正式路徑還要求額外的
+  `ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1` 旗標；正式庫兩次污染皆已清空
+  （僅限資產 5 張新表，其餘 18 張既有表確認未受影響）；正式服務已於
+  當天完成切換（`com.alphavibe.reportserver.plist` 改跑
+  `uvicorn app.main:app`），`com.alphavibe.mcphttpgateway`（獨立 8082
+  埠）確認退役並改檔名停用；已新增 `app/tests/test_smoke.py`
+  （16 項，含 4 個既有路由跟底層函式的輸出比對，非僅「回 200」的淺層
+  檢查）。CLAUDE.md 本節與上方「STND 分頁與程式碼位置」同天新增。
 
 - 2026-08-19｜情境：為個股詳情頁新增卡片時，連續四次寫出會誤判的測試斷言——`assertNotIn("conc-fill", page)`、`assertNotIn("完成比例", page)`、`assertIn("verdict--alert", page)`、`page.index("stock-row__delta")` 全都命中了頁面裡的 CSS 定義或說明文字，而不是實際渲染出來的元素
   ｜教訓：`report.py` 把整份 `CSS` 常數**內嵌進每一個頁面**（`<style>%s</style>` % CSS），所以任何拿 class 名稱或 CSS 片語去 grep 頁面字串的斷言，都會先命中樣式定義，位置與存在性判斷全錯。同理，說明文字裡也常包含 UI 標籤字（例：「因此算不出**完成比例**」會讓 `assertNotIn("完成比例")` 失敗）
