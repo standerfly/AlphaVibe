@@ -18,7 +18,7 @@ export default function AppShell() {
   return (
     <div className="app-shell">
       <header className="topnav">
-        <div className="topnav__brand">AlphaVibe</div>
+        <div className="topnav__brand">STND</div>
         <nav className="topnav__tabs">
           {TABS.map(({ to, label, icon: Icon, end }) => (
             <NavLink
