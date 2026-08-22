@@ -27,6 +27,16 @@ import time
 import urllib.request
 import urllib.error
 
+
+def _post(path: str, body: bytes, headers: dict = None, timeout: float = 10.0):
+    req = urllib.request.Request(
+        _BASE + path, data=body, headers=headers or {}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read()
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _APP_ROOT = os.path.abspath(os.path.join(_HERE, "..", ".."))
 _PRODUCTION_DATA_DIR = os.path.abspath(
@@ -189,6 +199,60 @@ def main() -> int:
         else:
             print("FAIL /api/market-scan 輸出跟底層函式不一致")
             failures.append("market-scan output mismatch")
+
+        # holdings：router 自己做 filter/搜尋/分頁，不是單純轉手，所以
+        # 比對重點是「底層資料（_tracked_stock_rows）跟 API 算出來的
+        # 計數/分頁是否一致」，不是整份 dict 相等。
+        import report  # noqa: E402
+        store2 = KBStore(data_dir)
+        try:
+            all_rows = report._tracked_stock_rows(store2)  # noqa: SLF001
+        finally:
+            store2.close()
+        expected_holdings_count = sum(1 for r in all_rows if r["is_holding"])
+        expected_all_total = len(all_rows)
+        status, holdings_body = _get("/api/holdings")
+        checks_ok = (
+            holdings_body is not None
+            and holdings_body.get("all_total") == expected_all_total
+            and holdings_body.get("holdings_count") == expected_holdings_count
+            and holdings_body.get("research_count") == expected_all_total - expected_holdings_count
+        )
+        if checks_ok:
+            # 再比對第一頁內容跟底層資料前 N 筆一致（扣掉 API 刻意省略的 spark_html）。
+            page_size = report.STOCKLIST_PAGE_SIZE
+            expected_page1 = [
+                {k: v for k, v in r.items() if k != "spark_html"}
+                for r in all_rows[:page_size]
+            ]
+            norm_expected_page1 = json.loads(json.dumps(expected_page1))
+            checks_ok = norm_expected_page1 == holdings_body.get("results")
+        if checks_ok:
+            print("PASS /api/holdings 計數與第一頁內容跟 _tracked_stock_rows() 一致")
+        else:
+            print("FAIL /api/holdings 跟底層資料兜不起來")
+            failures.append("holdings output mismatch")
+
+        # MCP：直接呼叫 handle_mcp_post() 跟透過 HTTP 打 /mcp，應該是
+        # 完全一樣的 (status, body)——這是唯一邏輯完全共用、風險最低的
+        # router，理論上該逐位元組相等。ALPHAVIBE_MCP_TOKEN 沒設定時
+        # fail-open（見 mcp_http_gateway._auth_ok()），測試環境不用帶
+        # Authorization header。
+        import mcp_http_gateway  # noqa: E402
+        mcp_request = json.dumps(
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+        ).encode("utf-8")
+        expected_status, expected_ct, expected_body = mcp_http_gateway.handle_mcp_post(
+            {}, mcp_request, data_dir=data_dir)
+        actual_status, actual_body = _post(
+            "/mcp", mcp_request, headers={"Content-Type": "application/json"})
+        if expected_status == actual_status and expected_body == actual_body:
+            print("PASS /mcp 輸出跟直接呼叫 handle_mcp_post() 逐位元組一致")
+        else:
+            print("FAIL /mcp 輸出跟 handle_mcp_post() 不一致 "
+                  "(expected status=%s actual status=%s)"
+                  % (expected_status, actual_status))
+            failures.append("mcp output mismatch")
 
     finally:
         proc.terminate()
