@@ -19,6 +19,7 @@ poc/data/，避免重蹈覆轍；沒設定或設定成正式路徑會直接拒�
 """
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import os
 import subprocess
@@ -94,11 +95,21 @@ def main() -> int:
     env = dict(os.environ)
     env["ALPHAVIBE_DATA_DIR"] = data_dir
     python = os.path.join(_APP_ROOT, ".venv", "bin", "python3")
+    # 2026-08-22 教訓：原本用 stdout=subprocess.PIPE 但從未讀取，這份
+    # 測試本身後面會送 30 個併發請求，uvicorn 每個請求都印一行 log，
+    # 沒人清 pipe 的話 OS pipe buffer（通常 64KB）滿了之後 child process
+    # 會卡在 write() 上，實測導致這個 subprocess 直接死掉、後續請求
+    # 變成 ConnectionRefused——不是併發修復本身的問題（同樣的併發測試
+    # 換成用一般背景行程啟動 server 完全正常），是這支測試腳本自己的
+    # subprocess 管理方式有 bug。改成導向暫存檔，不會阻塞。
+    log_path = os.path.join(
+        "/tmp", "alphavibe-test-smoke-server-%d.log" % os.getpid())
+    log_file = open(log_path, "w")
     proc = subprocess.Popen(
         [python, "-m", "uvicorn", "app.main:app",
          "--host", "127.0.0.1", "--port", str(_PORT)],
         cwd=_APP_ROOT, env=env,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        stdout=log_file, stderr=subprocess.STDOUT,
     )
 
     failures = []
@@ -254,12 +265,35 @@ def main() -> int:
                   % (expected_status, actual_status))
             failures.append("mcp output mismatch")
 
+        # 2026-08-22 教訓：get_kb_store() 是 sync generator dependency，
+        # Starlette 用 anyio thread pool 執行，「建立」跟「關閉」不保證
+        # 同一條 worker thread——沒有 check_same_thread=False 時，正式
+        # 環境併發測試 30 個 request 有 23 個 500
+        # （sqlite3.ProgrammingError）。這裡刻意送真正併發（非依序）的
+        # 30 個請求，確保這個 class 的 bug 回歸時測試會抓到，不是只測
+        # 依序請求（依序請求幾乎不會踩到這個 race）。**必須放在
+        # finally/proc.terminate() 之前**——server 被關掉之後才送請求，
+        # 只會得到 ConnectionRefused，不是在測併發，這是這份測試自己
+        # 曾經踩過的坑（見同一天的 commit）。
+        with concurrent.futures.ThreadPoolExecutor(max_workers=30) as pool:
+            statuses = list(pool.map(
+                lambda _: _get("/api/assets/holdings")[0], range(30)))
+        ok_count = sum(1 for s in statuses if s == 200)
+        if ok_count == 30:
+            print("PASS 30 個併發請求全數 200（無 SQLite 跨執行緒競爭）")
+        else:
+            print("FAIL 30 個併發請求只有 %d 個 200（疑似 sqlite3 "
+                  "跨執行緒競爭回歸，檢查 kb_store.py 的 "
+                  "check_same_thread 設定）" % ok_count)
+            failures.append("concurrency regression")
+
     finally:
         proc.terminate()
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+        log_file.close()
 
     print()
     if failures:

@@ -331,7 +331,21 @@ class KBStore:
         self.philosophy_dir = os.path.join(self.data_dir, "philosophy")
         os.makedirs(self.philosophy_dir, exist_ok=True)
         self.db_path = os.path.join(self.data_dir, "alphavibe.db")
-        self.conn = sqlite3.connect(self.db_path)
+        # 2026-08-22 教訓：check_same_thread=False 是必要的，不是隨手加的
+        # 選項。report_server.py（ThreadingHTTPServer）每個請求從頭到尾
+        # 都在同一條執行緒處理，原本不需要這個參數；但 app/deps.py 的
+        # get_kb_store() 是 FastAPI 的 sync generator dependency，
+        # Starlette 用 anyio thread pool 執行——同一個 request 的
+        # 「建立」（yield 前）跟「關閉」（finally，yield 後）**不保證
+        # 在同一條 pool worker thread 上執行**，正式環境併發測試 30 個
+        # request 有 23 個因為這個原因 500（sqlite3.ProgrammingError:
+        # SQLite objects created in a thread can only be used in that
+        # same thread）。這裡的用法本身沒有真正跨執行緒併發存取同一個
+        # connection（每個 request 各自建立、各自關閉，生命週期不重疊），
+        # 只是「同一段邏輯的不同階段」剛好被排到不同 thread，
+        # check_same_thread=False 關掉的正是這個誤判，不是關掉真正的
+        # 併發保護——sqlite3 連線本身仍然只會被單一 request 依序使用。
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
         self.conn.commit()
