@@ -168,6 +168,7 @@ details.collapse summary::marker { color: var(--accent); }
   box-shadow: var(--shadow); padding: .9rem 1rem;
 }
 .pocket-card__head { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; }
+.pocket-card__actions { display: flex; gap: .4rem; flex-shrink: 0; }
 .pocket-card__name { font-size: .98rem; font-weight: 700; }
 .pocket-card__amounts { display: flex; justify-content: space-between; align-items: baseline;
   font-size: .78rem; color: var(--ink-dim); margin-top: .3rem; }
@@ -201,6 +202,7 @@ details.collapse summary::marker { color: var(--accent); }
 .manage-row:last-child { border-bottom: none; }
 .manage-row__name { font-weight: 600; }
 .manage-row__meta { color: var(--ink-dim); font-size: .74rem; margin-left: .4rem; }
+.manage-row__actions { display: flex; gap: .4rem; flex-shrink: 0; }
 .btn-sm { font-size: .76rem; padding: .3rem .7rem; margin: 0; }
 .btn-danger-outline { background: none; border: 1px solid var(--rule); color: var(--red-ink);
   border-radius: 6px; padding: .3rem .7rem; font-size: .76rem; cursor: pointer; font-family: inherit; }

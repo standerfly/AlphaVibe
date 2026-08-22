@@ -46,8 +46,14 @@ export default function Assets() {
   const [buildup, setBuildup] = useState(null)
   const [buildupError, setBuildupError] = useState(null)
 
-  const [pocketForm, setPocketForm] = useState({ name: '', target_amount: '' })
-  const [accountForm, setAccountForm] = useState({ name: '', category: '' })
+  // pocketForm/accountForm 身兼「新增」與「編輯」兩用：id 為 null 時是
+  // 新增模式，送出時 POST 不帶 id；點卡片上的「編輯」會把 id 連同既有值
+  // 一起填進來，送出時帶 id，後端 upsert_pocket()/upsert_account() 看到
+  // id 就會更新既有那筆，不會新增（見 app/routers/assets.py 的
+  // PocketUpsert/AccountUpsert docstring）——後端本來就支援這個語意，
+  // 這裡純粹是補上前端沒有的編輯入口（2026-08-22 使用者回報才發現漏了）。
+  const [pocketForm, setPocketForm] = useState({ id: null, name: '', target_amount: '' })
+  const [accountForm, setAccountForm] = useState({ id: null, name: '', category: '' })
   const [holdingForm, setHoldingForm] = useState({ pocket_id: '', account_id: '', amount: '' })
   const [formError, setFormError] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -89,7 +95,7 @@ export default function Assets() {
     refreshBuildup()
   }, [refreshCore, refreshBuildup])
 
-  async function handleAddPocket(e) {
+  async function handleSubmitPocket(e) {
     e.preventDefault()
     setFormError(null)
     const name = pocketForm.name.trim()
@@ -97,10 +103,11 @@ export default function Assets() {
     setBusy(true)
     try {
       await apiPost('/api/assets/pockets', {
+        id: pocketForm.id || undefined,
         name,
         target_amount: pocketForm.target_amount === '' ? null : Number(pocketForm.target_amount),
       })
-      setPocketForm({ name: '', target_amount: '' })
+      setPocketForm({ id: null, name: '', target_amount: '' })
       await refreshCore()
     } catch (err) {
       setFormError(err.message)
@@ -109,7 +116,17 @@ export default function Assets() {
     }
   }
 
-  async function handleAddAccount(e) {
+  function handleEditPocket(p) {
+    setFormError(null)
+    setPocketForm({ id: p.id, name: p.name, target_amount: p.target_amount ?? '' })
+  }
+
+  function handleCancelEditPocket() {
+    setFormError(null)
+    setPocketForm({ id: null, name: '', target_amount: '' })
+  }
+
+  async function handleSubmitAccount(e) {
     e.preventDefault()
     setFormError(null)
     const name = accountForm.name.trim()
@@ -117,16 +134,27 @@ export default function Assets() {
     setBusy(true)
     try {
       await apiPost('/api/assets/accounts', {
+        id: accountForm.id || undefined,
         name,
         category: accountForm.category.trim() || null,
       })
-      setAccountForm({ name: '', category: '' })
+      setAccountForm({ id: null, name: '', category: '' })
       await refreshCore()
     } catch (err) {
       setFormError(err.message)
     } finally {
       setBusy(false)
     }
+  }
+
+  function handleEditAccount(a) {
+    setFormError(null)
+    setAccountForm({ id: a.id, name: a.name, category: a.category || '' })
+  }
+
+  function handleCancelEditAccount() {
+    setFormError(null)
+    setAccountForm({ id: null, name: '', category: '' })
   }
 
   async function handleSetHolding(e) {
@@ -256,12 +284,20 @@ export default function Assets() {
               <div className="pocket-card" key={p.id}>
                 <div className="pocket-card__head">
                   <div className="pocket-card__name">{p.name}</div>
-                  <button
-                    type="button"
-                    className="btn-danger-outline btn-sm"
-                    disabled={busy}
-                    onClick={() => handleArchivePocket(p.id)}
-                  >封存</button>
+                  <div className="pocket-card__actions">
+                    <button
+                      type="button"
+                      className="btn-muted btn-sm"
+                      disabled={busy}
+                      onClick={() => handleEditPocket(p)}
+                    >編輯</button>
+                    <button
+                      type="button"
+                      className="btn-danger-outline btn-sm"
+                      disabled={busy}
+                      onClick={() => handleArchivePocket(p.id)}
+                    >封存</button>
+                  </div>
                 </div>
                 <div className="pocket-card__amounts">
                   <span className="pocket-card__current">{money(p.current_amount)}</span>
@@ -299,8 +335,8 @@ export default function Assets() {
           {formError && <div className="error-box">{formError}</div>}
 
           <div className="subform">
-            <div className="subform__title">新增口袋</div>
-            <form onSubmit={handleAddPocket}>
+            <div className="subform__title">{pocketForm.id ? '編輯口袋' : '新增口袋'}</div>
+            <form onSubmit={handleSubmitPocket}>
               <div className="form-grid">
                 <div className="form-field">
                   <label htmlFor="pocket-name">名稱</label>
@@ -323,14 +359,21 @@ export default function Assets() {
                 </div>
               </div>
               <div className="form-actions">
-                <button type="submit" className="btn" disabled={busy}>新增口袋</button>
+                <button type="submit" className="btn" disabled={busy}>
+                  {pocketForm.id ? '儲存變更' : '新增口袋'}
+                </button>
+                {pocketForm.id && (
+                  <button type="button" className="btn-muted" disabled={busy} onClick={handleCancelEditPocket}>
+                    取消編輯
+                  </button>
+                )}
               </div>
             </form>
           </div>
 
           <div className="subform">
-            <div className="subform__title">新增帳戶</div>
-            <form onSubmit={handleAddAccount}>
+            <div className="subform__title">{accountForm.id ? '編輯帳戶' : '新增帳戶'}</div>
+            <form onSubmit={handleSubmitAccount}>
               <div className="form-grid">
                 <div className="form-field">
                   <label htmlFor="account-name">名稱</label>
@@ -352,7 +395,14 @@ export default function Assets() {
                 </div>
               </div>
               <div className="form-actions">
-                <button type="submit" className="btn" disabled={busy}>新增帳戶</button>
+                <button type="submit" className="btn" disabled={busy}>
+                  {accountForm.id ? '儲存變更' : '新增帳戶'}
+                </button>
+                {accountForm.id && (
+                  <button type="button" className="btn-muted" disabled={busy} onClick={handleCancelEditAccount}>
+                    取消編輯
+                  </button>
+                )}
               </div>
             </form>
           </div>
@@ -414,12 +464,20 @@ export default function Assets() {
                     <span className="manage-row__name">{a.name}</span>
                     {a.category && <span className="manage-row__meta">{a.category}</span>}
                   </span>
-                  <button
-                    type="button"
-                    className="btn-danger-outline btn-sm"
-                    disabled={busy}
-                    onClick={() => handleArchiveAccount(a.id)}
-                  >封存</button>
+                  <span className="manage-row__actions">
+                    <button
+                      type="button"
+                      className="btn-muted btn-sm"
+                      disabled={busy}
+                      onClick={() => handleEditAccount(a)}
+                    >編輯</button>
+                    <button
+                      type="button"
+                      className="btn-danger-outline btn-sm"
+                      disabled={busy}
+                      onClick={() => handleArchiveAccount(a.id)}
+                    >封存</button>
+                  </span>
                 </div>
               ))}
             </div>

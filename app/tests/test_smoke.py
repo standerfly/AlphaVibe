@@ -199,6 +199,38 @@ def main() -> int:
                   "sqlite_sequence 表）" % status)
             failures.append("buildup plan id mismatch")
 
+        # 2026-08-22 教訓：PO 回報「只有封存沒有編輯」，查證後發現後端
+        # 其實原本就支援（POST 帶 id＝更新、不帶＝新增，PocketUpsert/
+        # AccountUpsert 本來就這樣設計），缺的只是前端沒有編輯入口——
+        # 已補上前端，這裡驗證的是後端 upsert 語意本身沒有壞：帶既有 id
+        # 送出更新，總筆數不該變、id 不該變（不是新增一筆），欄位要
+        # 真的被改到。
+        status, pockets_before = _get("/api/assets/pockets")
+        count_before = len(pockets_before.get("pockets", []))
+        target_pocket = pockets_before["pockets"][0]
+        update_status, update_body = _post(
+            "/api/assets/pockets",
+            json.dumps({
+                "id": target_pocket["id"],
+                "name": target_pocket["name"],
+                "target_amount": target_pocket["target_amount"],
+                "note": "smoke-test-edit",
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        status, pockets_after = _get("/api/assets/pockets")
+        count_after = len(pockets_after.get("pockets", []))
+        updated = next(
+            (p for p in pockets_after["pockets"] if p["id"] == target_pocket["id"]),
+            None)
+        if (update_status == 200 and count_after == count_before
+                and updated is not None and updated.get("note") == "smoke-test-edit"):
+            print("PASS 帶 id 送出更新：總筆數不變、id 不變、欄位確實更新（編輯語意正確）")
+        else:
+            print("FAIL 編輯（帶 id 的 upsert）行為不符預期："
+                  "before=%d after=%d updated=%r" % (count_before, count_after, updated))
+            failures.append("pocket update semantics")
+
         # ---- 功能正確性比對：API 回傳是否跟直接呼叫底層共用函式一致 ----
         # 這幾支 router 的設計是「原封不動轉手底層函式的 dict，不重新
         #定義 schema」（見各 router docstring），所以「新 API 有沒有
