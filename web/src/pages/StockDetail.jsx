@@ -78,7 +78,7 @@ export default function StockDetail() {
   return (
     <div>
       <Link to="/dashboard" className="back-link">
-        <ChevronLeftIcon width={16} height={16} /> 回儀表板
+        <ChevronLeftIcon width={16} height={16} /> 回投資
       </Link>
 
       {error && <div className="error-box">載入失敗：{error}</div>}

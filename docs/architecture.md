@@ -1,4 +1,4 @@
-# STND 架構與使用方式（v1，2026-08-24）
+# STND 架構與使用方式（v2，2026-08-24；v2：「儀表板」分頁更名為「投資」）
 
 > 讀者：任何要接手 STND（= 本 repo，AlphaVibe）開發或討論工作的人／session。
 > 目的：不用重新爬程式碼就能搞懂「STND 現在長什麼樣、我該去哪裡改東西」。
@@ -8,7 +8,7 @@
 ## 一句話說明
 
 **STND 不是獨立專案，是這個 repo（AlphaVibe）對外的產品名字。** 所有分頁——首頁、
-儀表板、資產、相簿、未來可能的旅遊——全部住在同一個 repo 的 `app/`（FastAPI 後端）
+投資、資產、相簿、未來可能的旅遊——全部住在同一個 repo 的 `app/`（FastAPI 後端）
 與 `web/`（React 前端）裡，共用同一個資料庫、同一個部署單元。這是 2026-08-22
 明文定案的決策（見 `CLAUDE.md` 「STND 分頁與程式碼位置」節），刻意不拆成多個 repo，
 理由是同源部署可以省掉 CORS／auth 重新設計的成本。
@@ -18,7 +18,7 @@
 | 分頁 | 前端頁面 | 後端 router | 內容/資料來源 | 狀態 |
 |---|---|---|---|---|
 | 首頁 | `web/src/pages/Home.jsx` | `dashboard.py`（彙總其他分頁 API） | 本 repo | 已上線 |
-| 儀表板 | `Dashboard.jsx`／`StockDetail.jsx` | `holdings.py`／`screen.py`／`market_scan.py`／`stock_detail.py`／`actions.py`／`holdings_import.py` | `poc/kb-mcp/`（未重寫既有邏輯） | 已上線 |
+| 投資（原「儀表板」，2026-08-24 更名） | `Dashboard.jsx`／`StockDetail.jsx` | `holdings.py`／`screen.py`／`market_scan.py`／`stock_detail.py`／`actions.py`／`holdings_import.py` | `poc/kb-mcp/`（未重寫既有邏輯） | 已上線 |
 | 資產 | `Assets.jsx` | `assets.py` | `kb_store.py` 新增的 5 張表 | 已上線 |
 | 相簿 | `Photos.jsx` | 尚無 | 未定 | 僅 MVP 空殼入口 |
 | 旅遊 | 尚未建立 | 尚未建立 | 內容來自**另一個獨立專案** `/Users/stander/My_project/mytravel/`，但程式碼仍會建在本 repo | 未開始，整合深度待 PO 決定，不要預設 |
@@ -34,7 +34,7 @@
   渲染當前分頁內容。
 - **分頁清單的權威來源**：`web/src/components/AppShell.jsx` 的 `TABS` 常數
   （第 5-10 行）——導覽列上顯示哪些分頁、順序、圖示，都由這個陣列決定。目前只有
-  4 個（首頁／儀表板／資產／相簿），「旅遊」還沒被加進來。
+  4 個（首頁／投資／資產／相簿），「旅遊」還沒被加進來。
 - **共用元件**：`AppShell.jsx`（導覽外殼＋Outlet）、`ThemeToggle.jsx`（深色/淺色）、
   `icons.jsx`、`api/client.js`（API 呼叫封裝）、`styles/tokens.css`+`styles/app.css`
   （配色/樣式）、`theme.js`（主題邏輯）、`main.jsx`（Vite 標準入口）。

@@ -1,4 +1,4 @@
-# AlphaVibe 專案指南（v3，2026-08-22；v3：STND 個人主控台正式上線）
+# AlphaVibe 專案指南（v4，2026-08-24；v4：「儀表板」分頁更名為「投資」）
 
 ## 這個 repo 是什麼
 
@@ -30,7 +30,7 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 | 分頁 | 前端頁面 | 後端 router | 內容/資料來源 |
 |---|---|---|---|
 | 首頁 | `web/src/pages/Home.jsx` | 彙總其他分頁 API | 本 repo |
-| 儀表板 | `Dashboard.jsx`／`StockDetail.jsx` | `dashboard.py`／`screen.py`／`market_scan.py`／`holdings.py`／`holdings_import.py`／`stock_detail.py`／`actions.py` | `poc/kb-mcp/`（report.py／screener.py／frameworks.py，未重寫） |
+| 投資（原「儀表板」，2026-08-24 更名） | `Dashboard.jsx`／`StockDetail.jsx` | `dashboard.py`／`screen.py`／`market_scan.py`／`holdings.py`／`holdings_import.py`／`stock_detail.py`／`actions.py` | `poc/kb-mcp/`（report.py／screener.py／frameworks.py，未重寫） |
 | 資產 | `Assets.jsx` | `assets.py` | `kb_store.py` 新增 5 張表，手動輸入，無外部依賴 |
 | 相簿 | `Photos.jsx`（MVP 僅入口） | 尚無 | 未來：AutoGallery 資料模型參考（僅有 README 內容，本機實際 repo 路徑未定位到，見 clarification-log） |
 | 旅遊（未來，尚未建立） | — | — | 內容/研究在**另一個獨立專案** `/Users/stander/My_project/mytravel/`——若要做這個分頁，程式碼仍會建在這個 repo，但要不要整合 mytravel 的資料、整合到多深，屬於獨立待討論的範圍決策，不要預設 |
@@ -210,6 +210,22 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
   `check_same_thread=False`；`test_smoke.py` 補上 30 併發請求的回歸
   測試（位置修正在 `finally:` 之前）＋ server log 改導向暫存檔不阻塞；
   正式服務已重啟套用修復並在真實 ngrok 網址驗證 30/30 通過
+
+- 2026-08-24｜情境：PO 反映口語討論時「投資」（分頁）跟「投資」（領域）
+  容易搞混，決定把 UI 顯示名稱從「儀表板」改成「投資」
+  ｜教訓：這是純顯示文字＋現況參考文件的更名，刻意不動 URL 路由
+  （`/dashboard` 維持不變）、Python 函式/檔名（`dashboard.py`／
+  `render_dashboard()`）、測試斷言字串、以及 `docs/spec-intake/` 下已
+  Accepted 的歷史決策文件（`product-spec.md`／`clarification-log.md`／
+  `roadmap.md` 等維持原始「儀表板」用字，不追溯竄改決策紀錄）——route
+  slug 與顯示 label 本來就可以不同步，`report_server.py` 也有類似先例
+  （路由故意不隨改版而動，避免破壞書籤/測試）
+  ｜動作：`web/src/components/AppShell.jsx`（nav label＋註解）、
+  `web/src/pages/Dashboard.jsx`（H1＋註解）、`web/src/pages/StockDetail.jsx`
+  （返回連結文字）、本檔案「STND 分頁與程式碼位置」表、
+  `docs/architecture.md` 分頁地圖與相關敘述已同步改為「投資」；分支
+  `function/rename-dashboard-investment`，走一般 PR 流程，未觸碰正式
+  服務（`web/dist/` 是既有建置產物，本次未重新 `npm run build`）
 
 - 2026-08-19｜情境：為個股詳情頁新增卡片時，連續四次寫出會誤判的測試斷言——`assertNotIn("conc-fill", page)`、`assertNotIn("完成比例", page)`、`assertIn("verdict--alert", page)`、`page.index("stock-row__delta")` 全都命中了頁面裡的 CSS 定義或說明文字，而不是實際渲染出來的元素
   ｜教訓：`report.py` 把整份 `CSS` 常數**內嵌進每一個頁面**（`<style>%s</style>` % CSS），所以任何拿 class 名稱或 CSS 片語去 grep 頁面字串的斷言，都會先命中樣式定義，位置與存在性判斷全錯。同理，說明文字裡也常包含 UI 標籤字（例：「因此算不出**完成比例**」會讓 `assertNotIn("完成比例")` 失敗）

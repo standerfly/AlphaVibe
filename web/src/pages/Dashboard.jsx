@@ -9,7 +9,7 @@ const FILTERS = [
   { key: 'research', label: '研究中' },
 ]
 
-/* 儀表板：GET /api/holdings，接上搜尋關鍵字（q）、篩選 tab（filter）、
+/* 投資分頁：GET /api/holdings，接上搜尋關鍵字（q）、篩選 tab（filter）、
    分頁（page）三個 query string 參數——三者都用 useSearchParams 存進
    網址，重新整理／分享連結時篩選狀態不會消失。搜尋輸入框跟網址參數之間
    加 300ms debounce，避免每敲一個字就打一次 API。 */
@@ -58,7 +58,7 @@ export default function Dashboard() {
   return (
     <div>
       <div className="page-title">
-        <h1>儀表板</h1>
+        <h1>投資</h1>
       </div>
 
       <div className="stocklist-search">
