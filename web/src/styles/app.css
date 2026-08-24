@@ -284,6 +284,25 @@ details.collapse summary::marker { color: var(--accent); }
 .preview-table th, .preview-table td { padding: .4rem .6rem; border-bottom: 1px solid var(--rule); text-align: left; }
 .preview-table th { color: var(--ink-dim); font-weight: 600; font-size: .74rem; }
 
+/* 投資分頁「主題集中度」卡（2026-08-24 新增，見 Dashboard.jsx
+   ThemeConcentrationCard）：橫條沿用資產分頁既有 .progress-track／
+   .progress-fill，這裡只加卡片內部排版與「達參考上限」的警示色
+   modifier（.is-alert 用紅色——跟 .progress-fill.is-over 的綠色相反，
+   因為「集中度過高」是風險提示不是正向進度，不能沿用 is-over 語意）。 */
+.theme-conc-row { margin-bottom: .7rem; }
+.theme-conc-row:last-of-type { margin-bottom: 0; }
+.theme-conc-row__label { display: flex; justify-content: space-between; align-items: baseline;
+  font-size: .84rem; font-weight: 600; gap: .5rem; }
+.theme-conc-row__pct { font-variant-numeric: tabular-nums; color: var(--ink-dim); font-weight: 700; }
+.theme-conc-row__value { font-size: .74rem; color: var(--ink-dim); margin-top: .2rem;
+  text-align: right; font-variant-numeric: tabular-nums; }
+.progress-fill.is-alert { background: var(--red); }
+
+/* 投資分頁清單卡片：每列補上一行產業別／投資主題徽章（2026-08-24 新增，
+   見 Dashboard.jsx stock-row__tag-line），沒有資料時顯示「未分類」，
+   不留白造成誤會（比照既有「尚無立場」的處理原則）。 */
+.stock-row__tag-line { display: flex; gap: .35rem; margin-top: .3rem; flex-wrap: wrap; }
+
 @media (max-width: 640px) {
   .pocket-grid { grid-template-columns: 1fr; }
   .buildup-grid { grid-template-columns: repeat(3, 1fr); }

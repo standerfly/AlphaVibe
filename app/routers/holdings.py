@@ -136,10 +136,19 @@ def get_holdings_list(
       `研究中 <research_count>`）。
     - `results`：本頁（`STOCKLIST_PAGE_SIZE`＝10 筆一頁）股票清單，每筆
       含 `code`／`name`／`is_holding`／`price`／`delta_pct`／
-      `has_concern`／`status_text`／`stance`／`reason`（欄位定義見
-      `report._tracked_stock_rows()` docstring；`stance`／`reason`
-      是 2026-08-24 補回的假說清單欄位，沒有立場紀錄的代碼兩者皆為
-      `None`，不是漏欄位）。
+      `has_concern`／`status_text`／`stance`／`reason`／
+      `industry_category`／`theme`（欄位定義見
+      `report._tracked_stock_rows()` docstring；`stance`／`reason`是
+      2026-08-24 補回的假說清單欄位，`industry_category`／`theme`是
+      2026-08-24 同天再補回的主題集中度待辦欄位，沒有對應資料的代碼
+      皆為 `None`，不是漏欄位）。
+    - `theme_concentration`：主題集中度加總表（`report.
+      _theme_concentration_data()`，2026-08-24 新增），結構為
+      `{"total_value", "themes": [{"theme", "market_value",
+      "portfolio_pct"}, ...]}`。**刻意對全部持股計算，不受本次請求的
+      `filter`／`q`／`page` 影響**——這是投資組合層級的聚合指標，理由
+      同該函式 docstring：用分頁後的子集合算，數字會隨翻頁跳動、失去
+      意義。沒有任何已標記主題且已標價的持股時 `themes` 為空清單。
     """
     filter_key = filter if filter in _VALID_FILTERS else "all"
     search_query = (q or "").strip()
@@ -177,6 +186,13 @@ def get_holdings_list(
         {k: v for k, v in r.items() if k != "spark_html"} for r in page_rows
     ]
 
+    # 主題集中度（2026-08-24 新增）：刻意對全部持股計算（report.
+    # _theme_concentration_data() 內部直接呼叫 _portfolio_context()
+    # 重新查 store.get_holdings() 最新快照），不是對上面 filter／q／page
+    # 篩選過的 all_rows/rows/page_rows 算——見該函式與本檔案開頭
+    # docstring「theme_concentration」段落的說明。
+    theme_concentration = report._theme_concentration_data(store)  # noqa: SLF001  (刻意重用既有邏輯，見檔案 docstring)
+
     return {
         "filter": filter_key,
         "query": search_query,
@@ -187,4 +203,5 @@ def get_holdings_list(
         "holdings_count": holdings_count,
         "research_count": research_count,
         "results": results,
+        "theme_concentration": theme_concentration,
     }
