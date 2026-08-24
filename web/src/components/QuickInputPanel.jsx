@@ -420,7 +420,7 @@ function HoldingsImportForm({ onSuccess }) {
                 <td>{r.code}</td>
                 <td>{r.name || '—'}</td>
                 <td>{r.shares != null ? r.shares : '—'}</td>
-                <td>{r.avg_cost != null ? r.avg_cost : '—'}</td>
+                <td>{r.avg_cost != null ? r.avg_cost.toFixed(2) : '—'}</td>
                 <td>{r.is_emerging ? '是' : ''}</td>
               </tr>
             ))}
