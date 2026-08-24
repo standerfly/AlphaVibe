@@ -325,6 +325,52 @@ def main() -> int:
                              ensure_ascii=False))
             failures.append("holdings stance/reason missing")
 
+        # industry_category/theme（2026-08-24 新增，投資分頁主題集中度
+        # 待辦）：跟上面 stance/reason 同一個精神——存在性＋非空值雙重
+        # 檢查，不只驗證形狀。測試庫第一頁已知混有兩種代碼：8299（有
+        # theme 無 industry_category）與多檔研究中代碼（有
+        # industry_category 無 theme），所以兩欄各自都該至少有一筆非
+        # None，同時也該至少有一筆是 None（確認查無資料時是 None 不是
+        # 拋錯或缺欄位）。
+        has_industry_theme_key = all(
+            "industry_category" in r and "theme" in r for r in results)
+        has_nonnull_industry = any(r.get("industry_category") for r in results)
+        has_nonnull_theme = any(r.get("theme") for r in results)
+        if has_industry_theme_key and has_nonnull_industry and has_nonnull_theme:
+            print("PASS /api/holdings 每筆都有 industry_category/theme 欄位，且各至少一筆非空")
+        else:
+            print("FAIL /api/holdings 的 industry_category/theme 欄位缺漏或全部是空值")
+            print("  results industry_category/theme 樣本：",
+                  json.dumps([{"code": r.get("code"),
+                               "industry_category": r.get("industry_category"),
+                               "theme": r.get("theme")} for r in results[:5]],
+                             ensure_ascii=False))
+            failures.append("holdings industry_category/theme missing")
+
+        # theme_concentration（2026-08-24 新增，投資分頁主題集中度待辦）：
+        # 跟上面 /api/screen／/api/market-scan 同一個比對精神——直接呼叫
+        # 底層 report._theme_concentration_data() 拿「正確答案」，跟 API
+        # 回傳逐欄比對，不是只驗證「有回傳東西」。這裡刻意用獨立的
+        # store3（而非上面已關閉的 store2）避免跟前面的 with 區塊搶
+        # 連線生命週期。
+        store3 = KBStore(data_dir)
+        try:
+            expected_theme_conc = report._theme_concentration_data(store3)  # noqa: SLF001
+        finally:
+            store3.close()
+        actual_theme_conc = (holdings_body or {}).get("theme_concentration")
+        norm_expected_theme_conc = json.loads(json.dumps(expected_theme_conc))
+        if norm_expected_theme_conc == actual_theme_conc:
+            print("PASS /api/holdings 的 theme_concentration 跟 "
+                  "report._theme_concentration_data() 一致（%d 個主題，"
+                  "total_value=%s）" % (len(expected_theme_conc["themes"]),
+                                       expected_theme_conc["total_value"]))
+        else:
+            print("FAIL /api/holdings 的 theme_concentration 跟底層函式不一致")
+            print("  expected:", json.dumps(norm_expected_theme_conc, ensure_ascii=False))
+            print("  actual  :", json.dumps(actual_theme_conc, ensure_ascii=False))
+            failures.append("theme_concentration mismatch")
+
         # MCP：直接呼叫 handle_mcp_post() 跟透過 HTTP 打 /mcp，應該是
         # 完全一樣的 (status, body)——這是唯一邏輯完全共用、風險最低的
         # router，理論上該逐位元組相等。ALPHAVIBE_MCP_TOKEN 沒設定時

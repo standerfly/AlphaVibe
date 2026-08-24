@@ -34,6 +34,51 @@ function stanceBadgeClass(stance) {
   return 'badge-neutral'
 }
 
+/* 主題集中度卡（2026-08-24 新增，投資分頁待辦第5項）：呈現 GET
+   /api/holdings 回傳的 `theme_concentration`（report._theme_
+   concentration_data() 結構化版本，跟舊版 poc/kb-mcp/report.py
+   _render_holdings_section() 的「主題集中度」HTML 表格同一份演算法，見
+   該函式 docstring）。這是投資組合層級的聚合，不受 filter／q／page
+   影響，所以刻意放在「追蹤清單」子頁籤最上方、篩選/搜尋列之前——換
+   filter tab 或翻頁不會讓這張卡的數字跳動。用 .progress-track／
+   .progress-fill（既有「資產」分頁建倉進度條樣式）畫橫條，不引入新的
+   圖表套件；比例達主題集中度參考上限（review_engine.
+   THEME_CONCENTRATION_WARN_PCT＝50%，跟舊版 HTML 頁面提示文字一致）時
+   套用 .is-alert 改用警示色，呼應舊版「達參考上限」的既有語意。 */
+function ThemeConcentrationCard({ data }) {
+  const { themes } = data
+  return (
+    <section className="card">
+      <div className="card__head"><h2>主題集中度</h2></div>
+      <div className="card__body">
+        {themes.length === 0 && (
+          <p className="empty">尚無已標記主題且已更新價格的持股。</p>
+        )}
+        {themes.map((t) => (
+          <div className="theme-conc-row" key={t.theme}>
+            <div className="theme-conc-row__label">
+              <span>{t.theme}</span>
+              <span className="theme-conc-row__pct">{t.portfolio_pct.toFixed(1)}%</span>
+            </div>
+            <div className="progress-track">
+              <div
+                className={'progress-fill' + (t.portfolio_pct >= 50 ? ' is-alert' : '')}
+                style={{ width: `${Math.min(t.portfolio_pct, 100)}%` }}
+              />
+            </div>
+            <div className="theme-conc-row__value">
+              {Math.round(t.market_value).toLocaleString('zh-TW')} 元
+            </div>
+          </div>
+        ))}
+        {themes.length > 0 && (
+          <p className="meta">僅計入已標記主題且已更新價格的持股；單一主題參考上限 50%</p>
+        )}
+      </div>
+    </section>
+  )
+}
+
 /* 投資分頁：GET /api/holdings，接上搜尋關鍵字（q）、篩選 tab（filter）、
    分頁（page）三個 query string 參數——三者都用 useSearchParams 存進
    網址，重新整理／分享連結時篩選狀態不會消失。搜尋輸入框跟網址參數之間
@@ -125,6 +170,10 @@ export default function Dashboard() {
         <>
           <QuickInputPanel onDataChanged={() => setRefreshKey((k) => k + 1)} />
 
+          {data && data.theme_concentration && (
+            <ThemeConcentrationCard data={data.theme_concentration} />
+          )}
+
           <div className="stocklist-search">
             <SearchIcon width={16} height={16} />
             <input
@@ -172,6 +221,10 @@ export default function Dashboard() {
                       <span className="stock-row__name">{r.name || r.code}</span>
                       <span className="stock-row__code">{r.code}</span>
                       {r.is_holding && <span className="badge badge-neutral">庫存中</span>}
+                    </div>
+                    <div className="stock-row__tag-line">
+                      <span className="badge badge-neutral">{r.industry_category || '產業未分類'}</span>
+                      <span className="badge badge-neutral">{r.theme || '主題未分類'}</span>
                     </div>
                     <div className="stock-row__sub">{r.status_text}</div>
                     <div className="stock-row__stance-line">

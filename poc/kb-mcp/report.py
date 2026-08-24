@@ -1051,7 +1051,13 @@ def _tracked_stock_rows(store):
     寫法是一次查表分攤到每一列，不逐列各查一次 get_latest_stance()——
     這裡沿用同一份既有寫法，不是另外發明查詢方式）。沒有任何立場紀錄的
     代碼（例如剛加入研究、還沒建立過立場）兩欄皆為 None，呼叫端自行決定
-    空狀態顯示方式。"""
+    空狀態顯示方式。
+
+    industry_category/theme（2026-08-24 補回，投資分頁主題集中度待辦）：
+    來源同 _render_holdings_section() 逐列顯示的兩欄
+    （store.get_stock_industries()／store.get_stock_theme()，代碼查不到
+    時各自回傳的 dict 沒有這個 key，用 .get(code, {}).get(...) 拿到
+    None），沿用同一份既有查詢方式，不逐列各查一次。"""
     stances = store.list_stances()
     stance_by_code = {s["code"]: s for s in stances}
     holdings = store.get_holdings()["holdings"]
@@ -1060,6 +1066,8 @@ def _tracked_stock_rows(store):
     all_codes = list(dict.fromkeys(
         [h["code"] for h in holdings] + [s["code"] for s in stances]))
     price_map = store.get_stock_prices()
+    industry_map = store.get_stock_industries()
+    theme_map = store.get_stock_theme()
 
     rows = []
     for code in all_codes:
@@ -1090,6 +1098,8 @@ def _tracked_stock_rows(store):
             "spark_html": spark_html,
             "stance": stance_row.get("stance") if stance_row else None,
             "reason": stance_row.get("reason") if stance_row else None,
+            "industry_category": industry_map.get(code, {}).get("industry_category"),
+            "theme": theme_map.get(code, {}).get("theme"),
         })
     return rows
 
@@ -1624,6 +1634,49 @@ def _portfolio_context(store):
             market_values[h["code"]] = h["shares"] * info["price"]
     total_value = sum(market_values.values())
     return holdings, market_values, total_value
+
+
+def _theme_concentration_data(store):
+    """主題集中度加總表的結構化版本（2026-08-24 新增，投資分頁待辦第5項）
+    ——供 GET /api/holdings 使用。跟 _render_holdings_section()「主題
+    集中度」小節、review_engine._portfolio_position_context() 的
+    theme_totals 計算是同一份演算法（市值＝股數×快取股價；只把有標記
+    主題且已有市值的持股依主題分組加總，分母是全部「有市值資料」持股的
+    市值總和）——這裡不重新發明公式，只是把輸出從 HTML 字串／單一代碼
+    的兩個標量，換成前端可以直接渲染的完整清單，直接呼叫 _portfolio_
+    context() 取得跟其餘頁面完全一致的市值計算結果，不自己重算一遍。
+
+    刻意對**全部持股**（store.get_holdings() 的最新快照）計算，不受
+    /api/holdings 的 filter／q／page 影響——主題集中度是投資組合層級的
+    聚合指標，用分頁後的子集合算會讓數字隨翻頁跳動、失去意義。
+
+    回傳 {"total_value": 全部已標價持股市值總和,
+    "themes": [{"theme", "market_value", "portfolio_pct"}, ...]}，
+    themes 依市值由大到小排序（比照 _render_holdings_section() 既有
+    排序）。沒有任何已標記主題且已標價的持股時，themes 回傳空清單
+    （比照 _render_holdings_section() 的 `if theme_totals and
+    total_value` 既有判斷，避免除以零）。"""
+    holdings, market_values, total_value = _portfolio_context(store)
+    theme_map = store.get_stock_theme()
+
+    theme_totals = {}
+    for h in holdings:
+        value = market_values.get(h["code"])
+        if value is None:
+            continue
+        theme = theme_map.get(h["code"], {}).get("theme")
+        if theme:
+            theme_totals[theme] = theme_totals.get(theme, 0) + value
+
+    themes = []
+    if theme_totals and total_value:
+        for theme, value in sorted(theme_totals.items(), key=lambda kv: -kv[1]):
+            themes.append({
+                "theme": theme,
+                "market_value": value,
+                "portfolio_pct": value / total_value * 100,
+            })
+    return {"total_value": total_value, "themes": themes}
 
 
 def _combo_chart_aligned_trades(prices, entries):
