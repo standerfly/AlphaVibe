@@ -251,6 +251,37 @@ In-Scope（Q-042），不再屬於此清單**。
 - 啟動方式（PO決定要啟動時）：「依 handoff-checklist.md 進行 spec-kit
   input 切分」→ 之後走 `speckit-specify` → plan → tasks → implement
   （見 ADR-0027）。
+- **2026-08-21 補充（Q-046）：推翻 Q-034／Q-045，poc/kb-mcp 全面重寫為
+  FastAPI + React**——Claude Code session 規劃「個人遠端服務擴建」
+  （現有 ngrok 網址 `chancefully-erosive-lilian.ngrok-free.dev` 背後就是
+  `poc/kb-mcp/report_server.py`），要新增首頁／儀表板／資產／相簿四個
+  分頁。討論後決定：**推翻 Q-034（local-first，不需服務化架構）與
+  Q-045（先打磨到常用才談架構升級，非必要不接受月費）**，poc/kb-mcp
+  全面重寫為**FastAPI + React 輕量前後端分離**（前端 build 成靜態檔，
+  跟後端同一個 process／Docker image 服務，不是完整雙服務分離，不需要
+  重設計 CORS／認證）。理由：為未來功能擴充、維護性、docker 化打底。
+  - **遷移範圍**：不只是加新分頁——既有 `/screen`、`/market-scan`、
+    `/dashboard/stock/<code>`、5 個表單端點、MCP 連接器（`/mcp`）全部
+    一起遷移到新架構；`/report-classic` 舊版頁面決定停用不遷移。
+  - **資產分頁**：口袋（緊急預備金／危機加碼緩衝／核心0050累積／衛星
+    倉位）與帳戶皆做成使用者可自訂清單（非寫死）；建倉進度10月
+    checklist 可編輯、記實際投入金額；情境試算計算機；手動輸入不即時
+    串接 AlphaVibe 投資資料；**不做對帳單匯入解析**，需要時由使用者
+    請 agent 透過同一個更新 API／MCP write 工具協助寫入。
+  - **相簿分頁**：參考使用者既有 AutoGallery（Tkinter 原型）資料模型與
+    功能設計；Sigma dp 相機 X3F 檔轉 JPG 採混合模式（開源 x3f_tools
+    自動轉快速預覽＋Sigma Photo Pro 手動轉正式版，經查證 SPP 無法被
+    腳本自動化）；**MVP 階段僅做導覽入口，不含任何功能**，完整功能
+    延後到架構重寫、資產分頁都完成後才開工。
+  - **治理**：這次不另外跑正式 `/prespec` 流程，這段 Claude Code 對話
+    視同 pre-spec，直接在既有 `poc/kb-mcp/` 目錄動工。
+  - 完整規劃文件（含架構圖、既有功能遷移清單、資料模型 schema、實作
+    順序）：Claude Artifact
+    `https://claude.ai/code/artifact/f6670921-c206-42d3-8198-e9d9f63de05a`；
+    視覺 mockup（四分頁畫面稿）：Claude Artifact
+    `https://claude.ai/code/artifact/d98f29ae-2eb5-448d-a397-d10976e86dfd`；
+    repo 內備份摘要：
+    `supporting-artifacts/2026-08-21-personal-console-expansion.md`。
 
 ## 給接手 session 的原則（Sonnet 級模型也適用）
 

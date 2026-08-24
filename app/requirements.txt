@@ -1,0 +1,6 @@
+# AlphaVibe app/ 骨架的新增依賴（2026-08-21，Python 3.9.6 上實測安裝成功）。
+# 這是 Q-046 已授權推翻「僅標準庫」限制後的第一批外部套件，刻意只裝
+# 用得到的兩個套件，不預先加其他東西——starlette 是 fastapi 的必要
+# transitive dependency，會自動一併裝好，不用在這裡重複列。
+fastapi==0.128.8
+uvicorn==0.39.0

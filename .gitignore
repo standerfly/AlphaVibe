@@ -8,3 +8,10 @@ __pycache__/
 
 # PoC 本地資料（知識庫內容不進版控）
 poc/data/
+
+# 隔離測試資料庫（2026-08-22 新建，供 app/ 測試用，複製自 poc/data/，
+# 不可指向正式路徑——見 app/deps.py::_resolve_data_dir 的教訓紀錄）
+poc/data-test/
+
+# app/ 骨架的虛擬環境（2026-08-21 新建，見 app/requirements.txt）
+.venv/

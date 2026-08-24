@@ -214,6 +214,53 @@ CREATE TABLE IF NOT EXISTS module_d_results (
 );
 CREATE INDEX IF NOT EXISTS idx_module_d_results_code ON module_d_results(code, checked_at DESC);
 CREATE INDEX IF NOT EXISTS idx_module_d_results_checked_at ON module_d_results(checked_at DESC);
+CREATE TABLE IF NOT EXISTS asset_pockets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    target_amount REAL,
+    note TEXT,
+    sort_order INTEGER DEFAULT 0,
+    archived INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS asset_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    category TEXT,
+    note TEXT,
+    archived INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS asset_holdings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pocket_id INTEGER NOT NULL REFERENCES asset_pockets(id),
+    account_id INTEGER NOT NULL REFERENCES asset_accounts(id),
+    amount REAL NOT NULL DEFAULT 0,
+    updated_at TEXT DEFAULT (datetime('now')),
+    note TEXT,
+    UNIQUE(pocket_id, account_id)
+);
+CREATE TABLE IF NOT EXISTS asset_buildup_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pocket_id INTEGER NOT NULL REFERENCES asset_pockets(id),
+    account_id INTEGER NOT NULL REFERENCES asset_accounts(id),
+    label TEXT NOT NULL,
+    total_months INTEGER NOT NULL,
+    monthly_target_amount REAL NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS asset_buildup_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id INTEGER NOT NULL REFERENCES asset_buildup_plans(id),
+    month_number INTEGER NOT NULL,
+    planned_amount REAL,
+    actual_amount REAL,
+    completed_at TEXT,
+    note TEXT,
+    UNIQUE(plan_id, month_number)
+);
 """
 
 # FR-057 模組D檢視結果表：trigger_type 只允許這三個值（對應通用檢視層／
@@ -284,11 +331,116 @@ class KBStore:
         self.philosophy_dir = os.path.join(self.data_dir, "philosophy")
         os.makedirs(self.philosophy_dir, exist_ok=True)
         self.db_path = os.path.join(self.data_dir, "alphavibe.db")
-        self.conn = sqlite3.connect(self.db_path)
+        # 2026-08-22 教訓：check_same_thread=False 是必要的，不是隨手加的
+        # 選項。report_server.py（ThreadingHTTPServer）每個請求從頭到尾
+        # 都在同一條執行緒處理，原本不需要這個參數；但 app/deps.py 的
+        # get_kb_store() 是 FastAPI 的 sync generator dependency，
+        # Starlette 用 anyio thread pool 執行——同一個 request 的
+        # 「建立」（yield 前）跟「關閉」（finally，yield 後）**不保證
+        # 在同一條 pool worker thread 上執行**，正式環境併發測試 30 個
+        # request 有 23 個因為這個原因 500（sqlite3.ProgrammingError:
+        # SQLite objects created in a thread can only be used in that
+        # same thread）。這裡的用法本身沒有真正跨執行緒併發存取同一個
+        # connection（每個 request 各自建立、各自關閉，生命週期不重疊），
+        # 只是「同一段邏輯的不同階段」剛好被排到不同 thread，
+        # check_same_thread=False 關掉的正是這個誤判，不是關掉真正的
+        # 併發保護——sqlite3 連線本身仍然只會被單一 request 依序使用。
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
         self.conn.commit()
         self._migrate()
+        # 2026-08-22 教訓：這裡原本無條件呼叫 self._seed_asset_defaults()，
+        # 導致「任何」建立 KBStore 的呼叫端都會觸發種子資料寫入——不只是
+        # 新 app/ 的測試埠，連 market_scan.py 這種每天 02:00 排程、每次
+        # 都重新讀取磁碟上最新 kb_store.py 的既有腳本也會中招（排程本身
+        # 沒有錯，錯在這裡把「使用者資料初始化」跟「物件建構」綁在一起）。
+        # 修正：種子資料改成完全獨立、需要明確呼叫的動作，見
+        # seed_asset_defaults()（已移除前導底線，開放給外部明確呼叫）與
+        # poc/kb-mcp/seed_assets_once.py。KBStore.__init__() 之後不會再
+        # 因為「表是空的」就自動寫入任何資料。
+
+    def seed_asset_defaults(self):
+        """資產分頁初始種子資料（Q-046 第5節 Step 4）：只在 asset_pockets
+        表完全空的時候寫入一次，重複呼叫不會重複塞資料——這是使用者現在
+        的真實現況（口袋/帳戶/初始餘額/建倉計畫進度），不是 demo 假資料，
+        改動前請先跟需求方（roadmap.md Q-046）核對數字。
+
+        **這個方法不會被 KBStore.__init__() 自動呼叫**（2026-08-22 教訓，
+        見 __init__ 內的說明）——只能由呼叫端明確呼叫，目前唯一的呼叫點
+        是 poc/kb-mcp/seed_assets_once.py，一次性、由人手動執行。
+
+        寫入順序：口袋 → 帳戶 → 餘額 → 建倉計畫 → 10 筆進度 entries，
+        全部在同一個 transaction 內完成（任何一步失敗就整批不寫入，避免
+        半套資料）。"""
+        existing = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM asset_pockets").fetchone()["c"]
+        if existing:
+            return
+
+        pockets = [
+            ("緊急預備金", 600000),
+            ("危機加碼緩衝", 500000),
+            ("核心0050累積", 1200000),
+            ("衛星倉位", 500000),
+        ]
+        pocket_ids = {}
+        for name, target in pockets:
+            cur = self.conn.execute(
+                "INSERT INTO asset_pockets (name, target_amount) VALUES (?, ?)",
+                (name, target),
+            )
+            pocket_ids[name] = cur.lastrowid
+
+        accounts = [
+            ("銀行TS", "銀行"),
+            ("銀行KT", "銀行"),
+            ("銀行HN", "銀行"),
+            ("證券HN·原有部位", "證券"),
+            ("證券HN·分批投入", "證券"),
+            ("證券KT", "證券"),
+        ]
+        account_ids = {}
+        for name, category in accounts:
+            cur = self.conn.execute(
+                "INSERT INTO asset_accounts (name, category) VALUES (?, ?)",
+                (name, category),
+            )
+            account_ids[name] = cur.lastrowid
+
+        holdings = [
+            ("緊急預備金", "銀行TS", 600000),
+            ("危機加碼緩衝", "銀行KT", 300000),
+            ("危機加碼緩衝", "銀行HN", 200000),
+            ("核心0050累積", "證券HN·原有部位", 800000),
+            # 建倉計畫尚未開始，這裡刻意是 0，不塞假的已完成進度。
+            ("核心0050累積", "證券HN·分批投入", 0),
+            ("衛星倉位", "證券KT", 500000),
+        ]
+        for pocket_name, account_name, amount in holdings:
+            self.conn.execute(
+                "INSERT INTO asset_holdings (pocket_id, account_id, amount)"
+                " VALUES (?, ?, ?)",
+                (pocket_ids[pocket_name], account_ids[account_name], amount),
+            )
+
+        plan_cur = self.conn.execute(
+            "INSERT INTO asset_buildup_plans"
+            " (pocket_id, account_id, label, total_months, monthly_target_amount)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (pocket_ids["核心0050累積"], account_ids["證券HN·分批投入"],
+             "核心0050累積建倉計畫", 10, 40000),
+        )
+        plan_id = plan_cur.lastrowid
+        for month_number in range(1, 11):
+            self.conn.execute(
+                "INSERT INTO asset_buildup_entries"
+                " (plan_id, month_number, planned_amount, actual_amount, completed_at)"
+                " VALUES (?, ?, ?, NULL, NULL)",
+                (plan_id, month_number, 40000),
+            )
+
+        self.conn.commit()
 
     def _migrate(self):
         """輕量欄位遷移：CREATE TABLE IF NOT EXISTS 只對全新資料庫有效，
@@ -1214,3 +1366,310 @@ class KBStore:
                     "available": [m["module"] for m in self.list_philosophy()["modules"]]}
         with open(path, encoding="utf-8") as fh:
             return {"module": module, "content": fh.read()}
+
+    # ---------- 資產分頁：口袋／帳戶／餘額／建倉計畫（Q-046 第5節 Step 4）----------
+    # 「刪除」一律採封存（archived=1），不做硬刪——之前規劃已定案，見
+    # docs/spec-intake/alphavibe/roadmap.md Q-046。
+
+    def list_asset_pockets(self, include_archived=False):
+        """列出口袋，附 `current_amount`（JOIN asset_holdings 加總該口袋
+        底下所有帳戶的餘額，方便前端直接拿來算進度條，不用自己再查一次
+        /api/assets/holdings 湊資料）。"""
+        query = (
+            "SELECT p.id, p.name, p.target_amount, p.note, p.sort_order,"
+            " p.archived, p.created_at, p.updated_at,"
+            " COALESCE(SUM(h.amount), 0) AS current_amount"
+            " FROM asset_pockets p"
+            " LEFT JOIN asset_holdings h ON h.pocket_id = p.id"
+        )
+        if not include_archived:
+            query += " WHERE p.archived = 0"
+        query += " GROUP BY p.id ORDER BY p.sort_order, p.id"
+        rows = self.conn.execute(query).fetchall()
+        return [dict(r) for r in rows]
+
+    def save_asset_pocket(self, id=None, name=None, target_amount=None,
+                          note=None, sort_order=0):
+        """新增或更新口袋：`id` 為 None 時新增，帶 `id` 時更新該筆（比照
+        `save_position_plan()` INSERT OR REPLACE 的精神，但這裡表的主鍵是
+        AUTOINCREMENT，不是自然鍵，所以用「查得到就 UPDATE、查不到就
+        INSERT」而非 INSERT OR REPLACE，避免帶 id 更新時意外重新指派
+        rowid）。"""
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("name 為必填")
+        now = _now()
+        if id is None:
+            cur = self.conn.execute(
+                "INSERT INTO asset_pockets"
+                " (name, target_amount, note, sort_order, updated_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (name, target_amount, note, sort_order or 0, now),
+            )
+            pocket_id = cur.lastrowid
+        else:
+            existing = self.conn.execute(
+                "SELECT id FROM asset_pockets WHERE id=?", (id,)).fetchone()
+            if not existing:
+                raise ValueError("找不到口袋 id=%s" % id)
+            self.conn.execute(
+                "UPDATE asset_pockets SET name=?, target_amount=?, note=?,"
+                " sort_order=?, updated_at=? WHERE id=?",
+                (name, target_amount, note, sort_order or 0, now, id),
+            )
+            pocket_id = id
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT * FROM asset_pockets WHERE id=?", (pocket_id,)).fetchone()
+        return dict(row)
+
+    def archive_asset_pocket(self, id):
+        now = _now()
+        cur = self.conn.execute(
+            "UPDATE asset_pockets SET archived=1, updated_at=? WHERE id=?",
+            (now, id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError("找不到口袋 id=%s" % id)
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT * FROM asset_pockets WHERE id=?", (id,)).fetchone()
+        return dict(row)
+
+    def list_asset_accounts(self, include_archived=False):
+        query = "SELECT * FROM asset_accounts"
+        if not include_archived:
+            query += " WHERE archived = 0"
+        query += " ORDER BY id"
+        rows = self.conn.execute(query).fetchall()
+        return [dict(r) for r in rows]
+
+    def save_asset_account(self, id=None, name=None, category=None, note=None):
+        """新增或更新帳戶，邏輯對稱 `save_asset_pocket()`（帳戶沒有
+        `sort_order`——目前規格沒要求帳戶可排序，見 API 規格）。"""
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("name 為必填")
+        now = _now()
+        if id is None:
+            cur = self.conn.execute(
+                "INSERT INTO asset_accounts (name, category, note, updated_at)"
+                " VALUES (?, ?, ?, ?)",
+                (name, category, note, now),
+            )
+            account_id = cur.lastrowid
+        else:
+            existing = self.conn.execute(
+                "SELECT id FROM asset_accounts WHERE id=?", (id,)).fetchone()
+            if not existing:
+                raise ValueError("找不到帳戶 id=%s" % id)
+            self.conn.execute(
+                "UPDATE asset_accounts SET name=?, category=?, note=?,"
+                " updated_at=? WHERE id=?",
+                (name, category, note, now, id),
+            )
+            account_id = id
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT * FROM asset_accounts WHERE id=?", (account_id,)).fetchone()
+        return dict(row)
+
+    def archive_asset_account(self, id):
+        now = _now()
+        cur = self.conn.execute(
+            "UPDATE asset_accounts SET archived=1, updated_at=? WHERE id=?",
+            (now, id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError("找不到帳戶 id=%s" % id)
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT * FROM asset_accounts WHERE id=?", (id,)).fetchone()
+        return dict(row)
+
+    def list_asset_holdings(self):
+        """列出所有餘額記錄，JOIN 出口袋／帳戶名稱方便前端直接顯示，不用
+        另外查 pockets/accounts 兩張表湊名字。"""
+        rows = self.conn.execute(
+            "SELECT h.id, h.pocket_id, p.name AS pocket_name, h.account_id,"
+            " a.name AS account_name, h.amount, h.updated_at, h.note"
+            " FROM asset_holdings h"
+            " JOIN asset_pockets p ON p.id = h.pocket_id"
+            " JOIN asset_accounts a ON a.id = h.account_id"
+            " ORDER BY p.sort_order, p.id, a.id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def upsert_asset_holding(self, pocket_id, account_id, amount, note=None):
+        """新增/更新某口袋×帳戶的餘額——這是**覆蓋**（設成 `amount` 這個
+        絕對值），不是累加。累加是 `complete_asset_buildup_month()` 內部
+        `_apply_asset_holding_delta()` 的專屬語意，兩者刻意分開避免呼叫端
+        搞混（呼叫這支方法永遠是「我現在要把餘額設成 X」）。"""
+        try:
+            amount = float(amount)
+        except (TypeError, ValueError):
+            raise ValueError("amount 必須是數字：%r" % (amount,))
+        if not self.conn.execute(
+            "SELECT id FROM asset_pockets WHERE id=?", (pocket_id,)
+        ).fetchone():
+            raise ValueError("找不到口袋 id=%s" % pocket_id)
+        if not self.conn.execute(
+            "SELECT id FROM asset_accounts WHERE id=?", (account_id,)
+        ).fetchone():
+            raise ValueError("找不到帳戶 id=%s" % account_id)
+        now = _now()
+        self.conn.execute(
+            "INSERT INTO asset_holdings (pocket_id, account_id, amount, note, updated_at)"
+            " VALUES (?, ?, ?, ?, ?)"
+            " ON CONFLICT(pocket_id, account_id) DO UPDATE SET"
+            " amount=excluded.amount, note=excluded.note, updated_at=excluded.updated_at",
+            (pocket_id, account_id, amount, note, now),
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT h.id, h.pocket_id, p.name AS pocket_name, h.account_id,"
+            " a.name AS account_name, h.amount, h.updated_at, h.note"
+            " FROM asset_holdings h"
+            " JOIN asset_pockets p ON p.id = h.pocket_id"
+            " JOIN asset_accounts a ON a.id = h.account_id"
+            " WHERE h.pocket_id=? AND h.account_id=?",
+            (pocket_id, account_id),
+        ).fetchone()
+        return dict(row)
+
+    def _apply_asset_holding_delta(self, pocket_id, account_id, delta):
+        """內部用：把 `delta`（可正可負）累加進某口袋×帳戶的餘額，記錄
+        不存在時視同從 0 開始（用 ON CONFLICT DO UPDATE 的 UPSERT，一次
+        處理「還沒有這筆記錄」與「已有記錄要累加」兩種情況）。呼叫端
+        （`complete_asset_buildup_month()`／`undo_asset_buildup_month()`）
+        負責 commit，這裡不自行 commit，讓「更新 entry」與「更新
+        holdings」落在同一個 transaction。"""
+        now = _now()
+        self.conn.execute(
+            "INSERT INTO asset_holdings (pocket_id, account_id, amount, updated_at)"
+            " VALUES (?, ?, ?, ?)"
+            " ON CONFLICT(pocket_id, account_id) DO UPDATE SET"
+            " amount = amount + excluded.amount, updated_at = excluded.updated_at",
+            (pocket_id, account_id, delta, now),
+        )
+
+    def get_asset_buildup_plan_with_entries(self, plan_id):
+        """回傳建倉計畫本身＋10筆（或 total_months 筆）進度 entries，
+        附口袋／帳戶名稱方便前端顯示標題不用另外查表。查無此計畫回傳
+        None（呼叫端據此回 404，不要自己編一個空殼）。"""
+        plan_row = self.conn.execute(
+            "SELECT pl.*, p.name AS pocket_name, a.name AS account_name"
+            " FROM asset_buildup_plans pl"
+            " JOIN asset_pockets p ON p.id = pl.pocket_id"
+            " JOIN asset_accounts a ON a.id = pl.account_id"
+            " WHERE pl.id=?",
+            (plan_id,),
+        ).fetchone()
+        if not plan_row:
+            return None
+        entries = self.conn.execute(
+            "SELECT * FROM asset_buildup_entries WHERE plan_id=? ORDER BY month_number",
+            (plan_id,),
+        ).fetchall()
+        plan = dict(plan_row)
+        plan["entries"] = [dict(r) for r in entries]
+        return plan
+
+    def complete_asset_buildup_month(self, plan_id, month_number, actual_amount):
+        """把某個月的建倉進度標記完成，並把金額累加進對應的
+        asset_holdings 餘額——「更新 entry」與「累加 holdings」在同一個
+        transaction 內完成（呼叫端看到的結果永遠是兩者一致，不會出現
+        entry 顯示完成但 holdings 沒加到、或反過來的半套狀態）。
+
+        取消打勾的復原設計（見 undo_asset_buildup_month）：**不新增額外
+        欄位**記錄「上次套用金額」——`entries.actual_amount` 在完成狀態下
+        本身就等於「已套用進 asset_holdings 的金額」，取消時直接讀回這個
+        值扣回去即可，不需要重算整個口袋餘額（那種做法一來粗暴、二來會
+        把使用者透過 `upsert_asset_holding()` 手動調整過的部分一併蓋掉）。
+
+        額外處理「對已完成的月份重新打勾、金額跟上次不同」（更正輸入
+        錯誤）的情況：不是整批重算，是只把「新舊金額的差額」套用進
+        asset_holdings，語意等同「先扣回舊值、再加上新值」但只需一次
+        UPDATE。"""
+        try:
+            actual_amount = float(actual_amount)
+        except (TypeError, ValueError):
+            raise ValueError("actual_amount 必須是數字：%r" % (actual_amount,))
+        plan = self.conn.execute(
+            "SELECT * FROM asset_buildup_plans WHERE id=?", (plan_id,)
+        ).fetchone()
+        if not plan:
+            raise ValueError("找不到建倉計畫 id=%s" % plan_id)
+        entry = self.conn.execute(
+            "SELECT * FROM asset_buildup_entries WHERE plan_id=? AND month_number=?",
+            (plan_id, month_number),
+        ).fetchone()
+        if not entry:
+            raise ValueError(
+                "找不到第 %s 個月的進度記錄（plan_id=%s）" % (month_number, plan_id))
+
+        previous_applied = entry["actual_amount"] or 0.0
+        delta = actual_amount - previous_applied
+        now = _now()
+        self.conn.execute(
+            "UPDATE asset_buildup_entries SET actual_amount=?, completed_at=?"
+            " WHERE id=?",
+            (actual_amount, now, entry["id"]),
+        )
+        self._apply_asset_holding_delta(plan["pocket_id"], plan["account_id"], delta)
+        self.conn.commit()
+        updated_entry = self.conn.execute(
+            "SELECT * FROM asset_buildup_entries WHERE id=?", (entry["id"],)
+        ).fetchone()
+        holding = self.conn.execute(
+            "SELECT * FROM asset_holdings WHERE pocket_id=? AND account_id=?",
+            (plan["pocket_id"], plan["account_id"]),
+        ).fetchone()
+        return {"entry": dict(updated_entry),
+                "holding": dict(holding) if holding else None}
+
+    def undo_asset_buildup_month(self, plan_id, month_number):
+        """取消打勾：把 entry 設回未完成（`actual_amount`／`completed_at`
+        清成 NULL），並把當初完成時套用進 asset_holdings 的金額精確扣回去
+        （讀 entry 被清空前的 `actual_amount`，見
+        `complete_asset_buildup_month()` docstring 說明的復原設計）。
+
+        該月本來就未完成（`actual_amount` 已是 NULL）時視為 no-op，不當
+        錯誤：回傳 `undone: False` 讓呼叫端知道沒有東西可取消，而不是
+        丟一個「你在取消一個沒完成的東西」的 400——這種情況比較像是
+        呼叫端狀態過期（例如使用者連點兩次取消鍵），沒有必要當成錯誤。
+        """
+        plan = self.conn.execute(
+            "SELECT * FROM asset_buildup_plans WHERE id=?", (plan_id,)
+        ).fetchone()
+        if not plan:
+            raise ValueError("找不到建倉計畫 id=%s" % plan_id)
+        entry = self.conn.execute(
+            "SELECT * FROM asset_buildup_entries WHERE plan_id=? AND month_number=?",
+            (plan_id, month_number),
+        ).fetchone()
+        if not entry:
+            raise ValueError(
+                "找不到第 %s 個月的進度記錄（plan_id=%s）" % (month_number, plan_id))
+
+        if entry["actual_amount"] is None:
+            return {"entry": dict(entry), "holding": None, "undone": False}
+
+        previous_applied = entry["actual_amount"]
+        self.conn.execute(
+            "UPDATE asset_buildup_entries SET actual_amount=NULL, completed_at=NULL"
+            " WHERE id=?",
+            (entry["id"],),
+        )
+        self._apply_asset_holding_delta(
+            plan["pocket_id"], plan["account_id"], -previous_applied)
+        self.conn.commit()
+        updated_entry = self.conn.execute(
+            "SELECT * FROM asset_buildup_entries WHERE id=?", (entry["id"],)
+        ).fetchone()
+        holding = self.conn.execute(
+            "SELECT * FROM asset_holdings WHERE pocket_id=? AND account_id=?",
+            (plan["pocket_id"], plan["account_id"]),
+        ).fetchone()
+        return {"entry": dict(updated_entry),
+                "holding": dict(holding) if holding else None, "undone": True}
