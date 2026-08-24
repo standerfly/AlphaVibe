@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { apiGet } from '../api/client.js'
 import { SearchIcon } from '../components/icons.jsx'
+import QuickInputPanel from '../components/QuickInputPanel.jsx'
 
 const FILTERS = [
   { key: 'all', label: '全部' },
@@ -33,8 +34,12 @@ export default function Dashboard() {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
   const debounceRef = useRef(null)
+  // 快速輸入面板送出成功、且可能影響目前列表（加自選股／確認庫存匯入）
+  // 時遞增，觸發下面的 useEffect 重新查詢——理由見 QuickInputPanel.jsx
+  // 的 onDataChanged 註解。
+  const [refreshKey, setRefreshKey] = useState(0)
 
-  // 網址參數變動（切 tab／換頁／瀏覽器上一頁）時重新查詢。
+  // 網址參數變動（切 tab／換頁／瀏覽器上一頁）或 refreshKey 變動時重新查詢。
   useEffect(() => {
     let cancelled = false
     setError(null)
@@ -43,7 +48,7 @@ export default function Dashboard() {
       .then((d) => { if (!cancelled) setData(d) })
       .catch((err) => { if (!cancelled) setError(err.message) })
     return () => { cancelled = true }
-  }, [filter, page, urlQuery])
+  }, [filter, page, urlQuery, refreshKey])
 
   // 輸入框變動 debounce 300ms 後才寫回網址參數（同時重置頁碼到第 1 頁，
   // 跟後端「換搜尋字串／篩選 tab 就該重新從第一頁看」的既有慣例一致）。
@@ -69,6 +74,8 @@ export default function Dashboard() {
       <div className="page-title">
         <h1>投資</h1>
       </div>
+
+      <QuickInputPanel onDataChanged={() => setRefreshKey((k) => k + 1)} />
 
       <div className="stocklist-search">
         <SearchIcon width={16} height={16} />
