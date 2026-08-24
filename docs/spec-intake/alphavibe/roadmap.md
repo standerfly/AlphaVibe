@@ -107,6 +107,69 @@ In-Scope（Q-042），不再屬於此清單**。
   `kb_store.py`及對應MCP工具），需要在能存取正式伺服器程式碼的環境
   （本機或有權限的session）進行，雲端 session 這次碰不到。
 
+## STND（app/+web/）功能遷移缺口追蹤（2026-08-24 盤點）
+
+2026-08-22 從 `poc/kb-mcp/report_server.py` 切到新版 `app/`+`web/` 正式上線後，
+PO 實際使用「投資」分頁（原「儀表板」，2026-08-24 更名，見 CLAUDE.md「STND
+分頁與程式碼位置」）發現多項功能缺失，回報「少了好多功能」。已完整比對新舊
+兩套實作（方法：逐一讀完 `report.py` 全部 `render_*` 函式 vs `app/routers/*.py`
+回傳欄位 vs `web/src/pages/*.jsx` 實際渲染，含「後端資料已就緒但前端沒消費」
+這類單靠讀後端程式碼看不出來的落差），共 16 項，狀態隨完成即時更新於下。
+
+### 已完成
+
+- ✅ **假說清單（立場 stance＋理由 reason）**（2026-08-24，PR #8，已合併進
+  `function/alphavibe` 並部署上線）：`poc/kb-mcp/report.py`
+  `_tracked_stock_rows()` 補回 `stance`／`reason` 欄位（重用既有
+  `stance_by_code` 查表，未重寫商業邏輯），`web/src/pages/Dashboard.jsx`
+  每列加立場徽章＋理由行（截斷+title 顯示全文，無立場時顯示「尚無立場」）。
+  範圍**不含**產業別/投資主題/主題集中度加總表（見下方待辦第5項）。
+
+### 待辦（建議優先序，依 2026-08-24 盤點結論）
+
+1. **5 個快速輸入表單接上前端**（加自選股／記交易／老芋頭進出／交易明細表／
+   貼庫存匯入）——後端 API 全部就緒（`POST /api/watchlist`／`/api/trades`／
+   `/api/laoyutou-trades`／`/api/trade-ledger`，`app/routers/actions.py`；
+   `/api/holdings/preview`／`/confirm`，`holdings_import.py`），但
+   `web/src/api/client.js` 的 `apiPost` 目前只被 `Assets.jsx` 用到，投資相關
+   6 個寫入端點前端呼叫次數＝**0**。PO 現在完全無法透過網頁記交易/加自選股，
+   只能靠對話（MCP）。影響最大，建議優先做。
+2. **個股詳情頁走勢圖（進出場價格標記）**——舊版 `_render_combo_chart_svg()`
+   （`report.py:1650-1801`）：價格折線＋均價虛線＋買賣力道長條＋交易點位
+   紅（買）綠（賣）標記。新版後端 `stock_detail.py` 已把 `price_history`／
+   `ledger_entries`／`avg_cost` 準備好，只差前端畫圖——`StockDetail.jsx`
+   目前只把交易紀錄列成純文字清單，`price_history` 欄位從未被讀取。PO
+   2026-08-24 明確點名「進出場的價格位置」不見了就是這個。
+3. **選股篩選頁 `/screen` ＋ 全市場批次篩選頁 `/market-scan`**——後端 API
+   （`app/routers/screen.py`／`market_scan.py`）都在，前端 0 呼叫，無對應
+   頁面；市場掃描的「加入追蹤」寫入（`/market-scan/track`）也未遷移。
+4. **首頁「今日新候選」完整清單＋「策略設定」內容**——`GET /api/dashboard`
+   已回傳完整的 `today_new_candidates`／`strategy_settings` 資料
+   （`dashboard.py`），`Home.jsx` 目前只顯示候選**數字**，內容清單與策略
+   設定文字完全沒有前端消費端，等於做了一半。
+5. **主題集中度加總表＋持股清單的產業別/投資主題欄位**——舊版
+   `_render_holdings_section()`（`report.py:405-518`）有，新版無對應 API
+   欄位或呈現。優先度較低（非每日必用），可與第1項的表單一起規劃。
+
+### 已知刻意延後／已核准不遷移（不用主動處理，除非 PO 改變優先序）
+
+- 個股清單頁迷你走勢圖（sparkline）——`holdings.py` docstring 記載留給
+  前端之後自行設計，非本次範圍。
+- 個股詳情頁三個寫入操作（更新按鈕／留言心得／加碼計畫設定表單）、
+  `/dashboard/stocks/add`（清單頁直接加入研究）、CSV 批次匯入交易——
+  `app/main.py` 檔頭 docstring 明文列為刻意不遷移。
+- `/report-classic` 整頁（哲學模組檢視器／分析快照歷史／近期評論 feed）——
+  2026-08-21 規劃時已核准停用（見上方 Q-046 補充「遷移範圍」）。
+- 背景刷新中狀態提示、表單送出後的一次性成功/失敗訊息（flash）——新架構
+  是獨立 uvicorn process，跟舊版共用記憶體 state 的設計不相容，刻意不做；
+  後者連帶因為待辦第1項（表單）尚未接前端而暫時沒有意義，等表單做了再看
+  要不要補。
+
+接手任一項待辦前，先讀 `docs/architecture.md`「後端架構」節確認資料存取
+路徑（多數走 `Depends(get_kb_store)`），並比照上面已完成項目的做法：**不
+重寫 `poc/kb-mcp/` 既有商業邏輯**，`app/` 只補資料管線／HTTP 轉接，前端
+盡量重用既有 badge／樣式系統。
+
 ## 各階段接手指南
 
 ### 1b 試用累積（持續進行）
