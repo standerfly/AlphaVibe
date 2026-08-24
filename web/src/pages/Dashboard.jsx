@@ -9,6 +9,15 @@ const FILTERS = [
   { key: 'research', label: '研究中' },
 ]
 
+/* 立場徽章色彩，比照 poc/kb-mcp/report.py 既有的 STANCE_COLORS／
+   DEFAULT_STANCE_COLOR 邏輯（只有「偏多」「偏空」兩個精確字串有特殊色，
+   其餘立場文字一律用中性色）——不在前端另外發明一套判斷規則。 */
+function stanceBadgeClass(stance) {
+  if (stance === '偏多') return 'badge-danger'
+  if (stance === '偏空') return 'badge-positive'
+  return 'badge-neutral'
+}
+
 /* 投資分頁：GET /api/holdings，接上搜尋關鍵字（q）、篩選 tab（filter）、
    分頁（page）三個 query string 參數——三者都用 useSearchParams 存進
    網址，重新整理／分享連結時篩選狀態不會消失。搜尋輸入框跟網址參數之間
@@ -110,6 +119,14 @@ export default function Dashboard() {
                   {r.is_holding && <span className="badge badge-neutral">庫存中</span>}
                 </div>
                 <div className="stock-row__sub">{r.status_text}</div>
+                <div className="stock-row__stance-line">
+                  {r.stance
+                    ? <span className={'badge ' + stanceBadgeClass(r.stance)}>{r.stance}</span>
+                    : <span className="badge badge-neutral">尚無立場</span>}
+                  {r.reason && (
+                    <span className="stock-row__reason" title={r.reason}>{r.reason}</span>
+                  )}
+                </div>
               </div>
               <div className="stock-row__price">
                 <div className="stock-row__now">{r.price != null ? r.price : '—'}</div>

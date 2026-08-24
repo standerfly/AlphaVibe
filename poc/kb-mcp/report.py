@@ -1041,8 +1041,17 @@ def _tracked_stock_rows(store):
     每代碼最新一筆，涵蓋研究中/觀察/偏多/偏空各種立場文字）去重後的代碼
     清單——跟 review_engine.run_module_d_batch() 的批次範圍公式完全一致
     （同一套「PO在追蹤什麼」定義，不另外發明一套）。回傳每筆含
-    code/name/is_holding/price/delta_pct/has_concern/status_text 的
-    dict 清單，依代碼首次出現順序（庫存優先於純立場）。"""
+    code/name/is_holding/price/delta_pct/has_concern/status_text/
+    stance/reason 的 dict 清單，依代碼首次出現順序（庫存優先於純立場）。
+
+    stance/reason（2026-08-24 補回）：直接取自本函式已經在算的
+    stance_by_code（來源是 store.list_stances()，跟 store.get_latest_
+    stance(code) 同一張 stances 表、同一份「每代碼最新一筆」語意，只是
+    _render_holdings_section()／_render_watchlist_only_section() 既有
+    寫法是一次查表分攤到每一列，不逐列各查一次 get_latest_stance()——
+    這裡沿用同一份既有寫法，不是另外發明查詢方式）。沒有任何立場紀錄的
+    代碼（例如剛加入研究、還沒建立過立場）兩欄皆為 None，呼叫端自行決定
+    空狀態顯示方式。"""
     stances = store.list_stances()
     stance_by_code = {s["code"]: s for s in stances}
     holdings = store.get_holdings()["holdings"]
@@ -1072,12 +1081,15 @@ def _tracked_stock_rows(store):
         # 且點數少SVG較輕，一次渲染10列不會太重。純本地讀，不即時查價。
         spark_html = _render_sparkline_svg(
             _sparkline_points(store.get_cached_price_history(code, limit_days=60), price_info))
+        stance_row = stance_by_code.get(code)
         rows.append({
             "code": code, "name": name, "is_holding": is_holding,
             "price": price, "delta_pct": delta_pct,
             "has_concern": any(r.get("concern_flag") for r in latest_batch),
             "status_text": _row_status_text(latest_batch),
             "spark_html": spark_html,
+            "stance": stance_row.get("stance") if stance_row else None,
+            "reason": stance_row.get("reason") if stance_row else None,
         })
     return rows
 
