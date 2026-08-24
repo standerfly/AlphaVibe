@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { apiGet } from '../api/client.js'
 import { ChevronLeftIcon } from '../components/icons.jsx'
+import StockComboChart from '../components/StockComboChart.jsx'
 
 function pct(v, digits = 1) {
   return v == null ? '—' : `${(v * (Math.abs(v) <= 1 ? 100 : 1)).toFixed(digits)}%`
@@ -298,6 +299,22 @@ function StockDetailBody({ data }) {
                   <div className="value">{pct(holdings.pnl_pct)}</div>
                 </div>
               </div>
+              {holdings.ledger_entries.length > 0 && (
+                // 走勢與力道圖（2026-08-24 補回，見 StockComboChart.jsx）：
+                // 只在有交易紀錄時畫，比照舊版 _holdings_card_html() 的
+                // `if ledger:` 閘門——完全沒有交易紀錄（純觀察標的一類，
+                // 或持股是匯入快照、從未個別記錄交易）時不畫這張圖，維持
+                // 上面 holdings-grid 統計格即可，不畫一張下半部力道區
+                // 空白的畸形圖。價格快取本身不足時，元件內部會自行顯示
+                // 「尚無足夠資料繪製走勢圖」，不會壞掉。跟下方交易流水
+                // 清單共用同一張卡片、互補呈現（圖給整體感覺，清單給
+                // 精確數字），不取代它。
+                <StockComboChart
+                  priceHistory={holdings.price_history}
+                  ledgerEntries={holdings.ledger_entries}
+                  avgCost={holdings.avg_cost}
+                />
+              )}
               {holdings.ledger_entries.length > 0 && (
                 <details className="trade-list-details" open={holdings.ledger_entries.length <= 5}>
                   <summary>交易流水（{holdings.ledger_entries.length} 筆）</summary>
