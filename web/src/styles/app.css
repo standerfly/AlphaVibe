@@ -231,6 +231,45 @@ details.collapse summary::marker { color: var(--accent); }
   line-height: 1.6; margin-top: .8rem; }
 .disclaimer-box__label { font-weight: 700; color: var(--amber); margin-right: .3rem; }
 .simulate-result-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: .6rem; margin-top: .9rem; }
+
+/* 快速輸入面板（2026-08-24 新增，Q-046 待辦第1項，見
+   web/src/components/QuickInputPanel.jsx）：沿用 .card 的卡片外觀，
+   用原生 <details> 做展開/收合（比照 StockDetail.jsx 既有的
+   details.collapse 慣例，換一個名字是因為視覺尺寸不同——這裡要撐滿
+   整個卡片寬度，不是內嵌的小折疊區）。 */
+.quick-input { background: var(--paper); border: 1px solid var(--rule); border-radius: 10px;
+  box-shadow: var(--shadow); margin-bottom: 1rem; }
+.quick-input > summary { cursor: pointer; padding: .8rem 1rem; font-weight: 700;
+  font-size: .95rem; list-style: none; }
+.quick-input > summary::-webkit-details-marker { display: none; }
+.quick-input > summary::before { content: '▸ '; color: var(--accent); }
+.quick-input[open] > summary { border-bottom: 1px solid var(--rule); }
+.quick-input[open] > summary::before { content: '▾ '; }
+.quick-input__body { padding: .9rem 1rem 1rem; }
+.quick-input__body .filter-tabs { margin-bottom: .8rem; }
+
+.form-field textarea {
+  border: 1px solid var(--rule); border-radius: 6px; background: var(--paper);
+  color: var(--ink); font: inherit; font-size: .88rem; padding: .5rem .6rem;
+  width: 100%; min-height: 7rem; resize: vertical;
+}
+.form-field textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.success-box { background: var(--paper-sunken); border: 1px solid var(--green);
+  color: var(--green); border-radius: 8px; padding: .6rem .8rem; font-size: .84rem;
+  margin-top: .6rem; line-height: 1.5; }
+.notice-box { background: var(--amber-soft); border: 1px solid var(--amber);
+  color: var(--ink); border-radius: 8px; padding: .6rem .8rem; font-size: .84rem;
+  margin-top: .6rem; line-height: 1.5; overflow-wrap: break-word; }
+
+/* 貼庫存匯入預覽表：欄位多（代碼/名稱/股數/成本/興櫃），手機寬度不夠時
+   讓表格自己橫向捲動，不要讓整個頁面被撐寬（見專案 artifact 設計慣例：
+   寬內容要在自己的容器裡 overflow-x，body 本身不能橫向捲動）。 */
+.preview-table-wrap { overflow-x: auto; margin: .7rem 0; }
+.preview-table { width: 100%; border-collapse: collapse; font-size: .82rem; white-space: nowrap; }
+.preview-table th, .preview-table td { padding: .4rem .6rem; border-bottom: 1px solid var(--rule); text-align: left; }
+.preview-table th { color: var(--ink-dim); font-weight: 600; font-size: .74rem; }
+
 @media (max-width: 640px) {
   .pocket-grid { grid-template-columns: 1fr; }
   .buildup-grid { grid-template-columns: repeat(3, 1fr); }
