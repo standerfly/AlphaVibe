@@ -46,7 +46,11 @@ market_scan.py「plain dict、不包 Pydantic model」的既有慣例），只�
 `spark_html` 一個欄位——那是給 HTML `<svg>` 用的已渲染字串（迷你走勢圖），
 不是資料，JSON API 沒有等價欄位可轉手，故意省略並非漏欄位（詳見下方
 函式 docstring「刻意省略」段）。其餘欄位（`code`／`name`／`is_holding`／
-`price`／`delta_pct`／`has_concern`／`status_text`）原樣透傳。
+`price`／`delta_pct`／`has_concern`／`status_text`／`stance`／`reason`）
+原樣透傳（`stance`／`reason` 是 2026-08-24 補回：這兩欄舊版
+`_render_holdings_section()`／`_render_watchlist_only_section()` 都有
+顯示，是 2026-08-22 遷移到 `app/`+`web/` 時遺漏的「假說清單」欄位，見
+`docs/spec-intake/alphavibe/roadmap.md` Q-046）。
 """
 from __future__ import annotations
 
@@ -132,8 +136,10 @@ def get_holdings_list(
       `研究中 <research_count>`）。
     - `results`：本頁（`STOCKLIST_PAGE_SIZE`＝10 筆一頁）股票清單，每筆
       含 `code`／`name`／`is_holding`／`price`／`delta_pct`／
-      `has_concern`／`status_text`（欄位定義見
-      `report._tracked_stock_rows()` docstring）。
+      `has_concern`／`status_text`／`stance`／`reason`（欄位定義見
+      `report._tracked_stock_rows()` docstring；`stance`／`reason`
+      是 2026-08-24 補回的假說清單欄位，沒有立場紀錄的代碼兩者皆為
+      `None`，不是漏欄位）。
     """
     filter_key = filter if filter in _VALID_FILTERS else "all"
     search_query = (q or "").strip()

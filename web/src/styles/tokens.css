@@ -84,6 +84,7 @@ h2 { font-size: 1.08rem; font-weight: 700; margin-top: 2rem;
          white-space: nowrap; }
 .badge-danger { background: var(--red-soft); color: var(--red-ink); }
 .badge-neutral { background: var(--paper-sunken); color: var(--ink-dim); }
+.badge-positive { background: var(--paper-sunken); color: var(--green); }
 .btn, .btn-muted { display: inline-block; padding: .5rem 1rem; border-radius: 6px;
         text-decoration: none; font-weight: 600; margin: 0 .5rem .5rem 0;
         border: none; cursor: pointer; font-size: .9rem; font-family: inherit; }
@@ -162,6 +163,9 @@ h2 { font-size: 1.08rem; font-weight: 700; margin-top: 2rem;
 .stock-row__name { font-size: .96rem; font-weight: 700; }
 .stock-row__code { font-size: .72rem; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
 .stock-row__sub { font-size: .72rem; color: var(--ink-dim); margin-top: .15rem; overflow-wrap: break-word; }
+.stock-row__stance-line { display: flex; align-items: baseline; gap: .4rem; margin-top: .3rem; }
+.stock-row__reason { min-width: 0; flex: 1; font-size: .74rem; color: var(--ink-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stock-row__price { text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
 .stock-row__now { font-size: .92rem; font-weight: 700; }
 .stock-row__delta { font-size: .74rem; font-weight: 700; }

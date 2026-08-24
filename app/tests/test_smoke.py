@@ -304,6 +304,27 @@ def main() -> int:
             print("FAIL /api/holdings 跟底層資料兜不起來")
             failures.append("holdings output mismatch")
 
+        # stance/reason（2026-08-24 補回「假說清單」欄位，Q-046 遷移遺漏）：
+        # 上面的整份 dict 比對已經隱含涵蓋這兩欄，但這裡額外做「有沒有真的
+        # 傳出資料」的存在性檢查——避免兩邊剛好都是 None/沒有這個 key 時，
+        # 相等比對仍能通過、卻沒真正驗證到欄位有內容（比照 CLAUDE.md 教訓
+        # 紀錄「斷言要驗證真的有東西，不要只驗證形狀」的精神）。測試庫
+        # （複製自正式庫）已知有 31 檔代碼、296 筆立場紀錄，所以第一頁
+        # 10 筆裡應該至少有一筆非 None 的 stance/reason；同時確認完全沒有
+        # 立場紀錄的代碼會拿到 None 而不是缺欄位或拋錯。
+        results = (holdings_body or {}).get("results") or []
+        has_stance_key = all("stance" in r and "reason" in r for r in results)
+        has_nonnull_stance = any(r.get("stance") for r in results)
+        if has_stance_key and has_nonnull_stance:
+            print("PASS /api/holdings 每筆都有 stance/reason 欄位，且至少一筆非空")
+        else:
+            print("FAIL /api/holdings 的 stance/reason 欄位缺漏或全部是空值")
+            print("  results stance/reason 樣本：",
+                  json.dumps([{"code": r.get("code"), "stance": r.get("stance"),
+                               "reason": r.get("reason")} for r in results[:3]],
+                             ensure_ascii=False))
+            failures.append("holdings stance/reason missing")
+
         # MCP：直接呼叫 handle_mcp_post() 跟透過 HTTP 打 /mcp，應該是
         # 完全一樣的 (status, body)——這是唯一邏輯完全共用、風險最低的
         # router，理論上該逐位元組相等。ALPHAVIBE_MCP_TOKEN 沒設定時
