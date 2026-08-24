@@ -147,6 +147,20 @@ details.collapse summary::marker { color: var(--accent); }
 .manual-item__label { font-weight: 700; }
 .manual-item__why { color: var(--ink-dim); }
 
+/* 走勢與力道複合圖（2026-08-24 補回，Q-046 待辦第2項，見
+   web/src/components/StockComboChart.jsx）：從 poc/kb-mcp/report.py
+   的 CSS 常數原樣搬過來（.combo-chart / .chart-label 系列 / .chart-
+   bar-label），色彩沿用既有 .trade-row__tag／_delta_badge 同一套
+   紅漲綠跌語意，不另外配色；.combo-chart 用 width:100%+height:auto
+   讓 SVG 隨手機窄螢幕自動縮放，不寫死像素尺寸。 */
+.combo-chart { width: 100%; height: auto; background: var(--paper-sunken);
+  border-radius: 8px; margin: .5rem 0; }
+.chart-label { font-size: 11px; fill: var(--ink-dim); font-variant-numeric: tabular-nums; }
+.chart-label-latest { fill: var(--accent); font-weight: 700; }
+.chart-label-avg { fill: var(--amber); font-weight: 700; }
+.chart-bar-label { font-size: 9px; font-weight: 700; text-anchor: middle;
+  font-variant-numeric: tabular-nums; }
+
 /* 資產分頁（2026-08-21 新增，Q-046 第5節 Step 4）：口袋卡片／進度條／
    表單／建倉月曆格／情境試算揭露框。沿用既有 token，不發明新配色。 */
 .progress-track {
