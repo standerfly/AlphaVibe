@@ -116,40 +116,43 @@ PO 實際使用「投資」分頁（原「儀表板」，2026-08-24 更名，見
 回傳欄位 vs `web/src/pages/*.jsx` 實際渲染，含「後端資料已就緒但前端沒消費」
 這類單靠讀後端程式碼看不出來的落差），共 16 項，狀態隨完成即時更新於下。
 
-### 已完成
+### 已完成（2026-08-24 全部 5 項待辦皆已合併並部署上線）
 
-- ✅ **假說清單（立場 stance＋理由 reason）**（2026-08-24，PR #8，已合併進
-  `function/alphavibe` 並部署上線）：`poc/kb-mcp/report.py`
+- ✅ **假說清單（立場 stance＋理由 reason）**（PR #8）：`poc/kb-mcp/report.py`
   `_tracked_stock_rows()` 補回 `stance`／`reason` 欄位（重用既有
   `stance_by_code` 查表，未重寫商業邏輯），`web/src/pages/Dashboard.jsx`
   每列加立場徽章＋理由行（截斷+title 顯示全文，無立場時顯示「尚無立場」）。
-  範圍**不含**產業別/投資主題/主題集中度加總表（見下方待辦第5項）。
+- ✅ **5 個快速輸入表單接上前端**（PR #9）：`web/src/components/
+  QuickInputPanel.jsx`（新檔）實作加自選股／記交易／老芋頭進出／交易明細表／
+  貼庫存匯入（preview→confirm 兩步驟），掛在「投資」分頁頁首、預設收合，
+  5 表單用 tab 切換一次顯示一個（手機優先）。
+- ✅ **個股詳情頁走勢圖（進出場價格標記）**（PR #10）：`web/src/components/
+  StockComboChart.jsx`（新檔）從 `report.py:1662-1813
+  _render_combo_chart_svg()` port 成 React+手刻 SVG（未加圖表套件），價格
+  折線＋均價虛線＋買賣點位紅綠標記＋力道長條，配色改用主題 CSS 變數（跟隨
+  深色/淺色）。座標算法跟真實股票資料逐點比對過，誤差僅浮點捨入。
+- ✅ **選股篩選頁 `/screen` ＋ 全市場批次篩選頁 `/market-scan`**（PR #11）：
+  做成「投資」分頁**內部**子頁籤（`?view=list|screen|scan`，不新增路由，
+  頂部導覽維持四個分頁不變）。市場掃描頁確認是讀每天 02:00 排程的快取
+  結果，UI 文案沒有做誤導性的「立即掃描」按鈕；「加入追蹤」直接複用 PR#9
+  的 `POST /api/watchlist`（不是舊版 `/market-scan/track` 那套完整邏輯，
+  範圍內的簡化）。
+- ✅ **首頁「今日新候選」完整清單＋「策略設定」內容**（PR #12）：
+  `web/src/pages/Home.jsx` 新增完整候選表格（依 `today_new_candidates`
+  實際欄位）與各框架門檻/失效條件說明（`strategy_settings`，唯讀收合區塊，
+  逐框架動態組字不寫死文案）。
+- ✅ **主題集中度加總表＋持股清單的產業別/投資主題欄位**（PR #13）：
+  `poc/kb-mcp/report.py` 新增 `_theme_concentration_data()`（直接呼叫既有
+  `_portfolio_context()`，不重算市值邏輯），`GET /api/holdings` 新增
+  `theme_concentration` 頂層欄位（刻意對全部持股計算，不受 filter/q/page
+  影響），前端用既有 `.progress-track` 橫條呈現，達 50% 參考上限
+  （`review_engine.THEME_CONCENTRATION_WARN_PCT`）變警示色。
 
-### 待辦（建議優先序，依 2026-08-24 盤點結論）
-
-1. **5 個快速輸入表單接上前端**（加自選股／記交易／老芋頭進出／交易明細表／
-   貼庫存匯入）——後端 API 全部就緒（`POST /api/watchlist`／`/api/trades`／
-   `/api/laoyutou-trades`／`/api/trade-ledger`，`app/routers/actions.py`；
-   `/api/holdings/preview`／`/confirm`，`holdings_import.py`），但
-   `web/src/api/client.js` 的 `apiPost` 目前只被 `Assets.jsx` 用到，投資相關
-   6 個寫入端點前端呼叫次數＝**0**。PO 現在完全無法透過網頁記交易/加自選股，
-   只能靠對話（MCP）。影響最大，建議優先做。
-2. **個股詳情頁走勢圖（進出場價格標記）**——舊版 `_render_combo_chart_svg()`
-   （`report.py:1650-1801`）：價格折線＋均價虛線＋買賣力道長條＋交易點位
-   紅（買）綠（賣）標記。新版後端 `stock_detail.py` 已把 `price_history`／
-   `ledger_entries`／`avg_cost` 準備好，只差前端畫圖——`StockDetail.jsx`
-   目前只把交易紀錄列成純文字清單，`price_history` 欄位從未被讀取。PO
-   2026-08-24 明確點名「進出場的價格位置」不見了就是這個。
-3. **選股篩選頁 `/screen` ＋ 全市場批次篩選頁 `/market-scan`**——後端 API
-   （`app/routers/screen.py`／`market_scan.py`）都在，前端 0 呼叫，無對應
-   頁面；市場掃描的「加入追蹤」寫入（`/market-scan/track`）也未遷移。
-4. **首頁「今日新候選」完整清單＋「策略設定」內容**——`GET /api/dashboard`
-   已回傳完整的 `today_new_candidates`／`strategy_settings` 資料
-   （`dashboard.py`），`Home.jsx` 目前只顯示候選**數字**，內容清單與策略
-   設定文字完全沒有前端消費端，等於做了一半。
-5. **主題集中度加總表＋持股清單的產業別/投資主題欄位**——舊版
-   `_render_holdings_section()`（`report.py:405-518`）有，新版無對應 API
-   欄位或呈現。優先度較低（非每日必用），可與第1項的表單一起規劃。
+**部署方式備忘**：純前端 PR（#10/#11/#12）只需 `cd web && npm run build`；
+動到 `poc/kb-mcp/report.py` 的 PR（#8/#13）額外需要
+`launchctl kickstart -k gui/$(id -u)/com.alphavibe.reportserver` 重啟
+（正式服務沒開 `--reload`，Python 改動不重啟不會生效）。每次部署後用
+`curl http://127.0.0.1:8080/api/healthz` 確認服務存活。
 
 ### 已知刻意延後／已核准不遷移（不用主動處理，除非 PO 改變優先序）
 
