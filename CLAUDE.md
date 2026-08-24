@@ -30,7 +30,7 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 | 分頁 | 前端頁面 | 後端 router | 內容/資料來源 |
 |---|---|---|---|
 | 首頁 | `web/src/pages/Home.jsx` | 彙總其他分頁 API | 本 repo |
-| 儀表板 | `Dashboard.jsx`／`StockDetail.jsx` | `dashboard.py`／`screen.py`／`market_scan.py`／`holdings.py`／`stock_detail.py`／`actions.py` | `poc/kb-mcp/`（report.py／screener.py／frameworks.py，未重寫） |
+| 儀表板 | `Dashboard.jsx`／`StockDetail.jsx` | `dashboard.py`／`screen.py`／`market_scan.py`／`holdings.py`／`holdings_import.py`／`stock_detail.py`／`actions.py` | `poc/kb-mcp/`（report.py／screener.py／frameworks.py，未重寫） |
 | 資產 | `Assets.jsx` | `assets.py` | `kb_store.py` 新增 5 張表，手動輸入，無外部依賴 |
 | 相簿 | `Photos.jsx`（MVP 僅入口） | 尚無 | 未來：AutoGallery 資料模型參考（僅有 README 內容，本機實際 repo 路徑未定位到，見 clarification-log） |
 | 旅遊（未來，尚未建立） | — | — | 內容/研究在**另一個獨立專案** `/Users/stander/My_project/mytravel/`——若要做這個分頁，程式碼仍會建在這個 repo，但要不要整合 mytravel 的資料、整合到多深，屬於獨立待討論的範圍決策，不要預設 |
@@ -93,6 +93,9 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 
 ## 常用查證點
 
+- **STND 架構與使用方式總覽（2026-08-24 新增）**：`docs/architecture.md`
+  （分頁地圖、前後端架構、資料層/防呆機制、部署方式、開新 session 該去哪個
+  資料夾——比本檔案的「STND 分頁與程式碼位置」節更完整，含視覺化 diagram 連結）
 - **開發路線與進度（接手必讀）**：`docs/spec-intake/alphavibe/roadmap.md`
 - 需求基線：`docs/spec-intake/alphavibe/product-spec.md`（Accepted）
 - 開放問題：`docs/spec-intake/alphavibe/clarification-log.md`
