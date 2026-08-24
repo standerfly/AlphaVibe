@@ -58,7 +58,7 @@ function ThemeConcentrationCard({ data }) {
           <div className="theme-conc-row" key={t.theme}>
             <div className="theme-conc-row__label">
               <span>{t.theme}</span>
-              <span className="theme-conc-row__pct">{t.portfolio_pct.toFixed(1)}%</span>
+              <span className="theme-conc-row__pct">{t.portfolio_pct.toFixed(2)}%</span>
             </div>
             <div className="progress-track">
               <div
@@ -67,7 +67,7 @@ function ThemeConcentrationCard({ data }) {
               />
             </div>
             <div className="theme-conc-row__value">
-              {Math.round(t.market_value).toLocaleString('zh-TW')} 元
+              {t.market_value.toLocaleString('zh-TW', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} 元
             </div>
           </div>
         ))}
@@ -237,7 +237,7 @@ export default function Dashboard() {
                     </div>
                   </div>
                   <div className="stock-row__price">
-                    <div className="stock-row__now">{r.price != null ? r.price : '—'}</div>
+                    <div className="stock-row__now">{r.price != null ? r.price.toFixed(2) : '—'}</div>
                     {r.delta_pct != null && (
                       <div className={'stock-row__delta ' + (r.delta_pct >= 0 ? 'is-up' : 'is-down')}>
                         {r.delta_pct >= 0 ? '+' : ''}{r.delta_pct.toFixed(2)}%

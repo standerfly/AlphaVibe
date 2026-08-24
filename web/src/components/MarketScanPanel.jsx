@@ -21,7 +21,7 @@ import { apiGet, apiPost } from '../api/client.js'
    API 呼叫，換取「框架清單不必在前端另存一份」划算。 */
 
 function fmtPct(v) {
-  return v != null ? `${(v * 100).toFixed(1)}%` : '—'
+  return v != null ? `${(v * 100).toFixed(2)}%` : '—'
 }
 function fmtNum(v) {
   return v != null ? v.toFixed(2) : '—'
@@ -103,7 +103,7 @@ function ResultsTable({ rows, showTrack }) {
               <td>{fmtPct(r.excess_drawdown_pct)}</td>
               <td>{fmtNum(r.pbr)}</td>
               <td>{fmtPct(r.dividend_yield)}</td>
-              <td>{r.current_price != null ? r.current_price : '—'}</td>
+              <td>{r.current_price != null ? r.current_price.toFixed(2) : '—'}</td>
               <td>
                 {r.meets_framework
                   ? <span className="badge badge-danger">符合</span>

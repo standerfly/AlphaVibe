@@ -44,7 +44,7 @@ function formatConditionText(thresholds) {
 }
 
 const PER_FMT = (v) => (v != null ? v.toFixed(2) : '—')
-const PCT_FMT = (v) => (v != null ? `${(v * 100).toFixed(1)}%` : '—')
+const PCT_FMT = (v) => (v != null ? `${(v * 100).toFixed(2)}%` : '—')
 
 export default function ScreenPanel() {
   const [codesText, setCodesText] = useState('')
@@ -144,7 +144,7 @@ export default function ScreenPanel() {
                           <td>{r.peg != null ? r.peg.toFixed(2) : '—'}</td>
                           <td>{PCT_FMT(r.drawdown_pct)}</td>
                           <td>{PCT_FMT(r.excess_drawdown_pct)}</td>
-                          <td>{r.current_price != null ? r.current_price : '—'}</td>
+                          <td>{r.current_price != null ? r.current_price.toFixed(2) : '—'}</td>
                           <td>
                             {r.meets_framework
                               ? <span className="badge badge-danger">符合</span>
