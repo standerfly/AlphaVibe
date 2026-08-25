@@ -4,6 +4,9 @@
 https://www.digitimes.com.tw/tech/dt/n/shwnws.asp?cnlid=1&id=0000766072_IFJLJTK78GIECM1JVIMBK
 （標題：「NVIDIA漲價15%牽動AI供應鏈　晶片界：推論ASIC吸引力或攀升」，2026/08/25，作者劉憲杰）
 
+已發布 Artifact（排版版，含目錄導覽、六環節毛利卡片、9檔觀察清單卡片）：
+https://claude.ai/code/artifact/eeb27362-221d-465d-a6da-caff1bde8f12
+
 ---
 
 ## 一、起點新聞（DigiTimes 2026/08/25）逐項摘要
