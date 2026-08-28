@@ -3,7 +3,7 @@
 **Feature Slug:** pending-verification-list
 **Product Spec:** product-spec.md
 **Spec Kit Inputs Index:** spec-kit-inputs/index.md
-**Status:** Draft
+**Status:** Ready
 
 ## Product Baseline
 
@@ -28,22 +28,23 @@
 
 - [x] `spec-kit-inputs/index.md` lists every generated input package
 - [x] Each input package has exactly one Spec Kit feature boundary
-- [ ] Each accepted `speckit-input.md` has `Status: Accepted`（目前為
-  `Draft`——尚待下方「Handoff Approval」明確核准後才轉 Accepted）
+- [x] Each accepted `speckit-input.md` has `Status: Accepted`
 - [x] Each accepted `speckit-input.md` links back to source decisions
 - [x] Handoff order is recorded for accepted input packages
 
 ## Handoff Approval
 
-- [ ] TPM confirms accepted input packages are ready for `speckit-specify`
-- [ ] PO confirms the split from product spec to Spec Kit inputs is acceptable
-- [ ] No accepted input contains unresolved contradictions or meeting-note noise
+- [x] TPM confirms accepted input packages are ready for `speckit-specify`
+- [x] PO confirms the split from product spec to Spec Kit inputs is acceptable
+- [x] No accepted input contains unresolved contradictions or meeting-note noise
 
 ## Notes
 
 - 2026-08-27：product-spec.md 已 Accepted（PO Stander 核准，見
-  product-spec.md 標頭）。`spec-kit-inputs/pending-verification-list/
-  speckit-input.md` 已依 Accepted 的 product-spec 產出，目前狀態
-  `Draft`——依 Hard Boundaries，需 PO/TPM 另外明確核准 handoff（非僅
-  product-spec 的核准）才能轉為 `Accepted` 並交給 `speckit-specify`。
-  下一步：PO 審閱 `speckit-input.md`，確認無誤後核准 handoff。
+  product-spec.md 標頭）。PO 審閱
+  `spec-kit-inputs/pending-verification-list/speckit-input.md` 後於本
+  session 回覆「核准 handoff」——該套件狀態已轉為 `Accepted`，本
+  checklist 全數完成，狀態轉為 `Ready`。**下一步（不在本次 pre-spec
+  範圍）**：另行呼叫 `speckit-specify`，把
+  `spec-kit-inputs/pending-verification-list/speckit-input.md` 作為輸入
+  進入 Spec Kit 技術規格與實作階段。

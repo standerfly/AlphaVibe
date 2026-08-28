@@ -1,6 +1,6 @@
 # Spec Kit Input: Pending Verification List
 
-**Status:** Draft
+**Status:** Accepted
 **Source Product Spec:** ../../product-spec.md
 **Source Scope Decision:** ../../scope-decision.md
 **Spec Feature Slug:** pending-verification-list
