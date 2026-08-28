@@ -68,13 +68,19 @@ Source 002：NVIDIA Q2 FY2027 財報（2026/8/26）作為驗證漲價後毛利�
 
 ## Candidate Error Or Failure Behavior
 
-- 尚未決定（TBD，取決於 clarification-log Q-003 的觸發機制選擇——若選
-  被動查閱，錯誤情境很少；若選主動排程掃描，需要定義掃描失敗/漏掃的
-  處理方式，比照 `market_scan.py` 現有的優雅降級模式）。
+Q-003 已定案為(B)首頁被動提醒（不建排程/通知基礎設施），錯誤情境因此
+較少，主要是一般 CRUD 層級的失敗處理：
+
+- 登記/查詢/標記解決透過 Claude／MCP tool 進行（Q-004），任一筆缺必填
+  欄位（判斷內容、觸發條件、預期時間點）應拒絕寫入並回傳明確錯誤，不
+  應靜默失敗——比照既有 `save_stance`/`save_comment` 的錯誤處理風格。
+- 首頁區塊查詢「已到期/即將到期」清單時，若查詢本身失敗（如資料庫連線
+  問題），比照既有頁面既有的優雅降級模式（顯示錯誤提示，不擋其他首頁
+  內容渲染），不需要新發明一套機制。
 
 ## Duplicates, Conflicts, And Unclear Statements
 
 | ID | Source IDs | Type | Statement | Status | Notes |
 |----|------------|------|-----------|--------|-------|
-| GAP-001 | 001 | Unclear | PO 提出的5個討論方向（資料模型/關聯/觸發機制/產生來源/現階段是否該做）皆未預設答案 | Open→已轉為 clarification-log Q-001~Q-005 | 這是本次 pre-spec 的核心工作，非缺陷 |
+| GAP-001 | 001 | Unclear | PO 提出的5個討論方向（資料模型/關聯/觸發機制/產生來源/現階段是否該做）皆未預設答案 | Resolved | 已轉為 clarification-log Q-001~Q-005（另加 Q-003a 子題），PO 已於 2026-08-27 全數回答：Q-001=B(完整欄位)、Q-002=A(全新獨立表)、Q-003=B(首頁被動提醒)、Q-003a=純顯示不可就地操作、Q-004=B+C(手動為主+協作慣例)、Q-005=A(現在排入開發) |
 | GAP-002 | 002 | Conflict/Discrepancy | PO 原文稱案例見「第八節和第十二節」，查證後 `docs/research/2026-08-25-nvidia-ai-chain-pricing.md` 目前僅到第十一節，無第十二節，也未見財報公布後的回頭更新內容 | Answered | 已記錄於 raw/001、raw/002 查證備註；不影響構想成立性，反而是問題陳述的佐證，見 clarification-log Q-006 |
