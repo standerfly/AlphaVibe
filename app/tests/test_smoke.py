@@ -137,6 +137,7 @@ def main() -> int:
             ("GET /api/assets/pockets", "/api/assets/pockets", 200),
             ("GET /api/assets/accounts", "/api/assets/accounts", 200),
             ("GET /api/assets/holdings", "/api/assets/holdings", 200),
+            ("GET /api/pending-verifications", "/api/pending-verifications", 200),
         ]
         for label, path, expect_status in checks:
             status, body = _get(path)
@@ -391,6 +392,57 @@ def main() -> int:
                   "(expected status=%s actual status=%s)"
                   % (expected_status, actual_status))
             failures.append("mcp output mismatch")
+
+        # 待觀察／待查詢清單（2026-08-27新增，specs/001-pending-verification-list/）：
+        # 空清單先驗證（避免測試庫本身剛好有殘留資料造成誤判），再寫入
+        # 一筆已到期＋一筆還很遠的項目，驗證 API 的 due_only 篩選邏輯跟
+        # 直接呼叫底層 list_pending_verifications(due_only=True) 一致
+        # （比照上面 /api/screen 等既有比對精神：不只驗證「有回傳」，
+        # 要跟底層函式逐欄比對）。
+        status, empty_body = _get("/api/pending-verifications")
+        if status == 200 and empty_body == {"items": []}:
+            print("PASS /api/pending-verifications 初始為空清單")
+        else:
+            print("FAIL /api/pending-verifications 初始清單不是空的：%r"
+                  % (empty_body,))
+            failures.append("pending-verifications not empty initially")
+
+        pv_store = KBStore(data_dir)
+        try:
+            due_item = pv_store.save_pending_verification(
+                judgment_text="smoke-test 已到期案例",
+                trigger_type="date", trigger_condition_text="測試觸發條件",
+                trigger_date="2020-01-01")
+            pv_store.save_pending_verification(
+                judgment_text="smoke-test 還很遠案例",
+                trigger_type="date", trigger_condition_text="測試觸發條件",
+                trigger_date="2099-01-01")
+            expected_due = pv_store.list_pending_verifications(due_only=True)
+        finally:
+            pv_store.close()
+        status, actual_due = _get("/api/pending-verifications")
+        norm_expected_due = json.loads(json.dumps(expected_due))
+        if (status == 200 and actual_due == {"items": norm_expected_due}
+                and len(norm_expected_due) == 1
+                and norm_expected_due[0]["id"] == due_item["id"]):
+            print("PASS /api/pending-verifications?due_only=true 跟 "
+                  "list_pending_verifications(due_only=True) 一致（只含已到期項目）")
+        else:
+            print("FAIL /api/pending-verifications 跟底層函式不一致")
+            print("  expected:", json.dumps(norm_expected_due, ensure_ascii=False))
+            print("  actual  :", json.dumps(actual_due, ensure_ascii=False))
+            failures.append("pending-verifications output mismatch")
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=30) as pool:
+            pv_statuses = list(pool.map(
+                lambda _: _get("/api/pending-verifications")[0], range(30)))
+        pv_ok_count = sum(1 for s in pv_statuses if s == 200)
+        if pv_ok_count == 30:
+            print("PASS /api/pending-verifications 30 個併發請求全數 200")
+        else:
+            print("FAIL /api/pending-verifications 30 個併發請求只有 %d 個 200"
+                  % pv_ok_count)
+            failures.append("pending-verifications concurrency regression")
 
         # 2026-08-22 教訓：get_kb_store() 是 sync generator dependency，
         # Starlette 用 anyio thread pool 執行，「建立」跟「關閉」不保證

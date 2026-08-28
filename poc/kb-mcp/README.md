@@ -43,6 +43,7 @@ Claude Code session**，首次會詢問是否啟用 `alphavibe-kb`——允許�
 | save_philosophy / get_philosophy | L1 | 投資哲學模組 md 檔（append/replace）；篩選框架（如 framework_v1）也存這裡 |
 | save_snapshot / get_snapshots | 追溯 | 分析結論凍結（當時價/估值/三段式結論/框架版本）＋引用來源；歷次快照供 diff（FR-026~028） |
 | save_position_plan / get_position_plan | 部位 | 這檔的**加碼計畫總額度**（單位：金額 NT$，可隨時覆寫）。補上 check_position_control 的 suggested_add_pct 一直缺的分母，有它才算得出「加碼進度：已投入／計畫總額／完成幾成」 |
+| save_pending_verification / list_pending_verifications / get_pending_verification / resolve_pending_verification | 待觀察 | 「待觀察／待查詢清單」（specs/001-pending-verification-list/）：登記一個帶「等到某個未來時間點/事件發生就能驗證」但書的判斷，結構化記錄「判斷→觸發→結果」全軌跡。`list_pending_verifications(due_only=true)` 只回傳已到期/即將到期（7天內）且仍 pending 的項目，供 STND 首頁唯讀區塊顯示；`resolve_pending_verification` 標記為 resolved（需附結論）或 dropped（結論可選），皆為終態不可逆 |
 | check_auto_score | 檢視 | Score 自動化四項（EPS實際成長+3／月營收YoY加速+2／毛利率提升+2／ROE改善+1，皆為最新一季對去年同季）。**earned 三態**：true 計分、false 已查證但不成立、null 資料不足——不要把 null 當 false。另三項（法人上修EPS／新增大客戶訂單／產業需求提升）無免費資料源，需人工判斷 |
 | save_holdings / get_holdings | 追溯 | 持股快照 {code, shares, avg_cost, date}——不含損益計算（FR-029、Q-035 邊界） |
 | refresh_holdings_prices | 快取 | 批次更新目前庫存每檔的股價（近 7 天最新收盤價）與產業別快取，供檢視頁算市值/持股比例、顯示產業別；不帶參數，個別代碼失敗只記入 failed 不中斷整批。檢視頁本身不即時呼叫外部 API，靠這個工具定期寫入快取——建議每個交易日跑一次 |
@@ -172,6 +173,14 @@ python3 -m unittest discover -s poc/kb-mcp/tests -v
 CLI 入口）、/market-scan 網頁表單（GET/POST，mock）、server.py MCP dispatch
 （screen_stocks 門檻覆寫語意、無效框架代號不打 API、run_market_scan／
 get_market_scan 輸出瘦身與 total_results/returned/omitted 計數）、
-`test_traceability.py` 對 `TOOLS` 固定 **43** 個工具的斷言（2026-08-19：新增
-save_position_plan／get_position_plan／check_auto_score）。改動工具清單時
-記得同步這個守門測試與 `server_readonly.py` 的唯讀白名單。
+`test_traceability.py` 對 `TOOLS` 固定 **47** 個工具的斷言（2026-08-19：新增
+save_position_plan／get_position_plan／check_auto_score；2026-08-27：新增
+save_pending_verification／list_pending_verifications／
+get_pending_verification／resolve_pending_verification，43→47）。改動工具
+清單時記得同步這個守門測試與 `server_readonly.py` 的唯讀白名單——
+2026-08-27 這次刻意**沒有**把新工具加進 `server_readonly.py` 的
+`READONLY_TOOLS`：該白名單需與 repo 外部的
+`~/.claude/rules/10-model-dispatch.md`／stock-researcher 全域 subagent
+設定同步，不在這個 repo 的修改範圍內，且「預設不開放」對新工具是安全的
+保守預設；要不要讓 Cline 唯讀 wrapper 也能查詢待觀察清單，留待 PO 之後
+決定。

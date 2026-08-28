@@ -36,7 +36,7 @@ description: "Task list for feature implementation"
 **Purpose**：新增資料表定義，其餘既有專案結構/依賴不需變動（見
 `plan.md` Technical Context——無新增套件）
 
-- [ ] T001 在 `poc/kb-mcp/kb_store.py` 的 `SCHEMA` 常數新增
+- [X] T001 在 `poc/kb-mcp/kb_store.py` 的 `SCHEMA` 常數新增
   `pending_verifications` 表定義（欄位與型別見 `data-model.md`），沿用
   既有 `CREATE TABLE IF NOT EXISTS` 風格；因為是全新表，不需要
   `_MIGRATIONS`／`_migrate()` 遷移項目
@@ -50,7 +50,7 @@ description: "Task list for feature implementation"
 
 **⚠️ CRITICAL**：本階段完成前，US3／US4 無法開始；US1／US2 不依賴本階段
 
-- [ ] T002 [P] 在 `poc/kb-mcp/kb_store.py` 實作
+- [X] T002 [P] 在 `poc/kb-mcp/kb_store.py` 實作
   `KBStore.get_pending_verification(id)`，回傳單筆完整內容或 `None`
   （查無資料）——依賴 T001
 
@@ -70,7 +70,7 @@ description: "Task list for feature implementation"
 
 ### Tests for User Story 1
 
-- [ ] T003 [P] [US1] 在 `poc/kb-mcp/tests/test_pending_verifications.py`
+- [X] T003 [P] [US1] 在 `poc/kb-mcp/tests/test_pending_verifications.py`
   新增 `save_pending_verification` 單元測試：成功登記案例；缺
   `judgment_text`／`trigger_type`／`trigger_condition_text` 各自被拒絕；
   `trigger_type=date` 卻缺 `trigger_date` 被拒絕；`trigger_type=event`
@@ -78,12 +78,12 @@ description: "Task list for feature implementation"
 
 ### Implementation for User Story 1
 
-- [ ] T004 [US1] 在 `poc/kb-mcp/kb_store.py` 實作
+- [X] T004 [US1] 在 `poc/kb-mcp/kb_store.py` 實作
   `KBStore.save_pending_verification(...)`：驗證必填欄位、
   `trigger_type=date` 時要求 `trigger_date`、寫入時
   `status='pending'`、`created_at`/`updated_at` 自動填入，回傳新建記錄
   完整內容——依賴 T001，須讓 T003 全數通過
-- [ ] T005 [US1] 在 `poc/kb-mcp/server.py` 的 `TOOLS` 清單新增
+- [X] T005 [US1] 在 `poc/kb-mcp/server.py` 的 `TOOLS` 清單新增
   `save_pending_verification` 工具 schema（見
   `contracts/mcp-tools.md`），並在既有 dispatch if/elif 鏈新增對應
   分支呼叫 `self.store.save_pending_verification(...)`——依賴 T004
@@ -104,13 +104,13 @@ US1 測試（直接寫測試資料，不透過 MCP tool 登記）
 
 ### Tests for User Story 2
 
-- [ ] T006 [P] [US2] 在 `poc/kb-mcp/tests/test_pending_verifications.py`
+- [X] T006 [P] [US2] 在 `poc/kb-mcp/tests/test_pending_verifications.py`
   新增 `list_pending_verifications` 單元測試：依 `status` 篩選；
   `due_only=True` 時只回傳 `trigger_date` 已過或在7天內、且
   `status=pending` 的項目；剛好在7天視窗邊界的案例；`trigger_date`
   為 `NULL`（event 類型未填日期）的項目不出現在 `due_only` 結果中
   （FR-003/FR-004，data-model.md Query Patterns，research.md 決策5）
-- [ ] T007 [P] [US2] 在 `app/tests/test_smoke.py` 新增
+- [X] T007 [P] [US2] 在 `app/tests/test_smoke.py` 新增
   `GET /api/pending-verifications` 測試：空清單回傳
   `{"items": []}`；有已到期項目時正確回傳；**併發測試**——至少30個
   併發 request，全數成功（比照 CLAUDE.md 2026-08-22 教訓紀錄，
@@ -119,21 +119,21 @@ US1 測試（直接寫測試資料，不透過 MCP tool 登記）
 
 ### Implementation for User Story 2
 
-- [ ] T008 [US2] 在 `poc/kb-mcp/kb_store.py` 實作
+- [X] T008 [US2] 在 `poc/kb-mcp/kb_store.py` 實作
   `KBStore.list_pending_verifications(status=None, due_only=False)`——
   依賴 T001，須讓 T006 全數通過
-- [ ] T009 [US2] 在 `poc/kb-mcp/server.py` 的 `TOOLS` 清單新增
+- [X] T009 [US2] 在 `poc/kb-mcp/server.py` 的 `TOOLS` 清單新增
   `list_pending_verifications` 工具 schema（見
   `contracts/mcp-tools.md`），並新增對應 dispatch 分支——依賴 T008
-- [ ] T010 [US2] 新增 `app/routers/pending_verifications.py`：
+- [X] T010 [US2] 新增 `app/routers/pending_verifications.py`：
   `GET /api/pending-verifications`（query params `due_only`、
   `status`，見 `contracts/http-api.md`），比照
   `app/routers/assets.py` 風格（直接呼叫 `store.
   list_pending_verifications(...)`，不重寫商業邏輯）——依賴 T008
-- [ ] T011 [US2] 在 `app/main.py` 新增
+- [X] T011 [US2] 在 `app/main.py` 新增
   `app.include_router(pending_verifications_router.router)`——依賴
   T010
-- [ ] T012 [US2] 在 `web/src/pages/Home.jsx` 新增一個唯讀區塊：獨立
+- [X] T012 [US2] 在 `web/src/pages/Home.jsx` 新增一個唯讀區塊：獨立
   `fetch` 呼叫 `GET /api/pending-verifications?due_only=true`，獨立
   `loading`/`error` state（比照既有 dashboard／holdings 兩區塊「互不
   阻塞」模式），顯示判斷內容＋觸發條件摘要；查詢失敗時顯示簡短錯誤
@@ -155,7 +155,7 @@ US1 測試（直接寫測試資料，不透過 MCP tool 登記）
 
 ### Tests for User Story 3
 
-- [ ] T013 [P] [US3] 在 `poc/kb-mcp/tests/test_pending_verifications.py`
+- [X] T013 [P] [US3] 在 `poc/kb-mcp/tests/test_pending_verifications.py`
   新增 `resolve_pending_verification` 「resolved」路徑單元測試：
   成功案例（附 `resolution`，`resolved_at` 被寫入）；缺 `resolution`
   被拒絕；對已是 `resolved`／`dropped` 的項目再次呼叫被拒絕（終態不可
@@ -163,13 +163,13 @@ US1 測試（直接寫測試資料，不透過 MCP tool 登記）
 
 ### Implementation for User Story 3
 
-- [ ] T014 [US3] 在 `poc/kb-mcp/kb_store.py` 實作
+- [X] T014 [US3] 在 `poc/kb-mcp/kb_store.py` 實作
   `KBStore.resolve_pending_verification(id, status, resolution=None)`：
   `status='resolved'` 時要求 `resolution` 非空；檢查目前狀態是否已是
   終態（`resolved`／`dropped`）並拒絕；寫入 `resolved_at`；`id` 不存在
   時回傳明確錯誤——依賴 T001、T002，須讓 T013 全數通過（此方法同時
   服務 US4 的 `dropped` 路徑，見 Phase 6）
-- [ ] T015 [US3] 在 `poc/kb-mcp/server.py` 的 `TOOLS` 清單新增
+- [X] T015 [US3] 在 `poc/kb-mcp/server.py` 的 `TOOLS` 清單新增
   `get_pending_verification`（曝露 T002）與
   `resolve_pending_verification` 兩個工具 schema（見
   `contracts/mcp-tools.md`），並新增對應 dispatch 分支——依賴 T002、
@@ -195,7 +195,7 @@ US1 測試（直接寫測試資料，不透過 MCP tool 登記）
 
 ### Tests for User Story 4
 
-- [ ] T016 [P] [US4] 在 `poc/kb-mcp/tests/test_pending_verifications.py`
+- [X] T016 [P] [US4] 在 `poc/kb-mcp/tests/test_pending_verifications.py`
   新增 `resolve_pending_verification` 「dropped」路徑單元測試：成功案例
   （不附 `resolution`）；成功案例（附 `resolution` 說明原因）；對已是
   終態的項目再次呼叫被拒絕——依賴 T014
@@ -209,18 +209,18 @@ MVP In Scope）全數實作完畢
 
 **Purpose**：跨故事的收尾工作
 
-- [ ] T017 依 `quickstart.md` 完整跑一次端到端案例（呼應 NVIDIA 案例：
+- [X] T017 依 `quickstart.md` 完整跑一次端到端案例（呼應 NVIDIA 案例：
   登記已到期項目→首頁看到→標記已驗證→首頁不再顯示→
   `get_pending_verification` 仍可查得完整歷史），使用獨立測試資料庫
   （`ALPHAVIBE_DATA_DIR` 指向 `poc/data-test/`，絕不可指向
   `poc/data/`）
-- [ ] T018 執行 `python3 -m unittest discover -s poc/kb-mcp/tests`
+- [X] T018 執行 `python3 -m unittest discover -s poc/kb-mcp/tests`
   確認全數綠燈（含 T003/T006/T013/T016 新增的測試，以及既有測試未被
   破壞）
-- [ ] T019 執行 `ALPHAVIBE_DATA_DIR=<獨立測試庫路徑> .venv/bin/python3
+- [X] T019 執行 `ALPHAVIBE_DATA_DIR=<獨立測試庫路徑> .venv/bin/python3
   -m app.tests.test_smoke` 確認全數綠燈（含 T007 新增的測試，含
   併發測試）
-- [ ] T020 在 `CLAUDE.md` 記錄協作慣例（呼應 pre-spec Q-004 選項C的
+- [X] T020 在 `CLAUDE.md` 記錄協作慣例（呼應 pre-spec Q-004 選項C的
   PO 決定）：Claude 完成研究筆記時若識別出「待驗證」句型，主動建議
   使用者登記為待觀察項目——這是非程式邏輯的使用慣例，不是程式碼變更
   （FR-005 in spec.md／product-spec.md，本 repo 目前沒有獨立的「研究

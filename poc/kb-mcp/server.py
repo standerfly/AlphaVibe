@@ -372,6 +372,73 @@ TOOLS = [
         },
     },
     {
+        "name": "save_pending_verification",
+        "description": ("登記一筆「待觀察／待驗證」判斷：一個判斷/假設，帶著「等到某個"
+                        "未來時間點或事件發生就能驗證」的但書（例：NVIDIA公布財報後驗證"
+                        "毛利率是否守住）。研究/分析對話中識別出這種句型時可主動建議登記。"
+                        "trigger_type=date 時 trigger_date 為必填。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "judgment_text": {"type": "string", "description": "判斷/假設內容"},
+                "trigger_type": {"type": "string", "enum": ["date", "event"],
+                                  "description": "觸發類型"},
+                "trigger_date": {"type": "string",
+                                  "description": "YYYY-MM-DD，trigger_type=date 時必填"},
+                "trigger_condition_text": {"type": "string",
+                                            "description": "觸發條件文字描述"},
+                "code": {"type": "string", "description": "可選，關聯股票代碼"},
+                "theme": {"type": "string", "description": "可選，關聯主題"},
+                "target_value": {"type": "string",
+                                  "description": "可選，具體驗證目標，如「毛利率75%」"},
+                "source_ref": {"type": "string", "description": "來源引用"},
+            },
+            "required": ["judgment_text", "trigger_type", "trigger_condition_text"],
+        },
+    },
+    {
+        "name": "list_pending_verifications",
+        "description": ("查詢待觀察項目清單。due_only=true 時只回傳已到期／即將到期"
+                        "（7天內）且狀態仍是 pending 的項目——適合用來回答「有哪些待驗證"
+                        "的事現在該回頭看了」。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["pending", "resolved", "dropped"],
+                            "description": "可選，依狀態篩選；不填則回傳全部狀態"},
+                "due_only": {"type": "boolean",
+                              "description": "可選，true 時只回傳已到期/即將到期且status=pending的項目"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_pending_verification",
+        "description": "取得單筆待觀察項目的完整內容（含歷史resolution/resolved_at，若已標記過）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": {"type": "integer", "description": "待觀察項目ID"}},
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "resolve_pending_verification",
+        "description": ("標記待觀察項目為resolved（需附resolution驗證結論）或dropped"
+                        "（resolution可選，代表不追蹤原因）。已是終態的項目不可再次"
+                        "轉換——要重新追蹤同一判斷，請登記一筆新項目。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "待觀察項目ID"},
+                "status": {"type": "string", "enum": ["resolved", "dropped"],
+                            "description": "目標狀態"},
+                "resolution": {"type": "string",
+                                "description": "status=resolved時必填；status=dropped時可選"},
+            },
+            "required": ["id", "status"],
+        },
+    },
+    {
         "name": "get_stock_theme",
         "description": "查詢所有股票的投資主題標籤（code→theme 對照）。不需參數。",
         "inputSchema": {"type": "object", "properties": {}},
@@ -945,6 +1012,25 @@ class Server:
                 note=args.get("note"))
         if name == "get_position_plan":
             return self.store.get_position_plan(code=args["code"])
+        if name == "save_pending_verification":
+            return self.store.save_pending_verification(
+                judgment_text=args["judgment_text"],
+                trigger_type=args["trigger_type"],
+                trigger_condition_text=args["trigger_condition_text"],
+                code=args.get("code"), theme=args.get("theme"),
+                trigger_date=args.get("trigger_date"),
+                target_value=args.get("target_value"),
+                source_ref=args.get("source_ref"),
+            )
+        if name == "list_pending_verifications":
+            return self.store.list_pending_verifications(
+                status=args.get("status"), due_only=bool(args.get("due_only")))
+        if name == "get_pending_verification":
+            return self.store.get_pending_verification(id=args["id"])
+        if name == "resolve_pending_verification":
+            return self.store.resolve_pending_verification(
+                id=args["id"], status=args["status"],
+                resolution=args.get("resolution"))
         if name == "save_laoyutou_trade":
             return self.store.save_laoyutou_trade(
                 code=args["code"], name=args.get("name"), action=args["action"],

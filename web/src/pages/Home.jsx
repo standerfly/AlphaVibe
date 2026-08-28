@@ -59,6 +59,8 @@ export default function Home() {
   const [dashboardError, setDashboardError] = useState(null)
   const [holdings, setHoldings] = useState(null)
   const [holdingsError, setHoldingsError] = useState(null)
+  const [pendingVerifications, setPendingVerifications] = useState(null)
+  const [pendingVerificationsError, setPendingVerificationsError] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -68,6 +70,13 @@ export default function Home() {
     apiGet('/api/holdings?filter=holdings')
       .then((data) => { if (!cancelled) setHoldings(data) })
       .catch((err) => { if (!cancelled) setHoldingsError(err.message) })
+    /* 待觀察／待查詢清單（specs/001-pending-verification-list/）：獨立
+       fetch，跟上面兩支一樣互不阻塞——這支失敗不該讓「今日重點」等
+       既有區塊跟著不能顯示，反之亦然。唯讀顯示，沒有就地操作
+       （pre-spec Q-003a：登記/標記解決一律走 Claude／MCP tool）。 */
+    apiGet('/api/pending-verifications?due_only=true')
+      .then((data) => { if (!cancelled) setPendingVerifications(data) })
+      .catch((err) => { if (!cancelled) setPendingVerificationsError(err.message) })
     return () => { cancelled = true }
   }, [])
 
@@ -190,6 +199,39 @@ export default function Home() {
           策略不是填表單做出來的——先跟AI討論你觀察到的操作邏輯，定案後由AI把篩選門檻＋
           專屬檢視規則寫進 frameworks.py，你只需要確認結果。
         </p>
+      )}
+
+      <h2>待驗證清單</h2>
+      {pendingVerificationsError && (
+        <div className="error-box">待驗證清單載入失敗：{pendingVerificationsError}</div>
+      )}
+      {!pendingVerifications && !pendingVerificationsError && (
+        <div className="loading-box">載入中…</div>
+      )}
+      {pendingVerifications && pendingVerifications.items.length === 0 && (
+        <p className="empty">目前沒有已到期或即將到期的待驗證項目。</p>
+      )}
+      {pendingVerifications && pendingVerifications.items.length > 0 && (
+        <div>
+          {pendingVerifications.items.map((item) => (
+            <div key={item.id} className="finding">
+              <div className="finding__stripe" />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="finding__label-row">
+                  {item.code && <span className="badge badge-neutral">{item.code}</span>}
+                  {item.theme && <span className="badge badge-neutral">{item.theme}</span>}
+                  <span className="badge badge-neutral">
+                    {item.trigger_date ? `預計 ${item.trigger_date}` : '事件觸發'}
+                  </span>
+                </div>
+                <div className="finding__detail">
+                  {item.judgment_text}
+                  {item.trigger_condition_text ? `　（觸發條件：${item.trigger_condition_text}）` : ''}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
 
       <h2>資產總覽</h2>

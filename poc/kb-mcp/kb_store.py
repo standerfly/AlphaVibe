@@ -138,6 +138,24 @@ CREATE TABLE IF NOT EXISTS position_plans (
     note TEXT,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS pending_verifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT,
+    theme TEXT,
+    judgment_text TEXT NOT NULL,
+    trigger_type TEXT NOT NULL,
+    trigger_date TEXT,
+    trigger_condition_text TEXT NOT NULL,
+    target_value TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    resolution TEXT,
+    resolved_at TEXT,
+    source_ref TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pending_verifications_status
+    ON pending_verifications(status, trigger_date);
 CREATE TABLE IF NOT EXISTS market_scan_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     framework_id TEXT NOT NULL,
@@ -1036,6 +1054,97 @@ class KBStore:
             "DELETE FROM position_plans WHERE code = ?", (code,))
         self.conn.commit()
         return {"deleted": cur.rowcount > 0, "code": code}
+
+    # ---------- 待觀察／待查詢清單（2026-08-27新增，pre-spec見
+    # docs/spec-intake/pending-verification-list/）：研究/選股分析工作流
+    # 裡「這個判斷要等到未來某個時間點/事件發生才能驗證」的但書，之前
+    # 只能寫成散文（NVIDIA Q2 FY2027財報案例，見product-spec.md），沒有
+    # 結構化存放也不會主動提醒。這裡是獨立新表，不動既有
+    # stock_themes/comments/position_plans（PO決策 Q-002=A）。狀態
+    # pending/resolved/dropped 為單向流轉，resolved/dropped 是終態不可逆
+    # （FR-007）——要重新追蹤同一判斷，登記一筆新項目，不改寫舊列，跟
+    # stances 用多筆歷史列而非改寫既有列是同一套邏輯。 ----------
+
+    _PENDING_VERIFICATION_TERMINAL_STATUSES = ("resolved", "dropped")
+
+    def save_pending_verification(self, judgment_text, trigger_type,
+                                   trigger_condition_text, code=None,
+                                   theme=None, trigger_date=None,
+                                   target_value=None, source_ref=None):
+        if not judgment_text:
+            raise ValueError("judgment_text 為必填")
+        if trigger_type not in ("date", "event"):
+            raise ValueError("trigger_type 必須是 date 或 event：%r" % (trigger_type,))
+        if not trigger_condition_text:
+            raise ValueError("trigger_condition_text 為必填")
+        if trigger_type == "date" and not trigger_date:
+            raise ValueError("trigger_type=date 時 trigger_date 為必填")
+        now = _now()
+        cur = self.conn.execute(
+            "INSERT INTO pending_verifications (code, theme, judgment_text,"
+            " trigger_type, trigger_date, trigger_condition_text,"
+            " target_value, status, resolution, resolved_at, source_ref,"
+            " created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,'pending',NULL,NULL,?,?,?)",
+            (code, theme, judgment_text, trigger_type, trigger_date,
+             trigger_condition_text, target_value, source_ref, now, now),
+        )
+        self.conn.commit()
+        return self.get_pending_verification(cur.lastrowid)
+
+    def get_pending_verification(self, id):
+        row = self.conn.execute(
+            "SELECT * FROM pending_verifications WHERE id = ?", (id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_pending_verifications(self, status=None, due_only=False,
+                                    due_window_days=7):
+        """依 status 篩選；due_only=True 時只回傳 trigger_date 已過或在
+        due_window_days 天內、且 status=pending 的項目（FR-004）。
+        trigger_date 為 NULL（event 類型未填日期）的項目不參與「已到期」
+        判斷，不會出現在 due_only 結果中——沒有可比對的時間點就無法判斷
+        到期與否，見 spec.md Edge Cases／Assumptions。"""
+        if due_only:
+            rows = self.conn.execute(
+                "SELECT * FROM pending_verifications"
+                " WHERE status = 'pending' AND trigger_date IS NOT NULL"
+                " AND trigger_date <= date('now', '+' || ? || ' days')"
+                " ORDER BY trigger_date ASC, id ASC",
+                (due_window_days,),
+            ).fetchall()
+        elif status:
+            rows = self.conn.execute(
+                "SELECT * FROM pending_verifications WHERE status = ?"
+                " ORDER BY created_at DESC, id DESC", (status,),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM pending_verifications"
+                " ORDER BY created_at DESC, id DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def resolve_pending_verification(self, id, status, resolution=None):
+        if status not in self._PENDING_VERIFICATION_TERMINAL_STATUSES:
+            raise ValueError("status 必須是 resolved 或 dropped：%r" % (status,))
+        existing = self.get_pending_verification(id)
+        if not existing:
+            raise ValueError("找不到待觀察項目 id=%r" % (id,))
+        if existing["status"] in self._PENDING_VERIFICATION_TERMINAL_STATUSES:
+            raise ValueError(
+                "id=%r 已是終態「%s」，不可再次轉換——如需重新追蹤，"
+                "請登記一筆新項目" % (id, existing["status"]))
+        if status == "resolved" and not resolution:
+            raise ValueError("status=resolved 時 resolution 為必填")
+        now = _now()
+        self.conn.execute(
+            "UPDATE pending_verifications SET status=?, resolution=?,"
+            " resolved_at=?, updated_at=? WHERE id=?",
+            (status, resolution, now, now, id),
+        )
+        self.conn.commit()
+        return self.get_pending_verification(id)
 
     # ---------- 老芋頭交易表（FR-044）：老芋頭是PO信任的資深投資朋友／
     # 導師（非系統使用者，屬訊號來源），這裡結構化記錄他的進出，供模組D

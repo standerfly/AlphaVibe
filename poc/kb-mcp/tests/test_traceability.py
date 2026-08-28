@@ -121,11 +121,13 @@ class ServerToolsTest(unittest.TestCase):
         self.server.store.close()
         shutil.rmtree(self.tmp)
 
-    def test_tools_list_has_forty_three(self):
+    def test_tools_list_has_forty_seven(self):
         """2026-08-19：40→43。save_position_plan／get_position_plan（加碼
-        計畫總額度）＋check_auto_score（Score自動化四項評分）。"""
+        計畫總額度）＋check_auto_score（Score自動化四項評分）。
+        2026-08-27：43→47，新增待觀察／待查詢清單（pending_verifications）
+        四個工具，見 specs/001-pending-verification-list/。"""
         names = [t["name"] for t in server.TOOLS]
-        self.assertEqual(len(names), 43)
+        self.assertEqual(len(names), 47)
         for expected in ("save_snapshot", "get_snapshots",
                          "save_holdings", "get_holdings",
                          "save_stock_alias", "get_stock_alias",
@@ -147,7 +149,11 @@ class ServerToolsTest(unittest.TestCase):
                          "parse_and_save_trade_ledger",
                          "parse_and_save_trade_csv",
                          "save_position_plan", "get_position_plan",
-                         "check_auto_score"):
+                         "check_auto_score",
+                         "save_pending_verification",
+                         "list_pending_verifications",
+                         "get_pending_verification",
+                         "resolve_pending_verification"):
             self.assertIn(expected, names)
 
     def test_check_laoyutou_signal_tool_dispatch_wires_args(self):

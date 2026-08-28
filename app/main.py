@@ -62,6 +62,13 @@ docs/spec-intake/alphavibe/supporting-artifacts/2026-08-21-personal-console-expa
 `/{full_path:path}` 若先註冊會攔截所有請求；順序正確時，`/api/*`／`/mcp*`
 這些明確路徑一定先被上面的路由比對命中，catch-all 只接住剩下的路徑。
 
+**待觀察／待查詢清單（2026-08-27，獨立於上面「個人主控台擴建」Step
+編號之外的功能，見 specs/001-pending-verification-list/）**：
+`app/routers/pending_verifications.py` 只有一支唯讀 GET endpoint，供
+STND 首頁顯示「已到期／即將到期」的待驗證判斷——登記與標記解決一律
+透過 `poc/kb-mcp/server.py` 的 MCP tool 完成，不在這裡開 POST/PATCH
+endpoint（pre-spec Q-003a 決定）。
+
 啟動方式（在 AlphaVibe/.venv 內）：
     uvicorn app.main:app --port 8090
 """
@@ -81,6 +88,7 @@ from app.routers import holdings as holdings_router
 from app.routers import holdings_import as holdings_import_router
 from app.routers import market_scan as market_scan_router
 from app.routers import mcp as mcp_router
+from app.routers import pending_verifications as pending_verifications_router
 from app.routers import screen as screen_router
 from app.routers import stock_detail as stock_detail_router
 
@@ -95,6 +103,7 @@ app.include_router(actions_router.router)
 app.include_router(holdings_import_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(assets_router.router)
+app.include_router(pending_verifications_router.router)
 
 
 @app.get("/api/healthz")
