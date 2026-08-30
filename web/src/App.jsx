@@ -5,6 +5,7 @@ import DashboardList from './pages/Dashboard.jsx'
 import StockDetail from './pages/StockDetail.jsx'
 import Assets from './pages/Assets.jsx'
 import Photos from './pages/Photos.jsx'
+import Gateway from './pages/Gateway.jsx'
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
         <Route path="/dashboard/:code" element={<StockDetail />} />
         <Route path="/assets" element={<Assets />} />
         <Route path="/photos" element={<Photos />} />
+        <Route path="/gateway" element={<Gateway />} />
         <Route path="*" element={<Home />} />
       </Route>
     </Routes>

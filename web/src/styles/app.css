@@ -308,3 +308,49 @@ details.collapse summary::marker { color: var(--accent); }
   .buildup-grid { grid-template-columns: repeat(3, 1fr); }
   .simulate-result-grid { grid-template-columns: 1fr; }
 }
+
+/* 「管家」分頁（2026-08-31 新增，app/routers/gateway_monitor.py +
+   web/src/pages/Gateway.jsx）：鎖定橫幅、聊天泡泡、逐字稿面板。其餘
+   （卡片／表單／表格／stat-tile／badge）沿用既有 .card／.form-*／
+   .preview-table／.stat-tile／.badge-* token，不重新發明一套樣式。 */
+.gateway-lockdown-banner {
+  display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline;
+  background: var(--red-soft); border: 1px solid var(--red);
+  border-radius: 10px; padding: .8rem 1rem; margin-bottom: 1rem;
+  font-size: .86rem; color: var(--red-ink);
+}
+.gateway-lockdown-banner__title { font-weight: 700; }
+
+.gateway-chat-log {
+  display: flex; flex-direction: column; gap: .55rem;
+  margin-top: .9rem; max-height: 26rem; overflow-y: auto;
+}
+.gateway-chat-bubble {
+  border-radius: 8px; padding: .55rem .7rem; font-size: .86rem;
+  max-width: 42rem; overflow-wrap: break-word; white-space: pre-wrap;
+}
+.gateway-chat-bubble--user {
+  background: var(--accent-soft); align-self: flex-end; text-align: left;
+}
+.gateway-chat-bubble--assistant { background: var(--paper-sunken); align-self: flex-start; }
+.gateway-chat-bubble--error {
+  background: var(--red-soft); color: var(--red-ink); align-self: flex-start;
+}
+.gateway-chat-bubble__meta {
+  font-size: .68rem; color: var(--ink-dim); margin-bottom: .2rem; font-weight: 600;
+}
+.gateway-chat-bubble--error .gateway-chat-bubble__meta { color: var(--red-ink); }
+.gateway-chat-bubble__text { line-height: 1.55; }
+
+.gateway-transcript-panel {
+  border-top: 1px solid var(--rule); margin-top: .9rem; padding-top: .8rem;
+}
+
+.gateway-table th:last-child, .gateway-table td:last-child { text-align: right; }
+.gateway-table__desc { white-space: normal; max-width: 26rem; }
+
+.gateway-usage-note { font-size: .68rem; color: var(--ink-dim); font-weight: 600; }
+
+@media (max-width: 640px) {
+  .gateway-chat-bubble { max-width: 100%; }
+}

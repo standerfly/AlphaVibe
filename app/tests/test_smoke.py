@@ -38,6 +38,7 @@ import sys
 import time
 import urllib.request
 import urllib.error
+from datetime import datetime, timezone
 
 
 def _post(path: str, body: bytes, headers: dict = None, timeout: float = 10.0):
@@ -59,6 +60,143 @@ _BASE = "http://127.0.0.1:%d" % _PORT
 _KB_MCP_DIR = os.path.join(_APP_ROOT, "poc", "kb-mcp")
 if _KB_MCP_DIR not in sys.path:
     sys.path.insert(0, _KB_MCP_DIR)
+
+
+# gateway_monitor（2026-08-31 新增，STND「管家」分頁，見
+# app/routers/gateway_monitor.py 檔頭 docstring 與
+# ~/.claude/plans/hazy-petting-wreath.md）的內部邏輯單元測試。
+
+# **刻意用獨立 subprocess 執行，不在這個外層腳本 import app.routers.
+# gateway_monitor**——這支測試腳本開頭 docstring 明確講「刻意不用
+# pytest/httpx...改用標準庫」，import gateway_monitor 會連帶 import
+# fastapi/pydantic，讓外層腳本也綁死 fastapi 依賴，跟既有設計原則衝突。
+# 用跟啟動 uvicorn 一樣的模式（.venv/bin/python3 -c "..."）跑一段獨立腳本，
+# 外層 test_smoke.py 本身維持零外部依賴。
+#
+# 這裡驗證的是「不方便／不安全用真正的黑箱 HTTP 測」的部分：LOCKDOWN
+# 旗標檔要讓 POST /chat、/task 直接拒絕（不能真的在正式 telegram_gateway/
+# state/ 建立 LOCKDOWN 檔——那是 Telegram 側也在用的共用旗標，測試不該
+# 動到正式系統的鎖定狀態）、.env 權限模式解析、gateway_state.json／
+# usage_log.jsonl 的讀寫與彙總邏輯。全部用 tempfile 建的 scratch 目錄，
+# 不碰任何正式檔案。唯一例外是 `_transcript_path()` 那一項刻意用今天
+# 真實存在的 session_id（見任務背景知識第3點「底線變破折號」的 bug），
+# 因為這是唯讀 glob 搜尋，不會寫壞任何東西。
+_GATEWAY_UNIT_CHECK_SCRIPT = r"""
+import asyncio
+import json
+import sys
+import tempfile
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from fastapi import HTTPException
+
+from app.routers import gateway_monitor as gw
+
+failures = []
+
+
+def check(label, condition):
+    print(("PASS " if condition else "FAIL ") + label)
+    if not condition:
+        failures.append(label)
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    scratch = Path(tmp)
+    gw._STATE_DIR = scratch
+    gw._GATEWAY_STATE_PATH = scratch / "gateway_state.json"
+    gw._USAGE_LOG_PATH = scratch / "usage_log.jsonl"
+    gw._AUDIT_LOG_PATH = scratch / "audit_log.jsonl"
+    gw._LOCKDOWN_FLAG_PATH = scratch / "LOCKDOWN"
+
+    state = gw._load_state()
+    check("空狀態有三個預設 domain",
+          set(state["domains"].keys()) == set(gw.GATEWAY_DOMAINS.keys()))
+
+    gw._set_session_id("alphavibe", "unit-test-session-1")
+    check("set/get session_id round trip",
+          gw._get_session_id("alphavibe") == "unit-test-session-1")
+
+    gw._add_inflight("alphavibe", "sess-a", "/tmp", "測試任務")
+    inflight = gw._load_state()["inflight_bg_tasks"]
+    check("add_inflight 寫入一筆",
+          len(inflight) == 1 and inflight[0]["claude_session_id"] == "sess-a")
+    gw._clear_inflight("sess-a")
+    check("clear_inflight 清空", gw._load_state()["inflight_bg_tasks"] == [])
+
+    gw._append_usage_log("alphavibe", {"session_id": "s1", "total_cost_usd": 1.5,
+        "usage": {"input_tokens": 10, "output_tokens": 20}}, kind="sync", channel="web")
+    gw._append_usage_log("alphavibe", {"session_id": "s2", "total_cost_usd": None,
+        "usage": {}}, kind="bg", channel="web")
+    entries = gw._load_usage_entries()
+    check("usage_log 寫入兩筆", len(entries) == 2)
+    agg = gw._aggregate_usage(entries, datetime.now(timezone.utc) - timedelta(days=1))
+    check("彙總總花費為 1.5", agg["total_cost_usd"] == 1.5)
+    check("彙總標記 has_unknown_cost（背景任務無金額）", agg["has_unknown_cost"] is True)
+    check("彙總 calls 數為 2", agg["calls"] == 2)
+    since_future = datetime.now(timezone.utc) + timedelta(days=1)
+    agg_future = gw._aggregate_usage(entries, since_future)
+    check("since 設在未來時彙總為 0（時間篩選確實生效）", agg_future["calls"] == 0)
+
+    env_path = scratch / "fake.env"
+    gw._ENV_FILE_PATH = env_path
+    env_path.write_text("CLAUDE_PERMISSION_MODE=bypassPermissions\n", encoding="utf-8")
+    check("permission_args 讀到設定值",
+          gw._permission_args() == ["--permission-mode", "bypassPermissions"])
+    env_path.write_text("CLAUDE_PERMISSION_MODE=\n", encoding="utf-8")
+    check("空值不傳旗標", gw._permission_args() == [])
+
+    m = gw._BACKGROUNDED_RE.search("Starting background service...\nbackgrounded · a5581939\n")
+    check("backgrounded regex 抓到短 id", bool(m) and m.group(1) == "a5581939")
+
+    fake_jsonl = scratch / "fake-session.jsonl"
+    fake_jsonl.write_text("\n".join([
+        json.dumps({"type": "user", "timestamp": "t1", "message": {"content": "你好"}}),
+        json.dumps({"type": "assistant", "timestamp": "t2", "message": {"content": [
+            {"type": "text", "text": "哈囉"}]}}),
+        json.dumps({"type": "assistant", "timestamp": "t3", "message": {"content": [
+            {"type": "tool_use", "name": "Bash"}]}}),
+        json.dumps({"type": "queue-operation", "message": {}}),
+    ]), encoding="utf-8")
+    messages = gw._extract_messages(fake_jsonl)
+    check("只抽出有文字的 2 則訊息（純 tool_use／非 user-assistant type 被略過）",
+          len(messages) == 2 and messages[0]["text"] == "你好" and messages[1]["text"] == "哈囉")
+
+    gw._LOCKDOWN_FLAG_PATH.write_text(json.dumps({"locked_at": "t"}), encoding="utf-8")
+    check("LOCKDOWN 檔案存在時 _is_locked_down() 為真", gw._is_locked_down() is True)
+
+    async def _check_lockdown_rejects():
+        rejected_chat = False
+        try:
+            await gw.post_chat(gw.ChatRequest(domain="alphavibe", text="hi"))
+        except HTTPException as exc:
+            rejected_chat = exc.status_code == 423
+        rejected_task = False
+        try:
+            await gw.post_task(gw.TaskRequest(domain="alphavibe", description="hi"))
+        except HTTPException as exc:
+            rejected_task = exc.status_code == 423
+        return rejected_chat, rejected_task
+
+    rejected_chat, rejected_task = asyncio.run(_check_lockdown_rejects())
+    check("鎖定時 POST /chat 回 423（未呼叫 claude CLI）", rejected_chat)
+    check("鎖定時 POST /task 回 423（未呼叫 claude CLI）", rejected_task)
+
+    gw._LOCKDOWN_FLAG_PATH.unlink()
+    check("刪除旗標後 _is_locked_down() 為假", gw._is_locked_down() is False)
+
+    real_path = gw._transcript_path("adbfa17c-05d3-4025-8dba-86bc37b1b758")
+    check("真實 session_id 找得到逐字稿（底線變破折號的路徑，不是用猜的）",
+          real_path is not None and "-Users-stander-My-project-AlphaVibe" in str(real_path))
+
+print()
+if failures:
+    print("GATEWAY_UNIT: FAIL (%d 項失敗)" % len(failures))
+    sys.exit(1)
+print("GATEWAY_UNIT: PASS")
+sys.exit(0)
+"""
 
 
 def _guard_data_dir() -> str:
@@ -106,6 +244,20 @@ def main() -> int:
     env = dict(os.environ)
     env["ALPHAVIBE_DATA_DIR"] = data_dir
     python = os.path.join(_APP_ROOT, ".venv", "bin", "python3")
+
+    print()
+    print("=== gateway_monitor 內部邏輯單元測試（獨立 scratch state，不碰"
+          "正式 telegram_gateway/state/，不需要啟動 uvicorn） ===")
+    gateway_unit_failures = []
+    unit_result = subprocess.run(
+        [python, "-c", _GATEWAY_UNIT_CHECK_SCRIPT], cwd=_APP_ROOT,
+        capture_output=True, text=True, timeout=30)
+    print(unit_result.stdout)
+    if unit_result.returncode != 0:
+        print("gateway_monitor 單元測試 stderr（最後 2000 字）：")
+        print(unit_result.stderr[-2000:])
+        gateway_unit_failures.append("gateway_monitor unit checks")
+
     # 2026-08-22 教訓：原本用 stdout=subprocess.PIPE 但從未讀取，這份
     # 測試本身後面會送 30 個併發請求，uvicorn 每個請求都印一行 log，
     # 沒人清 pipe 的話 OS pipe buffer（通常 64KB）滿了之後 child process
@@ -123,7 +275,7 @@ def main() -> int:
         stdout=log_file, stderr=subprocess.STDOUT,
     )
 
-    failures = []
+    failures = list(gateway_unit_failures)
     try:
         _wait_for_server(proc)
 
@@ -137,6 +289,14 @@ def main() -> int:
             ("GET /api/assets/pockets", "/api/assets/pockets", 200),
             ("GET /api/assets/accounts", "/api/assets/accounts", 200),
             ("GET /api/assets/holdings", "/api/assets/holdings", 200),
+            # gateway_monitor（2026-08-31 新增，STND「管家」分頁）：這三支
+            # 讀的是 telegram_gateway/state/ 的正式共用狀態（不是這個測試
+            # 專用的 poc/data-test），刻意不用 STND_GATEWAY_STATE_DIR 覆寫
+            # ——都是唯讀查詢，直接對著今天真實累積的資料驗證格式正確，
+            # 見下方「gateway_monitor 深度驗證」區塊的進一步斷言。
+            ("GET /api/gateway/conversations", "/api/gateway/conversations", 200),
+            ("GET /api/gateway/tasks", "/api/gateway/tasks", 200),
+            ("GET /api/gateway/usage", "/api/gateway/usage", 200),
         ]
         for label, path, expect_status in checks:
             status, body = _get(path)
@@ -391,6 +551,111 @@ def main() -> int:
                   "(expected status=%s actual status=%s)"
                   % (expected_status, actual_status))
             failures.append("mcp output mismatch")
+
+        # ---- gateway_monitor：對著真實 telegram_gateway/state/ 資料的
+        # 深度驗證（2026-08-31 新增，STND「管家」分頁）。跟上面幾組
+        # router 不同，這裡刻意不比對「底層函式」（沒有底層函式，資料
+        # 來源就是共用狀態檔本身），改成直接讀同一份 gateway_state.json/
+        # usage_log.jsonl 檔案內容，逐欄比對 API 回應是否一致——這是這
+        # 支 router 語境下等價的「跟真相source比對」。 ----
+        gw_state_path = os.path.join(
+            "/Users/stander/My_project/AI/telegram_gateway/state", "gateway_state.json")
+        with open(gw_state_path, encoding="utf-8") as f:
+            gw_state_on_disk = json.load(f)
+
+        status, conv_body = _get("/api/gateway/conversations")
+        expected_domains = gw_state_on_disk.get("domains", {})
+        actual_by_name = {d["name"]: d for d in conv_body.get("domains", [])}
+        conv_ok = (
+            status == 200
+            and set(actual_by_name.keys()) == {"general", "alphavibe", "harness"}
+            and all(
+                actual_by_name[name]["session_id"] == info.get("session_id")
+                and actual_by_name[name]["last_active"] == info.get("last_active")
+                for name, info in expected_domains.items()
+                if name in actual_by_name
+            )
+        )
+        if conv_ok:
+            print("PASS /api/gateway/conversations 跟 gateway_state.json 內容逐欄一致（真實資料）")
+        else:
+            print("FAIL /api/gateway/conversations 跟 gateway_state.json 不一致")
+            print("  expected:", json.dumps(expected_domains, ensure_ascii=False))
+            print("  actual  :", json.dumps(actual_by_name, ensure_ascii=False))
+            failures.append("gateway conversations mismatch")
+
+        # transcript：驗證「底線變破折號」那個真實 bug 案例（任務背景
+        # 知識第3點）——alphavibe domain 的 session 逐字稿實際存在
+        # ~/.claude/projects/-Users-stander-My-project-AlphaVibe/ 底下
+        # （AlphaVibe 中的 _ 變成 -），如果 _transcript_path() 又退化成
+        # 用猜的（把 cwd 的 / 換成 -，但漏掉 _ 也要換），這裡會直接找不到
+        # 逐字稿、回 404，測試會抓到。
+        status, transcript_body = _get("/api/gateway/conversations/alphavibe/transcript")
+        transcript_ok = (
+            status == 200
+            and transcript_body is not None
+            and "-Users-stander-My-project-AlphaVibe" in transcript_body.get("transcript_path", "")
+            and len(transcript_body.get("messages", [])) > 0
+        )
+        if transcript_ok:
+            print("PASS /api/gateway/conversations/alphavibe/transcript 找到真實逐字稿"
+                  "（%d 則訊息，路徑含底線變破折號的真實目錄名稱）"
+                  % len(transcript_body.get("messages", [])))
+        else:
+            print("FAIL transcript 端點沒有正確找到底線變破折號路徑下的逐字稿：%r" % transcript_body)
+            failures.append("gateway transcript underscore-dash lookup")
+
+        status, harness_transcript = _get("/api/gateway/conversations/harness/transcript")
+        if status == 404:
+            print("PASS harness domain 目前無 session_id 時 transcript 端點正確回 404")
+        else:
+            print("FAIL harness domain 應回 404，實際 %s" % status)
+            failures.append("gateway transcript harness should 404")
+
+        status, unknown_transcript = _get("/api/gateway/conversations/not-a-domain/transcript")
+        if status == 404:
+            print("PASS 未知 domain 的 transcript 請求正確回 404")
+        else:
+            print("FAIL 未知 domain 應回 404，實際 %s" % status)
+            failures.append("gateway transcript unknown domain should 404")
+
+        # POST /chat、/task 的 domain 驗證（400，發生在真的呼叫 claude CLI
+        # 之前，安全，不會觸發真實訂閱用量或卡住）——真正呼叫 claude CLI
+        # 的端對端驗證另外用 1 次真實請求手動驗證過（見任務回報，不放進
+        # 這支可重跑的自動化測試，避免每次跑測試都消耗真實訂閱額度）。
+        chat_status, chat_body = _post(
+            "/api/gateway/chat",
+            json.dumps({"domain": "not-a-domain", "text": "hi"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"})
+        task_status, task_body = _post(
+            "/api/gateway/task",
+            json.dumps({"domain": "not-a-domain", "description": "hi"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"})
+        if chat_status == 400 and task_status == 400:
+            print("PASS POST /api/gateway/chat、/api/gateway/task 對未知 domain 都正確回 400（未呼叫 claude CLI）")
+        else:
+            print("FAIL domain 驗證沒有正確擋下：chat=%s task=%s" % (chat_status, task_status))
+            failures.append("gateway chat/task domain validation")
+
+        # usage：cross-check API 彙總跟直接解析 usage_log.jsonl 加總結果一致
+        usage_log_path = os.path.join(
+            "/Users/stander/My_project/AI/telegram_gateway/state", "usage_log.jsonl")
+        with open(usage_log_path, encoding="utf-8") as f:
+            usage_lines = [json.loads(line) for line in f if line.strip()]
+        today_start = datetime.now(timezone.utc).astimezone().replace(
+            hour=0, minute=0, second=0, microsecond=0)
+        expected_today_cost = round(sum(
+            e.get("total_cost_usd") or 0.0 for e in usage_lines
+            if e.get("timestamp") and datetime.fromisoformat(e["timestamp"]) >= today_start
+        ), 4)
+        status, usage_body = _get("/api/gateway/usage")
+        actual_today_cost = (usage_body or {}).get("today", {}).get("total_cost_usd")
+        if status == 200 and actual_today_cost == expected_today_cost:
+            print("PASS /api/gateway/usage 今日花費加總跟直接解析 usage_log.jsonl 一致（%s）" % actual_today_cost)
+        else:
+            print("FAIL /api/gateway/usage 今日花費跟手動加總不一致：expected=%s actual=%s"
+                  % (expected_today_cost, actual_today_cost))
+            failures.append("gateway usage aggregation mismatch")
 
         # 2026-08-22 教訓：get_kb_store() 是 sync generator dependency，
         # Starlette 用 anyio thread pool 執行，「建立」跟「關閉」不保證
