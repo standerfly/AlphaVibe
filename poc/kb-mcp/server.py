@@ -250,7 +250,12 @@ TOOLS = [
         "name": "save_holdings",
         "description": ("將截圖解析出的持股寫入持股快照（FR-029；只記 {code, name, "
                         "shares, avg_cost}，不做損益計算——Q-035 邊界）。"
-                        "經使用者確認解析結果後才呼叫。"),
+                        "經使用者確認解析結果後才呼叫。同日重複匯入防呆"
+                        "（2026-08-31新增）：同一個(代碼, snapshot_date)若"
+                        "已存在，該筆跳過不寫入，歸入回傳的"
+                        "duplicates_skipped，避免同一天重複確認同一份庫存表"
+                        "時股數被重複計算；不同天的快照不受影響，仍完整"
+                        "保留歷史。"),
         "inputSchema": {
             "type": "object",
             "properties": {

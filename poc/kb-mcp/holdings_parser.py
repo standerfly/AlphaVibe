@@ -19,11 +19,26 @@ _SKIP_PREFIXES = ("總計:", "註:", "印表日期:")
 # 表頭／次表頭列常見字樣，出現任一個即視為表頭列跳過（不是資料列）。
 _HEADER_MARKERS = ("股票代號", "集 保", "融 資", "融 券", "庫 存", "本日評估")
 
-# 資料列：代碼(4~6位數字) 空白 名稱(可能*前綴，無內部空白) 空白
-# 股數(整數，可能有千分位逗號) 空白 其餘欄位(市值/收盤價，只含數字/逗號/
-# 小數點/空白，不需要精確解析，只用來確認這確實是一列完整資料)。
+# 資料列：代碼(4~6位數字) 空白 [*興櫃前綴] 名稱 [空白] 股數(整數，可能有
+# 千分位逗號) 其餘欄位(市值/收盤價，只含數字/逗號/小數點/空白，不需要精確
+# 解析，只用來確認這確實是一列完整資料)。
+#
+# 名稱跟股數之間「有沒有空白」實測會因來源不同而不一致：App/網站匯出通常
+# 有空白（如「光洋科 150」），但從有密碼保護的PDF複製出來的文字常常沒有
+# （如「台達電65」）——2026-08-31 PO提供的真實PDF擷取文字證實這點，且
+# 原本 `(?P<name>\*?\S+)` 貪婪比對在沒空白時會把股數也吃進 name、同時把
+# 後面的市值欄位誤判成 shares（矽下不叫、看起來像解析成功但數字全錯，
+# 比對不出來比直接解析失敗更危險）。改用「name 用 lazy `[^\d]*?` 比對到
+# 第一個數字字元出現為止」的方式界定股數起點，中間可有可無的空白都用
+# `\s*` 容錯，兩種來源格式都能正確切開——已知限制：股票名稱本身若含
+# 阿拉伯數字（例如某些ETF簡稱），會被誤判為股數邊界，目前實際看過的
+# 個股清單沒有這種情況。
 _DATA_LINE_RE = re.compile(
-    r"^(?P<code>\d{4,6})\s+(?P<name>\*?\S+)\s+(?P<shares>\d[\d,]*)(?P<rest>[\d,.\s]*)$"
+    r"^(?P<code>\d{4,6})\s+"
+    r"(?P<star>\*?)"
+    r"(?P<name>[^\s\d][^\d]*?)\s*"
+    r"(?P<shares>\d[\d,]*)"
+    r"(?P<rest>[\d,.\s]*)$"
 )
 
 _LOOKS_LIKE_DATA_RE = re.compile(r"^\d")
@@ -53,15 +68,11 @@ def parse_holdings_report(text):
 
         match = _DATA_LINE_RE.match(line)
         if match:
-            name = match.group("name")
-            is_emerging = name.startswith("*")
-            if is_emerging:
-                name = name[1:]
             rows.append({
                 "code": match.group("code"),
-                "name": name,
+                "name": match.group("name"),
                 "shares": int(match.group("shares").replace(",", "")),
-                "is_emerging": is_emerging,
+                "is_emerging": bool(match.group("star")),
             })
             continue
 

@@ -1257,6 +1257,63 @@ class HoldingsParserTest(unittest.TestCase):
         self.assertEqual(out, {"rows": [], "unparsed_lines": [], "total_parsed": 0})
 
 
+# 2026-08-31 PO從有密碼保護的券商PDF複製出來的真實零股庫存表片段——跟
+# HOLDINGS_REPORT_SAMPLE（App/網站匯出）的關鍵差異：名稱跟股數之間幾乎
+# 都沒有空白（如「台達電65」「*和淞200」），只有含「-KY」字尾的名稱例外
+# 保留空白（如「世芯-KY 20」）。這是回歸測試：PO第一次貼這份文字時，舊版
+# regex會把每一列都解析「成功」但股數/名稱全部抓錯（例如台達電65被解析
+# 成shares=118950而不是65），比整批解析失敗更危險，因此修正regex並用這份
+# 真實資料鎖定正確行為。
+PDF_HOLDINGS_REPORT_SAMPLE = """\
+------ ------------------------------集　　保------------------------------ ------------------------------融　　資------------------------------ ------------------------------融　　券------------------------------ 庫　　　存　　------------------------本日評估----------------------
+股票代號名稱零股昨日可用本日買進前日買進本日賣出本日可用昨日可用本日買進前日買進本日賣出本日可用昨日可用本日買進前日買進本日賣出本日可用總　市　值現股市值信用市值總市值收盤價
+庫　　存庫　　存庫　　存庫　　存庫　　存庫　　存
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+2308 台達電65 118,950 118,950 118,950 1,830.00
+3008 大立光3 21,195 21,195 21,195 7,065.00
+3661 世芯-KY 20 81,300 81,300 81,300 4,065.00
+6757 台灣虎航1 55 55 55 55.10
+6826 *和淞200 90,002 54,001 54,001 450.01
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+總計: 593,272 557,271 557,271
+"""
+
+PDF_EXPECTED_HOLDINGS_ROWS = [
+    {"code": "2308", "name": "台達電", "shares": 65, "is_emerging": False},
+    {"code": "3008", "name": "大立光", "shares": 3, "is_emerging": False},
+    {"code": "3661", "name": "世芯-KY", "shares": 20, "is_emerging": False},
+    {"code": "6757", "name": "台灣虎航", "shares": 1, "is_emerging": False},
+    {"code": "6826", "name": "和淞", "shares": 200, "is_emerging": True},
+]
+
+
+class HoldingsParserPdfConcatenatedFormatTest(unittest.TestCase):
+    """PDF擷取文字（名稱股數無空白）的回歸測試，見上方PDF_HOLDINGS_REPORT_SAMPLE
+    docstring。跟HoldingsParserTest涵蓋的App/網站匯出格式並存，兩種格式都要
+    解析正確，不能顧此失彼。"""
+
+    def test_parses_pdf_sample_all_5_rows_with_correct_shares(self):
+        out = holdings_parser.parse_holdings_report(PDF_HOLDINGS_REPORT_SAMPLE)
+        self.assertEqual(out["total_parsed"], 5)
+        self.assertEqual(out["unparsed_lines"], [])
+        self.assertEqual(out["rows"], PDF_EXPECTED_HOLDINGS_ROWS)
+
+    def test_name_does_not_swallow_trailing_share_digits(self):
+        """回歸重點：舊版regex會把「台達電65」整段當name，這裡明確驗證
+        name不含任何數字字元。"""
+        out = holdings_parser.parse_holdings_report(PDF_HOLDINGS_REPORT_SAMPLE)
+        by_code = {r["code"]: r for r in out["rows"]}
+        self.assertEqual(by_code["2308"]["name"], "台達電")
+        self.assertEqual(by_code["2308"]["shares"], 65)  # 不是118950（總市值欄位）
+
+    def test_star_prefix_still_flagged_when_concatenated_with_shares(self):
+        out = holdings_parser.parse_holdings_report(PDF_HOLDINGS_REPORT_SAMPLE)
+        by_code = {r["code"]: r for r in out["rows"]}
+        self.assertEqual(by_code["6826"]["name"], "和淞")
+        self.assertEqual(by_code["6826"]["shares"], 200)  # 不是90002（總市值欄位）
+        self.assertTrue(by_code["6826"]["is_emerging"])
+
+
 class ProtocolE2ETest(unittest.TestCase):
     """實際啟動 server 子行程，走一遍 initialize → tools/list → tools/call。"""
 
