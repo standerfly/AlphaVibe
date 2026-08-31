@@ -771,10 +771,14 @@ class ReportServerTest(unittest.TestCase):
         """端到端：貼帳單→預覽→從隱藏欄位取值→確認存入，驗證store真的多了
         一筆新快照，且股票名稱（含「-KY」）在HTML跳脫/還原往返中不失真，
         avg_cost從上次快照正確沿用。用get_holdings(code=...)查逐代碼歷史
-        （而非get_holdings()整批最新快照）來驗證——save_holdings每次呼叫
-        都是單純INSERT、同一天內重複呼叫會在同一個snapshot_date累加多筆，
-        這是既有行為（不可更動），用code查詢history[0]（最新一筆）才是
-        對這個功能本身的正確驗證方式，不受同一天內測試seed資料干擾。"""
+        （而非get_holdings()整批最新快照）來驗證，不受同一天內測試seed
+        資料干擾。
+
+        本測試seed的9921股數是100，confirm送出的是200（股數真的變動了），
+        2026-08-31新增的同日重複防呆（見kb_store.py save_holdings()
+        docstring）只擋「code+snapshot_date+shares+avg_cost完全相同」的
+        意外重複確認，股數不同代表這是當天的合理更新，不會被擋下——這正是
+        當初設計防呆時特意保留的情境，此測試同時驗證這一點沒有被誤傷。"""
         store = KBStore(self.tmp)
         store.save_holdings([
             {"code": "9921", "name": "測試庫存股-KY", "shares": 100, "avg_cost": 3000},

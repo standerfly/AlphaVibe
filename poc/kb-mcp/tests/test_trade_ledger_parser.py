@@ -191,6 +191,60 @@ class ParseSkipLinesTest(unittest.TestCase):
         self.assertIn("中美晶", out["unparsed_lines"][0])
 
 
+class ParsePdfConcatenatedFormatTest(unittest.TestCase):
+    """2026-08-31 PO從有密碼保護的券商PDF複製出來的真實交易明細表片段——
+    跟SAMPLE_TEXT（App/網站匯出，CD/股票名稱/股數之間都有空白）的關鍵差異：
+    這份幾乎完全沒有空白（如「集買華邦電40」），只有含「-KY」字尾的名稱
+    例外保留空白（如「集買材料*-KY 30」）。這是回歸測試：PO第一次貼這份
+    文字時，舊版regex對每一列都判定失敗（total_parsed=0，整批安全但沒用），
+    因此修正regex並用這份真實資料鎖定新行為——涵蓋無空白CD+名稱+股數、
+    千分位逗號股數（1,000）、含連字號名稱（鴻華先進-創）、興市場別。"""
+
+    PDF_SAMPLE_TEXT = """\
+114/11/21 集買華邦電40 52.80 1 2,112 2,113(收) k-02xy-00
+114/12/24 興買倍利科20 629.00 5 12,580 12,585(收) V-00uL-00
+114/12/31 集賣鴻華先進-創1,000 43.00 17 129 43,000 42,854(付) a-R573-00
+115/01/19 集買材料*-KY 30 51.70 1 1,551 1,552(收) r-03a4-00
+115/07/20 OT買中美晶46 235.00 4 10,810 10,814(收) k-0BU6-01
+"""
+
+    def setUp(self):
+        self.out = trade_ledger_parser.parse_trade_ledger_text(self.PDF_SAMPLE_TEXT)
+
+    def test_all_5_rows_parsed_none_unparsed(self):
+        self.assertEqual(self.out["total_parsed"], 5)
+        self.assertEqual(self.out["unparsed_lines"], [])
+
+    def test_fields_correct_for_concatenated_rows(self):
+        expected = [
+            ("2025-11-21", "買", "華邦電", 40, 52.80, "k-02xy-00"),
+            ("2025-12-24", "買", "倍利科", 20, 629.00, "V-00uL-00"),
+            ("2025-12-31", "賣", "鴻華先進-創", 1000, 43.00, "a-R573-00"),
+            ("2026-01-19", "買", "材料*-KY", 30, 51.70, "r-03a4-00"),
+            ("2026-07-20", "買", "中美晶", 46, 235.00, "k-0BU6-01"),
+        ]
+        self.assertEqual(len(self.out["trades"]), len(expected))
+        for trade, (date, action, name, shares, price, order_ref) in zip(
+                self.out["trades"], expected):
+            self.assertEqual(trade["date"], date, trade)
+            self.assertEqual(trade["action"], action, trade)
+            self.assertEqual(trade["name"], name, trade)
+            self.assertEqual(trade["shares"], shares, trade)
+            self.assertEqual(trade["price"], price, trade)
+            self.assertEqual(trade["order_ref"], order_ref, trade)
+
+    def test_name_does_not_swallow_trailing_share_digits(self):
+        """回歸重點：舊版regex在CD跟名稱之間沒空白時整列比對失敗；就算
+        比對成功也不該把股數黏進名稱裡（比照holdings_parser同類回歸測試）。"""
+        by_name = {t["name"]: t for t in self.out["trades"]}
+        self.assertIn("華邦電", by_name)
+        self.assertEqual(by_name["華邦電"]["shares"], 40)
+
+    def test_comma_thousands_shares_parsed_as_integer(self):
+        by_name = {t["name"]: t for t in self.out["trades"]}
+        self.assertEqual(by_name["鴻華先進-創"]["shares"], 1000)
+
+
 class ResolveAndSaveAddSequenceTest(unittest.TestCase):
     """add_sequence 計算正確性——本檔測試重點。"""
 

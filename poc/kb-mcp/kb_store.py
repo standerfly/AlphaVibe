@@ -662,21 +662,53 @@ class KBStore:
     # ---------- 持股快照（FR-029，Q-035：不含損益計算） ----------
 
     def save_holdings(self, rows, snapshot_date=None, source_ref=None):
+        """新增一批持股快照（純INSERT，不覆蓋/刪除舊快照，見docstring歷史
+        設計）。2026-08-31新增同日「完全相同」重複匯入防呆（PO明確要求）：
+        同一個(code, snapshot_date)若已存在**且shares／avg_cost都跟現有列
+        完全相同**，判定為同一份資料被不小心重複確認匯入，該筆跳過不寫入，
+        歸入回傳的duplicates_skipped——避免get_holdings()把兩批一模一樣的
+        資料都當作「最新那天」回傳，造成股數看起來被重複計算（例如同一檔
+        出現兩列各自的股數）。
+
+        刻意只比對「完全相同」而非單純「code+snapshot_date存在」：同一天
+        合理地可能會有股數/成本真的不同的第二次確認（例如當天盤中先存一次、
+        尾盤又更新一次真的變動的持股數），這種情況不是使用者的錯誤重複，
+        不該被擋下——見test_report_server.py
+        test_dashboard_holdings_preview_then_confirm_full_flow 的既有情境。
+        跨「不同天」的快照完全不受本防呆影響，仍然完整保留歷史
+        （get_holdings()只看最新一天，不做跨天加總，不是這裡要防的問題）。
+
+        同一批次(rows)內部若本身就貼了兩筆一模一樣的資料，也會被擋下
+        第二筆——SQLite同一連線內尚未commit的INSERT對後續SELECT可見
+        （read-your-own-writes），不需要額外處理批次內比對。"""
         if not rows or not isinstance(rows, list):
             raise ValueError("rows 必須是非空的持股清單")
         snapshot_date = snapshot_date or _today()
+        duplicates_skipped = []
+        saved_count = 0
         for r in rows:
             if not r.get("code"):
                 raise ValueError("每筆持股都必須有 code：%r" % r)
+            existing = self.conn.execute(
+                "SELECT shares, avg_cost FROM holdings"
+                " WHERE code=? AND snapshot_date=? LIMIT 1",
+                (r["code"], snapshot_date),
+            ).fetchone()
+            if existing is not None and existing["shares"] == r.get("shares") \
+                    and existing["avg_cost"] == r.get("avg_cost"):
+                duplicates_skipped.append({"code": r["code"], "name": r.get("name")})
+                continue
             self.conn.execute(
                 "INSERT INTO holdings (code, name, shares, avg_cost,"
                 " snapshot_date, source_ref, created_at) VALUES (?,?,?,?,?,?,?)",
                 (r["code"], r.get("name"), r.get("shares"), r.get("avg_cost"),
                  snapshot_date, source_ref, _now()),
             )
+            saved_count += 1
         self.conn.commit()
-        return {"saved": True, "count": len(rows),
-                "snapshot_date": snapshot_date}
+        return {"saved": True, "count": saved_count,
+                "snapshot_date": snapshot_date,
+                "duplicates_skipped": duplicates_skipped}
 
     def get_holdings(self, code=None):
         if code:

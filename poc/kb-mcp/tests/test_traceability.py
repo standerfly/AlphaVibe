@@ -109,6 +109,63 @@ class HoldingsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.save_holdings([{"name": "沒代碼"}])
 
+    def test_same_day_duplicate_import_skipped_not_double_counted(self):
+        """2026-08-31回歸測試（PO明確要求的防呆）：同一天把同一份庫存表
+        確認匯入兩次，第二次該檔應被跳過、不寫入第二列，get_holdings()
+        才不會把同一天同一檔的股數算成兩份。"""
+        first = self.store.save_holdings(
+            [{"code": "2308", "name": "台達電", "shares": 65}],
+            snapshot_date="2026-08-31", source_ref="第一次匯入")
+        self.assertEqual(first["count"], 1)
+        self.assertEqual(first["duplicates_skipped"], [])
+
+        second = self.store.save_holdings(
+            [{"code": "2308", "name": "台達電", "shares": 65}],
+            snapshot_date="2026-08-31", source_ref="不小心重複貼上")
+        self.assertEqual(second["count"], 0)
+        self.assertEqual(second["duplicates_skipped"],
+                         [{"code": "2308", "name": "台達電"}])
+
+        latest = self.store.get_holdings()
+        self.assertEqual(latest["snapshot_date"], "2026-08-31")
+        self.assertEqual(latest["count"], 1)  # 不是2——沒有重複計算
+        self.assertEqual(latest["holdings"][0]["shares"], 65)
+
+    def test_same_code_different_day_not_treated_as_duplicate(self):
+        """跨「不同天」不受同日防呆影響，兩天各自的快照都該正常寫入
+        （這是既有的「保留歷史」設計，不能被新的防呆機制誤擋）。"""
+        first = self.store.save_holdings(
+            [{"code": "2308", "name": "台達電", "shares": 65}],
+            snapshot_date="2026-08-30")
+        second = self.store.save_holdings(
+            [{"code": "2308", "name": "台達電", "shares": 70}],
+            snapshot_date="2026-08-31")
+        self.assertEqual(first["duplicates_skipped"], [])
+        self.assertEqual(second["duplicates_skipped"], [])
+
+        history = self.store.get_holdings("2308")
+        self.assertEqual(history["count"], 2)
+
+    def test_mixed_batch_partial_duplicates_only_new_codes_saved(self):
+        """混合情境：同一天先存2308，再貼一批含2308（重複）+2337（新）——
+        2308該被跳過，2337該正常寫入，兩者互不干擾。"""
+        self.store.save_holdings(
+            [{"code": "2308", "name": "台達電", "shares": 65}],
+            snapshot_date="2026-08-31")
+
+        out = self.store.save_holdings(
+            [{"code": "2308", "name": "台達電", "shares": 65},
+             {"code": "2337", "name": "旺宏", "shares": 450}],
+            snapshot_date="2026-08-31")
+        self.assertEqual(out["count"], 1)
+        self.assertEqual(out["duplicates_skipped"],
+                         [{"code": "2308", "name": "台達電"}])
+
+        latest = self.store.get_holdings()
+        self.assertEqual(latest["count"], 2)
+        codes = {h["code"] for h in latest["holdings"]}
+        self.assertEqual(codes, {"2308", "2337"})
+
 
 class ServerToolsTest(unittest.TestCase):
     """直接以 Server 類別呼叫（協定層已有既有 E2E 測試涵蓋）。"""
