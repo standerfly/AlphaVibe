@@ -111,12 +111,49 @@ with tempfile.TemporaryDirectory() as tmp:
     gw._LOCKDOWN_FLAG_PATH = scratch / "LOCKDOWN"
 
     state = gw._load_state()
-    check("空狀態有三個預設 domain",
-          set(state["domains"].keys()) == set(gw.GATEWAY_DOMAINS.keys()))
+    check("空狀態有兩個已知專案捷徑 domain（general 已拿掉，見「擴充：任意命名主題」）",
+          set(state["domains"].keys()) == set(gw.PROJECT_DOMAINS.keys()))
 
     gw._set_session_id("alphavibe", "unit-test-session-1")
     check("set/get session_id round trip",
           gw._get_session_id("alphavibe") == "unit-test-session-1")
+
+    # ---- 任意命名主題（2026-08-31 擴充）：命名規則邊界測試。這些規則
+    # 必須跟 telegram_gateway/config.py 的同名函式逐字一致。 ----
+    check("normalize_domain_name 統一小寫去頭尾空白",
+          gw.normalize_domain_name("  MyTopic  ") == "mytopic")
+    check("is_valid_domain_name 接受已知簡單名稱", gw.is_valid_domain_name("alphavibe"))
+    check("is_valid_domain_name 接受中文名稱", gw.is_valid_domain_name("股票研究"))
+    check("is_valid_domain_name 拒絕空字串", gw.is_valid_domain_name("") is False)
+    check("is_valid_domain_name 拒絕含空白的名稱（Telegram args[0] 斷詞安全考量）",
+          gw.is_valid_domain_name("旅行 規劃") is False)
+    check("is_valid_domain_name 拒絕含斜線的名稱", gw.is_valid_domain_name("not/a-domain") is False)
+    check("is_valid_domain_name 接受剛好 40 字元",
+          gw.is_valid_domain_name("a" * gw.MAX_DOMAIN_NAME_LEN))
+    check("is_valid_domain_name 拒絕 41 字元",
+          gw.is_valid_domain_name("a" * (gw.MAX_DOMAIN_NAME_LEN + 1)) is False)
+    check("resolve_cwd 已知專案捷徑回傳真實路徑",
+          gw.resolve_cwd("alphavibe") == gw.PROJECT_DOMAINS["alphavibe"])
+    check("resolve_cwd 未知名稱 fallback 到家目錄、不拋錯（取代舊的 KeyError 查表）",
+          gw.resolve_cwd("brand-new-topic") == Path.home())
+
+    # 合法但從未見過的名稱應該被接受、_load_state() 能看到新 key——這類
+    # 測試只能放在這個子行程腳本層級（直接呼叫內部函式），不能透過真正
+    # 的 HTTP 端點觸發（POST /chat 一旦通過驗證就會真的呼叫 claude CLI，
+    # 消耗真實訂閱額度，見本檔案檔頭 docstring）。
+    gw._set_session_id("股票研究", "unit-test-session-new-topic")
+    reloaded = gw._load_state()
+    check("全新主題名稱第一次使用即自動建立（不需要預先存在於 PROJECT_DOMAINS）",
+          "股票研究" in reloaded["domains"]
+          and reloaded["domains"]["股票研究"]["session_id"] == "unit-test-session-new-topic")
+
+    # list_conversations() 必須走訪 state 本身，不能走訪 PROJECT_DOMAINS
+    # 固定字典——不修的話，任意命名的新主題永遠不會出現在這裡，直接打臉
+    # 「跨管道共用記憶看得到」這個核心賣點（見「擴充：任意命名主題」章節）。
+    conv = gw.list_conversations()
+    conv_names = {d["name"] for d in conv["domains"]}
+    check("list_conversations() 含任意命名的新主題（走訪 state 而非 PROJECT_DOMAINS）",
+          {"股票研究", "alphavibe", "harness"} <= conv_names)
 
     gw._add_inflight("alphavibe", "sess-a", "/tmp", "測試任務")
     inflight = gw._load_state()["inflight_bg_tasks"]
@@ -124,6 +161,32 @@ with tempfile.TemporaryDirectory() as tmp:
           len(inflight) == 1 and inflight[0]["claude_session_id"] == "sess-a")
     gw._clear_inflight("sess-a")
     check("clear_inflight 清空", gw._load_state()["inflight_bg_tasks"] == [])
+
+    # ---- 背景任務完成可見性（2026-08-31 擴充）：mark_inflight_done()
+    # 原地標記，不立刻清除；超過保留期才真的刪除。 ----
+    gw._add_inflight("harness", "sess-bg-done", "/tmp/y", "背景測試任務")
+    gw._mark_inflight_done("sess-bg-done")
+    marked = gw._load_state()["inflight_bg_tasks"]
+    check("mark_inflight_done() 原地標記 status=done，不清除紀錄",
+          len(marked) == 1 and marked[0]["status"] == "done" and "completed_at" in marked[0])
+
+    st_for_purge = gw._load_state()
+    old_ts = (datetime.now(timezone.utc)
+              - timedelta(hours=gw._COMPLETED_TASK_RETENTION_HOURS + 1)).isoformat()
+    st_for_purge["inflight_bg_tasks"][0]["completed_at"] = old_ts
+    gw._save_state(st_for_purge)
+    check("超過保留期的已完成任務下次 _load_state() 時真的被刪除",
+          gw._load_state()["inflight_bg_tasks"] == [])
+
+    # list_tasks() 2026-08-31 拿掉舊的 known_cwds（cwd 反查 domain）邏輯，
+    # 對任意命名主題也要能正確回報 domain（任意主題共用 Path.home()，
+    # 用 cwd 反查會拿到錯的／拿不到 domain，必須改讀持久化的 domain 欄位）。
+    gw._add_inflight("股票研究", "sess-bg-arbitrary", str(Path.home()), "任意主題背景任務")
+    tasks_result = gw.list_tasks()
+    check("list_tasks() 對任意命名主題的任務回傳正確 domain（不靠 cwd 反查）",
+          any(t["domain"] == "股票研究" and t["claude_session_id"] == "sess-bg-arbitrary"
+              for t in tasks_result["tasks"]))
+    gw._clear_inflight("sess-bg-arbitrary")
 
     gw._append_usage_log("alphavibe", {"session_id": "s1", "total_cost_usd": 1.5,
         "usage": {"input_tokens": 10, "output_tokens": 20}}, kind="sync", channel="web")
@@ -185,6 +248,32 @@ with tempfile.TemporaryDirectory() as tmp:
 
     gw._LOCKDOWN_FLAG_PATH.unlink()
     check("刪除旗標後 _is_locked_down() 為假", gw._is_locked_down() is False)
+
+    # 不合法主題名稱要在呼叫 claude CLI 之前就被 400 擋下（鎖定已解除，
+    # 這裡測的是命名驗證本身，不是鎖定閘門）。
+    async def _check_invalid_domain_rejected():
+        rejected_chat = False
+        try:
+            await gw.post_chat(gw.ChatRequest(domain="not/a-domain", text="hi"))
+        except HTTPException as exc:
+            rejected_chat = exc.status_code == 400
+        rejected_task = False
+        try:
+            await gw.post_task(gw.TaskRequest(domain="not/a-domain", description="hi"))
+        except HTTPException as exc:
+            rejected_task = exc.status_code == 400
+        return rejected_chat, rejected_task
+
+    rejected_chat2, rejected_task2 = asyncio.run(_check_invalid_domain_rejected())
+    check("不合法主題名稱 POST /chat 回 400（未呼叫 claude CLI）", rejected_chat2)
+    check("不合法主題名稱 POST /task 回 400（未呼叫 claude CLI）", rejected_task2)
+
+    try:
+        gw.get_transcript("not/a-domain")
+        transcript_invalid_rejected = False
+    except HTTPException as exc:
+        transcript_invalid_rejected = exc.status_code == 400
+    check("get_transcript() 對不合法主題名稱回 400", transcript_invalid_rejected)
 
     real_path = gw._transcript_path("adbfa17c-05d3-4025-8dba-86bc37b1b758")
     check("真實 session_id 找得到逐字稿（底線變破折號的路徑，不是用猜的）",
@@ -566,9 +655,13 @@ def main() -> int:
         status, conv_body = _get("/api/gateway/conversations")
         expected_domains = gw_state_on_disk.get("domains", {})
         actual_by_name = {d["name"]: d for d in conv_body.get("domains", [])}
+        # 2026-08-31「擴充：任意命名主題」：domain 集合不再固定三個，改跟
+        # gateway_state.json 實際內容完全相等比對——比單純放寬成 subset
+        # 更嚴謹，能同時抓「少報」（list_conversations() 又退化成走訪
+        # PROJECT_DOMAINS 固定字典）與「多報」。
         conv_ok = (
             status == 200
-            and set(actual_by_name.keys()) == {"general", "alphavibe", "harness"}
+            and set(actual_by_name.keys()) == set(expected_domains.keys())
             and all(
                 actual_by_name[name]["session_id"] == info.get("session_id")
                 and actual_by_name[name]["last_active"] == info.get("last_active")
@@ -612,27 +705,35 @@ def main() -> int:
             print("FAIL harness domain 應回 404，實際 %s" % status)
             failures.append("gateway transcript harness should 404")
 
+        # 2026-08-31「擴充：任意命名主題」後，"not-a-domain" 其實是個合法
+        # 名稱（不含空白／斜線）——這裡測的不再是「未知 domain 被拒絕」，
+        # 而是「合法但從未使用過的名稱，沒有 session_id 時回 404」，跟
+        # harness 那個案例是同一種情況。
         status, unknown_transcript = _get("/api/gateway/conversations/not-a-domain/transcript")
         if status == 404:
-            print("PASS 未知 domain 的 transcript 請求正確回 404")
+            print("PASS 從未使用過的合法主題名稱，transcript 請求正確回 404（無 session_id）")
         else:
-            print("FAIL 未知 domain 應回 404，實際 %s" % status)
+            print("FAIL 從未使用過的主題應回 404，實際 %s" % status)
             failures.append("gateway transcript unknown domain should 404")
 
         # POST /chat、/task 的 domain 驗證（400，發生在真的呼叫 claude CLI
         # 之前，安全，不會觸發真實訂閱用量或卡住）——真正呼叫 claude CLI
         # 的端對端驗證另外用 1 次真實請求手動驗證過（見任務回報，不放進
         # 這支可重跑的自動化測試，避免每次跑測試都消耗真實訂閱額度）。
+        # 2026-08-31 教訓：舊的 fixture 值 "not-a-domain" 在新規則下其實
+        # 是合法名稱（見上面 transcript 測試），如果沿用會通過驗證、真的
+        # 呼叫 claude CLI——改用含斜線的 "not/a-domain"，一定會被
+        # is_valid_domain_name() 擋下。
         chat_status, chat_body = _post(
             "/api/gateway/chat",
-            json.dumps({"domain": "not-a-domain", "text": "hi"}).encode("utf-8"),
+            json.dumps({"domain": "not/a-domain", "text": "hi"}).encode("utf-8"),
             headers={"Content-Type": "application/json"})
         task_status, task_body = _post(
             "/api/gateway/task",
-            json.dumps({"domain": "not-a-domain", "description": "hi"}).encode("utf-8"),
+            json.dumps({"domain": "not/a-domain", "description": "hi"}).encode("utf-8"),
             headers={"Content-Type": "application/json"})
         if chat_status == 400 and task_status == 400:
-            print("PASS POST /api/gateway/chat、/api/gateway/task 對未知 domain 都正確回 400（未呼叫 claude CLI）")
+            print("PASS POST /api/gateway/chat、/api/gateway/task 對不合法主題名稱都正確回 400（未呼叫 claude CLI）")
         else:
             print("FAIL domain 驗證沒有正確擋下：chat=%s task=%s" % (chat_status, task_status))
             failures.append("gateway chat/task domain validation")

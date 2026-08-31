@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { apiGet, apiPost } from '../api/client.js'
 
 /* 「管家」分頁（2026-08-31 新增）：STND Telegram 管家閘道的網頁監控＋
@@ -17,7 +17,10 @@ import { apiGet, apiPost } from '../api/client.js'
 
 const POLL_INTERVAL_MS = 15000
 
-const DOMAIN_LABELS = { general: '一般', alphavibe: 'AlphaVibe', harness: 'Harness' }
+// 2026-08-31「擴充：任意命名主題」：只有已知專案捷徑（cwd 指到真實
+// 專案路徑）需要顯示名稱對照，其餘任意命名的主題直接顯示原始名稱
+// （domainLabel() 的既有 fallback `DOMAIN_LABELS[name] || name` 不用改）。
+const DOMAIN_LABELS = { alphavibe: 'AlphaVibe', harness: 'Harness' }
 
 function domainLabel(name) {
   return DOMAIN_LABELS[name] || name
@@ -99,6 +102,14 @@ export default function Gateway() {
     refreshUsage()
   }, [refreshConversations, refreshTasks, refreshUsage])
 
+  // 主題選單的選項來源：GET /api/gateway/conversations 修好後會回傳
+  // 完整清單（含 Telegram 建立的任意新主題），依上次活躍時間排序，
+  // 供下方 <datalist> 使用。
+  const sortedDomains = useMemo(() => {
+    if (!domains) return []
+    return [...domains].sort((a, b) => (b.last_active || '').localeCompare(a.last_active || ''))
+  }, [domains])
+
   useEffect(() => {
     refreshAll()
     const timer = setInterval(refreshAll, POLL_INTERVAL_MS)
@@ -163,7 +174,7 @@ export default function Gateway() {
     setTranscriptError(null)
     setTranscriptLoading(true)
     try {
-      const res = await apiGet(`/api/gateway/conversations/${domain}/transcript`)
+      const res = await apiGet(`/api/gateway/conversations/${encodeURIComponent(domain)}/transcript`)
       setTranscriptData(res)
     } catch (err) {
       setTranscriptError(err.message)
@@ -199,16 +210,24 @@ export default function Gateway() {
           <form onSubmit={handleSendChat}>
             <div className="form-grid">
               <div className="form-field">
-                <label htmlFor="gateway-domain">情境（domain）</label>
-                <select
+                <label htmlFor="gateway-domain">情境（主題）</label>
+                {/* 2026-08-31「擴充：任意命名主題」：固定 <select> 改成
+                    自由輸入＋建議清單——同一個輸入框「選既有主題」跟
+                    「打新名稱建立」共用，不用另外做「新增主題」表單。
+                    命名規則不在前端重複驗證，非法名稱交給後端 400，沿用
+                    既有 actionError 顯示機制。 */}
+                <input
                   id="gateway-domain"
+                  list="gateway-domain-options"
                   value={selectedDomain}
                   onChange={(e) => setSelectedDomain(e.target.value)}
-                >
-                  {Object.keys(DOMAIN_LABELS).map((name) => (
-                    <option key={name} value={name}>{domainLabel(name)}</option>
+                  placeholder="輸入已知主題名稱，或打新名稱建立"
+                />
+                <datalist id="gateway-domain-options">
+                  {sortedDomains.map((d) => (
+                    <option key={d.name} value={d.name}>{domainLabel(d.name)}</option>
                   ))}
-                </select>
+                </datalist>
               </div>
             </div>
             <div className="form-field" style={{ marginTop: '.6rem' }}>

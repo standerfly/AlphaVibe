@@ -18,9 +18,11 @@ Python 行程，long-polling Telegram）已經常駐上線，靠呼叫本機 hea
    對應函式的獨立重寫，行為對齊但不共用模組。
 2. **共用狀態檔路徑可用 `STND_GATEWAY_STATE_DIR` 環境變數覆寫**（預設指向
    telegram_gateway 的正式 state 目錄），方便測試時指向獨立複本，不會
-   在跑測試時弄髒真正的 `gateway_state.json`。`GATEWAY_DOMAINS`／
-   `DEFAULT_DOMAIN` 則照方案 §2 寫死三個 domain 捷徑，不做成可覆寫
-   （方案本來就只定義這三個，不是安全邊界，見方案已知限制第 8 條）。
+   在跑測試時弄髒真正的 `gateway_state.json`。`PROJECT_DOMAINS`（已知
+   專案捷徑，只剩 alphavibe／harness）寫死不做成可覆寫（不是安全邊界，
+   見方案已知限制第 8 條）——但 domain／主題名稱本身**不再限於這個固定
+   字典**，任何通過命名檢查的字串都是合法主題，第一次使用即自動建立
+   （2026-08-31「擴充：任意命名主題」章節）。
 3. **權限模式從共用的 `~/.config/stnd-gateway/.env` 讀 `CLAUDE_PERMISSION_MODE`**
    （`STND_GATEWAY_ENV_FILE` 可覆寫路徑）——跟 Telegram 側共用同一個設定
    來源，避免兩邊各自為政、日後不同步。這個 app/ 目錄沒有裝
@@ -72,13 +74,71 @@ _USAGE_LOG_PATH = _STATE_DIR / "usage_log.jsonl"
 _AUDIT_LOG_PATH = _STATE_DIR / "audit_log.jsonl"
 _LOCKDOWN_FLAG_PATH = _STATE_DIR / "LOCKDOWN"
 
-# 跟 telegram_gateway/config.py::GATEWAY_DOMAINS 保持一致（見方案 §2、§7）。
-GATEWAY_DOMAINS: Dict[str, Path] = {
-    "general": Path.home(),
+# 已知專案捷徑（cwd 指到真實專案路徑，供需要讀檔/跑指令的主題使用）——
+# 跟 telegram_gateway/config.py::PROJECT_DOMAINS 保持一致（見方案 §2、§7、
+# 2026-08-31「擴充：任意命名主題」章節）。任意命名的主題不需要預先出現
+# 在這裡，第一次使用即自動建立，cwd 一律 fallback 到 Path.home()。
+PROJECT_DOMAINS: Dict[str, Path] = {
     "alphavibe": Path("/Users/stander/My_project/AlphaVibe"),
     "harness": Path("/Users/stander/My_project/AI/harness"),
 }
 DEFAULT_DOMAIN = "general"
+
+# 主題名稱的長度上限。**這個數值必須跟
+# telegram_gateway/config.py::MAX_DOMAIN_NAME_LEN 逐字一致**——任一邊
+# 漏改，會讓某些名稱在一邊被接受、在另一邊被拒絕。
+MAX_DOMAIN_NAME_LEN = 40
+
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def normalize_domain_name(name: str) -> str:
+    """統一小寫、去頭尾空白。所有入口（`ChatRequest.domain`／
+    `TaskRequest.domain`）都要先正規化，再驗證、再拿去查/寫 state——
+    否則 `MyTopic` 跟 `mytopic` 會變成兩個獨立 session，直接打臉「跨
+    管道共用記憶」這個核心賣點。**必須跟
+    telegram_gateway/config.py::normalize_domain_name() 逐字一致。**
+    """
+    return name.strip().lower()
+
+
+def is_valid_domain_name(name: str) -> bool:
+    """假設輸入已經 normalize_domain_name() 過。規則：非空、長度
+    ≤ MAX_DOMAIN_NAME_LEN、不含任何空白字元、不含 `/`、不含控制字元
+    （空白字元的禁止理由是 Telegram `/switch` 用 `context.args[0]`
+    斷詞，這裡沿用同一條規則以維持兩邊一致，即使網頁沒有這個斷詞
+    問題）。**必須跟 telegram_gateway/config.py::is_valid_domain_name()
+    逐字一致（長度上限、禁止字元集合）。**
+    """
+    if not name:
+        return False
+    if len(name) > MAX_DOMAIN_NAME_LEN:
+        return False
+    if any(ch.isspace() for ch in name):
+        return False
+    if "/" in name:
+        return False
+    if _CONTROL_CHAR_RE.search(name):
+        return False
+    return True
+
+
+def resolve_cwd(name: str) -> Path:
+    """`PROJECT_DOMAINS` 裡的已知專案捷徑用真實路徑；其餘一律 fallback
+    到 `Path.home()`（精準避開 `claude --bg` 首次在未信任目錄執行卡死
+    的地雷，新主題不支援自訂 cwd 是刻意的 MVP 邊界）。永不拋錯，取代
+    舊有會 KeyError 的 `PROJECT_DOMAINS[domain]` 直接查表寫法。**必須跟
+    telegram_gateway/config.py::resolve_cwd() 邏輯一致。**
+    """
+    return PROJECT_DOMAINS.get(name, Path.home())
+
+
+# 網頁提交的背景任務完成後，inflight_bg_tasks 紀錄原地標記
+# status="done"/completed_at 而不立刻清除，保留這麼多小時讓網頁輪詢
+# 看得到「已完成」（Telegram 有主動推播墊底，網頁沒有）。到期真的刪除，
+# 不是任務歷史列表。邏輯對齊
+# telegram_gateway/config.py::COMPLETED_TASK_RETENTION_HOURS。
+_COMPLETED_TASK_RETENTION_HOURS = 24
 
 _ENV_FILE_PATH = Path(os.environ.get(
     "STND_GATEWAY_ENV_FILE",
@@ -135,10 +195,39 @@ def _now_iso() -> str:
 def _empty_state() -> Dict[str, Any]:
     return {
         "version": 2,
-        "domains": {name: {"session_id": None, "last_active": None} for name in GATEWAY_DOMAINS},
+        "domains": {name: {"session_id": None, "last_active": None} for name in PROJECT_DOMAINS},
         "chats": {},
         "inflight_bg_tasks": [],
     }
+
+
+def _purge_stale_completed(state: Dict[str, Any]) -> bool:
+    """把 `completed_at` 超過保留期的 `status=="done"` 背景任務紀錄真的
+    刪除——不是任務歷史列表，只是讓近期完成的任務多活一段時間可見。
+    回傳是否有變動，供 `_load_state()` 決定要不要重新寫檔。邏輯對齊
+    telegram_gateway/state.py::_purge_stale_completed()。"""
+    now = datetime.now(timezone.utc)
+    kept: List[Dict[str, Any]] = []
+    changed = False
+    for task in state.get("inflight_bg_tasks", []):
+        if task.get("status") == "done":
+            completed_at = task.get("completed_at")
+            parsed: Optional[datetime] = None
+            if completed_at:
+                try:
+                    parsed = datetime.fromisoformat(completed_at)
+                except ValueError:
+                    parsed = None
+            if parsed is not None:
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                if now - parsed > timedelta(hours=_COMPLETED_TASK_RETENTION_HOURS):
+                    changed = True
+                    continue
+        kept.append(task)
+    if changed:
+        state["inflight_bg_tasks"] = kept
+    return changed
 
 
 def _load_state() -> Dict[str, Any]:
@@ -148,10 +237,15 @@ def _load_state() -> Dict[str, Any]:
         state = json.loads(_GATEWAY_STATE_PATH.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return _empty_state()
-    for name in GATEWAY_DOMAINS:
+    # 確保已知專案捷徑也存在於狀態裡；任意命名的主題不需要預先存在，
+    # 第一次使用（_set_session_id／_add_inflight 等）時會自然透過
+    # setdefault 建立。
+    for name in PROJECT_DOMAINS:
         state.setdefault("domains", {}).setdefault(name, {"session_id": None, "last_active": None})
     state.setdefault("chats", {})
     state.setdefault("inflight_bg_tasks", [])
+    if _purge_stale_completed(state):
+        _save_state(state)
     return state
 
 
@@ -205,6 +299,23 @@ def _clear_inflight(claude_session_id: str) -> None:
         t for t in state.get("inflight_bg_tasks", [])
         if t.get("claude_session_id") != claude_session_id
     ]
+    _save_state(state)
+
+
+def _mark_inflight_done(claude_session_id: str) -> None:
+    """完成時原地標記 `status="done"`／`completed_at`，不立刻清除——
+    「擴充：任意命名主題」章節「背景任務完成可見性」採用的修法：網頁
+    沒有主動推播（`notify=None`），靠輪詢 `GET /api/gateway/tasks` 看到
+    狀態變化，所以 inflight 紀錄要保留一段時間（見
+    `_COMPLETED_TASK_RETENTION_HOURS`）才能看到「已完成」。取代舊的
+    `_clear_inflight()` 呼叫點。邏輯對齊
+    telegram_gateway/state.py::mark_inflight_done()。"""
+    state = _load_state()
+    for t in state.get("inflight_bg_tasks", []):
+        if t.get("claude_session_id") == claude_session_id:
+            t["status"] = "done"
+            t["completed_at"] = _now_iso()
+            break
     _save_state(state)
 
 
@@ -428,17 +539,26 @@ def _aggregate_usage(entries: List[Dict[str, Any]], since: datetime) -> Dict[str
 
 @router.get("/api/gateway/conversations")
 def list_conversations() -> Dict[str, Any]:
+    """2026-08-31 修正（「擴充：任意命名主題」章節，最高優先度的功能性
+    bug）：改成走訪 `state.get("domains", {})` 本身，不再走訪
+    `PROJECT_DOMAINS`（固定字典）——不修的話，Telegram 建立的任意新
+    主題永遠不會出現在這裡，直接打臉「跨管道共用記憶看得到」這個核心
+    賣點。依 `last_active` 新到舊排序（`None` 排最後），方便前端
+    datalist 選單直接使用。"""
     state = _load_state()
-    inflight_domains = {t.get("domain") for t in state.get("inflight_bg_tasks", [])}
+    inflight_domains = {
+        t.get("domain") for t in state.get("inflight_bg_tasks", [])
+        if t.get("status") != "done"
+    }
     domains = []
-    for name in GATEWAY_DOMAINS:
-        info = state.get("domains", {}).get(name, {"session_id": None, "last_active": None})
+    for name, info in state.get("domains", {}).items():
         domains.append({
             "name": name,
             "session_id": info.get("session_id"),
             "last_active": info.get("last_active"),
             "has_inflight_task": name in inflight_domains,
         })
+    domains.sort(key=lambda d: d["last_active"] or "", reverse=True)
     return {"domains": domains, "lockdown": _lockdown_payload()}
 
 
@@ -448,50 +568,38 @@ def list_conversations() -> Dict[str, Any]:
 
 @router.get("/api/gateway/tasks")
 def list_tasks() -> Dict[str, Any]:
-    """回傳兩類任務：(1) `gateway_state.json` 目前記錄的 inflight
-    （不管誰提交，只要還沒被清掉就在這裡）；(2) `claude agents --json`
-    裡屬於已知 domain cwd、但已經不在 inflight 清單裡的背景任務——這讓
-    「已完成」的任務（尤其網頁自己提交、`_watch_bg_task()` 清掉 inflight
-    後）還能在這裡看到最終狀態，不需要另外做一份完成歷史儲存。"""
+    """回傳 `gateway_state.json` 記錄的 inflight_bg_tasks——包含真正
+    進行中的任務，以及近期完成、`status=="done"` 但還在
+    `_COMPLETED_TASK_RETENTION_HOURS` 保留期內的任務（見
+    `_mark_inflight_done()`／「擴充：任意命名主題」章節「背景任務完成
+    可見性」）。真正進行中的任務即時查 `claude agents --json` 對照
+    真實狀態，不只信快取。
+
+    2026-08-31 拿掉舊的 `known_cwds`（cwd 反查 domain）邏輯——任意主題
+    預設共用 `Path.home()` 後，一個 cwd 會對應多個主題名稱，無法唯一
+    反查回 domain。已完成任務改成直接讀持久化在紀錄裡的 `status`／
+    `completed_at`，不再需要反查。"""
     state = _load_state()
     inflight = state.get("inflight_bg_tasks", [])
     agents = _list_agents()
     agents_by_session = {a.get("sessionId"): a for a in agents if a.get("sessionId")}
 
     tasks = []
-    seen_sessions = set()
     for t in inflight:
         session_id = t.get("claude_session_id")
-        live = agents_by_session.get(session_id)
+        if t.get("status") == "done":
+            status = "done"
+        else:
+            live = agents_by_session.get(session_id)
+            status = live.get("state") if live else "unknown"
         tasks.append({
             "claude_session_id": session_id,
             "domain": t.get("domain"),
             "cwd": t.get("cwd"),
             "description": t.get("description"),
             "submitted_at": t.get("submitted_at"),
-            "status": live.get("state") if live else "unknown",
-            "source": "inflight",
-        })
-        seen_sessions.add(session_id)
-
-    known_cwds = {str(p): name for name, p in GATEWAY_DOMAINS.items()}
-    for a in agents:
-        if a.get("kind") != "background":
-            continue
-        session_id = a.get("sessionId")
-        if not session_id or session_id in seen_sessions:
-            continue
-        domain = known_cwds.get(a.get("cwd"))
-        if domain is None:
-            continue
-        tasks.append({
-            "claude_session_id": session_id,
-            "domain": domain,
-            "cwd": a.get("cwd"),
-            "description": a.get("name"),
-            "submitted_at": None,
-            "status": a.get("state") or a.get("status") or "unknown",
-            "source": "agents_history",
+            "completed_at": t.get("completed_at"),
+            "status": status,
         })
 
     return {"tasks": tasks, "lockdown": _lockdown_payload()}
@@ -521,17 +629,22 @@ def get_usage() -> Dict[str, Any]:
 
 @router.get("/api/gateway/conversations/{domain}/transcript")
 def get_transcript(domain: str) -> Dict[str, Any]:
-    if domain not in GATEWAY_DOMAINS:
-        raise HTTPException(status_code=404, detail="未知的 domain：%s，可用選項：%s" % (
-            domain, ", ".join(GATEWAY_DOMAINS)))
-    session_id = _get_session_id(domain)
+    """domain 先正規化再驗證格式（不再檢查是否為 `PROJECT_DOMAINS`
+    固定字典的 key——任意合法名稱都是有效主題）。格式合法但沒有
+    session_id（從未使用過）維持原本 404，這條路徑邏輯本來就是對的，
+    不用改。"""
+    normalized = normalize_domain_name(domain)
+    if not is_valid_domain_name(normalized):
+        raise HTTPException(status_code=400, detail="不合法的主題名稱：%s（長度需 1~%d、不能包含空白或「/」）" % (
+            domain, MAX_DOMAIN_NAME_LEN))
+    session_id = _get_session_id(normalized)
     if not session_id:
-        raise HTTPException(status_code=404, detail="這個 domain 目前沒有對話記錄（session_id 為空）")
+        raise HTTPException(status_code=404, detail="這個主題目前沒有對話記錄（session_id 為空）")
     path = _transcript_path(session_id)
     if path is None:
         raise HTTPException(status_code=404, detail="找不到逐字稿檔案（session_id=%s）" % session_id)
     return {
-        "domain": domain,
+        "domain": normalized,
         "session_id": session_id,
         "transcript_path": str(path),
         "messages": _extract_messages(path),
@@ -543,7 +656,7 @@ def get_transcript(domain: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 class ChatRequest(BaseModel):
-    domain: str = Field(..., description="general/alphavibe/harness 其中之一")
+    domain: str = Field(..., description="任意主題名稱（長度 1~40、不含空白或「/」）；已知專案捷徑：alphavibe/harness")
     text: str = Field(..., min_length=1, description="要送出的訊息")
 
 
@@ -560,12 +673,13 @@ async def _run(*args: str, cwd: Optional[Path] = None, timeout: Optional[float] 
 async def post_chat(payload: ChatRequest) -> Dict[str, Any]:
     if _is_locked_down():
         raise HTTPException(status_code=423, detail="系統已鎖定（LOCKDOWN），拒絕執行。解鎖需要在本機手動刪除旗標檔（見 telegram_gateway/state.py）。")
-    if payload.domain not in GATEWAY_DOMAINS:
-        raise HTTPException(status_code=400, detail="未知的 domain：%s，可用選項：%s" % (
-            payload.domain, ", ".join(GATEWAY_DOMAINS)))
+    normalized = normalize_domain_name(payload.domain)
+    if not is_valid_domain_name(normalized):
+        raise HTTPException(status_code=400, detail="不合法的主題名稱：%s（長度需 1~%d、不能包含空白或「/」）" % (
+            payload.domain, MAX_DOMAIN_NAME_LEN))
 
-    cwd = GATEWAY_DOMAINS[payload.domain]
-    session_id = _get_session_id(payload.domain)
+    cwd = resolve_cwd(normalized)
+    session_id = _get_session_id(normalized)
     cmd = ["claude", "-p", payload.text, "--output-format", "json"] + _permission_args()
     if session_id:
         cmd += ["--resume", session_id]
@@ -589,12 +703,12 @@ async def post_chat(payload: ChatRequest) -> Dict[str, Any]:
 
     new_session_id = cli_payload.get("session_id")
     if new_session_id:
-        _set_session_id(payload.domain, new_session_id)
-    _append_usage_log(payload.domain, cli_payload, kind="sync", channel="web")
-    _append_audit_log(payload.domain, "chat", payload.text)
+        _set_session_id(normalized, new_session_id)
+    _append_usage_log(normalized, cli_payload, kind="sync", channel="web")
+    _append_audit_log(normalized, "chat", payload.text)
 
     return {
-        "domain": payload.domain,
+        "domain": normalized,
         "session_id": new_session_id or session_id,
         "is_error": bool(cli_payload.get("is_error")),
         "result": cli_payload.get("result", "(沒有回覆內容)"),
@@ -608,7 +722,7 @@ async def post_chat(payload: ChatRequest) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 class TaskRequest(BaseModel):
-    domain: str = Field(..., description="general/alphavibe/harness 其中之一")
+    domain: str = Field(..., description="任意主題名稱（長度 1~40、不含空白或「/」）；已知專案捷徑：alphavibe/harness")
     description: str = Field(..., min_length=1, description="背景任務描述")
 
 
@@ -629,24 +743,26 @@ async def _watch_bg_task(domain: str, session_id: str) -> None:
     """無限輪詢直到完成——沒有固定逾時是刻意的（見方案已知限制第5條）。
     網頁提交的任務完成後不推播（`notify=None`），前端靠輪詢
     GET /api/gateway/tasks 自然看到狀態變化；這個函式唯一要做的收尾是
-    把 usage 記下來、把任務從 inflight 清單移除。任何例外都要吞掉，
-    否則這個 fire-and-forget asyncio task 的例外會變成 unhandled task
-    exception，不影響其他請求但會汙染 server log。"""
+    把 usage 記下來、把任務原地標記為完成（不立刻清除，見
+    `_mark_inflight_done()`／「擴充：任意命名主題」章節「背景任務完成
+    可見性」）。任何例外都要吞掉，否則這個 fire-and-forget asyncio task
+    的例外會變成 unhandled task exception，不影響其他請求但會汙染
+    server log。"""
     try:
         while True:
             agents = await asyncio.to_thread(_list_agents)
             entry = next((a for a in agents if a.get("sessionId") == session_id), None)
             if entry and entry.get("state") == "done":
                 _append_usage_log(domain, _extract_usage_from_transcript(session_id), kind="bg", channel="web")
-                _clear_inflight(session_id)
+                _mark_inflight_done(session_id)
                 return
             await asyncio.sleep(_BG_POLL_INTERVAL_S)
     except Exception:
         # 背景 watcher 掛掉不該讓 inflight 紀錄永遠卡著查不到原因，但
-        # 也不該讓整個 process 崩潰——至少把 inflight 清掉，狀態不明時
-        # 寧可讓它從清單消失（前端可以到 claude agents 或逐字稿目錄
+        # 也不該讓整個 process 崩潰——至少把它標記完成，狀態不明時寧可
+        # 讓它照正常保留期消失（前端可以到 claude agents 或逐字稿目錄
         # 人工核對），不要卡死顯示成永遠「進行中」。
-        _clear_inflight(session_id)
+        _mark_inflight_done(session_id)
         raise
 
 
@@ -654,11 +770,12 @@ async def _watch_bg_task(domain: str, session_id: str) -> None:
 async def post_task(payload: TaskRequest) -> Dict[str, Any]:
     if _is_locked_down():
         raise HTTPException(status_code=423, detail="系統已鎖定（LOCKDOWN），拒絕執行。解鎖需要在本機手動刪除旗標檔（見 telegram_gateway/state.py）。")
-    if payload.domain not in GATEWAY_DOMAINS:
-        raise HTTPException(status_code=400, detail="未知的 domain：%s，可用選項：%s" % (
-            payload.domain, ", ".join(GATEWAY_DOMAINS)))
+    normalized = normalize_domain_name(payload.domain)
+    if not is_valid_domain_name(normalized):
+        raise HTTPException(status_code=400, detail="不合法的主題名稱：%s（長度需 1~%d、不能包含空白或「/」）" % (
+            payload.domain, MAX_DOMAIN_NAME_LEN))
 
-    cwd = GATEWAY_DOMAINS[payload.domain]
+    cwd = resolve_cwd(normalized)
     cmd = ["claude", "--bg", payload.description] + _permission_args()
     try:
         result = await _run(*cmd, cwd=cwd, timeout=_BG_SUBMIT_TIMEOUT_S)
@@ -677,14 +794,14 @@ async def post_task(payload: TaskRequest) -> Dict[str, Any]:
     if not full_session_id:
         raise HTTPException(status_code=502, detail="已送出（短id=%s）但在 claude agents --json 找不到對應項目，可能還在啟動中，請稍後查 /api/gateway/tasks。" % short_id)
 
-    _add_inflight(payload.domain, full_session_id, agents_cwd, payload.description, notify=None)
-    _append_audit_log(payload.domain, "task", payload.description)
-    asyncio.create_task(_watch_bg_task(payload.domain, full_session_id))
+    _add_inflight(normalized, full_session_id, agents_cwd, payload.description, notify=None)
+    _append_audit_log(normalized, "task", payload.description)
+    asyncio.create_task(_watch_bg_task(normalized, full_session_id))
 
     return {
         "accepted": True,
         "short_id": short_id,
         "claude_session_id": full_session_id,
-        "domain": payload.domain,
+        "domain": normalized,
         "message": "已受理，背景執行中；完成狀態請查 /api/gateway/tasks",
     }
