@@ -53,6 +53,18 @@ export function PhotosIcon(props) {
   )
 }
 
+export function GatewayIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <rect x="4" y="7" width="16" height="12" rx="2.5" />
+      <path d="M9 3.5 12 7l3-3.5" />
+      <circle cx="9" cy="12.5" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="12.5" r="1.1" fill="currentColor" stroke="none" />
+      <path d="M9.5 16h5" />
+    </svg>
+  )
+}
+
 export function SearchIcon(props) {
   return (
     <svg {...base} {...props}>
