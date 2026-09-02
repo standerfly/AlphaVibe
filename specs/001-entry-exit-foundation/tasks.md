@@ -191,7 +191,7 @@ description: 001-entry-exit-foundation 的可執行任務清單
       的結論統一為「股數（單位：股）」
 - [X] T030 執行完整回歸 `python3 -m unittest discover -s poc/kb-mcp/tests`，
       與 T001 的基準數字比對（應為 657 ＋ 本次新增數，且 0 失敗）
-- [ ] T031 依 `~/.claude/rules/10-model-dispatch.md` 第 6 節「驗證不自驗」，
+- [X] T031 依 `~/.claude/rules/10-model-dispatch.md` 第 6 節「驗證不自驗」，
       派 fresh-context agent 對照 spec.md 的 14 條 FR 逐條驗收，
       **不由實作者自行宣告完成**；驗收 prompt 必須含否決條件
 

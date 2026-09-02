@@ -93,8 +93,12 @@ FR-010「不為了計算而即時查外部 API」的原則。
 
 ## R-006：FR-014 加長排程抓取窗口
 
-**Decision**：把 `screener.PRICE_WINDOW_DAYS`（`screener.py:38`，目前
-120）加長至 **400**（約 1.1 年，涵蓋「近 52 週」所需）。
+**Decision（2026-09-03 修正）**：`screener.PRICE_WINDOW_DAYS` **維持 120**，
+改用一次性腳本 `backfill_price_history_once.py` 補歷史深度。
+
+> **原始判斷已被推翻**：本節原本主張把 `PRICE_WINDOW_DAYS` 加長至 400，
+> 理由是「加長的是單次抓取的日期範圍，不是抓取次數」——**這個假設錯誤**，
+> 由 2026-09-02 的獨立驗收實測推翻，詳見下方「實測結果」。
 
 **Rationale**：這是 `review_engine.refresh_price_and_valuation()`
 （`review_engine.py:837-875`，寫入在 `:871`）抓取股價的日期範圍參數。
@@ -102,11 +106,31 @@ FR-010「不為了計算而即時查外部 API」的原則。
 故 API 呼叫「次數」不變。資料會隨每日 17:00 排程自然累積，百分位的
 參考價值逐月提升，不需要改介面。
 
-**實測結果（2026-09-02，T026，只測一檔）**：改為 400 後以 2330 台積電
-實測 `_fetch_prices_with_fallback('2330', 'TWSE', None, None, {})`，
-走 `twse_official` 官方端點回傳 **268 個交易日**（2025-07-29~2026-09-02），
-無截斷、無錯誤，且未觸發 FinMind fallback（不消耗匿名額度）。
-400 天窗口確認可用，維持此設定，不需退回 250 天。
+**實測結果一（2026-09-02，T026，只測一檔）**：400 天窗口確實能取得
+**268 個交易日**（2025-07-29~2026-09-02），走 `twse_official` 官方端點、
+無截斷、未觸發 FinMind fallback。**但這個測試只驗了「資料拿得到」，
+沒有量測呼叫次數**——這是 T026 設計上的缺口。
+
+**實測結果二（2026-09-02，獨立驗收攔截 `_throttled_get` 量測）**：
+`twse_price_client.fetch_price_history()` 是**逐月**抓的
+（`twse_price_client.py:392`，`_months_needed = window_days // 20 + 2`）：
+
+| 窗口 | 每檔月數＝HTTP 次數 | 3 檔實測總次數 |
+|---|---|---|
+| 120 天 | 8 | 24 |
+| 400 天 | 22 | 66（2.75 倍） |
+
+排程路徑 `review_engine.py:863` 傳 `market=None, cache=None`，上櫃股會
+先試 TWSE 失敗再試 TPEx（再乘 2），25 檔持股的每日排程會從約 200 次
+變成 550+ 次，每次還有 `SLEEP_SECONDS` 節流。這**違反 FR-014 的
+MUST NOT 條款**。
+
+**最終做法**：每日窗口維持 120（呼叫次數完全不變），長歷史用
+`backfill_price_history_once.py` 補一次。`stock_price_history` 是
+`INSERT OR REPLACE` 永不刪除，補過就永久有了，之後 120 天窗口足以接續
+更新——長歷史的成本只付一次。守門測試
+`test_traceability.test_fr014_daily_window_not_widened` 釘住
+`PRICE_WINDOW_DAYS == 120`，避免有人再調大。
 
 ## R-007：批次查詢的資料存取
 

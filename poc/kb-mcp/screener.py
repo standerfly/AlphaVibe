@@ -35,11 +35,23 @@ import fundamentals_client
 import twse_price_client
 
 MAX_CODES = 50
-# FR-014（2026-09-02）：由 120 加長為 400，讓 stock_price_history 快取能
-# 隨每日排程自然累積到約 1 年，使 get_price_position 的百分位判斷從
-# 「近期區間位置」逐步變成有意義的「區間定位」。加長的是單次抓取的
-# 日期範圍，不是抓取次數——每檔仍是一次呼叫，API 呼叫次數不變。
-PRICE_WINDOW_DAYS = 400
+# 每日排程的股價抓取窗口。**維持 120，不要加長**——
+# twse_price_client.fetch_price_history() 是逐月抓的
+# （_months_needed = window_days // 20 + 2），窗口變長會等比例增加 HTTP
+# 呼叫次數，不是「同一次呼叫多拿一點」：
+#     120 天 →  8 個月 →  每檔 8 次（上櫃股先試 TWSE 失敗再試 TPEx ＝ 16 次）
+#     400 天 → 22 個月 → 每檔 22 次（上櫃股 44 次）
+# 2026-09-02 實測（攔截 _throttled_get）：3 檔在 120 天下 24 次、
+# 400 天下 66 次，2.75 倍；排程路徑（review_engine.py:863 傳
+# market=None, cache=None）不快取，25 檔持股每日會從約 200 次變成 550+ 次，
+# 每次還有 SLEEP_SECONDS 節流，執行時間與被暫時封鎖的風險同步上升。
+#
+# 需要更深的歷史（例如 get_price_position 的百分位想涵蓋近一年）時，
+# 用一次性腳本 backfill_price_history_once.py 補一次即可——
+# stock_price_history 是 INSERT OR REPLACE 永不刪除，補過就永久有了，
+# 之後每日 120 天窗口足以接續更新。這樣長歷史的成本只付一次，
+# 不是每天都付。（spec 001-entry-exit-foundation FR-014）
+PRICE_WINDOW_DAYS = 120
 PEG_THRESHOLD = 1.0
 DRAWDOWN_THRESHOLD = 0.40
 

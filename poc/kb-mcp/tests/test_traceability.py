@@ -1034,7 +1034,7 @@ class EntryExitFoundationTraceabilityTest(unittest.TestCase):
         "FR-011": ("批次查詢單檔問題不影響整批", "pnl.compute_all_positions"),
         "FR-012": ("MCP 工具化", "server.TOOLS"),
         "FR-013": ("不改既有浮動損益顯示", "report._chart_stats_html"),
-        "FR-014": ("加長排程抓取窗口", "screener.PRICE_WINDOW_DAYS"),
+        "FR-014": ("一次性回補歷史深度，日常窗口不變", "screener.PRICE_WINDOW_DAYS"),
     }
 
     def test_all_frs_have_implementation(self):
@@ -1067,10 +1067,36 @@ class EntryExitFoundationTraceabilityTest(unittest.TestCase):
         ]
         self.assertAlmostEqual(report._avg_cost_for_chart(None, entries), 15.0)
 
-    def test_fr014_window_extended(self):
-        """FR-014：抓取窗口已加長（原 120）。"""
+    def test_fr014_daily_window_not_widened(self):
+        """FR-014 的 MUST NOT：不得增加每日排程的外部 API 呼叫次數。
+
+        2026-09-02 獨立驗收抓到的問題：原本以為加長 PRICE_WINDOW_DAYS
+        只是「同一次呼叫多拿一點」，實測證實 twse_price_client 是逐月抓
+        （_months_needed = window_days // 20 + 2），窗口變長＝等比例多打
+        HTTP：120 天 8 次／檔、400 天 22 次／檔（上櫃股再乘 2）。
+        改用一次性腳本 backfill_price_history_once.py 補深度，
+        每日排程窗口維持 120。
+
+        這個測試就是釘住那條 MUST NOT——有人再想調大 PRICE_WINDOW_DAYS
+        時會先撞到這裡。
+        """
         import screener
-        self.assertGreaterEqual(screener.PRICE_WINDOW_DAYS, 400)
+        import twse_price_client
+
+        self.assertEqual(screener.PRICE_WINDOW_DAYS, 120)
+        self.assertEqual(
+            twse_price_client._months_needed(screener.PRICE_WINDOW_DAYS), 8,
+            "每日排程每檔的抓取月數變了＝API 呼叫次數變了，違反 FR-014 的 MUST NOT")
+
+    def test_fr014_backfill_script_exists(self):
+        """FR-014 的達成手段：一次性回補腳本存在且可 import。"""
+        import backfill_price_history_once as backfill
+        self.assertTrue(hasattr(backfill, "main"))
+        # 冪等性靠 save_price_history_points 的 INSERT OR REPLACE，
+        # 估算函式讓執行者事前知道要打幾次 API
+        estimate = backfill._estimate_calls(["2330", "2337"], 400)
+        self.assertEqual(estimate["months_per_code"], 22)
+        self.assertEqual(estimate["best_case"], 44)
 
 
 class RevenueYoyLookbackTest(unittest.TestCase):
