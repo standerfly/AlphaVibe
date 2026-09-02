@@ -1,6 +1,6 @@
 # Spec Kit Input: 進出場分析基礎層（損益追蹤與價位定位）
 
-**Status:** Draft
+**Status:** Accepted
 **Source Product Spec:** ../../product-spec.md
 **Source Scope Decision:** ../../scope-decision.md
 **Spec Feature Slug:** entry-exit-foundation
