@@ -722,8 +722,22 @@ class KBStore:
             "SELECT max(snapshot_date) AS d FROM holdings").fetchone()["d"]
         if latest is None:
             return {"snapshot_date": None, "count": 0, "holdings": []}
+        # 2026-09-02（交易紀錄自動同步持股快照）：同一天同代碼可能出現兩列
+        # ——holdings_sync.py 每次交易匯入後會重寫「今天完整快照」，若當天
+        # 稍後又手動上傳一次券商持股報告，兩者都落在同一個
+        # snapshot_date，靠 id AUTOINCREMENT 嚴格遞增取後寫入者勝出（券商
+        # 報告永遠優先於自動推算，見product-spec決策），不需要額外的
+        # 「來源優先權」欄位。同時篩掉 shares<=0（賣出歸零/已出清的代碼）
+        # ——這代表「是否持有」，不該再出現在最新持股清單。get_holdings
+        # (code=X) 這條「查歷史」的分支不受影響，仍完整保留每一列
+        # （含shares=0那筆），供需要「出清那一刻」的呼叫端使用。
         rows = self.conn.execute(
-            "SELECT * FROM holdings WHERE snapshot_date=? ORDER BY code",
+            "SELECT h.* FROM holdings h"
+            " INNER JOIN (SELECT code, max(id) AS max_id FROM holdings"
+            "             WHERE snapshot_date=? GROUP BY code) t"
+            " ON h.id = t.max_id"
+            " WHERE h.shares > 0"
+            " ORDER BY h.code",
             (latest,),
         ).fetchall()
         return {"snapshot_date": latest, "count": len(rows),

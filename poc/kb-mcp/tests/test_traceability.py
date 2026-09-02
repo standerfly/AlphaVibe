@@ -166,6 +166,54 @@ class HoldingsTest(unittest.TestCase):
         codes = {h["code"] for h in latest["holdings"]}
         self.assertEqual(codes, {"2308", "2337"})
 
+    def test_same_day_same_code_two_rows_returns_higher_id_row(self):
+        """2026-09-02（交易紀錄自動同步）回歸測試：同一天同代碼出現兩列
+        （例如自動同步先寫、券商報告後補上不同數字）時，get_holdings()
+        該回傳id較大（後寫入）那列，不是任意一列或兩列都回。"""
+        self.store.save_holdings(
+            [{"code": "2330", "name": "台積電", "shares": 1000, "avg_cost": 880.0}],
+            snapshot_date="2026-09-01", source_ref="第一次")
+        self.store.save_holdings(
+            [{"code": "2330", "name": "台積電", "shares": 2000, "avg_cost": 900.0}],
+            snapshot_date="2026-09-01", source_ref="第二次")
+
+        latest = self.store.get_holdings()
+        self.assertEqual(latest["count"], 1)
+        self.assertEqual(latest["holdings"][0]["shares"], 2000)
+        self.assertEqual(latest["holdings"][0]["avg_cost"], 900.0)
+        self.assertEqual(latest["holdings"][0]["source_ref"], "第二次")
+
+    def test_shares_zero_excluded_from_unbound_query(self):
+        """shares<=0（賣出歸零/已出清）的代碼，不該出現在不帶code的
+        get_holdings()結果——代表「是否持有」，該檔已經出清了。"""
+        self.store.save_holdings(
+            [{"code": "2330", "name": "台積電", "shares": 1000, "avg_cost": 880.0},
+             {"code": "6805", "name": "鴻勁", "shares": 500, "avg_cost": 1000.0}],
+            snapshot_date="2026-09-01")
+        self.store.save_holdings(
+            [{"code": "2330", "name": "台積電", "shares": 0, "avg_cost": 880.0}],
+            snapshot_date="2026-09-01", source_ref="賣出歸零")
+
+        latest = self.store.get_holdings()
+        self.assertEqual(latest["count"], 1)
+        self.assertEqual(latest["holdings"][0]["code"], "6805")
+
+    def test_get_holdings_with_code_still_includes_shares_zero_history(self):
+        """get_holdings(code=X)查歷史的分支不受shares<=0篩選影響，仍要
+        完整保留每一列（含shares=0那筆），供需要『出清那一刻』的呼叫端
+        使用。"""
+        self.store.save_holdings(
+            [{"code": "2330", "name": "台積電", "shares": 1000, "avg_cost": 880.0}],
+            snapshot_date="2026-09-01")
+        self.store.save_holdings(
+            [{"code": "2330", "name": "台積電", "shares": 0, "avg_cost": 880.0}],
+            snapshot_date="2026-09-01", source_ref="賣出歸零")
+
+        history = self.store.get_holdings("2330")
+        self.assertEqual(history["count"], 2)
+        shares_values = {h["shares"] for h in history["history"]}
+        self.assertEqual(shares_values, {1000, 0})
+
 
 class ServerToolsTest(unittest.TestCase):
     """直接以 Server 類別呼叫（協定層已有既有 E2E 測試涵蓋）。"""
