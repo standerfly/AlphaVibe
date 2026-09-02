@@ -60,6 +60,7 @@ total_parsed），可直接餵給`resolve_and_save_trade_ledger()`，不需要�
 import csv
 import re
 
+import holdings_sync
 import stock_alias_resolver
 
 # 資料列：{日期 115/07/22}{空白}{CD 如 OT賣/集買}{CD跟股票名稱之間可能有
@@ -324,7 +325,17 @@ def resolve_and_save_trade_ledger(parsed, store, data_dir=None, token=None):
     回傳 {"total_parsed", "saved"(每筆含code/name/action/shares/price/
     date/add_sequence/order_ref), "unresolved_names", "unparsed_lines",
     "duplicates_skipped"(每筆含code/name/action/shares/price/date/
-    order_ref，被防重複機制擋下、未寫入的交易)}。
+    order_ref，被防重複機制擋下、未寫入的交易), "holdings_sync"}。
+
+    holdings_sync（2026-09-02新增，FR-056週邊）：`saved` 這批真的寫入
+    trade_ledger 的交易，會自動同步反映到 holdings 持股快照（見
+    holdings_sync.py::sync_holdings_from_trades()）。`saved` 為空（整批
+    都查無代碼或被防重複擋下）時不觸發，這個鍵是
+    `{"synced": False, ...}`。同步失敗**不影響** trade_ledger 本身是否
+    寫入成功——交易紀錄已經在上面的迴圈逐筆 commit 過了，這裡只是把
+    例外訊息放進 `holdings_sync.error`，不重新拋出，避免「交易明明存
+    成功了，卻因為持股同步這個附加動作出錯，讓呼叫端誤以為整個匯入失
+    敗」。
     """
     if isinstance(parsed, dict):
         trades = list(parsed.get("trades") or [])
@@ -409,10 +420,20 @@ def resolve_and_save_trade_ledger(parsed, store, data_dir=None, token=None):
             "order_ref": order_ref,
         })
 
+    # 持股快照自動同步（2026-09-02新增）：sync_holdings_from_trades()
+    # 自己在 saved 為空時就回傳 synced=False、不觸發，這裡不重複判斷；
+    # 只包一層 try/except——同步本身失敗不影響 trade_ledger 已經寫入
+    # 成功這件事，錯誤放進 holdings_sync.error，不重新拋出。
+    try:
+        sync_result = holdings_sync.sync_holdings_from_trades(store, saved)
+    except Exception as exc:  # noqa: BLE001 — 見上方 docstring 取捨說明
+        sync_result = {"synced": False, "error": str(exc)}
+
     return {
         "total_parsed": len(trades),
         "saved": saved,
         "unresolved_names": unresolved_names,
         "unparsed_lines": unparsed_lines,
         "duplicates_skipped": duplicates_skipped,
+        "holdings_sync": sync_result,
     }

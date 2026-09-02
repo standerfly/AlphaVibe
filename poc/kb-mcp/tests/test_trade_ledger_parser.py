@@ -418,6 +418,86 @@ class ResolveAndSaveAddSequenceTest(unittest.TestCase):
         self.assertEqual([s["add_sequence"] for s in out["saved"]], [1, 2])
 
 
+class ResolveAndSaveHoldingsSyncIntegrationTest(unittest.TestCase):
+    """FR-056週邊：resolve_and_save_trade_ledger()尾端掛載的持股快照
+    自動同步（holdings_sync.py），2026-09-02新增。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(
+            prefix="alphavibe-trade-ledger-holdings-sync-test-")
+        self.store = KBStore(self.tmp)
+        for name, code in ALIAS_MAP.items():
+            self.store.save_stock_alias(name, code, source="測試預先建立")
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp)
+
+    def _run(self):
+        parsed = trade_ledger_parser.parse_trade_ledger_text(SAMPLE_TEXT)
+        return trade_ledger_parser.resolve_and_save_trade_ledger(
+            parsed, self.store, data_dir=self.tmp)
+
+    def test_pasting_trade_text_reflects_in_get_holdings_without_extra_call(self):
+        """貼交易明細表文字呼叫resolve_and_save_trade_ledger()後，不需要
+        額外呼叫任何東西，get_holdings()就該直接反映這批交易。"""
+        out = self._run()
+        self.assertTrue(out["holdings_sync"]["synced"])
+        latest = self.store.get_holdings()
+        codes = {h["code"] for h in latest["holdings"]}
+        # SAMPLE_TEXT涵蓋6個代碼：中美晶(5483,全賣，baseline本來就沒有
+        # 持股，賣出後仍是0，不該出現)；台達電(2308)/旺宏(2337)/
+        # 家碩(6953)/家登(3680)/世芯-KY(3661)都有淨買進，該出現。
+        self.assertNotIn("5483", codes)
+        for expected_code in ("2308", "2337", "6953", "3680", "3661"):
+            self.assertIn(expected_code, codes)
+
+    def test_holdings_sync_key_present_existing_four_keys_unaffected(self):
+        """回傳dict新增holdings_sync鍵，既有四個鍵（total_parsed/saved/
+        unresolved_names/unparsed_lines）完全不受影響。"""
+        out = self._run()
+        self.assertIn("holdings_sync", out)
+        self.assertEqual(out["total_parsed"], TOTAL_COUNT)
+        self.assertEqual(len(out["saved"]), TOTAL_COUNT)
+        self.assertEqual(out["unresolved_names"], [])
+        self.assertEqual(out["unparsed_lines"], [])
+
+    def test_unresolved_name_trade_not_synced(self):
+        """查無代碼的交易不寫入trade_ledger，自然也不該進入持股同步。"""
+        text = "115/07/22 OT買 查無此股 100 10.00 1 1,000 1,001(收) k-0000-00\n"
+        parsed = trade_ledger_parser.parse_trade_ledger_text(text)
+        with unittest.mock.patch.object(
+                trade_ledger_parser.stock_alias_resolver.finmind_client,
+                "get_stock_info", return_value={"stocks": []}):
+            out = trade_ledger_parser.resolve_and_save_trade_ledger(
+                parsed, self.store, data_dir=self.tmp)
+        self.assertEqual(out["saved"], [])
+        self.assertFalse(out["holdings_sync"]["synced"])
+        self.assertEqual(self.store.get_holdings()["count"], 0)
+
+    def test_duplicate_order_ref_trade_not_synced(self):
+        """委託書號重複被防重複機制擋下、未寫入trade_ledger的交易，不該
+        被算進這次的持股同步（否則會把同一筆交易的效果套用兩次）。"""
+        first_batch_text = (
+            "115/07/22 集買 台達電 10 1,905.00 7 19,050 19,057(收) k-01NM-00\n"
+        )
+        parsed_first = trade_ledger_parser.parse_trade_ledger_text(first_batch_text)
+        first_out = trade_ledger_parser.resolve_and_save_trade_ledger(
+            parsed_first, self.store, data_dir=self.tmp)
+        self.assertTrue(first_out["holdings_sync"]["synced"])
+        self.assertEqual(self.store.get_holdings()["holdings"][0]["shares"], 10)
+
+        # 貼同一筆（同order_ref）第二次——該被防重複擋下、不寫入
+        # trade_ledger，也不該進入這次的持股同步（沒有新交易可套用）。
+        second_out = trade_ledger_parser.resolve_and_save_trade_ledger(
+            parsed_first, self.store, data_dir=self.tmp)
+        self.assertEqual(second_out["saved"], [])
+        self.assertEqual(len(second_out["duplicates_skipped"]), 1)
+        self.assertFalse(second_out["holdings_sync"]["synced"])
+        # 持股數字沒有被第二次重複套用（不是20，還是10）。
+        self.assertEqual(self.store.get_holdings()["holdings"][0]["shares"], 10)
+
+
 class ResolveAndSaveNameResolutionTest(unittest.TestCase):
     """名稱→代碼解析（共用 stock_alias_resolver.py）在這個模組裡的整合行為。"""
 
