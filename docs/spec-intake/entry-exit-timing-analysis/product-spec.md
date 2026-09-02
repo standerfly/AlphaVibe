@@ -1,12 +1,17 @@
 # Product Spec: 進出場時機分析工具
 
-**Status:** Draft
+**Status:** Accepted
 **Feature Slug:** entry-exit-timing-analysis
 **Function Branch:** function/entry-exit-timing-analysis
 **Product Owner:** Stander
 **TPM:** Stander
-**Accepted At:** N/A
-**Acceptance Evidence:** N/A
+**Accepted At:** 2026-09-02
+**Acceptance Evidence:** PO（Stander）於 2026-09-02 Claude Code 對話中，
+針對本 pre-spec 全套產物明示「1.驗收」。驗收前已完成 fresh-context
+獨立驗收（7 項條件逐條檢查，首輪回報 FAIL，指出 `server.py:381` 行號
+錯誤與 clarification-log／product-spec 之間的過時矛盾等 2 個必修＋
+3 個 minor，皆於同日修正後複驗通過）；`prespec_validate.py` 回報
+mechanically valid、無未填欄位警告。詳見 `handoff-checklist.md` Notes 節。
 
 ## Problem And Goal
 

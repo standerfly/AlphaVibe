@@ -8,8 +8,8 @@
 ## Product Baseline
 
 - [x] `docs/spec-intake/index.md` lists this feature workspace
-- [ ] `product-spec.md` status is `Accepted`
-- [ ] PO and TPM approval are recorded in `product-spec.md`
+- [x] `product-spec.md` status is `Accepted`（2026-09-02）
+- [x] PO and TPM approval are recorded in `product-spec.md`
 - [x] All raw source material for this feature is listed in `intake-index.md`
 - [x] Blocking questions in `clarification-log.md` are resolved
 - [x] In-scope and out-of-scope decisions are recorded in `scope-decision.md`
@@ -40,11 +40,13 @@
 
 ## Notes
 
-剩餘未勾項目與原因（2026-09-01）：
+剩餘未勾項目與原因（2026-09-02 更新）：
 
-1. **PO/TPM 正式驗收未完成**——`product-spec.md` 與兩份 `speckit-input.md`
-   維持 `Draft`，需 PO 明確表示驗收並留下證據後才可標記 `Accepted`
-   （ADR-0027 Step 2 Gate，本輪不得由 AI 自行標記）。
+1. **產品基線已驗收，但 Spec Kit 交付未開放**——`product-spec.md` 已於
+   2026-09-02 經 PO 明示驗收並標記 `Accepted`；兩份 `speckit-input.md`
+   **刻意維持 `Draft`**：PO 同日明確指示「先不要執行改 CODE」，尚未
+   給出 handoff approval，因此不得標記 Accepted、不得交付
+   `speckit-specify`。待 PO 明確表示要啟動實作時才推進此關卡。
 2. **4 份必要支援文件尚未展開**（`supporting-artifacts/readiness-checks.md`
    的 GAP-R01~R04）：API contract、Data model note、Sequence diagram/
    state transition model、Observability/alerting note。這 4 份的內容
