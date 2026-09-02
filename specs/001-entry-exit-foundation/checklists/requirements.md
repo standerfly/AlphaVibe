@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,6 +31,15 @@
 
 ## Notes
 
+**驗證第 2 輪（2026-09-02）：16 項全數通過。**
+
+PO 已於 2026-09-02 裁決兩個待決項（Q1 選項 C、Q2 選項 A），spec.md 的
+2 個 [NEEDS CLARIFICATION] 標記皆已轉為正式需求：FR-006（重複列
+照原樣計入＋警示，不自行排除）、FR-010＋FR-014（百分位只用既有快取、
+不即時查外部 API，另加長每日排程抓取窗口讓資料自然累積）。
+
+以下為第 1 輪的原始紀錄，保留供追溯：
+
 **驗證第 1 輪（2026-09-02）：1 項未通過。**
 
 未通過項目：`No [NEEDS CLARIFICATION] markers remain` —— spec.md 中有 2 個標記：
@@ -44,7 +53,7 @@
    顯著（短區間削弱判斷價值 vs 線上查詢衝突既有原則與 API 額度風險），
    需 PO 裁決。
 
-其餘 15 項通過。特別說明幾項判斷依據：
+第 1 輪其餘 15 項通過。特別說明幾項判斷依據：
 
 - **No implementation details**：spec 提及 FIFO、收盤價、交易成本欄位缺漏
   等，屬於**需求本身**（PO 已在 pre-spec 階段裁定成本法為 FIFO）與**資料
