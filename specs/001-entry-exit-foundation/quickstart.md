@@ -82,12 +82,12 @@ cd /Users/stander/My_project/AlphaVibe/poc/kb-mcp
 python3 -c "
 import screener
 print(screener.PRICE_WINDOW_DAYS)
-rows = screener._fetch_prices_with_fallback('2330')
-print('筆數:', len(rows) if rows else rows)
+prices, source = screener._fetch_prices_with_fallback('2330', 'TWSE', None, None, {})
+print('來源:', source, '筆數:', len(prices))
 "
 ```
 
-**只測一檔就好**——2026-07-28 曾因密集測試把 FinMind 匿名額度打光、
+**只測一檔就好**（2026-09-02 實測：400 天窗口回 268 個交易日，走官方端點不耗 FinMind 額度）——2026-07-28 曾因密集測試把 FinMind 匿名額度打光、
 連累當晚 02:00 的正式排程（CLAUDE.md 教訓紀錄）。
 
 ## 完成後的驗收

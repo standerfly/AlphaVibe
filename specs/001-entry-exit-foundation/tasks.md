@@ -33,14 +33,14 @@ description: 001-entry-exit-foundation 的可執行任務清單
 
 ## Phase 1: Setup
 
-- [ ] T001 執行 `python3 -m unittest discover -s poc/kb-mcp/tests` 記錄改動前的
+- [X] T001 執行 `python3 -m unittest discover -s poc/kb-mcp/tests` 記錄改動前的
       基準測試數（目前應為 15 檔 / 657 個 test 全綠），作為後續回歸比對基準
 
 ---
 
 ## Phase 2: Foundational (Blocking Prerequisites)
 
-- [ ] T002 在 `poc/kb-mcp/pnl.py` 建立模組骨架與共用的現價取得 helper
+- [X] T002 在 `poc/kb-mcp/pnl.py` 建立模組骨架與共用的現價取得 helper
       `resolve_current_price(code, prices)`：輸入 `get_stock_prices()` 回傳的
       dict，輸出 `(price, price_date)`，查無資料回 `(None, None)`。純函式不碰 I/O
       （FR-002、FR-007 共用）
@@ -56,41 +56,41 @@ description: 001-entry-exit-foundation 的可執行任務清單
 
 ### Tests for User Story 1
 
-- [ ] T003 [P] [US1] 在 `poc/kb-mcp/tests/test_pnl.py` 寫 FIFO 基本情境測試：
+- [X] T003 [P] [US1] 在 `poc/kb-mcp/tests/test_pnl.py` 寫 FIFO 基本情境測試：
       多筆買進後部分賣出，驗證已實現損益＝配對批次的 `(賣價-買價)×股數` 加總、
       未實現損益＝剩餘批次以現價計（FR-001、FR-002）
-- [ ] T004 [P] [US1] 在 `poc/kb-mcp/tests/test_pnl.py` 寫**單位固定測試**：
+- [X] T004 [P] [US1] 在 `poc/kb-mcp/tests/test_pnl.py` 寫**單位固定測試**：
       用大立光真實案例（買 3 @2605）斷言成本為 7,815 元而非 7,815,000，
       防止未來有人誤加 ×1000（research.md R-001）
-- [ ] T005 [P] [US1] 在 `poc/kb-mcp/tests/test_pnl.py` 寫賣超情境測試：
+- [X] T005 [P] [US1] 在 `poc/kb-mcp/tests/test_pnl.py` 寫賣超情境測試：
       賣出股數 > 買進股數時回 `status="history_incomplete"` ＋
       `shortfall_shares`，且不輸出未實現損益、不捏造成本（FR-004）
-- [ ] T006 [P] [US1] 在 `poc/kb-mcp/tests/test_pnl.py` 寫無現價與已出清情境：
+- [X] T006 [P] [US1] 在 `poc/kb-mcp/tests/test_pnl.py` 寫無現價與已出清情境：
       查無現價回 `status="no_price"` 但已實現損益照常；已全數出清的標的
       仍回傳已實現損益（FR-003）
-- [ ] T007 [P] [US1] 在 `poc/kb-mcp/tests/test_pnl.py` 寫重複列警示測試：
+- [X] T007 [P] [US1] 在 `poc/kb-mcp/tests/test_pnl.py` 寫重複列警示測試：
       同 code/action/shares/price/date 的多餘列**照原樣計入**，且
       `suspected_duplicates` 回報正確筆數（FR-006）
 
 ### Implementation for User Story 1
 
-- [ ] T008 [US1] 在 `poc/kb-mcp/pnl.py` 實作 FIFO 佇列引擎
+- [X] T008 [US1] 在 `poc/kb-mcp/pnl.py` 實作 FIFO 佇列引擎
       `compute_position_pnl(code, entries, prices)`：依 `(date, id)` 排序，
       「買」推入佇列、「賣」從前端消耗並累計已實現損益；`action` 只認中文
       「買」/「賣」（`kb_store.py:1141-1142` 的既有值域）（FR-001、FR-002）
-- [ ] T009 [US1] 在 `poc/kb-mcp/pnl.py` 實作 status 判定與結果組裝，順序依
+- [X] T009 [US1] 在 `poc/kb-mcp/pnl.py` 實作 status 判定與結果組裝，順序依
       `data-model.md`「狀態轉換」節：`no_trades` → `history_incomplete` →
       `no_price` → `ok`；固定附上 `cost_method="FIFO"`、`fees_included=False`
       （FR-003、FR-004、FR-005、FR-006）
-- [ ] T010 [US1] 在 `poc/kb-mcp/server.py` 的 `TOOLS` list 新增
+- [X] T010 [US1] 在 `poc/kb-mcp/server.py` 的 `TOOLS` list 新增
       `get_position_pnl` 定義（name／description／inputSchema，`code` 為選填），
       格式比照 `get_trade_ledger`（`server.py:439-448`）（FR-012）
-- [ ] T011 [US1] 在 `poc/kb-mcp/server.py` 的 dispatch 區塊（`:820` 起）新增
+- [X] T011 [US1] 在 `poc/kb-mcp/server.py` 的 dispatch 區塊（`:820` 起）新增
       `get_position_pnl` 分支，比照 `get_trade_ledger`（`:968-969`）（FR-012）
-- [ ] T012 [US1] 在 `poc/kb-mcp/server_readonly.py` 的 `READONLY_TOOLS`
+- [X] T012 [US1] 在 `poc/kb-mcp/server_readonly.py` 的 `READONLY_TOOLS`
       白名單（`:22-32`）加入 `get_position_pnl`——**漏加會讓工具在 Cline
       唯讀路徑上靜默消失**（FR-012）
-- [ ] T013 [US1] 在 `poc/kb-mcp/tests/test_pnl.py` 新增**註冊守門測試**：
+- [X] T013 [US1] 在 `poc/kb-mcp/tests/test_pnl.py` 新增**註冊守門測試**：
       斷言 `get_position_pnl` 同時存在於 `server.TOOLS`、dispatch 可呼叫、
       以及 `server_readonly.READONLY_TOOLS`——目前 repo 完全沒有這類守門測試
       （grep 在 `tests/` 下 0 命中），三處漏一處不會被抓到
@@ -109,31 +109,31 @@ description: 001-entry-exit-foundation 的可執行任務清單
 
 ### Tests for User Story 2
 
-- [ ] T014 [P] [US2] 在 `poc/kb-mcp/tests/test_price_position.py` 寫百分位
+- [X] T014 [P] [US2] 在 `poc/kb-mcp/tests/test_price_position.py` 寫百分位
       計算測試：樣本 ≥30 時回 `status="ok"` ＋正確百分位，並驗證
       `sample_size`／`range_start`／`range_end` 與輸入序列一致（FR-007、FR-008）
-- [ ] T015 [P] [US2] 在 `poc/kb-mcp/tests/test_price_position.py` 寫三段式
+- [X] T015 [P] [US2] 在 `poc/kb-mcp/tests/test_price_position.py` 寫三段式
       降級測試：6–29 筆回 `status="limited"` 且 `basis` 字串明講樣本不足；
       <6 筆回 `status="insufficient"` 且 **`percentile` 必須是 None**；
       無資料回 `status="no_data"`（FR-009）
-- [ ] T016 [P] [US2] 在 `poc/kb-mcp/tests/test_price_position.py` 寫防呆測試：
+- [X] T016 [P] [US2] 在 `poc/kb-mcp/tests/test_price_position.py` 寫防呆測試：
       斷言資料不足時**不會**回傳 0、0.0 或空字串等會被誤讀為「在最低點」
       的值（FR-009 的核心風險）
 
 ### Implementation for User Story 2
 
-- [ ] T017 [US2] 建立 `poc/kb-mcp/price_position.py`，實作
+- [X] T017 [US2] 建立 `poc/kb-mcp/price_position.py`，實作
       `compute(code, history_rows, prices)`：純函式，輸入
       `get_cached_price_history()` 的列與現價 dict，輸出 `PricePosition`
       結構（欄位見 `data-model.md`）；百分位計算 `import` 既有
       `review_engine._percentile`，**不重寫**（FR-007、FR-008）
-- [ ] T018 [US2] 在 `poc/kb-mcp/price_position.py` 實作三段式門檻，沿用
+- [X] T018 [US2] 在 `poc/kb-mcp/price_position.py` 實作三段式門檻，沿用
       `review_engine` 既有常數語意（`PERCENTILE_MIN_POINTS=30`、
       `MIN_PER_HISTORY_POINTS=6`），並在 `basis` 產出人類可讀的依據說明
       （FR-009）
-- [ ] T019 [US2] 在 `poc/kb-mcp/server.py` 的 `TOOLS` list 與 dispatch 區塊
+- [X] T019 [US2] 在 `poc/kb-mcp/server.py` 的 `TOOLS` list 與 dispatch 區塊
       新增 `get_price_position`（兩處），格式同 T010／T011（FR-012）
-- [ ] T020 [US2] 在 `poc/kb-mcp/server_readonly.py` 的 `READONLY_TOOLS`
+- [X] T020 [US2] 在 `poc/kb-mcp/server_readonly.py` 的 `READONLY_TOOLS`
       加入 `get_price_position`，並擴充 T013 的守門測試涵蓋這個工具（FR-012）
 
 **Checkpoint**：US1＋US2 完成後，兩項核心查詢皆可單檔使用。
@@ -150,22 +150,22 @@ description: 001-entry-exit-foundation 的可執行任務清單
 
 ### Tests for User Story 3
 
-- [ ] T021 [P] [US3] 在 `poc/kb-mcp/tests/test_kb.py` 寫
+- [X] T021 [P] [US3] 在 `poc/kb-mcp/tests/test_kb.py` 寫
       `get_all_trade_entries()` 的存取測試：回傳全部交易列且排序為
       `code, date, id`，不影響既有 `get_trade_ledger(code)` 的行為
-- [ ] T022 [P] [US3] 在 `poc/kb-mcp/tests/test_pnl.py` 寫批次隔離測試：
+- [X] T022 [P] [US3] 在 `poc/kb-mcp/tests/test_pnl.py` 寫批次隔離測試：
       同一批資料中混入賣超標的與無現價標的，驗證每檔各自回傳正確 status、
       **任何單檔問題都不讓整批拋例外**（FR-011）
 
 ### Implementation for User Story 3
 
-- [ ] T023 [US3] 在 `poc/kb-mcp/kb_store.py` 新增
+- [X] T023 [US3] 在 `poc/kb-mcp/kb_store.py` 新增
       `get_all_trade_entries()`（單一查詢 `ORDER BY code, date, id`），
       **不修改**既有 `get_trade_ledger`（`:1158-1166`）以免影響現有呼叫端
-- [ ] T024 [US3] 在 `poc/kb-mcp/pnl.py` 新增 `compute_all_positions(entries, prices)`：
+- [X] T024 [US3] 在 `poc/kb-mcp/pnl.py` 新增 `compute_all_positions(entries, prices)`：
       以 `code` 分組後逐檔呼叫 T008 的引擎，每檔獨立 try 保護，並產出
       `summary` 各 status 計數（FR-011）
-- [ ] T025 [US3] 在 `poc/kb-mcp/price_position.py` 新增全量模式，並在
+- [X] T025 [US3] 在 `poc/kb-mcp/price_position.py` 新增全量模式，並在
       `poc/kb-mcp/server.py` 讓兩個工具的 `code` 省略時走全量路徑
       （回傳結構見 `contracts/mcp-tools.md`）（FR-011、FR-012）
 
@@ -175,21 +175,21 @@ description: 001-entry-exit-foundation 的可執行任務清單
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T026 [P] 在 `poc/kb-mcp/screener.py` 將 `PRICE_WINDOW_DAYS` 由 120
+- [X] T026 [P] 在 `poc/kb-mcp/screener.py` 將 `PRICE_WINDOW_DAYS` 由 120
       改為 400（FR-014），**並以單一標的實測**外部來源回應正常：
       `python3 -c "import screener; print(len(screener._fetch_prices_with_fallback('2330')))"`。
       **只測一檔**——2026-07-28 曾因密集測試把 FinMind 匿名額度打光、
       連累當晚 02:00 正式排程。實測結果（筆數、是否有截斷）寫回
       `research.md` R-006；若回應異常則降為 250 天並記錄原因
-- [ ] T027 [P] 在 `poc/kb-mcp/tests/test_traceability.py` 登記 FR-001~FR-014
+- [X] T027 [P] 在 `poc/kb-mcp/tests/test_traceability.py` 登記 FR-001~FR-014
       的需求↔實作↔測試對照（本 repo 的守門測試慣例）
-- [ ] T028 [P] 校正 `poc/kb-mcp/server_readonly.py:7-9` docstring 中過時的
+- [X] T028 [P] 校正 `poc/kb-mcp/server_readonly.py:7-9` docstring 中過時的
       工具數字（現寫「40 個工具／23 個唯讀」，實際改動前為 43／26，
       本階段完成後應為 45／28）
-- [ ] T029 [P] 統一 `poc/kb-mcp/server.py:270` 的參數描述用字——目前寫
+- [X] T029 [P] 統一 `poc/kb-mcp/server.py:270` 的參數描述用字——目前寫
       「股數/張數」語意含混，`:397`／`:431` 寫「股數」；依 research.md R-001
       的結論統一為「股數（單位：股）」
-- [ ] T030 執行完整回歸 `python3 -m unittest discover -s poc/kb-mcp/tests`，
+- [X] T030 執行完整回歸 `python3 -m unittest discover -s poc/kb-mcp/tests`，
       與 T001 的基準數字比對（應為 657 ＋ 本次新增數，且 0 失敗）
 - [ ] T031 依 `~/.claude/rules/10-model-dispatch.md` 第 6 節「驗證不自驗」，
       派 fresh-context agent 對照 spec.md 的 14 條 FR 逐條驗收，

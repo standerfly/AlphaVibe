@@ -35,7 +35,11 @@ import fundamentals_client
 import twse_price_client
 
 MAX_CODES = 50
-PRICE_WINDOW_DAYS = 120
+# FR-014（2026-09-02）：由 120 加長為 400，讓 stock_price_history 快取能
+# 隨每日排程自然累積到約 1 年，使 get_price_position 的百分位判斷從
+# 「近期區間位置」逐步變成有意義的「區間定位」。加長的是單次抓取的
+# 日期範圍，不是抓取次數——每檔仍是一次呼叫，API 呼叫次數不變。
+PRICE_WINDOW_DAYS = 400
 PEG_THRESHOLD = 1.0
 DRAWDOWN_THRESHOLD = 0.40
 
