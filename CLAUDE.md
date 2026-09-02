@@ -230,3 +230,21 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 - 2026-08-19｜情境：為個股詳情頁新增卡片時，連續四次寫出會誤判的測試斷言——`assertNotIn("conc-fill", page)`、`assertNotIn("完成比例", page)`、`assertIn("verdict--alert", page)`、`page.index("stock-row__delta")` 全都命中了頁面裡的 CSS 定義或說明文字，而不是實際渲染出來的元素
   ｜教訓：`report.py` 把整份 `CSS` 常數**內嵌進每一個頁面**（`<style>%s</style>` % CSS），所以任何拿 class 名稱或 CSS 片語去 grep 頁面字串的斷言，都會先命中樣式定義，位置與存在性判斷全錯。同理，說明文字裡也常包含 UI 標籤字（例：「因此算不出**完成比例**」會讓 `assertNotIn("完成比例")` 失敗）
   ｜動作：測 `report.py` 產出的頁面時，一律斷言**渲染形式**而非裸字串——用 `class="conc-fill`、`<div class="verdict `、`<span class="stock-row__delta` 這種帶 `class="` 前綴或帶標籤的比對；順序比較（assertLess）更要如此，否則比到的是 CSS 區塊的位置
+
+- 2026-09-03｜情境：改了 `poc/kb-mcp/screener.py` 的常數（400→120）並 commit
+  後，測試仍然失敗；`grep` 檔案、`git show HEAD:` 都顯示 120，`git status`
+  乾淨、repo 內 `find -name __pycache__` 找不到任何快取，但
+  `import screener` 拿到的是 **400**。獨立驗收 agent 也踩到同一個坑，
+  一度以為是自己的修改殘留，最後改用 `git archive` 匯出乾淨副本才得到
+  可信結果
+  ｜教訓：這台機器的 Python bytecode 快取**不在 repo 的 `__pycache__`**，
+  而在 macOS 系統層的
+  `~/Library/Caches/com.apple.python/<完整專案路徑>/*.pyc`
+  （用 `python3 -c "import mod; print(mod.__cached__)"` 才看得到）。
+  這份快取有時不會正確失效，導致「檔案內容是新的、import 到的是舊的」，
+  而且 repo 內完全找不到線索。**遇到「改了程式碼但行為沒變／測試結果與
+  檔案內容矛盾」時，先查 `模組.__cached__` 指向哪裡**，不要先懷疑程式碼、
+  更不要重寫一次
+  ｜動作：`rm -f ~/Library/Caches/com.apple.python/<專案路徑>/<模組>*.pyc`
+  後重新 import 即恢復；驗證時若要完全排除此因素，用
+  `git archive <commit> | tar -x -C <暫存目錄>` 匯出乾淨副本跑
