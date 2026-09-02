@@ -81,6 +81,7 @@ _KB_MCP_DIR = Path(__file__).resolve().parent.parent.parent / "poc" / "kb-mcp"
 if str(_KB_MCP_DIR) not in sys.path:
     sys.path.insert(0, str(_KB_MCP_DIR))
 
+import pnl  # noqa: E402
 import report  # noqa: E402  (需先插入 sys.path 才能 import)
 import review_engine  # noqa: E402
 
@@ -194,6 +195,15 @@ def get_stock_detail(code: str, store: KBStore = Depends(get_kb_store)) -> Dict[
         pnl_pct = None
         if avg_cost is not None and current_price is not None:
             pnl_pct = (current_price - avg_cost) / avg_cost * 100
+        # 002-entry-exit-signals FR-014／FR-015：接上階段A 的 FIFO 損益，
+        # 與既有加權平均估算**並存**（PO 裁決 Q2-C）。既有 avg_cost／pnl_pct
+        # 欄位刻意保持不變以維持向後相容，前端依 fifo.status 決定主從呈現。
+        fifo_result = None
+        try:
+            fifo_result = pnl.compute_position_pnl(
+                code, ledger, store.get_stock_prices())
+        except Exception:   # 損益算不出來不該讓整個 API 掛掉
+            fifo_result = None
         holdings_block = {
             "holding_row": holding_row,
             "market_value": market_value,
@@ -204,6 +214,8 @@ def get_stock_detail(code: str, store: KBStore = Depends(get_kb_store)) -> Dict[
             "avg_cost_label": avg_cost_label,
             "current_price": current_price,
             "pnl_pct": pnl_pct,
+            "cost_method_label": "加權平均估算・未扣賣出・非 FIFO",
+            "fifo": fifo_result,
         }
 
     comments = store.get_comments_by_code(code, limit=50)["results"]

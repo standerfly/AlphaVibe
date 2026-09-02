@@ -738,7 +738,7 @@ class RunModuleDReviewTest(unittest.TestCase):
         self.assertEqual(out["errors"], {})
 
         saved = self.store.get_module_d_results(code="2330")
-        self.assertEqual(saved["count"], 2)  # 通用層固定2筆，即使都沒觸發
+        self.assertEqual(saved["count"], 4)  # 通用層固定2筆，即使都沒觸發  # +2＝002 階段的停損停利與背離訊號（FR-002/FR-005），每檔固定各1筆
         for row in saved["results"]:
             self.assertEqual(row["trigger_type"], "通用層")
             self.assertIsNone(row["strategy_id"])
@@ -791,12 +791,12 @@ class RunModuleDReviewTest(unittest.TestCase):
         # module_d_results：通用層2筆＋策略層1筆＝3筆；concern筆才附
         # suggested_action，非concern筆（下檔風險）維持None
         saved = self.store.get_module_d_results(code="2330")
-        self.assertEqual(saved["count"], 3)
+        self.assertEqual(saved["count"], 5)  # +2＝002 階段的停損停利與背離訊號（FR-002/FR-005），每檔固定各1筆
         by_label_prefix = {}
         for row in saved["results"]:
             by_label_prefix.setdefault(row["trigger_type"], []).append(row)
         general_rows = by_label_prefix["通用層"]
-        self.assertEqual(len(general_rows), 2)
+        self.assertEqual(len(general_rows), 4)  # +2＝002 階段的停損停利與背離訊號（FR-002/FR-005），每檔固定各1筆
         concern_general = [r for r in general_rows if r["finding"] == "成長趨緩detail"]
         normal_general = [r for r in general_rows if r["finding"] == "下檔風險detail"]
         self.assertEqual(concern_general[0]["suggested_action"], position_detail)
@@ -824,7 +824,7 @@ class RunModuleDReviewTest(unittest.TestCase):
         self.assertEqual(out["findings"][0]["trigger_label"], "老芋頭動向")
         self.assertTrue(out["findings"][0]["concern_flag"])
         saved = self.store.get_module_d_results(code="2330")
-        self.assertEqual(saved["count"], 3)  # 通用層2筆 + 老芋頭1筆
+        self.assertEqual(saved["count"], 5)  # 通用層2筆 + 老芋頭1筆  # +2＝002 階段的停損停利與背離訊號（FR-002/FR-005），每檔固定各1筆
         laoyutou_rows = [r for r in saved["results"] if r["trigger_type"] == "老芋頭動向"]
         self.assertEqual(len(laoyutou_rows), 1)
 
@@ -841,7 +841,7 @@ class RunModuleDReviewTest(unittest.TestCase):
 
         self.assertEqual(out["findings"], [])
         saved = self.store.get_module_d_results(code="2330")
-        self.assertEqual(saved["count"], 2)  # 只有通用層2筆，老芋頭沒有訊號不產生列
+        self.assertEqual(saved["count"], 4)  # 只有通用層2筆，老芋頭沒有訊號不產生列  # +2＝002 階段的停損停利與背離訊號（FR-002/FR-005），每檔固定各1筆
 
     def test_general_layer_failure_does_not_abort_other_layers(self):
         with unittest.mock.patch.object(
@@ -864,7 +864,7 @@ class RunModuleDReviewTest(unittest.TestCase):
         self.assertEqual(len(out["strategies"]), 1)  # 策略層仍正常跑完
 
         saved = self.store.get_module_d_results(code="2330")
-        self.assertEqual(saved["count"], 1)  # 只有策略層1筆，通用層失敗沒有記錄
+        self.assertEqual(saved["count"], 3)  # 只有策略層1筆，通用層失敗沒有記錄  # +2＝002 階段的停損停利與背離訊號（FR-002/FR-005），每檔固定各1筆
 
     def test_one_strategy_failure_does_not_block_other_strategies(self):
         def _side_effect(code, strategy_id, data_dir=None, token=None):
@@ -892,7 +892,7 @@ class RunModuleDReviewTest(unittest.TestCase):
 
         saved = self.store.get_module_d_results(code="2330")
         # 通用層2筆 + 正常那個策略1筆 = 3筆，壞掉的策略沒有記錄
-        self.assertEqual(saved["count"], 3)
+        self.assertEqual(saved["count"], 5)  # +2＝002 階段的停損停利與背離訊號（FR-002/FR-005），每檔固定各1筆
 
 
 class RunModuleDBatchTest(unittest.TestCase):

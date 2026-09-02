@@ -16,6 +16,7 @@
 僅標準庫，Python 3.9 相容。
 """
 import argparse
+import datetime
 import os
 
 import review_engine
@@ -38,11 +39,21 @@ def main(argv=None):
 
     store = KBStore(data_dir)
     exit_code = 0
+    # 002-entry-exit-signals R-009：加上時間戳與逐階段耗時。
+    # 改動前這支腳本的輸出完全沒有時間資訊，要查排程跑多久只能回頭從
+    # module_d_results.checked_at 反推——FR-012 要求「執行時間增幅可被
+    # 量測」，沒有這幾行就無從驗證。
+    started_at = datetime.datetime.now()
+    print("module_d_scheduler開始：trigger=%s at=%s"
+          % (args.trigger, started_at.isoformat(timespec="seconds")))
     try:
+        batch_started = datetime.datetime.now()
         summary = review_engine.run_module_d_batch(store, data_dir=data_dir)
+        batch_secs = (datetime.datetime.now() - batch_started).total_seconds()
         print("module_d_scheduler完成：trigger=%s total=%d checked=%d failed=%d concern=%d"
+              " 批次耗時=%.1f秒"
               % (args.trigger, summary["total"], summary["checked_count"],
-                 summary["failed_count"], len(summary["concern_codes"])))
+                 summary["failed_count"], len(summary["concern_codes"]), batch_secs))
         for f in summary["failed"]:
             print("  失敗：%s — %s" % (f["code"], f["error"]))
 
@@ -67,6 +78,9 @@ def main(argv=None):
         print("module_d_scheduler失敗：%s" % exc)
         exit_code = 1
     finally:
+        total_secs = (datetime.datetime.now() - started_at).total_seconds()
+        print("module_d_scheduler結束：at=%s 總耗時=%.1f秒"
+              % (datetime.datetime.now().isoformat(timespec="seconds"), total_secs))
         store.close()
 
     return exit_code

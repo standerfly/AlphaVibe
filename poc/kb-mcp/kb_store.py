@@ -100,6 +100,16 @@ CREATE TABLE IF NOT EXISTS stock_valuation_snapshots (
     revenue_error TEXT,
     checked_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS exit_thresholds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL,
+    stop_loss REAL,
+    take_profit REAL,
+    reason TEXT,
+    source_ref TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_exit_thresholds_code ON exit_thresholds(code, id DESC);
 CREATE TABLE IF NOT EXISTS stock_price_history (
     code TEXT NOT NULL,
     date TEXT NOT NULL,
@@ -1164,6 +1174,82 @@ class KBStore:
             "SELECT * FROM trade_ledger WHERE code=? ORDER BY date, id", (code,),
         ).fetchall()
         return {"code": code, "count": len(rows), "entries": [dict(r) for r in rows]}
+
+    # ---------- 停損停利門檻（002-entry-exit-signals FR-001~FR-003）----------
+    # 刻意採 append-only + max(id) 取最新，跟 stances 同模式，而不是
+    # position_plans 的 INSERT OR REPLACE——門檻背後有討論脈絡，
+    # 要能回答「當初為什麼設在這裡」，覆寫掉就查不到了。
+
+    def save_exit_threshold(self, code, stop_loss=None, take_profit=None,
+                            reason=None, source_ref=None):
+        """新增一筆門檻設定（append-only，不覆寫舊值）。
+
+        stop_loss 與 take_profit 至少要給一個；給定的值必須 > 0；
+        兩者都給時 stop_loss 必須小於 take_profit（否則是明顯的設定錯誤，
+        直接擋下而不是存進去讓它每天誤觸發）。
+        """
+        if not code:
+            raise ValueError("code 為必填")
+        if stop_loss is None and take_profit is None:
+            raise ValueError("stop_loss 與 take_profit 至少要給一個")
+        parsed = {}
+        for name, value in (("stop_loss", stop_loss), ("take_profit", take_profit)):
+            if value is None:
+                parsed[name] = None
+                continue
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                raise ValueError("%s 必須是數字" % name)
+            if number <= 0:
+                raise ValueError("%s 必須大於 0" % name)
+            parsed[name] = number
+        if (parsed["stop_loss"] is not None and parsed["take_profit"] is not None
+                and parsed["stop_loss"] >= parsed["take_profit"]):
+            raise ValueError("stop_loss 必須小於 take_profit")
+
+        created_at = _now()
+        cur = self.conn.execute(
+            "INSERT INTO exit_thresholds"
+            " (code, stop_loss, take_profit, reason, source_ref, created_at)"
+            " VALUES (?,?,?,?,?,?)",
+            (code, parsed["stop_loss"], parsed["take_profit"], reason,
+             source_ref or "對話設定", created_at))
+        self.conn.commit()
+        return {"saved": True, "id": cur.lastrowid, "code": code,
+                "stop_loss": parsed["stop_loss"], "take_profit": parsed["take_profit"],
+                "reason": reason, "created_at": created_at}
+
+    def get_exit_threshold(self, code):
+        """該標的最新一筆門檻；**從未設定回 None**。
+
+        呼叫端據此顯示「尚未設定」，不要自己編一個預設門檻——沒討論過的
+        標的看起來像已經有策略，比沒有更危險（FR-003）。
+        """
+        if not code:
+            raise ValueError("code 為必填")
+        row = self.conn.execute(
+            "SELECT * FROM exit_thresholds WHERE code=? ORDER BY id DESC LIMIT 1",
+            (code,)).fetchone()
+        return dict(row) if row else None
+
+    def get_all_exit_thresholds(self):
+        """每檔最新一筆，供批次判斷。"""
+        rows = self.conn.execute(
+            "SELECT t.* FROM exit_thresholds t"
+            " INNER JOIN (SELECT code, max(id) AS mid FROM exit_thresholds"
+            "             GROUP BY code) latest ON t.id = latest.mid"
+        ).fetchall()
+        return {r["code"]: dict(r) for r in rows}
+
+    def get_exit_threshold_history(self, code):
+        """該標的完整設定歷史，舊到新——這是 append-only 的意義所在。"""
+        if not code:
+            raise ValueError("code 為必填")
+        rows = self.conn.execute(
+            "SELECT * FROM exit_thresholds WHERE code=? ORDER BY id", (code,)
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def get_all_trade_entries(self):
         """回傳全部標的的交易流水（依 code、date、id 排序）。

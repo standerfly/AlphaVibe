@@ -35,24 +35,24 @@ description: 002-entry-exit-signals 的可執行任務清單
 
 ## Phase 1: Setup
 
-- [ ] T001 執行 `python3 -m unittest discover -s poc/kb-mcp/tests` 記錄改動前
+- [X] T001 執行 `python3 -m unittest discover -s poc/kb-mcp/tests` 記錄改動前
       基準（階段A 完成後應為 688 tests 全綠），作為 T037 回歸比對的基準
 
 ---
 
 ## Phase 2: Foundational (Blocking Prerequisites)
 
-- [ ] T002 在 `poc/kb-mcp/kb_store.py` 新增 `exit_thresholds` 表
+- [X] T002 在 `poc/kb-mcp/kb_store.py` 新增 `exit_thresholds` 表
       （`CREATE TABLE IF NOT EXISTS`，schema 見 data-model.md）與 4 個方法：
       `save_exit_threshold`／`get_exit_threshold`／`get_all_exit_thresholds`／
       `get_exit_threshold_history`。**append-only、`max(id) GROUP BY code`
       取最新**（比照 `stances`，非 `position_plans` 的覆寫式）；驗證規則：
       兩門檻至少給一個、值需可轉 float 且 > 0、兩者都給時
       `stop_loss < take_profit`，違反則 raise（FR-001）
-- [ ] T003 [P] 在 `poc/kb-mcp/tests/test_kb.py` 寫 `exit_thresholds` 存取測試：
+- [X] T003 [P] 在 `poc/kb-mcp/tests/test_kb.py` 寫 `exit_thresholds` 存取測試：
       append-only 保留歷史、`get_exit_threshold` 從未設定回 `None`、
       驗證規則各自 raise（FR-001）
-- [ ] T004 [P] 在 `poc/kb-mcp/module_d_scheduler.py` 的輸出加上起訖時間戳與
+- [X] T004 [P] 在 `poc/kb-mcp/module_d_scheduler.py` 的輸出加上起訖時間戳與
       逐階段耗時（research.md R-009）。**必須先於 US4 完成**——目前 log
       完全沒有時間戳，沒有它 FR-012 的耗時比對沒有量測基礎
 
@@ -67,37 +67,37 @@ description: 002-entry-exit-signals 的可執行任務清單
 
 ### Tests for User Story 1
 
-- [ ] T005 [P] [US1] 在 `poc/kb-mcp/tests/test_exit_signals.py` 寫觸發判斷測試：
+- [X] T005 [P] [US1] 在 `poc/kb-mcp/tests/test_exit_signals.py` 寫觸發判斷測試：
       現價跌破停損回 `triggered_stop_loss`、漲過停利回 `triggered_take_profit`、
       區間內回 `within_range`，並驗證 `distance_pct` 正負號正確（FR-002）
-- [ ] T006 [P] [US1] 在 `poc/kb-mcp/tests/test_exit_signals.py` 寫 `not_set`
+- [X] T006 [P] [US1] 在 `poc/kb-mcp/tests/test_exit_signals.py` 寫 `not_set`
       防呆測試：未設定門檻時 `status == "not_set"`、`stop_loss`／`take_profit`
       **必須是 None**、且 `status != "within_range"`——不得被當成安全（FR-003）
-- [ ] T007 [P] [US1] 在 `poc/kb-mcp/tests/test_exit_signals.py` 寫無現價測試：
+- [X] T007 [P] [US1] 在 `poc/kb-mcp/tests/test_exit_signals.py` 寫無現價測試：
       有門檻但查無現價回 `no_price`，不得誤判為未觸發（FR-002）
-- [ ] T008 [P] [US1] 在 `poc/kb-mcp/tests/test_exit_signals.py` 寫批次測試：
+- [X] T008 [P] [US1] 在 `poc/kb-mcp/tests/test_exit_signals.py` 寫批次測試：
       混合 `not_set`／`within_range`／已觸發的多檔，驗證各自狀態與 summary
       計數正確，單檔問題不影響整批（FR-002、FR-011）
 
 ### Implementation for User Story 1
 
-- [ ] T009 [US1] 建立 `poc/kb-mcp/exit_signals.py`，實作
+- [X] T009 [US1] 建立 `poc/kb-mcp/exit_signals.py`，實作
       `evaluate_threshold(code, threshold, prices)`：純函式不碰 I/O，
       status 判定順序依 data-model.md（`not_set` → `no_price` →
       `triggered_stop_loss` → `triggered_take_profit` → `within_range`）
       （FR-002、FR-003）
-- [ ] T010 [US1] 在 `poc/kb-mcp/exit_signals.py` 新增
+- [X] T010 [US1] 在 `poc/kb-mcp/exit_signals.py` 新增
       `evaluate_all_thresholds(thresholds, prices)`：逐檔獨立 try 保護，
       產出 summary 各狀態計數（FR-002、FR-011）
-- [ ] T011 [US1] 在 `poc/kb-mcp/server.py` 的 `TOOLS` 新增
+- [X] T011 [US1] 在 `poc/kb-mcp/server.py` 的 `TOOLS` 新增
       `save_exit_threshold`（寫入）與 `get_exit_threshold`（唯讀）定義，
       inputSchema 見 contracts/mcp-tools.md（FR-004）
-- [ ] T012 [US1] 在 `poc/kb-mcp/server.py` 的 dispatch 區塊新增兩個分支；
+- [X] T012 [US1] 在 `poc/kb-mcp/server.py` 的 dispatch 區塊新增兩個分支；
       `get_exit_threshold` 省略 code 時走全量路徑（FR-004）
-- [ ] T013 [US1] 在 `poc/kb-mcp/server_readonly.py` 的 `READONLY_TOOLS`
+- [X] T013 [US1] 在 `poc/kb-mcp/server_readonly.py` 的 `READONLY_TOOLS`
       **只加 `get_exit_threshold`**；`save_exit_threshold` 是寫入工具，
       **不得加入**（FR-004）
-- [ ] T014 [US1] 擴充 `poc/kb-mcp/tests/test_pnl.py::ToolRegistrationTest`：
+- [X] T014 [US1] 擴充 `poc/kb-mcp/tests/test_pnl.py::ToolRegistrationTest`：
       涵蓋兩個新工具的三處註冊，並新增**反向斷言**——
       `assertNotIn("save_exit_threshold", server_readonly.READONLY_TOOLS)`；
       工具總數斷言 45→47、唯讀白名單 27→28（FR-004）
@@ -115,30 +115,30 @@ description: 002-entry-exit-signals 的可執行任務清單
 
 ### Tests for User Story 2
 
-- [ ] T015 [P] [US2] 在 `poc/kb-mcp/tests/test_exit_signals.py` 寫
+- [X] T015 [P] [US2] 在 `poc/kb-mcp/tests/test_exit_signals.py` 寫
       `revenue_trend` 測試：上升/下降/持平/樣本不足四種情況，並驗證
       `periods_used` 不超過既有資料窗口可得的期數（FR-007）
-- [ ] T016 [P] [US2] 在 `poc/kb-mcp/tests/test_exit_signals.py` 寫背離測試：
+- [X] T016 [P] [US2] 在 `poc/kb-mcp/tests/test_exit_signals.py` 寫背離測試：
       營收上升＋股價低百分位回 `fundamentals_ahead`、營收下降＋股價高
       百分位回 `price_ahead`、其餘回 `aligned`，且 `basis` 同時含兩邊數字
       （FR-005）
-- [ ] T017 [P] [US2] 在 `poc/kb-mcp/tests/test_exit_signals.py` 寫資料不足測試：
+- [X] T017 [P] [US2] 在 `poc/kb-mcp/tests/test_exit_signals.py` 寫資料不足測試：
       營收或股價任一邊不足即回 `insufficient`，**不得**單憑一邊下結論
       （FR-006）
 
 ### Implementation for User Story 2
 
-- [ ] T018 [US2] 在 `poc/kb-mcp/exit_signals.py` 實作
+- [X] T018 [US2] 在 `poc/kb-mcp/exit_signals.py` 實作
       `revenue_trend(values, periods=6)`：斜率方向＋最新值相對窗口中位數
       的位置；**不新增任何外部呼叫**，只吃既有 `fetch_revenue_yoy()` 的
       結果（FR-007）
-- [ ] T019 [US2] 在 `poc/kb-mcp/exit_signals.py` 實作
+- [X] T019 [US2] 在 `poc/kb-mcp/exit_signals.py` 實作
       `detect_divergence(code, revenue_values, price_position_result)`：
       高低檔門檻 30／70 百分位定義為模組常數，不散落在判斷式（FR-005、FR-006）
-- [ ] T020 [US2] 修改 `poc/kb-mcp/review_engine.py` 的 `_growth_deceleration`
+- [X] T020 [US2] 修改 `poc/kb-mcp/review_engine.py` 的 `_growth_deceleration`
       委派給 `exit_signals.revenue_trend`，**輸出結構與呼叫端介面完全不變**
       （仍回 `{"flagged", "detail", ...}`）（FR-007）
-- [ ] T021 [US2] **改動前後的正式資料逐檔比對（獨立任務，不可併入 T020）**：
+- [X] T021 [US2] **改動前後的正式資料逐檔比對（獨立任務，不可併入 T020）**：
       用 `git archive` 匯出改動前版本到暫存目錄，兩版對同一批正式資料
       （**唯讀連線**）跑 `_growth_deceleration`，列出哪些標的的 flagged
       結果改變、變化是否合理，結果寫回 `specs/002-entry-exit-signals/research.md`
@@ -156,16 +156,16 @@ description: 002-entry-exit-signals 的可執行任務清單
 
 ### Tests for User Story 3
 
-- [ ] T022 [P] [US3] 在 `poc/kb-mcp/tests/test_exit_signals.py` 寫建議測試：
+- [X] T022 [P] [US3] 在 `poc/kb-mcp/tests/test_exit_signals.py` 寫建議測試：
       觸發停損/停利/背離時各自產出可選調整方向與依據；資料不足時
       **訊號仍照常回傳**、建議欄位標示資料不足（FR-008、FR-009）
 
 ### Implementation for User Story 3
 
-- [ ] T023 [US3] 在 `poc/kb-mcp/exit_signals.py` 實作
+- [X] T023 [US3] 在 `poc/kb-mcp/exit_signals.py` 實作
       `build_suggestion(signal)`：依訊號類型產出調整選項與依據，
       範圍限於該檔持股，**不得**呼叫任何選股或市場掃描邏輯（FR-008）
-- [ ] T024 [US3] 在 `poc/kb-mcp/exit_signals.py` 實作洗版控制：
+- [X] T024 [US3] 在 `poc/kb-mcp/exit_signals.py` 實作洗版控制：
       **只有實際觸發的訊號才填 `suggested_action`**，未設定門檻／未觸發／
       資料不足一律不填（research.md R-006——首頁「今日重點」的篩選條件
       就是 `suggested_action is not None`，全填會灌爆）（FR-008）
@@ -182,26 +182,26 @@ description: 002-entry-exit-signals 的可執行任務清單
 
 ### Tests for User Story 4
 
-- [ ] T025 [P] [US4] 在 `poc/kb-mcp/tests/test_exit_signals.py` 寫
+- [X] T025 [P] [US4] 在 `poc/kb-mcp/tests/test_exit_signals.py` 寫
       **不寫入 stances** 的測試：跑完含新訊號的檢視流程後，
       `stances` 表筆數與跑之前完全相同（FR-013）
-- [ ] T026 [P] [US4] 在 `poc/kb-mcp/tests/test_exit_signals.py` 寫失敗隔離
+- [X] T026 [P] [US4] 在 `poc/kb-mcp/tests/test_exit_signals.py` 寫失敗隔離
       測試：注入例外讓新訊號計算失敗，驗證既有通用層/策略層/老芋頭層
       檢查照常完成、結果照常寫入（FR-011）
 
 ### Implementation for User Story 4
 
-- [ ] T027 [US4] 修改 `poc/kb-mcp/review_engine.py` 的 `run_module_d_review`：
+- [X] T027 [US4] 修改 `poc/kb-mcp/review_engine.py` 的 `run_module_d_review`：
       新增門檻與背離兩類 items，`trigger_label` 用 `通用層／停損停利`、
       `通用層／背離`；每類各自 try 包住不影響既有項目；**不呼叫
       `auto_record_findings`**（FR-010、FR-011、FR-013）
-- [ ] T028 [US4] **外部呼叫次數實測（獨立任務，本階段最高風險項）**：
+- [X] T028 [US4] **外部呼叫次數實測（獨立任務，本階段最高風險項）**：
       攔截 `twse_price_client._throttled_get` 與 finmind 的請求函式，
       對同一批標的分別在「關閉新訊號」與「開啟新訊號」下執行，
       **兩者呼叫次數必須完全相同**。方法見 quickstart.md「FR-012 的必做
       實測」。實測數字寫回 research.md R-002。不接受從參數語意推論
       ——階段A 就是這樣錯的（FR-012）
-- [ ] T029 [US4] 用 T004 補上的時間戳，在測試環境跑一次完整流程並與
+- [X] T029 [US4] 用 T004 補上的時間戳，在測試環境跑一次完整流程並與
       基準線（39 檔 1097 秒）比對，記錄增幅；若增幅超出「本機計算應有的
       毫秒級」，回頭查 T028 的假設哪裡不成立（FR-012）
 
@@ -216,7 +216,7 @@ description: 002-entry-exit-signals 的可執行任務清單
 
 ### Tests for User Story 5
 
-- [ ] T030 [P] [US5] 在 `poc/kb-mcp/tests/test_report.py` 寫渲染測試：
+- [X] T030 [P] [US5] 在 `poc/kb-mcp/tests/test_report.py` 寫渲染測試：
       FIFO 可算時顯示 FIFO 數字＋口徑標籤；`history_incomplete` 時顯示
       「FIFO 無法計算」＋加權平均估算值＋其口徑標籤。**斷言要用渲染形式**
       （帶 `class="` 前綴或帶標籤），不可用裸字串——CSS 常數內嵌在每個
@@ -224,16 +224,16 @@ description: 002-entry-exit-signals 的可執行任務清單
 
 ### Implementation for User Story 5
 
-- [ ] T031 [US5] 修改 `poc/kb-mcp/report.py` 的 `_chart_stats_html`
+- [X] T031 [US5] 修改 `poc/kb-mcp/report.py` 的 `_chart_stats_html`
       （約 1922-1942 行）支援兩種口徑並存與標籤；呼叫處
       （`_holdings_card_html`，約 1985/1992 行）傳入 FIFO 結果。
       走勢圖均價虛線維持沿用估算值不動（FR-014、FR-015）
-- [ ] T032 [US5] 修改 `app/routers/stock_detail.py` 的 holdings 區塊
+- [X] T032 [US5] 修改 `app/routers/stock_detail.py` 的 holdings 區塊
       （約 188-206 行）：新增 `fifo` 與 `cost_method_label` 欄位，
       **保留既有 `avg_cost`／`pnl_pct` 不變**以維持向後相容（FR-014）
-- [ ] T033 [US5] 修改 `web/src/pages/StockDetail.jsx`（約 299 行附近）
+- [X] T033 [US5] 修改 `web/src/pages/StockDetail.jsx`（約 299 行附近）
       呈現兩種口徑，視覺上可區分（FR-015）
-- [ ] T034 [US5] `cd web && npm run build`，並重啟正式服務
+- [X] T034 [US5] `cd web && npm run build`，並重啟正式服務
       `launchctl kickstart -k gui/$(id -u)/com.alphavibe.reportserver`，
       用 `curl -s http://127.0.0.1:8080/api/healthz` 確認存活後，
       實際檢視一檔 FIFO 可算（例 2308）與一檔不可算（例 6257）的頁面
@@ -243,12 +243,12 @@ description: 002-entry-exit-signals 的可執行任務清單
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T035 [P] 在 `poc/kb-mcp/tests/test_traceability.py` 登記 FR-001~FR-015
+- [X] T035 [P] 在 `poc/kb-mcp/tests/test_traceability.py` 登記 FR-001~FR-015
       的需求↔實作↔測試對照，並更新工具數斷言 45→47
-- [ ] T036 [P] 修正三處排程時間註解不一致：實際是 17:00（plist），但
+- [X] T036 [P] 修正三處排程時間註解不一致：實際是 17:00（plist），但
       `poc/kb-mcp/review_engine.py:834` 寫 18:00、`poc/kb-mcp/server.py:600`
       寫 02:00（research.md R-009）
-- [ ] T037 執行完整回歸 `python3 -m unittest discover -s poc/kb-mcp/tests`，
+- [X] T037 執行完整回歸 `python3 -m unittest discover -s poc/kb-mcp/tests`，
       與 T001 基準（688）比對，應為 688 ＋ 本次新增數且 0 失敗
 - [ ] T038 依 `~/.claude/rules/10-model-dispatch.md` 第 6 節「驗證不自驗」，
       派 fresh-context agent 對照 spec.md 的 15 條 FR 逐條驗收。驗收 prompt

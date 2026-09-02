@@ -227,13 +227,15 @@ class ServerToolsTest(unittest.TestCase):
         self.server.store.close()
         shutil.rmtree(self.tmp)
 
-    def test_tools_list_has_forty_five(self):
+    def test_tools_list_has_forty_seven(self):
         """2026-08-19：40→43。save_position_plan／get_position_plan（加碼
         計畫總額度）＋check_auto_score（Score自動化四項評分）。
         2026-09-02：43→45。get_position_pnl／get_price_position
-        （001-entry-exit-foundation 階段A，FR-001~FR-012）。"""
+        （001-entry-exit-foundation 階段A，FR-001~FR-012）。
+        2026-09-03：45→47。save_exit_threshold／get_exit_threshold
+        （002-entry-exit-signals 階段B，FR-001~FR-004）。"""
         names = [t["name"] for t in server.TOOLS]
-        self.assertEqual(len(names), 45)
+        self.assertEqual(len(names), 47)
         for expected in ("save_snapshot", "get_snapshots",
                          "save_holdings", "get_holdings",
                          "save_stock_alias", "get_stock_alias",
@@ -1097,6 +1099,60 @@ class EntryExitFoundationTraceabilityTest(unittest.TestCase):
         estimate = backfill._estimate_calls(["2330", "2337"], 400)
         self.assertEqual(estimate["months_per_code"], 22)
         self.assertEqual(estimate["best_case"], 44)
+
+
+class EntryExitSignalsTraceabilityTest(unittest.TestCase):
+    """002-entry-exit-signals 階段B 的需求↔實作↔測試對照（FR-001~FR-015）。
+
+    規格：specs/002-entry-exit-signals/spec.md
+    細部行為由 tests/test_exit_signals.py 涵蓋，這裡只守「對照關係還在不在」。
+    """
+
+    FR_MAP = {
+        "FR-001": ("門檻設定與歷史保留", "kb_store.KBStore.save_exit_threshold"),
+        "FR-002": ("觸發判斷", "exit_signals.evaluate_threshold"),
+        "FR-003": ("未設定不得當成安全", "exit_signals.evaluate_threshold"),
+        "FR-004": ("對話設定、寫入工具不進唯讀白名單", "server.TOOLS"),
+        "FR-005": ("背離偵測", "exit_signals.detect_divergence"),
+        "FR-006": ("單邊資料不足不下結論", "exit_signals.detect_divergence"),
+        "FR-007": ("營收趨勢期數擴大", "exit_signals.revenue_trend"),
+        "FR-008": ("觸發時建議", "exit_signals.build_suggestion"),
+        "FR-009": ("建議產不出來訊號不被吞", "exit_signals.suggestion_or_note"),
+        "FR-010": ("併入每日流程", "review_engine.run_module_d_review"),
+        "FR-011": ("新訊號失敗不影響既有檢查", "review_engine.run_module_d_review"),
+        "FR-012": ("零新增外部呼叫", "exit_signals.TRIGGERED_STATUSES"),
+        "FR-013": ("不寫入 stances", "review_engine.run_module_d_review"),
+        "FR-014": ("頁面接上 FIFO", "report._chart_stats_html"),
+        "FR-015": ("兩種口徑並存並標明", "report._chart_stats_html"),
+    }
+
+    def test_all_frs_have_implementation(self):
+        import exit_signals
+        import kb_store
+        modules = {"exit_signals": exit_signals, "kb_store": kb_store,
+                   "review_engine": review_engine, "report": report,
+                   "server": server}
+        for fr, (desc, symbol) in sorted(self.FR_MAP.items()):
+            module_name, attr = symbol.split(".", 1)
+            target = modules[module_name]
+            for part in attr.split("."):
+                self.assertTrue(hasattr(target, part),
+                                "%s（%s）對應的 %s 不存在" % (fr, desc, symbol))
+                target = getattr(target, part)
+
+    def test_fr004_write_tool_not_in_readonly(self):
+        """FR-004：門檻設定是寫入操作，唯讀路徑依設計不得看到。"""
+        import server_readonly
+        self.assertNotIn("save_exit_threshold", server_readonly.READONLY_TOOLS)
+        self.assertIn("get_exit_threshold", server_readonly.READONLY_TOOLS)
+
+    def test_fr012_signal_module_has_no_external_client(self):
+        """FR-012：訊號模組不得自己去打外部 API。"""
+        import exit_signals
+        with open(exit_signals.__file__, encoding="utf-8") as handle:
+            source = handle.read()
+        for forbidden in ("finmind_client", "twse_price_client", "urllib"):
+            self.assertNotIn("import %s" % forbidden, source)
 
 
 class RevenueYoyLookbackTest(unittest.TestCase):
