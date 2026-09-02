@@ -40,6 +40,14 @@ HTTP 呼叫次數：每檔 8 次 → 22 次（上櫃股 16 → 44 次），25 �
     python3 poc/kb-mcp/backfill_price_history_once.py --data-dir poc/data \\
         --codes 2330,2337,3008
 
+官方端點對某些標的的舊月份會回 HTTP 308（實測 6257／3661 的 2025-12
+就是如此，但同一支的 2026-08、以及 2308 的 2025-12 都正常），而
+`fetch_price_history` 只要有任何一個月成功就算成功、不會退回 FinMind，
+結果那些標的只補到最近幾個月。這種情況改用 FinMind 直取：
+
+    python3 poc/kb-mcp/backfill_price_history_once.py --data-dir poc/data \\
+        --codes 6257,3661 --source finmind
+
 測試環境：把 `--data-dir` 指向獨立測試庫（例如 `poc/data-test`）。
 `--data-dir` 是必填且沒有預設值——沿用 2026-08-22 教訓（正式庫曾被
 測試污染兩次）的防呆做法，不讓人不小心打到正式庫。
@@ -47,16 +55,22 @@ HTTP 呼叫次數：每檔 8 次 → 22 次（上櫃股 16 → 44 次），25 �
 from __future__ import annotations
 
 import argparse
+import datetime
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import finmind_client  # noqa: E402
 import screener  # noqa: E402
 import twse_price_client  # noqa: E402
 from kb_store import KBStore  # noqa: E402
 
 DEFAULT_WINDOW_DAYS = 400  # 約 13 個月，讓百分位能涵蓋近一年
+
+
+def _days_ago(days):
+    return (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
 
 
 def _target_codes(store, explicit):
@@ -101,6 +115,12 @@ def main(argv=None):
                         help="逗號分隔的股票代碼；省略＝持股與交易流水的全部標的")
     parser.add_argument("--window-days", type=int, default=DEFAULT_WINDOW_DAYS,
                         help="回補窗口天數（預設 %d）" % DEFAULT_WINDOW_DAYS)
+    parser.add_argument("--source", choices=("auto", "finmind"), default="auto",
+                        help=("auto＝官方端點優先、失敗才退回 FinMind（預設）；"
+                              "finmind＝直接用 FinMind。官方端點對某些「個股×月份」"
+                              "組合會回 HTTP 308，而 fetch_price_history 只要有任何"
+                              "一個月成功就算成功、不會退回 FinMind，導致那些標的"
+                              "只補到最近幾個月——這種情況用 --source finmind 補。"))
     parser.add_argument("--dry-run", action="store_true",
                         help="只印出將回補的標的與預估 API 呼叫次數，不碰網路也不寫入")
     args = parser.parse_args(argv)
@@ -124,8 +144,14 @@ def main(argv=None):
         failures = []
         for index, code in enumerate(codes, 1):
             try:
-                prices, source = screener._fetch_prices_with_fallback(
-                    code, None, args.data_dir, None, {})
+                if args.source == "finmind":
+                    start = _days_ago(args.window_days)
+                    result = finmind_client.get_stock_price_history(
+                        code, start_date=start, data_dir=args.data_dir)
+                    prices, source = (result.get("prices") or []), "finmind"
+                else:
+                    prices, source = screener._fetch_prices_with_fallback(
+                        code, None, args.data_dir, None, {})
                 if not prices:
                     failures.append((code, "查無資料（來源：%s）" % source))
                     continue
