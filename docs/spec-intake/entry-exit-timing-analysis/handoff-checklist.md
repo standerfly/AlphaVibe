@@ -28,7 +28,7 @@
 
 - [x] `spec-kit-inputs/index.md` lists every generated input package
 - [x] Each input package has exactly one Spec Kit feature boundary
-- [x] Each accepted `speckit-input.md` has `Status: Accepted`（階段A `entry-exit-foundation` 已 Accepted；階段B `entry-exit-signals` 依交付順序維持 Draft）
+- [x] Each accepted `speckit-input.md` has `Status: Accepted`（階段A、階段B 皆已 Accepted；階段B 於 2026-09-03 階段A 完成後開放）
 - [x] Each accepted `speckit-input.md` links back to source decisions
 - [x] Handoff order is recorded for accepted input packages
 
@@ -45,9 +45,9 @@
 1. **產品基線已驗收、階段A 已開放交付**——`product-spec.md` 於 2026-09-02
    經 PO 明示驗收標記 `Accepted`；同日 PO 指示「PR後，開始開發」，
    handoff approval 成立，階段A `entry-exit-foundation` 標記 `Accepted`
-   可交付 `speckit-specify`。階段B `entry-exit-signals` **依交付順序
-   維持 `Draft`**——其功能建立在階段A 的 FIFO 損益與歷史百分位計算
-   之上，待階段A 完成後才開放。
+   可交付 `speckit-specify`。階段B `entry-exit-signals` 於 2026-09-03
+   取得 handoff approval（階段A 實作完成、688 測試全綠、獨立驗收兩輪
+   PASS、PR #21 已開），標記 `Accepted`。
 2. **`Status:` 仍為 `Draft` 而非 `Ready` 的原因**：Dynamic Readiness
    Checks 有一項未完成——4 份必要技術文件（`readiness-checks.md` 的
    GAP-R01~R04：API contract、Data model note、Sequence diagram/state

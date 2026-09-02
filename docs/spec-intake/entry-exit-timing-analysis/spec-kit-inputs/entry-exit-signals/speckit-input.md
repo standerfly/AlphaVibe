@@ -1,6 +1,6 @@
 # Spec Kit Input: 進出場訊號層（門檻、背離偵測與主動提醒）
 
-**Status:** Draft
+**Status:** Accepted
 **Source Product Spec:** ../../product-spec.md
 **Source Scope Decision:** ../../scope-decision.md
 **Spec Feature Slug:** entry-exit-signals
