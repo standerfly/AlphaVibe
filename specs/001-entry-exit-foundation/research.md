@@ -100,11 +100,19 @@ FR-010「不為了計算而即時查外部 API」的原則。
 > 理由是「加長的是單次抓取的日期範圍，不是抓取次數」——**這個假設錯誤**，
 > 由 2026-09-02 的獨立驗收實測推翻，詳見下方「實測結果」。
 
-**Rationale**：這是 `review_engine.refresh_price_and_valuation()`
-（`review_engine.py:837-875`，寫入在 `:871`）抓取股價的日期範圍參數。
-加長的是**單次抓取的日期範圍**，不是抓取次數——每檔仍是一次呼叫，
-故 API 呼叫「次數」不變。資料會隨每日 17:00 排程自然累積，百分位的
-參考價值逐月提升，不需要改介面。
+**原 Rationale（已被下方「實測結果二」推翻，保留供追溯，不要照用）**：
+~~這是 `review_engine.refresh_price_and_valuation()` 抓取股價的日期範圍
+參數。加長的是單次抓取的日期範圍，不是抓取次數——每檔仍是一次呼叫，
+故 API 呼叫「次數」不變。~~
+↑ 這段的錯誤在於沒查證 `twse_price_client.fetch_price_history()` 的實作
+就假設「一次呼叫」；它其實是逐月抓的。教訓：**涉及外部呼叫成本的宣稱，
+必須實際量測呼叫次數，不能從參數語意推論**。
+
+**現行 Rationale**：每日排程（`review_engine.py:863` →
+`_fetch_prices_with_fallback(code, None, data_dir, token, None)`）維持
+120 天窗口，呼叫次數與本功能開發前完全相同；需要更深歷史時用
+`backfill_price_history_once.py` 補一次，`stock_price_history` 是
+`INSERT OR REPLACE` 永不刪除，補過就永久有了。
 
 **實測結果一（2026-09-02，T026，只測一檔）**：400 天窗口確實能取得
 **268 個交易日**（2025-07-29~2026-09-02），走 `twse_official` 官方端點、
@@ -124,6 +132,11 @@ FR-010「不為了計算而即時查外部 API」的原則。
 先試 TWSE 失敗再試 TPEx（再乘 2），25 檔持股的每日排程會從約 200 次
 變成 550+ 次，每次還有 `SLEEP_SECONDS` 節流。這**違反 FR-014 的
 MUST NOT 條款**。
+
+**真實世界佐證（2026-09-03 複驗發現）**：`~/Library/Logs/alphavibe-market-scan.log`
+顯示 8/22~9/2 的每日排程都在 **02:13~02:14** 完成，唯獨 9/3 那次
+（唯一一次在 `PRICE_WINDOW_DAYS=400` 生效下跑的排程）拖到 **02:42:33**，
+**晚了約 29 分鐘**——2.75 倍的推算在正式環境確實發生過一次。
 
 **最終做法**：每日窗口維持 120（呼叫次數完全不變），長歷史用
 `backfill_price_history_once.py` 補一次。`stock_price_history` 是
