@@ -250,7 +250,7 @@ description: 002-entry-exit-signals 的可執行任務清單
       寫 02:00（research.md R-009）
 - [X] T037 執行完整回歸 `python3 -m unittest discover -s poc/kb-mcp/tests`，
       與 T001 基準（688）比對，應為 688 ＋ 本次新增數且 0 失敗
-- [ ] T038 依 `~/.claude/rules/10-model-dispatch.md` 第 6 節「驗證不自驗」，
+- [X] T038 依 `~/.claude/rules/10-model-dispatch.md` 第 6 節「驗證不自驗」，
       派 fresh-context agent 對照 spec.md 的 15 條 FR 逐條驗收。驗收 prompt
       **必須包含**：(a) 外部呼叫次數的獨立實測 (b) `save_exit_threshold`
       不得出現在唯讀白名單的反向檢查 (c) 正式庫未被寫入的確認
