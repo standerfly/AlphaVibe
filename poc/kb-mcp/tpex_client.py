@@ -62,19 +62,36 @@ def roc_date_to_iso(roc_date):
         return None
 
 
-def _fetch(endpoint_key):
+def _fetch(endpoint_key, cache=None):
+    """cache：可選 dict，key=endpoint_key（2026-09-03 新增，供
+    market_scan.py 逐檔呼叫 get_emerging_stock_valuation() 時共用同一份
+    批次回應——三個興櫃端點本身就是全市場批次回應，逐檔重打是純浪費。
+    cache=None（預設）行為與改動前完全一致，不影響既有唯一呼叫端
+    （server.py 的單檔查詢）。"""
+    if cache is not None and endpoint_key in cache:
+        return cache[endpoint_key]
     url = ENDPOINTS[endpoint_key]
     req = urllib.request.Request(url, headers={"User-Agent": "alphavibe-kb-poc"})
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        return {"error": "TPEx HTTP %s（%s）" % (exc.code, endpoint_key)}
+        result = {"error": "TPEx HTTP %s（%s）" % (exc.code, endpoint_key)}
+        if cache is not None:
+            cache[endpoint_key] = result
+        return result
     except Exception as exc:  # 網路不通、逾時、JSON 壞掉
-        return {"error": "TPEx 呼叫失敗（%s）：%s" % (endpoint_key, exc)}
+        result = {"error": "TPEx 呼叫失敗（%s）：%s" % (endpoint_key, exc)}
+        if cache is not None:
+            cache[endpoint_key] = result
+        return result
     if not isinstance(payload, list):
-        return {"error": "TPEx 回應格式異常（%s，非陣列）" % endpoint_key}
-    return {"data": payload}
+        result = {"error": "TPEx 回應格式異常（%s，非陣列）" % endpoint_key}
+    else:
+        result = {"data": payload}
+    if cache is not None:
+        cache[endpoint_key] = result
+    return result
 
 
 def _find_by_code(rows, stock_id):
@@ -93,7 +110,7 @@ def _to_float(value):
         return None
 
 
-def get_emerging_stock_valuation(stock_id, data_dir=None):
+def get_emerging_stock_valuation(stock_id, data_dir=None, cache=None, include_pbr=True):
     """興櫃股估值粗估（PER/PBR）。資料源：TPEx 興櫃三端點＋FinMind 淨值。
 
     - price/eps 分別來自 latest_statistics／eps_rank，任一查無資料則對應
@@ -103,6 +120,17 @@ def get_emerging_stock_valuation(stock_id, data_dir=None):
     - book_value（每股淨值粗估）＝ FinMind 淨值 ÷ estimated_shares；
       PBR ＝ price ÷ book_value；任一環節缺資料則 book_value/pbr 為 None
     - 回傳一定含 caveats（精確度限制說明），呼叫端須轉達給使用者
+
+    cache：可選 dict，透傳給 _fetch()，供呼叫端在逐檔迴圈時共用同一份
+    三端點批次回應（見 _fetch docstring）。
+
+    include_pbr：預設 True（改動前既有行為，單檔查詢用）。market_scan.py
+    的候選初篩只需要 PER 來算 PEG，不需要 PBR；傳 False 會跳過 FinMind
+    淨值查詢（get_equity_attributable_to_owners），book_value/pbr 維持
+    None，且不記錄「缺淨值資料」這類 errors——那是刻意跳過，不是查詢
+    失敗，不該混進 errors 讓呼叫端誤以為資料有問題。這樣做是為了不讓
+    market_scan 逐檔篩選時每檔都多打一次 FinMind（額度是共用池，
+    2026-07-28 密集測試打光額度連累當晚排程的教訓見 CLAUDE.md）。
     """
     result = {
         "stock_id": stock_id, "name": None,
@@ -116,9 +144,9 @@ def get_emerging_stock_valuation(stock_id, data_dir=None):
         "errors": [],
     }
 
-    price_resp = _fetch("latest_statistics")
-    eps_resp = _fetch("eps_rank")
-    cap_resp = _fetch("capitals_rank")
+    price_resp = _fetch("latest_statistics", cache=cache)
+    eps_resp = _fetch("eps_rank", cache=cache)
+    cap_resp = _fetch("capitals_rank", cache=cache)
 
     price_row = eps_row = cap_row = None
 
@@ -149,10 +177,21 @@ def get_emerging_stock_valuation(stock_id, data_dir=None):
 
     if price_row:
         result["name"] = price_row.get("CompanyName")
-        result["price"] = _to_float(price_row.get("LatestPrice"))
+        price = _to_float(price_row.get("LatestPrice"))
         result["price_date"] = roc_date_to_iso(price_row.get("Date"))
-        if result["price"] is None:
+        if price is None:
             result["errors"].append("興櫃當日行情price欄位無法解析（可能當日無成交）")
+        elif price <= 0:
+            # 2026-09-03 修正：TPEx 用 0 當「當日無成交」的 sentinel（實測
+            # 7849/7885 皆如此），改動前這裡只檢查 None，0 會被當成有效
+            # 價格繼續往下算 PER=0.00——PEG 也會跟著算出 0，在 market_scan
+            # 依 PEG 升冪排序時反而排到最前面，看起來像完美標的，實際是
+            # 垃圾資料。跟 EPS<=0 的既有處理方式一致：不計算、記錄原因、
+            # price 維持 None 讓下游正確判斷「缺資料」。
+            result["errors"].append(
+                "興櫃當日行情price為0（可能當日無成交），不計算PER/PBR")
+        else:
+            result["price"] = price
 
     if eps_row:
         result["name"] = result["name"] or eps_row.get("CompanyName")
@@ -179,22 +218,23 @@ def get_emerging_stock_valuation(stock_id, data_dir=None):
         else:
             result["errors"].append("興櫃資本額排名Capital欄位無法解析，無法估算股數")
 
-    equity_info = finmind_client.get_equity_attributable_to_owners(stock_id, data_dir=data_dir)
-    if equity_info.get("errors"):
-        result["errors"].extend("FinMind淨值查詢：%s" % e for e in equity_info["errors"])
-    equity = equity_info.get("equity")
+    if include_pbr:
+        equity_info = finmind_client.get_equity_attributable_to_owners(stock_id, data_dir=data_dir)
+        if equity_info.get("errors"):
+            result["errors"].extend("FinMind淨值查詢：%s" % e for e in equity_info["errors"])
+        equity = equity_info.get("equity")
 
-    if equity is not None and estimated_shares:
-        book_value = equity / estimated_shares
-        result["book_value"] = round(book_value, 2)
-        result["book_value_date"] = equity_info.get("equity_date")
-        if price is not None and book_value > 0:
-            result["pbr"] = round(price / book_value, 2)
-        elif price is not None:
-            result["errors"].append("估算每股淨值<=0，不計算PBR")
-    elif equity is None:
-        result["errors"].append("PBR無法計算：FinMind查無淨值資料")
-    elif not estimated_shares:
-        result["errors"].append("PBR無法計算：估算股數缺資料")
+        if equity is not None and estimated_shares:
+            book_value = equity / estimated_shares
+            result["book_value"] = round(book_value, 2)
+            result["book_value_date"] = equity_info.get("equity_date")
+            if price is not None and book_value > 0:
+                result["pbr"] = round(price / book_value, 2)
+            elif price is not None:
+                result["errors"].append("估算每股淨值<=0，不計算PBR")
+        elif equity is None:
+            result["errors"].append("PBR無法計算：FinMind查無淨值資料")
+        elif not estimated_shares:
+            result["errors"].append("PBR無法計算：估算股數缺資料")
 
     return result

@@ -13,6 +13,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
 import market_scan  # noqa: E402
+import tpex_client  # noqa: E402
 from kb_store import KBStore  # noqa: E402
 
 FRAMEWORK = {
@@ -155,6 +156,8 @@ class ScanCandidatesTest(unittest.TestCase):
     def test_twse_failure_does_not_block_tpex_candidates(self):
         """回歸測試：TWSE 掛了，TPEx 仍要正常回傳候選，不能整批槓龜。"""
         def fake(url, market_label, cache=None):
+            if market_label == "興櫃":  # 這批既有測試不測興櫃路徑，回空避免
+                return {"data": []}      # 誤吃到假資料或觸發真實網路呼叫
             if market_label == "TWSE":
                 return {"error": "TWSE 呼叫失敗：模擬逾時"}
             if url == market_scan.TPEX_PER_URL:
@@ -171,6 +174,8 @@ class ScanCandidatesTest(unittest.TestCase):
 
     def test_tpex_failure_does_not_block_twse_candidates(self):
         def fake(url, market_label, cache=None):
+            if market_label == "興櫃":  # 這批既有測試不測興櫃路徑，回空避免
+                return {"data": []}      # 誤吃到假資料或觸發真實網路呼叫
             if market_label == "TPEx":
                 return {"error": "TPEx 呼叫失敗：模擬逾時"}
             if url == market_scan.TWSE_PER_URL:
@@ -185,6 +190,8 @@ class ScanCandidatesTest(unittest.TestCase):
 
     def test_candidates_sorted_by_peg_ascending(self):
         def fake(url, market_label, cache=None):
+            if market_label == "興櫃":  # 這批既有測試不測興櫃路徑，回空避免
+                return {"data": []}      # 誤吃到假資料或觸發真實網路呼叫
             if url == market_scan.TWSE_PER_URL:
                 return {"data": [{"Code": "AAA", "PEratio": "20"}]}
             if url == market_scan.TWSE_REVENUE_URL:
@@ -204,6 +211,8 @@ class ScanCandidatesTest(unittest.TestCase):
         TPEX_PER_EXTRA_FIELDS，2026-07-28 實跑確認），scan_candidates 要各自
         用對應欄位名抓到 pbr／dividend_yield，不能兩市場共用同一組欄位名。"""
         def fake(url, market_label, cache=None):
+            if market_label == "興櫃":  # 這批既有測試不測興櫃路徑，回空避免
+                return {"data": []}      # 誤吃到假資料或觸發真實網路呼叫
             if url == market_scan.TWSE_PER_URL:
                 return {"data": [{"Code": "2330", "PEratio": "8.0",
                                   "PBratio": "1.5", "DividendYield": "3.28"}]}
@@ -226,6 +235,8 @@ class ScanCandidatesTest(unittest.TestCase):
     def test_pbr_and_dividend_yield_missing_field_does_not_raise(self):
         """欄位缺失或空字串一律回None，不丟例外——比照既有per的防呆規則。"""
         def fake(url, market_label, cache=None):
+            if market_label == "興櫃":  # 這批既有測試不測興櫃路徑，回空避免
+                return {"data": []}      # 誤吃到假資料或觸發真實網路呼叫
             if url == market_scan.TWSE_PER_URL:
                 return {"data": [{"Code": "2330", "PEratio": "8.0"}]}  # 沒有PBratio/DividendYield
             return {"data": [{"公司代號": "2330", "公司名稱": "台積電", "產業別": "半導體業",
@@ -256,7 +267,7 @@ class RunScanTest(unittest.TestCase):
                  "revenue_period": "2026-06", "peg": 0.5},
             ],
             "codes": ["2330"],
-            "market_errors": {"TWSE": None, "TPEx": None},
+            "market_errors": {"TWSE": None, "TPEx": None, "興櫃": None},
             "total_scanned": 500,
         }
         with unittest.mock.patch.object(
@@ -279,7 +290,7 @@ class RunScanTest(unittest.TestCase):
         self.assertAlmostEqual(row["drawdown_pct"], 0.45)
         self.assertAlmostEqual(row["excess_drawdown_pct"], 0.35)
         self.assertTrue(row["meets_framework"])
-        self.assertEqual(out["market_errors"], {"TWSE": None, "TPEx": None})
+        self.assertEqual(out["market_errors"], {"TWSE": None, "TPEx": None, "興櫃": None})
         self.assertEqual(out["total_scanned"], 500)  # 從 stage_a 傳遞過來，不是重新計算
         self.assertAlmostEqual(out["benchmark_drawdown_pct"], 0.0951)
         self.assertIsNone(out["benchmark_error"])
@@ -296,7 +307,7 @@ class RunScanTest(unittest.TestCase):
                  "revenue_period": "2026-06", "peg": 0.5},
             ],
             "codes": ["1111", "2330"],
-            "market_errors": {"TWSE": None, "TPEx": None},
+            "market_errors": {"TWSE": None, "TPEx": None, "興櫃": None},
             "total_scanned": 500,
         }
 
@@ -329,7 +340,7 @@ class RunScanTest(unittest.TestCase):
 
     def test_trigger_source_passed_through(self):
         stage_a_result = {"candidates": [], "codes": [],
-                          "market_errors": {"TWSE": None, "TPEx": None}, "total_scanned": 0}
+                          "market_errors": {"TWSE": None, "TPEx": None, "興櫃": None}, "total_scanned": 0}
         with unittest.mock.patch.object(
                 market_scan, "scan_candidates", return_value=stage_a_result), \
              unittest.mock.patch.object(
@@ -350,7 +361,7 @@ class RunScanTest(unittest.TestCase):
                  "revenue_period": "2026-06", "peg": None},
             ],
             "codes": ["2330"],
-            "market_errors": {"TWSE": None, "TPEx": None},
+            "market_errors": {"TWSE": None, "TPEx": None, "興櫃": None},
             "total_scanned": 500,
         }
         fake_framework = dict(FRAMEWORK, id="excess_test", peg_max=None,
@@ -391,7 +402,7 @@ class RunScansTest(unittest.TestCase):
                  "revenue_period": "2026-06", "peg": 0.5},
             ],
             "codes": ["2330"],
-            "market_errors": {"TWSE": None, "TPEx": None},
+            "market_errors": {"TWSE": None, "TPEx": None, "興櫃": None},
             "total_scanned": 500,
         }
 
@@ -430,7 +441,7 @@ class RunScansTest(unittest.TestCase):
 
     def test_unknown_framework_does_not_block_other_frameworks(self):
         stage_a_result = {"candidates": [], "codes": [],
-                          "market_errors": {"TWSE": None, "TPEx": None}, "total_scanned": 0}
+                          "market_errors": {"TWSE": None, "TPEx": None, "興櫃": None}, "total_scanned": 0}
         with unittest.mock.patch.object(
                 market_scan, "scan_candidates", return_value=stage_a_result), \
              unittest.mock.patch.object(
@@ -458,7 +469,7 @@ class MainCliTest(unittest.TestCase):
         return {
             "framework_id": framework_id, "trigger_source": "scheduled",
             "candidate_count": 1, "meets_count": 1,
-            "market_errors": {"TWSE": None, "TPEx": None},
+            "market_errors": {"TWSE": None, "TPEx": None, "興櫃": None},
             "total_scanned": 500,
             "benchmark_drawdown_pct": 0.0951, "benchmark_error": None,
             "results": [{"code": code, "name": "台積電", "market": "TWSE",
@@ -555,6 +566,166 @@ class MainCliTest(unittest.TestCase):
         latest = store.get_latest_market_scan()
         store.close()
         self.assertFalse(latest["found"])
+
+
+class ScanEmergingTest(unittest.TestCase):
+    """興櫃候選初篩（2026-09-03 補齊已知限制）：不打真實 TPEx/FinMind，
+    valuation_fn 用假函式取代 tpex_client.get_emerging_stock_valuation。"""
+
+    EMERGING_REVENUE = [
+        {"公司代號": "2255", "公司名稱": "凱銳光電", "產業別": "其他電子業",
+         "營業收入-去年同月增減(%)": "43.0", "資料年月": "11507"},
+        {"公司代號": "9999", "公司名稱": "水泥業者", "產業別": "水泥工業",
+         "營業收入-去年同月增減(%)": "50.0", "資料年月": "11507"},  # 產業別不符
+        {"公司代號": "8888", "公司名稱": "營收轉弱", "產業別": "半導體業",
+         "營業收入-去年同月增減(%)": "-5.0", "資料年月": "11507"},  # 年增率不符
+    ]
+
+    def _fake_json(self, cache=None):
+        def fake(url, market_label, cache=None):
+            self.assertEqual(market_label, "興櫃")
+            self.assertEqual(url, market_scan.TPEX_EMERGING_REVENUE_URL)
+            return {"data": self.EMERGING_REVENUE}
+        return fake
+
+    def test_industry_and_revenue_filter_then_peg_computed(self):
+        """產業別/營收年增率篩選跟 _scan_market 同邏輯；通過後才逐檔查估值算PEG。"""
+        calls = []
+
+        def fake_valuation(code, data_dir=None, cache=None, include_pbr=None):
+            calls.append((code, data_dir, cache, include_pbr))
+            return {"per": 20.0, "name": None, "pbr": None, "errors": []}
+
+        with unittest.mock.patch.object(market_scan, "_fetch_json", self._fake_json()):
+            out = market_scan._scan_emerging(
+                ("半導體業", "其他電子業"), 1.0, 0.0,
+                data_dir="/tmp/fake", valuation_fn=fake_valuation)
+
+        self.assertIsNone(out["error"])
+        self.assertEqual(out["market"], "興櫃")
+        self.assertEqual(out["total_scanned"], 3)  # 全部3列都算，不受篩選影響
+        # 只有 2255 通過產業別+營收篩選（9999產業別不符、8888年增率為負）
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0], ("2255", "/tmp/fake", None, False))  # include_pbr 固定 False
+        codes = [c["code"] for c in out["candidates"]]
+        self.assertEqual(codes, ["2255"])
+        # PEG = 20 / (43.0) = 0.465...
+        self.assertAlmostEqual(out["candidates"][0]["peg"], 20.0 / 43.0, places=4)
+        self.assertEqual(out["candidates"][0]["market"], "興櫃")
+        self.assertIsNone(out["candidates"][0]["pbr"])  # include_pbr=False，不查
+
+    def test_peg_max_excludes_high_peg_candidate(self):
+        def fake_valuation(code, data_dir=None, cache=None, include_pbr=None):
+            return {"per": 100.0, "name": None, "pbr": None, "errors": []}  # PEG會很大
+
+        with unittest.mock.patch.object(market_scan, "_fetch_json", self._fake_json()):
+            out = market_scan._scan_emerging(
+                ("半導體業", "其他電子業"), 1.0, 0.0, valuation_fn=fake_valuation)
+        self.assertEqual(out["candidates"], [])
+
+    def test_valuation_per_none_excludes_candidate_not_raises(self):
+        """估值查不到PER（例如查無此代碼）時該候選被排除，不當成PEG=0硬留。"""
+        def fake_valuation(code, data_dir=None, cache=None, include_pbr=None):
+            return {"per": None, "name": None, "pbr": None,
+                    "errors": ["興櫃當日行情查無代碼 2255"]}
+
+        with unittest.mock.patch.object(market_scan, "_fetch_json", self._fake_json()):
+            out = market_scan._scan_emerging(
+                ("半導體業", "其他電子業"), 1.0, 0.0, valuation_fn=fake_valuation)
+        self.assertEqual(out["candidates"], [])
+        self.assertIsNone(out["error"])  # 個別候選查不到不算整批錯誤
+
+    def test_valuation_cache_shared_across_candidates(self):
+        """同一次 _scan_emerging 呼叫，多檔候選要共用同一份 valuation_cache
+        （不是各自 None），這樣 tpex_client._fetch 才真的省得掉重複批次請求。"""
+        revenue = [
+            {"公司代號": "1111", "公司名稱": "A", "產業別": "半導體業",
+             "營業收入-去年同月增減(%)": "43.0", "資料年月": "11507"},
+            {"公司代號": "2222", "公司名稱": "B", "產業別": "半導體業",
+             "營業收入-去年同月增減(%)": "50.0", "資料年月": "11507"},
+        ]
+        seen_cache_ids = []
+
+        def fake_json(url, market_label, cache=None):
+            return {"data": revenue}
+
+        def fake_valuation(code, data_dir=None, cache=None, include_pbr=None):
+            seen_cache_ids.append(id(cache))
+            return {"per": 10.0, "name": None, "pbr": None, "errors": []}
+
+        shared_cache = {}
+        with unittest.mock.patch.object(market_scan, "_fetch_json", fake_json):
+            market_scan._scan_emerging(("半導體業",), 1.0, 0.0,
+                                       valuation_cache=shared_cache,
+                                       valuation_fn=fake_valuation)
+        self.assertEqual(len(seen_cache_ids), 2)
+        self.assertEqual(seen_cache_ids[0], seen_cache_ids[1])
+        self.assertEqual(seen_cache_ids[0], id(shared_cache))
+
+    def test_revenue_endpoint_error_returns_empty_not_raises(self):
+        def fake(url, market_label, cache=None):
+            return {"error": "興櫃 呼叫失敗：模擬逾時"}
+        with unittest.mock.patch.object(market_scan, "_fetch_json", fake):
+            out = market_scan._scan_emerging(("半導體業",), 1.0, 0.0)
+        self.assertEqual(out["candidates"], [])
+        self.assertEqual(out["total_scanned"], 0)
+        self.assertIsNotNone(out["error"])
+
+    def test_unexpected_exception_recorded_not_raised(self):
+        def fake(url, market_label, cache=None):
+            raise RuntimeError("模擬非預期錯誤")
+        with unittest.mock.patch.object(market_scan, "_fetch_json", fake):
+            out = market_scan._scan_emerging(("半導體業",), 1.0, 0.0)
+        self.assertIn("非預期錯誤", out["error"])
+        self.assertEqual(out["candidates"], [])
+
+
+class ScanCandidatesEmergingIntegrationTest(unittest.TestCase):
+    """scan_candidates() 把興櫃併進 TWSE/TPEx 候選、market_errors 三市場齊全。"""
+
+    def _fake_json(self, emerging_rows=None):
+        emerging_rows = emerging_rows if emerging_rows is not None else []
+
+        def fake(url, market_label, cache=None):
+            if market_label == "興櫃":
+                return {"data": emerging_rows}
+            return {"data": []}  # TWSE/TPEx 這裡不測，回空即可
+        return fake
+
+    def test_emerging_candidates_merged_with_market_errors_key(self):
+        rows = [{"公司代號": "2255", "公司名稱": "凱銳光電", "產業別": "半導體業",
+                 "營業收入-去年同月增減(%)": "43.0", "資料年月": "11507"}]
+
+        def fake_valuation(code, data_dir=None, cache=None, include_pbr=None):
+            return {"per": 20.0, "name": None, "pbr": None, "errors": []}
+
+        with unittest.mock.patch.object(market_scan, "_fetch_json", self._fake_json(rows)),              unittest.mock.patch.object(
+                 tpex_client, "get_emerging_stock_valuation", fake_valuation):
+            out = market_scan.scan_candidates(FRAMEWORK)
+
+        self.assertIn("興櫃", out["market_errors"])
+        self.assertIsNone(out["market_errors"]["興櫃"])
+        codes = [c["code"] for c in out["candidates"]]
+        self.assertIn("2255", codes)
+
+    def test_include_emerging_false_skips_emerging_path(self):
+        """include_emerging=False 時興櫃候選數為0，且完全不呼叫 valuation_fn
+        （呼叫端明確選擇跳過，不該有任何興櫃相關流量）。"""
+        rows = [{"公司代號": "2255", "公司名稱": "凱銳光電", "產業別": "半導體業",
+                 "營業收入-去年同月增減(%)": "43.0", "資料年月": "11507"}]
+        called = []
+
+        def fake_valuation(code, **kw):
+            called.append(code)
+            return {"per": 20.0, "name": None, "pbr": None, "errors": []}
+
+        with unittest.mock.patch.object(market_scan, "_fetch_json", self._fake_json(rows)),              unittest.mock.patch.object(
+                 tpex_client, "get_emerging_stock_valuation", fake_valuation):
+            out = market_scan.scan_candidates(FRAMEWORK, include_emerging=False)
+
+        self.assertEqual(called, [])
+        self.assertIsNone(out["market_errors"]["興櫃"])
+        self.assertEqual([c for c in out["candidates"] if c["market"] == "興櫃"], [])
 
 
 if __name__ == "__main__":

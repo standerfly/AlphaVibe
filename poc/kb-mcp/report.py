@@ -2547,8 +2547,10 @@ def render_market_scan_page(selected_id, latest, error=None):
 
     parts.append("<details class=\"philomod\"><summary>這是什麼？</summary><pre>"
                  "用 TWSE/TPEx 官方批次資料，在框架鎖定的產業別內自動找候選"
-                 "（不用手動貼代碼），範圍只有上市＋上櫃（興櫃沒有官方批次PER"
-                 "資料，不在這次掃描範圍）。每天 02:00 也會自動掃描一次，"
+                 "（不用手動貼代碼），涵蓋上市＋上櫃＋興櫃（2026-09-03起）。"
+                 "興櫃沒有官方批次PER資料，改用「先以產業別＋營收年增率篩出"
+                 "小批候選、再逐檔查估值」的方式補齊，估值精確度低於上市/"
+                 "上櫃，候選列的備註欄會標明。每天 02:00 也會自動掃描一次，"
                  "這裡永遠顯示最近一次結果。</pre></details>")
 
     # 框架若有量化規則做不到的條件（例如 revenue_high_price_dip 的 EPS 上修
@@ -2582,7 +2584,7 @@ def render_market_scan_page(selected_id, latest, error=None):
     trigger_text = {"manual": "手動觸發", "scheduled": "排程自動"}.get(
         run.get("trigger_source"), esc(run.get("trigger_source")))
     total_scanned = run.get("total_scanned")
-    scanned_text = ("本次掃描全市場（上市+上櫃）共 %d 檔，其中" % total_scanned
+    scanned_text = ("本次掃描全市場（上市+上櫃+興櫃）共 %d 檔，其中" % total_scanned
                     if total_scanned is not None else "")
     benchmark_dd = run.get("benchmark_drawdown_pct")
     benchmark_text = ("｜同期大盤回檔 %s%%" % _fmt_pct(benchmark_dd)
@@ -2593,13 +2595,16 @@ def render_market_scan_page(selected_id, latest, error=None):
 
     twse_err = run.get("twse_error")
     tpex_err = run.get("tpex_error")
-    if twse_err or tpex_err:
+    emerging_err = run.get("emerging_error")
+    if twse_err or tpex_err or emerging_err:
         parts.append("<p class=\"empty\" style=\"color:var(--red)\">")
         if twse_err:
             parts.append("TWSE 資料源異常：%s　" % esc(twse_err))
         if tpex_err:
-            parts.append("TPEx 資料源異常：%s" % esc(tpex_err))
-        parts.append("（該市場當次候選數會變少，不影響另一邊）</p>")
+            parts.append("TPEx 資料源異常：%s　" % esc(tpex_err))
+        if emerging_err:
+            parts.append("興櫃資料源異常：%s" % esc(emerging_err))
+        parts.append("（該市場當次候選數會變少，不影響其他市場）</p>")
 
     benchmark_err = run.get("benchmark_error")
     if benchmark_err:
@@ -2616,7 +2621,7 @@ def render_market_scan_page(selected_id, latest, error=None):
                      "<th>代碼</th><th>名稱</th><th>市場</th><th>產業別</th>"
                      "<th>PER</th><th>營收年增率</th><th>PEG</th><th>回檔幅度</th>"
                      "<th>超額跌幅</th><th>PBR</th><th>殖利率</th>"
-                     "<th>目前價</th><th>加入追蹤</th></tr></thead><tbody>")
+                     "<th>目前價</th><th>加入追蹤</th><th>備註</th></tr></thead><tbody>")
         for r in hit_rows:
             parts.append(_market_scan_row_html(r, highlight=False, run_id=run_id))
         parts.append("</tbody></table></div>")
@@ -2782,9 +2787,11 @@ def render_track_error_page(message):
 def _market_scan_row_html(r, highlight, run_id):
     """/market-scan 結果表格的單一列。highlight=True 才畫黃底（符合框架
     候選區塊裡全部列都符合，畫了反而是雜訊，所以那裡傳 False）。
-    highlight=True 時多渲染「符合框架」「備註」兩欄，維持與全部候選表格
-    的欄位對齊；highlight=False（符合框架區塊）省略這兩欄，因為值恆為
-    「符合」「—」，不提供資訊。每列都有「加入追蹤」表單（兩個區塊都有，
+    highlight=True 時多渲染「符合框架」欄；「備註」欄兩邊都渲染
+    （2026-09-03 修正：原本符合框架區塊省略備註欄，理由是「值恆為
+    —，不提供資訊」，但興櫃候選的估值精確度警語一定要顯示，即使
+    在符合框架區塊也不能省略，否則使用者可能誤以為興櫃候選跟上市/
+    上櫃候選一樣可信）。每列都有「加入追蹤」表單（兩個區塊都有，
     不限符合框架的候選）。"""
     peg_text = ("%.2f" % r["peg"]) if r["peg"] is not None else "—"
     yoy_text = ("%.1f%%" % (r["revenue_yoy"] * 100)) if r["revenue_yoy"] is not None else "—"
@@ -2810,12 +2817,22 @@ def _market_scan_row_html(r, highlight, run_id):
         % (esc(r["code"]), esc(r["name"]), esc(r.get("market")), esc(r.get("industry")),
            per_text, yoy_text, peg_text, drawdown_text, excess_drawdown_text,
            pbr_text, dividend_yield_text, esc(r.get("current_price")), track_form))
+    # 興櫃候選的 PER/PEG 精確度低於正式上市櫃股（半年報/年報EPS、估算
+    # 股數，見 tpex_client.CAVEATS），備註欄一律標明，不能讓使用者誤以為
+    # 跟上市/上櫃候選一樣可信（roadmap.md 明文要求）；符合框架區塊也不
+    # 例外。跟既有 error 並存時兩者都顯示，不互相蓋掉。
+    note_parts = []
+    if r.get("market") == "興櫃":
+        note_parts.append("興櫃估值為粗估（半年報/年報EPS，非TTM），精確度低於上市/上櫃")
+    if r.get("error"):
+        note_parts.append(esc(r.get("error")))
+    note = "；".join(note_parts) if note_parts else "—"
+
     if not highlight:
-        return "<tr>%s</tr>" % base
+        return "<tr>%s<td data-label=\"備註\">%s</td></tr>" % (base, note)
     hit = r.get("meets_framework")
     row_style = " class=\"row-highlight\"" if hit else ""
     hit_text = "符合" if hit else "—"
-    note = esc(r.get("error")) if r.get("error") else "—"
     return ("<tr%s>%s<td data-label=\"符合框架\" class=\"stance\">%s</td>"
             "<td data-label=\"備註\">%s</td></tr>"
             % (row_style, base, hit_text, note))
