@@ -1932,26 +1932,35 @@ def _chart_stats_html(current_price, avg_cost, avg_cost_label, fifo=None):
     if avg_cost is not None:
         parts.append("<div class=\"stat\"><b style=\"color:var(--amber)\">%s</b>"
                      "<span>%s</span></div>" % (esc(_fmt_price(avg_cost)), esc(avg_cost_label)))
-        if current_price is not None:
+        # FR-014：FIFO 算得出來時，「浮動損益」這一格顯示的就是 FIFO 數字
+        # ——頁面與 get_position_pnl 必須一致（SC-004）。實測正式資料 14 檔
+        # 可算的標的中有 5 檔兩種口徑不同，其中 3131 連正負號都相反，
+        # 並列而不統一會讓 PO 在頁面看到的跟對話問到的對不起來。
+        # FIFO 算不出來時（history_incomplete）才退回估算值並標明口徑，
+        # 那是 FR-015 的範圍（PO 裁決 Q2-C）。
+        fifo_ok = bool(fifo and fifo.get("status") == "ok"
+                       and fifo.get("unrealized_pct") is not None)
+        if fifo_ok:
+            pnl_pct = fifo["unrealized_pct"]
+            pnl_label = "浮動損益（FIFO・未扣交易成本）"
+        elif current_price is not None:
             pnl_pct = (current_price - avg_cost) / avg_cost * 100
+            pnl_label = "浮動損益（加權平均估算・非 FIFO）"
+        else:
+            pnl_pct = None
+            pnl_label = None
+        if pnl_pct is not None:
             color = ("var(--red)" if pnl_pct > 0 else
                     "var(--green)" if pnl_pct < 0 else "var(--ink-dim)")
             parts.append("<div class=\"stat\"><b style=\"color:%s\">%+.1f%%</b>"
-                         "<span>浮動損益</span></div>" % (color, pnl_pct))
+                         "<span>%s</span></div>" % (color, pnl_pct, esc(pnl_label)))
     # 002-entry-exit-signals FR-014／FR-015：接上階段A 的 FIFO 損益。
     # PO 裁決 Q2-C——兩種口徑**並存**且各自標明，不是單純替換：實測 60 檔
     # 中 21 檔賣超（流水表起始日之前的部位沒有進場紀錄），單純換成 FIFO 會
     # 讓 1/3 標的的損益數字突然消失，那是 PO 每天在看的頁面上的可見退步。
     if fifo:
         status = fifo.get("status")
-        if status == "ok" and fifo.get("unrealized_pnl") is not None:
-            pct = fifo.get("unrealized_pct")
-            color = ("var(--red)" if (pct or 0) > 0 else
-                     "var(--green)" if (pct or 0) < 0 else "var(--ink-dim)")
-            parts.append("<div class=\"stat stat--fifo\"><b style=\"color:%s\">%s</b>"
-                         "<span>FIFO 未實現・未扣交易成本</span></div>"
-                         % (color, ("%+.1f%%" % pct) if pct is not None else "—"))
-        elif status == "history_incomplete":
+        if status == "history_incomplete":
             shortfall = fifo.get("shortfall_shares")
             parts.append("<div class=\"stat stat--fifo-na\"><b>—</b>"
                          "<span>FIFO 無法計算：歷史不完整（缺口 %s 股）</span></div>"

@@ -339,15 +339,32 @@ class ChartStatsRenderTest(unittest.TestCase):
     （CLAUDE.md 2026-08-19 教訓）。
     """
 
-    def test_fifo_ok_shows_both_with_labels(self):
+    def test_fifo_ok_makes_pnl_field_show_fifo(self):
+        """FR-014／SC-004：FIFO 算得出來時，「浮動損益」這一格就是 FIFO 數字。
+
+        獨立驗收（2026-09-03）抓到的問題：原本實作把浮動損益維持加權平均、
+        只在旁邊加一格 FIFO，導致頁面與 get_position_pnl 對不起來——實測
+        14 檔可算的標的有 5 檔不同，3131 甚至正負號相反。
+        """
         import report
         html = report._chart_stats_html(
-            126.0, 140.0, "均價（加權平均估算・未扣賣出・非 FIFO，3筆買進）",
+            126.0, 140.0, "均價（3筆）・加權平均估算・未扣賣出・非 FIFO",
             fifo={"status": "ok", "unrealized_pnl": -1400.0, "unrealized_pct": -10.0})
-        self.assertIn('class="stat stat--fifo"', html)
-        self.assertIn("FIFO 未實現・未扣交易成本", html)
-        # 既有估算值仍在，且標明口徑
-        self.assertIn("非 FIFO", html)
+        # 浮動損益顯示的是 FIFO 的 -10.0%，不是加權平均的 -10.0%（此例恰好
+        # 相同，故一併斷言標籤，確保用的是 FIFO 那條路徑）
+        self.assertIn("浮動損益（FIFO・未扣交易成本）", html)
+        self.assertNotIn("浮動損益（加權平均估算・非 FIFO）", html)
+        # FIFO 可算時不再另外多一格
+        self.assertNotIn('class="stat stat--fifo"', html)
+
+    def test_fifo_ok_uses_fifo_number_not_weighted_average(self):
+        """兩種口徑數字不同時，浮動損益必須是 FIFO 的那個。"""
+        import report
+        html = report._chart_stats_html(
+            300.0, 150.0, "均價（2筆）・加權平均估算・未扣賣出・非 FIFO",
+            fifo={"status": "ok", "unrealized_pnl": 50000.0, "unrealized_pct": 50.0})
+        self.assertIn("+50.0%", html)      # FIFO
+        self.assertNotIn("+100.0%", html)  # 加權平均（300 vs 150）
 
     def test_history_incomplete_shows_cannot_compute_not_blank(self):
         import report
@@ -357,8 +374,8 @@ class ChartStatsRenderTest(unittest.TestCase):
                   "unrealized_pnl": None})
         self.assertIn('class="stat stat--fifo-na"', html)
         self.assertIn("歷史不完整", html)
-        # FR-015：估算值必須仍然顯示，不得因為 FIFO 算不出來就整格消失
-        self.assertIn("非 FIFO", html)
+        # FR-015：估算值必須仍然顯示，且標明是估算口徑
+        self.assertIn("浮動損益（加權平均估算・非 FIFO）", html)
 
     def test_no_fifo_result_falls_back_to_existing_display(self):
         import report

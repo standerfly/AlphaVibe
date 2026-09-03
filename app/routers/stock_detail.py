@@ -204,6 +204,17 @@ def get_stock_detail(code: str, store: KBStore = Depends(get_kb_store)) -> Dict[
                 code, ledger, store.get_stock_prices())
         except Exception:   # 損益算不出來不該讓整個 API 掛掉
             fifo_result = None
+        # FR-014／SC-004：pnl_pct 是「頁面顯示的浮動損益」，FIFO 算得出來
+        # 時就必須是 FIFO 的數字，否則頁面與 get_position_pnl 對不起來
+        # （實測 14 檔可算的標的有 5 檔不同，3131 連正負號都相反）。
+        # 加權平均估算值移到 pnl_pct_estimate 保留，供對照與 FR-015 使用。
+        pnl_pct_estimate = pnl_pct
+        if fifo_result and fifo_result.get("status") == "ok" \
+                and fifo_result.get("unrealized_pct") is not None:
+            pnl_pct = fifo_result["unrealized_pct"]
+            pnl_source = "FIFO・未扣交易成本"
+        else:
+            pnl_source = "加權平均估算・未扣賣出・非 FIFO"
         holdings_block = {
             "holding_row": holding_row,
             "market_value": market_value,
@@ -214,6 +225,8 @@ def get_stock_detail(code: str, store: KBStore = Depends(get_kb_store)) -> Dict[
             "avg_cost_label": avg_cost_label,
             "current_price": current_price,
             "pnl_pct": pnl_pct,
+            "pnl_pct_estimate": pnl_pct_estimate,
+            "pnl_source": pnl_source,
             "cost_method_label": "加權平均估算・未扣賣出・非 FIFO",
             "fifo": fifo_result,
         }

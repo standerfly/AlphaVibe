@@ -295,23 +295,18 @@ function StockDetailBody({ data }) {
                   <div className="value">{num(holdings.current_price)}</div>
                 </div>
                 <div className="val-item">
+                  {/* FR-014／SC-004：這一格就是「頁面顯示的浮動損益」，
+                      FIFO 算得出來時後端已把 pnl_pct 換成 FIFO 數字，
+                      頁面與 get_position_pnl 才會一致。pnl_source 標明
+                      目前用的是哪一種口徑。 */}
                   <div className="label">浮動損益</div>
                   <div className="value">{pct(holdings.pnl_pct)}</div>
-                  {/* FR-015（PO 裁決 Q2-C）：估算值必須標明口徑，不能讓它
-                      看起來像 FIFO 的結果。 */}
-                  <div className="val-source">{holdings.cost_method_label}</div>
+                  <div className="val-source">{holdings.pnl_source}</div>
                 </div>
-                {holdings.fifo && holdings.fifo.status === 'ok' && (
-                  <div className="val-item">
-                    <div className="label">FIFO 未實現損益</div>
-                    <div className="value">{pct(holdings.fifo.unrealized_pct)}</div>
-                    <div className="val-source">FIFO・未扣交易成本</div>
-                  </div>
-                )}
                 {holdings.fifo && holdings.fifo.status === 'history_incomplete' && (
-                  // 實測約 1/3 持股屬此類（流水表起始日之前的部位沒有進場
-                  // 紀錄）。明講「無法計算」而不是留白或沿用失真數字，
-                  // 上方的加權平均估算值仍在，兩者靠 val-source 標籤區分。
+                  // FR-015（PO 裁決 Q2-C）：實測約 1/3 持股屬此類（流水表
+                  // 起始日之前的部位沒有進場紀錄）。明講「無法計算」而不是
+                  // 留白，上方仍顯示標明口徑的加權平均估算值。
                   <div className="val-item">
                     <div className="label">FIFO 未實現損益</div>
                     <div className="value">—</div>
