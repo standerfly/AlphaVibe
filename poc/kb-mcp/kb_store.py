@@ -159,7 +159,8 @@ CREATE TABLE IF NOT EXISTS market_scan_runs (
     run_at TEXT NOT NULL,
     total_scanned INTEGER,
     benchmark_drawdown_pct REAL,
-    benchmark_error TEXT
+    benchmark_error TEXT,
+    emerging_error TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_market_scan_runs ON market_scan_runs(framework_id, run_at DESC);
 CREATE TABLE IF NOT EXISTS market_scan_results (
@@ -285,6 +286,7 @@ _MIGRATIONS = {
         ("total_scanned", "INTEGER"),
         ("benchmark_drawdown_pct", "REAL"),
         ("benchmark_error", "TEXT"),
+        ("emerging_error", "TEXT"),
     ],
     "market_scan_results": [
         ("market_drawdown_pct", "REAL"),
@@ -1383,11 +1385,12 @@ class KBStore:
         cur = self.conn.execute(
             "INSERT INTO market_scan_runs (framework_id, trigger_source,"
             " candidate_count, meets_count, twse_error, tpex_error, run_at,"
-            " total_scanned, benchmark_drawdown_pct, benchmark_error)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            " total_scanned, benchmark_drawdown_pct, benchmark_error, emerging_error)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (framework_id, trigger_source, candidate_count, meets_count,
              market_errors.get("TWSE"), market_errors.get("TPEx"), run_at,
-             total_scanned, benchmark.get("window_drawdown_pct"), benchmark.get("error")),
+             total_scanned, benchmark.get("window_drawdown_pct"), benchmark.get("error"),
+             market_errors.get("興櫃")),
         )
         run_id = cur.lastrowid
         for row in rows:

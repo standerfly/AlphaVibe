@@ -237,7 +237,7 @@ class MarketScanPageTest(unittest.TestCase):
         rows = [self._row("3135", meets=True)]
         page = report.render_market_scan_page(
             "peg_deep_dip_concentration", self._latest(rows, total_scanned=1973))
-        self.assertIn("本次掃描全市場（上市+上櫃）共 1973 檔", page)
+        self.assertIn("本次掃描全市場（上市+上櫃+興櫃）共 1973 檔", page)
 
     def test_total_scanned_omitted_when_none(self):
         """舊資料列（遷移前存的）沒有total_scanned，不該顯示「共None檔」。"""
@@ -246,6 +246,55 @@ class MarketScanPageTest(unittest.TestCase):
             "peg_deep_dip_concentration", self._latest(rows, total_scanned=None))
         self.assertNotIn("共 None 檔", page)
         self.assertNotIn("本次掃描全市場", page)
+
+    def test_emerging_market_caveat_shown_in_both_sections(self):
+        """2026-09-03：興櫃候選補齊——估值精確度警語要在「符合框架」與
+        「全部候選」兩張表都出現，即使符合框架也不能省略（roadmap.md
+        明文要求）。斷言用渲染形式（data-label="備註"），不是裸字串
+        ——CSS 常數內嵌在每個頁面，裸字串會命中樣式定義（CLAUDE.md
+        2026-08-19 教訓）。"""
+        row = self._row("2255", meets=True)
+        row["market"] = "興櫃"
+        page = report.render_market_scan_page("peg_deep_dip_concentration", self._latest([row]))
+
+        match_section = re.search(
+            r'<details class="section" open><summary><h2>符合框架的候選.*?</details>', page, re.S)
+        self.assertIsNotNone(match_section)
+        self.assertIn('<td data-label="備註">興櫃估值為粗估', match_section.group(0))
+
+        all_section = re.search(
+            r'<details class="section"><summary><h2>全部候選.*?</details>', page, re.S)
+        self.assertIsNotNone(all_section)
+        self.assertIn('<td data-label="備註">興櫃估值為粗估', all_section.group(0))
+
+    def test_emerging_caveat_and_row_error_both_shown(self):
+        """興櫃警語跟既有的個別列錯誤要並存顯示，不互相蓋掉。"""
+        row = self._row("2255", meets=False, peg=None, error="非預期錯誤：模擬")
+        row["market"] = "興櫃"
+        page = report.render_market_scan_page("peg_deep_dip_concentration", self._latest([row]))
+        all_section = re.search(
+            r'<details class="section"><summary><h2>全部候選.*?</details>', page, re.S)
+        note_cell = re.search(r'<td data-label="備註">([^<]*)</td>', all_section.group(0))
+        self.assertIsNotNone(note_cell)
+        self.assertIn("興櫃估值為粗估", note_cell.group(1))
+        self.assertIn("非預期錯誤：模擬", note_cell.group(1))
+
+    def test_non_emerging_market_no_caveat_shown(self):
+        """上市/上櫃候選不該出現興櫃警語，只是普通的「—」或既有 error。"""
+        row = self._row("3135", meets=True)  # market="TWSE"（_row 預設值）
+        page = report.render_market_scan_page("peg_deep_dip_concentration", self._latest([row]))
+        all_section = re.search(
+            r'<details class="section"><summary><h2>全部候選.*?</details>', page, re.S)
+        self.assertNotIn("興櫃估值為粗估", all_section.group(0))
+
+    def test_emerging_run_error_shown_in_header(self):
+        """market_scan_runs.emerging_error 有值時，頁面上方異常提示要
+        比照既有 TWSE/TPEx 異常提示的樣式顯示。"""
+        rows = [self._row("3135", meets=True)]
+        latest = self._latest(rows)
+        latest["run"]["emerging_error"] = "興櫃 呼叫失敗：模擬逾時"
+        page = report.render_market_scan_page("peg_deep_dip_concentration", latest)
+        self.assertIn("興櫃資料源異常：興櫃 呼叫失敗：模擬逾時", page)
 
     def test_matching_rows_appear_only_in_matches_section(self):
         rows = [self._row("3135", meets=True), self._row("2222", meets=False, peg=3.0)]
