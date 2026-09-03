@@ -19,6 +19,7 @@
 | 1e. 模組A+D+E開發 | 老芋頭交易結構化表（FR-044）、交易流水表（FR-056）、策略檢視引擎四組成部分（FR-051~055：通用檢視層/策略專屬層/老芋頭動向比對/部位控制建議）、每日排程整合（FR-057） | ✅ 完成（2026-08-09查證修正，先前本檔誤標待啟動） | commit `4fa230e`（2026-07-31）；`review_engine.py`／`module_d_scheduler.py`；MCP工具`check_general_review`/`check_strategy_review`/`check_laoyutou_signal`/`check_position_control`/`record_module_d_findings`/`run_module_d_check`已掛載server.py |
 | 1f. 模組F開發：儀表板方案A＋個股清單/詳情頁＋庫存買賣圖表 | FR-058單頁式儀表板（今日重點/新候選/觀察庫存/策略設定/快速輸入）；個股清單頁＋詳情頁（`/dashboard/stocks`／`/dashboard/stock/<code>`，搜尋/篩選/背景刷新）；庫存買賣圖表（清單頁迷你走勢、詳情頁價格折線＋買賣力道長條圖） | ✅ 完成（2026-08-09查證修正，先前本檔誤標待1e完成） | commit `4fa230e`（2026-07-31，基礎儀表板）＋本機 Cline session `552c625`（2026-08-02，未commit的已完成工作，2026-08-09補commit保存：個股清單/詳情頁、背景刷新機制、`fundamentals_client.py`估值來源架構修正）＋本次session（2026-08-09，庫存買賣圖表嫁接進上述架構，見下方接手指南）；測試600/600綠 |
 | 1g. 模組G：策略績效回顧 | FR-059 | ⏳ 待樣本量足夠再啟動（1e/1f已完成，資料寫入管道已對，可持續累積） | — |
+| 1h. 進出場時機分析（001＋002） | FIFO 損益追蹤、股價歷史百分位、討論式停損停利門檻、基本面與價格背離偵測、觸發時調整建議、每日排程整合 | ✅ 完成（2026-09-03） | PR #21 合併、PR #22 待合併；測試 727 全綠；`poc/kb-mcp/pnl.py`／`price_position.py`／`exit_signals.py`；規格在 `specs/001-entry-exit-foundation/`／`specs/002-entry-exit-signals/` |
 | 2. 正式產品 | speckit 流程＋交易紀錄整合 FR-022/FR-056 | ⏳ Phase 1 驗證後（五項前置開放問題已於2026-07-27全數定案，見下方「Phase 2 正式產品」節，但「現在啟動Phase 2」本身仍是待PO另外決定的獨立問題，不是自動觸發） | — |
 
 Deferred（已定案遞延，見 scope-decision.md）：Docker 雲端部署、多用戶、
@@ -30,7 +31,7 @@ In-Scope（Q-042），不再屬於此清單**。
 
 | 順位 | 項目 | 狀態 |
 |---|---|---|
-| **1** | **進出場時機分析工具**（新功能，`docs/spec-intake/entry-exit-timing-analysis/`） | product-spec 已 **Accepted**（2026-09-02）；分兩階段交付（階段A `entry-exit-foundation`／階段B `entry-exit-signals`）；**實作尚未開放**，PO 明示「先不要執行改 CODE」，兩份 speckit-input 維持 Draft |
+| **1** | **進出場時機分析工具**（`docs/spec-intake/entry-exit-timing-analysis/`） | ✅ **兩階段皆已實作完成**（2026-09-03）。階段A `001-entry-exit-foundation`（FIFO 損益＋股價歷史百分位，PR #21 已合併，31/31 任務）；階段B `002-entry-exit-signals`（討論式停損停利門檻＋背離偵測＋觸發建議＋每日排程整合＋頁面 FIFO 一致，PR #22 待合併，38/38 任務）。測試 727 全綠；兩階段各經 fresh-context 獨立驗收兩輪（各抓到 1 個真問題，修正後複驗 PASS）。新增 MCP 工具 4 個（工具總數 43→47） |
 | **2** | 興櫃候選篩選缺口（見下方「已知限制／待辦」第 1 條） | 未開工；技術解法已寫在該條目，範圍小且與順位 1 不衝突，可並行 |
 | **3** | 1g 模組G：策略績效回顧（FR-059） | 未開工；其統計可複用順位 1 的 FIFO 損益邏輯，故排在其後反而省工 |
 | 4 | Layer 1 哲學庫自動拼接（FR-014，見下方「已知限制／待辦」第 2 條） | 未開工；已有 CLAUDE.md workaround，純技術債 |

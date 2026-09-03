@@ -18,6 +18,7 @@ import frameworks  # noqa: E402
 import fundamentals_client  # noqa: E402
 import holdings_parser  # noqa: E402
 import market_scan  # noqa: E402
+import exit_signals
 import pnl
 import price_position
 import review_engine  # noqa: E402
@@ -449,6 +450,43 @@ TOOLS = [
         },
     },
     {
+        "name": "save_exit_threshold",
+        "description": ("設定某檔持股的停損/停利門檻（絕對價格）。**寫入工具**——"
+                        "門檻是 PO 與 Claude 討論後才設定的決定，不是系統自動算的，"
+                        "所以請在確認過使用者意圖後才呼叫，不要自行猜測門檻價位。"
+                        "append-only：重新設定同一檔會新增一筆、保留舊值供追溯。"
+                        "stop_loss 與 take_profit 至少要給一個；兩者都給時"
+                        "stop_loss 必須小於 take_profit。reason 強烈建議填——"
+                        "保留歷史的意義就在於日後能回答「當初為什麼設在這裡」。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "股票代碼"},
+                "stop_loss": {"type": "number", "description": "停損價（絕對價格，非百分比）"},
+                "take_profit": {"type": "number", "description": "停利價（絕對價格）"},
+                "reason": {"type": "string", "description": "設定當下的討論結論"},
+            },
+            "required": ["code"],
+        },
+    },
+    {
+        "name": "get_exit_threshold",
+        "description": ("查停損/停利門檻與目前是否觸發。省略 code＝回傳全部已設定"
+                        "門檻的標的。status：not_set（尚未設定，**不等於安全**）／"
+                        "no_price（有門檻但查無現價）／triggered_stop_loss／"
+                        "triggered_take_profit／within_range。未設定時 stop_loss 與"
+                        "take_profit 為 null，不會有任何預設值——沒討論過的標的"
+                        "看起來像已經有策略比沒有更危險。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "股票代碼；省略＝全部"},
+                "include_history": {"type": "boolean",
+                                    "description": "是否一併回傳該檔的設定歷史（預設 false）"},
+            },
+        },
+    },
+    {
         "name": "get_position_pnl",
         "description": ("查持股的 FIFO 損益（已實現＋未實現）。省略 code＝回傳全部有"
                         "交易紀錄的標的。成本法為先進先出，金額為毛額（流水表沒有"
@@ -596,7 +634,7 @@ TOOLS = [
         "description": ("FR-057 模組D單檔即時檢視：串接FR-051~055整個流程"
                         "（通用檢視層／策略專屬層／老芋頭動向比對／部位控制"
                         "建議／立場自動回寫），供PO貼入老芋頭新動向後即時"
-                        "觸發單一標的重新檢視（不用等隔天02:00排程）。策略"
+                        "觸發單一標的重新檢視（不用等每日17:00排程（以 launchd plist 為準））。策略"
                         "專屬層會自動判斷這檔標的最近符合過哪些框架門檻"
                         "（依market_scan歷史紀錄），沒被market_scan篩中過的"
                         "標的（PO手動加入觀察名單、或老芋頭訊號帶進來的）"
@@ -1003,6 +1041,21 @@ class Server:
             )
         if name == "get_trade_ledger":
             return self.store.get_trade_ledger(args["code"])
+        if name == "save_exit_threshold":
+            return self.store.save_exit_threshold(
+                args["code"], stop_loss=args.get("stop_loss"),
+                take_profit=args.get("take_profit"), reason=args.get("reason"))
+        if name == "get_exit_threshold":
+            code = args.get("code")
+            prices = self.store.get_stock_prices()
+            if code:
+                result = exit_signals.evaluate_threshold(
+                    code, self.store.get_exit_threshold(code), prices)
+                if args.get("include_history"):
+                    result["history"] = self.store.get_exit_threshold_history(code)
+                return result
+            return exit_signals.evaluate_all_thresholds(
+                self.store.get_all_exit_thresholds(), prices)
         if name == "get_position_pnl":
             code = args.get("code")
             prices = self.store.get_stock_prices()

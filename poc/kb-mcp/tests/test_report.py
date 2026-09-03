@@ -1168,7 +1168,9 @@ class StockDetailPageTest(unittest.TestCase):
         page = report.render_stock_detail_page(self.store, "2330")
         self.assertIn("class=\"chart-stats\"", page)
         self.assertIn("<b>1,000</b><span>現價</span>", page)
-        self.assertIn("<b style=\"color:var(--amber)\">900</b><span>均價</span>", page)
+        # 002-entry-exit-signals FR-015：均價需標明口徑（PO 裁決 Q2-C），
+        # 快照來源的均價同樣不是 FIFO，標籤加註「快照」以與 FIFO 區分。
+        self.assertIn("<b style=\"color:var(--amber)\">900</b><span>均價（快照）</span>", page)
         self.assertIn("+11.1%", page)
         self.assertIn("color:var(--red)", page)  # 浮動損益為正，紅漲語意
 
@@ -1192,7 +1194,9 @@ class StockDetailPageTest(unittest.TestCase):
                                            "2026-06-01", add_sequence=1)
         page = report.render_stock_detail_page(self.store, "2330")
         self.assertIn("<b>—</b><span>現價</span>", page)
-        self.assertIn("<b style=\"color:var(--amber)\">900</b><span>均價</span>", page)
+        # 002-entry-exit-signals FR-015：均價需標明口徑（PO 裁決 Q2-C），
+        # 快照來源的均價同樣不是 FIFO，標籤加註「快照」以與 FIFO 區分。
+        self.assertIn("<b style=\"color:var(--amber)\">900</b><span>均價（快照）</span>", page)
         self.assertNotIn("浮動損益", page)
 
     def test_chart_dims_closed_lot_before_last_sell_and_draws_separator(self):

@@ -226,11 +226,34 @@ class ToolRegistrationTest(unittest.TestCase):
     唯讀路徑上靜默消失且不會被任何測試抓到。
     """
 
+    def test_write_tool_must_not_be_in_readonly_whitelist(self):
+        """FR-004（002 階段）：save_exit_threshold 是寫入工具，設定門檻只能
+        在具備完整工具存取的主對話進行。唯讀路徑（Cline server_readonly、
+        stock-researcher subagent）依設計不得看到它。
+
+        這是**反向斷言**——正向的「有沒有註冊」測不出「不該註冊的被註冊了」。
+        """
+        import server
+        import server_readonly
+
+        self.assertIn("save_exit_threshold", [t["name"] for t in server.TOOLS])
+        self.assertNotIn("save_exit_threshold", server_readonly.READONLY_TOOLS,
+                         "save_exit_threshold 是寫入工具，不得進唯讀白名單")
+        self.assertIn("get_exit_threshold", server_readonly.READONLY_TOOLS)
+
+    def test_tool_counts(self):
+        """工具數守門：45→47（002 階段新增 2 個）、唯讀 27→28（只加 get_）。"""
+        import server
+        import server_readonly
+        self.assertEqual(len(server.TOOLS), 47)
+        self.assertEqual(len(server_readonly.READONLY_TOOLS), 28)
+
     def test_new_tools_registered_in_all_three_places(self):
         import server
         import server_readonly
 
-        for tool_name in ("get_position_pnl", "get_price_position"):
+        for tool_name in ("get_position_pnl", "get_price_position",
+                          "get_exit_threshold"):
             names = [t["name"] for t in server.TOOLS]
             self.assertIn(tool_name, names, "%s 不在 server.TOOLS" % tool_name)
             self.assertIn(tool_name, server_readonly.READONLY_TOOLS,

@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from kb_store import KBStore  # noqa: E402
 import frameworks  # noqa: E402
+import pnl  # noqa: E402
 import screener  # noqa: E402
 
 # 台股慣例：紅漲綠跌 → 偏多紅、偏空綠
@@ -1919,7 +1920,7 @@ def _avg_cost_for_chart(holding_row, entries):
     return buy_value / buy_shares
 
 
-def _chart_stats_html(current_price, avg_cost, avg_cost_label):
+def _chart_stats_html(current_price, avg_cost, avg_cost_label, fifo=None):
     """走勢圖右上方的現價／均價／浮動損益（2026-08-09，PO比對mockup反饋
     補上——原mockup的chart-stats一直沒接進正式頁面）。浮動損益＝
     (現價-均價)/均價，兩者缺一個就不算、不臆測，只顯示「—」。台股慣例
@@ -1931,12 +1932,39 @@ def _chart_stats_html(current_price, avg_cost, avg_cost_label):
     if avg_cost is not None:
         parts.append("<div class=\"stat\"><b style=\"color:var(--amber)\">%s</b>"
                      "<span>%s</span></div>" % (esc(_fmt_price(avg_cost)), esc(avg_cost_label)))
-        if current_price is not None:
+        # FR-014：FIFO 算得出來時，「浮動損益」這一格顯示的就是 FIFO 數字
+        # ——頁面與 get_position_pnl 必須一致（SC-004）。實測正式資料 14 檔
+        # 可算的標的中有 5 檔兩種口徑不同，其中 3131 連正負號都相反，
+        # 並列而不統一會讓 PO 在頁面看到的跟對話問到的對不起來。
+        # FIFO 算不出來時（history_incomplete）才退回估算值並標明口徑，
+        # 那是 FR-015 的範圍（PO 裁決 Q2-C）。
+        fifo_ok = bool(fifo and fifo.get("status") == "ok"
+                       and fifo.get("unrealized_pct") is not None)
+        if fifo_ok:
+            pnl_pct = fifo["unrealized_pct"]
+            pnl_label = "浮動損益（FIFO・未扣交易成本）"
+        elif current_price is not None:
             pnl_pct = (current_price - avg_cost) / avg_cost * 100
+            pnl_label = "浮動損益（加權平均估算・非 FIFO）"
+        else:
+            pnl_pct = None
+            pnl_label = None
+        if pnl_pct is not None:
             color = ("var(--red)" if pnl_pct > 0 else
                     "var(--green)" if pnl_pct < 0 else "var(--ink-dim)")
             parts.append("<div class=\"stat\"><b style=\"color:%s\">%+.1f%%</b>"
-                         "<span>浮動損益</span></div>" % (color, pnl_pct))
+                         "<span>%s</span></div>" % (color, pnl_pct, esc(pnl_label)))
+    # 002-entry-exit-signals FR-014／FR-015：接上階段A 的 FIFO 損益。
+    # PO 裁決 Q2-C——兩種口徑**並存**且各自標明，不是單純替換：實測 60 檔
+    # 中 21 檔賣超（流水表起始日之前的部位沒有進場紀錄），單純換成 FIFO 會
+    # 讓 1/3 標的的損益數字突然消失，那是 PO 每天在看的頁面上的可見退步。
+    if fifo:
+        status = fifo.get("status")
+        if status == "history_incomplete":
+            shortfall = fifo.get("shortfall_shares")
+            parts.append("<div class=\"stat stat--fifo-na\"><b>—</b>"
+                         "<span>FIFO 無法計算：歷史不完整（缺口 %s 股）</span></div>"
+                         % esc(_fmt_price(shortfall) if shortfall is not None else "?"))
     parts.append("</div>")
     return "".join(parts)
 
@@ -1983,13 +2011,22 @@ def _holdings_card_html(store, code):
         history = store.get_cached_price_history(code)
         aligned = _combo_chart_aligned_trades(history, ledger)
         avg_cost = _avg_cost_for_chart(holding_row, ledger)
+        # FR-015：估算值要標明口徑，不能讓它看起來像 FIFO 的結果
         if holding_row and holding_row.get("avg_cost") is not None:
-            avg_cost_label = "均價"
+            avg_cost_label = "均價（快照）"
         else:
-            avg_cost_label = "均價（%d筆）" % sum(1 for e in ledger if e["action"] == "買")
-        price_info = store.get_stock_prices().get(code)
+            avg_cost_label = ("均價（%d筆）・加權平均估算・未扣賣出・非 FIFO"
+                              % sum(1 for e in ledger if e["action"] == "買"))
+        prices_map = store.get_stock_prices()
+        price_info = prices_map.get(code)
         current_price = price_info["price"] if price_info else None
-        parts.append(_chart_stats_html(current_price, avg_cost, avg_cost_label))
+        fifo = None
+        try:
+            fifo = pnl.compute_position_pnl(code, ledger, prices_map)
+        except Exception:   # 損益算不出來不該讓整張卡掛掉
+            fifo = None
+        parts.append(_chart_stats_html(current_price, avg_cost, avg_cost_label,
+                                       fifo=fifo))
         parts.append(_render_combo_chart_svg(history, aligned, avg_cost=avg_cost))
         if len(history) >= 2:
             has_sell = any(e["action"] == "賣" for e in ledger)
