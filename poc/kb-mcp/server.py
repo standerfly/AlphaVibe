@@ -18,6 +18,8 @@ import frameworks  # noqa: E402
 import fundamentals_client  # noqa: E402
 import holdings_parser  # noqa: E402
 import market_scan  # noqa: E402
+import pnl
+import price_position
 import review_engine  # noqa: E402
 import screener  # noqa: E402
 import tpex_client  # noqa: E402
@@ -267,7 +269,7 @@ TOOLS = [
                         "properties": {
                             "code": {"type": "string", "description": "股票代碼"},
                             "name": {"type": "string", "description": "股票名稱"},
-                            "shares": {"type": "number", "description": "股數/張數"},
+                            "shares": {"type": "number", "description": "股數（單位：股，非張）"},
                             "avg_cost": {"type": "number", "description": "平均成本"},
                         },
                         "required": ["code"],
@@ -444,6 +446,35 @@ TOOLS = [
             "type": "object",
             "properties": {"code": {"type": "string", "description": "股票代碼"}},
             "required": ["code"],
+        },
+    },
+    {
+        "name": "get_position_pnl",
+        "description": ("查持股的 FIFO 損益（已實現＋未實現）。省略 code＝回傳全部有"
+                        "交易紀錄的標的。成本法為先進先出，金額為毛額（流水表沒有"
+                        "手續費/證交稅欄位，不含交易成本）。股數單位是「股」，金額即"
+                        "股數×價格。賣出量超過流水表買進量的標的（既有部位在流水表"
+                        "起始日之前建立）回 status=history_incomplete＋缺口股數，"
+                        "不猜測缺失批次成本。疑似重複交易列照原樣計入並在"
+                        "suspected_duplicates 警示，不自動排除。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"code": {"type": "string",
+                                    "description": "股票代碼；省略＝全部標的"}},
+        },
+    },
+    {
+        "name": "get_price_position",
+        "description": ("查現價在該標的歷史收盤價區間中的百分位，一併回傳樣本數與"
+                        "涵蓋起訖日，讓呼叫端能判斷參考價值。省略 code＝回傳全部有"
+                        "股價歷史快取的標的。樣本<6 筆回 status=insufficient 且"
+                        "percentile 為 null（不回 0，0 會被誤讀為在歷史最低點）；"
+                        "6~29 筆回 limited；>=30 筆回 ok。只讀既有快取，不即時查"
+                        "外部 API。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"code": {"type": "string",
+                                    "description": "股票代碼；省略＝全部標的"}},
         },
     },
     {
@@ -809,6 +840,11 @@ def _simplify_scan_row(row):
     return {field: row.get(field) for field in _SIMPLE_MARKET_SCAN_FIELDS}
 
 
+# 價位百分位的取樣窗口：刻意大於快取實際深度（實測最長約 100 個交易日），
+# 讓 FR-010「區間長度＝可得的全部快取樣本」成立；不足的部分由
+# price_position 的三段式降級處理，不是靠這個數字擋。
+PRICE_POSITION_LOOKBACK_DAYS = 800
+
 class Server:
     def __init__(self, data_dir=None):
         self.data_dir = os.path.abspath(data_dir or _default_data_dir())
@@ -967,6 +1003,28 @@ class Server:
             )
         if name == "get_trade_ledger":
             return self.store.get_trade_ledger(args["code"])
+        if name == "get_position_pnl":
+            code = args.get("code")
+            prices = self.store.get_stock_prices()
+            if code:
+                entries = self.store.get_trade_ledger(code)["entries"]
+                return pnl.compute_position_pnl(code, entries, prices)
+            return pnl.compute_all_positions(
+                self.store.get_all_trade_entries(), prices)
+        if name == "get_price_position":
+            code = args.get("code")
+            prices = self.store.get_stock_prices()
+            if code:
+                history = self.store.get_cached_price_history(
+                    code, limit_days=PRICE_POSITION_LOOKBACK_DAYS)
+                return price_position.compute(code, history, prices)
+            history_by_code = {}
+            for row in self.store.get_all_trade_entries():
+                stock_code = row.get("code")
+                if stock_code and stock_code not in history_by_code:
+                    history_by_code[stock_code] = self.store.get_cached_price_history(
+                        stock_code, limit_days=PRICE_POSITION_LOOKBACK_DAYS)
+            return price_position.compute_all(history_by_code, prices)
         if name == "check_general_review":
             return review_engine.general_review(args["code"], data_dir=self.data_dir)
         if name == "check_strategy_review":

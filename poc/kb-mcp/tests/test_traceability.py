@@ -1,4 +1,5 @@
 """追溯層測試：分析快照＋來源、持股快照、新 MCP 工具、report 呈現。"""
+import inspect
 import os
 import re
 import shutil
@@ -226,11 +227,13 @@ class ServerToolsTest(unittest.TestCase):
         self.server.store.close()
         shutil.rmtree(self.tmp)
 
-    def test_tools_list_has_forty_three(self):
+    def test_tools_list_has_forty_five(self):
         """2026-08-19：40→43。save_position_plan／get_position_plan（加碼
-        計畫總額度）＋check_auto_score（Score自動化四項評分）。"""
+        計畫總額度）＋check_auto_score（Score自動化四項評分）。
+        2026-09-02：43→45。get_position_pnl／get_price_position
+        （001-entry-exit-foundation 階段A，FR-001~FR-012）。"""
         names = [t["name"] for t in server.TOOLS]
-        self.assertEqual(len(names), 43)
+        self.assertEqual(len(names), 45)
         for expected in ("save_snapshot", "get_snapshots",
                          "save_holdings", "get_holdings",
                          "save_stock_alias", "get_stock_alias",
@@ -1007,6 +1010,93 @@ class ReportTraceabilityTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EntryExitFoundationTraceabilityTest(unittest.TestCase):
+    """001-entry-exit-foundation 階段A 的需求↔實作↔測試對照（FR-001~FR-014）。
+
+    規格：specs/001-entry-exit-foundation/spec.md
+    這個類別只做「對照關係還在不在」的守門，細部行為由 tests/test_pnl.py
+    與 tests/test_price_position.py 涵蓋。
+    """
+
+    FR_MAP = {
+        "FR-001": ("FIFO 已實現損益", "pnl.compute_position_pnl"),
+        "FR-002": ("未實現損益", "pnl.compute_position_pnl"),
+        "FR-003": ("已出清標的仍回傳已實現損益", "pnl.compute_position_pnl"),
+        "FR-004": ("賣超回 history_incomplete＋缺口股數", "pnl.compute_position_pnl"),
+        "FR-005": ("標示 FIFO 與未扣交易成本", "pnl.COST_METHOD"),
+        "FR-006": ("疑似重複列照原樣計入＋警示", "pnl._count_suspected_duplicates"),
+        "FR-007": ("歷史收盤價百分位", "price_position.compute"),
+        "FR-008": ("揭露樣本數與涵蓋期間", "price_position.compute"),
+        "FR-009": ("資料不足回 None 不回 0", "price_position.compute"),
+        "FR-010": ("只用既有快取不查外部 API", "price_position.compute"),
+        "FR-011": ("批次查詢單檔問題不影響整批", "pnl.compute_all_positions"),
+        "FR-012": ("MCP 工具化", "server.TOOLS"),
+        "FR-013": ("不改既有浮動損益顯示", "report._chart_stats_html"),
+        "FR-014": ("一次性回補歷史深度，日常窗口不變", "screener.PRICE_WINDOW_DAYS"),
+    }
+
+    def test_all_frs_have_implementation(self):
+        """每條 FR 都有對應的實作符號存在（不是空殼登記）。"""
+        import pnl
+        import price_position
+        import screener
+
+        modules = {"pnl": pnl, "price_position": price_position,
+                   "server": server, "report": report, "screener": screener}
+        for fr, (desc, symbol) in sorted(self.FR_MAP.items()):
+            module_name, attr = symbol.split(".", 1)
+            module = modules[module_name]
+            self.assertTrue(hasattr(module, attr),
+                            "%s（%s）對應的 %s 不存在" % (fr, desc, symbol))
+
+    def test_fr013_existing_pnl_display_untouched(self):
+        """FR-013：既有的加權平均損益顯示不得被改成 FIFO。
+
+        用行為斷言而非 docstring 字串比對（字串比對太脆弱）：
+        買 100@10、買 100@20、賣 150@30 這組資料——
+          既有做法（全部買進加權平均，不扣賣出）→ 15.0
+          FIFO 剩餘批次成本                      → 20.0
+        回 15.0 才代表既有邏輯沒被改掉。
+        """
+        entries = [
+            {"action": "買", "shares": 100, "price": 10.0},
+            {"action": "買", "shares": 100, "price": 20.0},
+            {"action": "賣", "shares": 150, "price": 30.0},
+        ]
+        self.assertAlmostEqual(report._avg_cost_for_chart(None, entries), 15.0)
+
+    def test_fr014_daily_window_not_widened(self):
+        """FR-014 的 MUST NOT：不得增加每日排程的外部 API 呼叫次數。
+
+        2026-09-02 獨立驗收抓到的問題：原本以為加長 PRICE_WINDOW_DAYS
+        只是「同一次呼叫多拿一點」，實測證實 twse_price_client 是逐月抓
+        （_months_needed = window_days // 20 + 2），窗口變長＝等比例多打
+        HTTP：120 天 8 次／檔、400 天 22 次／檔（上櫃股再乘 2）。
+        改用一次性腳本 backfill_price_history_once.py 補深度，
+        每日排程窗口維持 120。
+
+        這個測試就是釘住那條 MUST NOT——有人再想調大 PRICE_WINDOW_DAYS
+        時會先撞到這裡。
+        """
+        import screener
+        import twse_price_client
+
+        self.assertEqual(screener.PRICE_WINDOW_DAYS, 120)
+        self.assertEqual(
+            twse_price_client._months_needed(screener.PRICE_WINDOW_DAYS), 8,
+            "每日排程每檔的抓取月數變了＝API 呼叫次數變了，違反 FR-014 的 MUST NOT")
+
+    def test_fr014_backfill_script_exists(self):
+        """FR-014 的達成手段：一次性回補腳本存在且可 import。"""
+        import backfill_price_history_once as backfill
+        self.assertTrue(hasattr(backfill, "main"))
+        # 冪等性靠 save_price_history_points 的 INSERT OR REPLACE，
+        # 估算函式讓執行者事前知道要打幾次 API
+        estimate = backfill._estimate_calls(["2330", "2337"], 400)
+        self.assertEqual(estimate["months_per_code"], 22)
+        self.assertEqual(estimate["best_case"], 44)
 
 
 class RevenueYoyLookbackTest(unittest.TestCase):

@@ -1165,6 +1165,19 @@ class KBStore:
         ).fetchall()
         return {"code": code, "count": len(rows), "entries": [dict(r) for r in rows]}
 
+    def get_all_trade_entries(self):
+        """回傳全部標的的交易流水（依 code、date、id 排序）。
+
+        給 FIFO 損益的全量計算用（FR-011）：既有 get_trade_ledger(code)
+        必須逐檔查，60 檔就是 60 次查詢；這裡一次查回由呼叫端在記憶體
+        分組，資料量小（實測 537 筆）成本可忽略。
+        刻意另開新方法而非改 get_trade_ledger 的簽名，避免影響既有呼叫端。
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM trade_ledger ORDER BY code, date, id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def trade_ledger_order_ref_exists(self, order_ref):
         """委託書號防重複查詢：trade_ledger 裡是否已存在相同 order_ref 的
         既有列（非 NULL 比對，SQLite `=` 對 NULL 一律不成立，不需要額外
