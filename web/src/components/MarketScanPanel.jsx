@@ -173,9 +173,10 @@ export default function MarketScanPanel() {
         <div className="card__head"><h2>市場掃描</h2></div>
         <div className="card__body">
           <p className="form-note">
-            用 TWSE/TPEx 官方批次資料，在框架鎖定的產業別內自動找候選，範圍僅上市＋上櫃。
-            這裡永遠顯示最近一次掃描結果——掃描本身由每天 02:00 排程自動執行，不會因為打開
-            這個頁面而現場重新計算。
+            用 TWSE/TPEx 官方批次資料，在框架鎖定的產業別內自動找候選，涵蓋上市＋上櫃＋興櫃
+            （2026-09-03起）。興櫃沒有官方批次PER資料，改用「先篩產業別＋營收年增率、再逐檔
+            查估值」補齊，精確度低於上市/上櫃，候選列的備註欄會標明。這裡永遠顯示最近一次
+            掃描結果——掃描本身由每天 02:00 排程自動執行，不會因為打開這個頁面而現場重新計算。
           </p>
           <div className="form-field" style={{ maxWidth: '24rem' }}>
             <label htmlFor="scan-framework">框架</label>
@@ -220,11 +221,12 @@ export default function MarketScanPanel() {
                 {run.benchmark_drawdown_pct != null && `｜同期大盤回檔 ${fmtPct(run.benchmark_drawdown_pct)}`}
               </p>
 
-              {(run.twse_error || run.tpex_error) && (
+              {(run.twse_error || run.tpex_error || run.emerging_error) && (
                 <div className="error-box">
                   {run.twse_error && `TWSE 資料源異常：${run.twse_error}　`}
-                  {run.tpex_error && `TPEx 資料源異常：${run.tpex_error}`}
-                  （該市場當次候選數會變少，不影響另一邊）
+                  {run.tpex_error && `TPEx 資料源異常：${run.tpex_error}　`}
+                  {run.emerging_error && `興櫃資料源異常：${run.emerging_error}`}
+                  （該市場當次候選數會變少，不影響其他市場）
                 </div>
               )}
               {run.benchmark_error && (

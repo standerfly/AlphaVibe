@@ -2547,8 +2547,10 @@ def render_market_scan_page(selected_id, latest, error=None):
 
     parts.append("<details class=\"philomod\"><summary>這是什麼？</summary><pre>"
                  "用 TWSE/TPEx 官方批次資料，在框架鎖定的產業別內自動找候選"
-                 "（不用手動貼代碼），範圍只有上市＋上櫃（興櫃沒有官方批次PER"
-                 "資料，不在這次掃描範圍）。每天 02:00 也會自動掃描一次，"
+                 "（不用手動貼代碼），涵蓋上市＋上櫃＋興櫃（2026-09-03起）。"
+                 "興櫃沒有官方批次PER資料，改用「先以產業別＋營收年增率篩出"
+                 "小批候選、再逐檔查估值」的方式補齊，估值精確度低於上市/"
+                 "上櫃，候選列的備註欄會標明。每天 02:00 也會自動掃描一次，"
                  "這裡永遠顯示最近一次結果。</pre></details>")
 
     # 框架若有量化規則做不到的條件（例如 revenue_high_price_dip 的 EPS 上修
