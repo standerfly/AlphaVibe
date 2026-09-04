@@ -3,7 +3,7 @@
 **Feature Slug:** us-stocks
 **Product Spec:** product-spec.md
 **Spec Kit Inputs Index:** spec-kit-inputs/index.md
-**Status:** Draft
+**Status:** Ready
 
 ## Product Baseline
 
@@ -28,15 +28,15 @@
 
 - [x] `spec-kit-inputs/index.md` lists every generated input package
 - [x] Each input package has exactly one Spec Kit feature boundary
-- [ ] Each accepted `speckit-input.md` has `Status: Accepted`（目前 Draft，待 handoff核准）
-- [ ] Each accepted `speckit-input.md` links back to source decisions（內容已具備，待正式Accepted後此項才算生效）
-- [ ] Handoff order is recorded for accepted input packages（Order已記錄為1，但套件尚未Accepted，此checkbox語意上待正式核准後才勾選）
+- [x] Each accepted `speckit-input.md` has `Status: Accepted`
+- [x] Each accepted `speckit-input.md` links back to source decisions
+- [x] Handoff order is recorded for accepted input packages
 
 ## Handoff Approval
 
-- [ ] TPM confirms accepted input packages are ready for `speckit-specify`
-- [ ] PO confirms the split from product spec to Spec Kit inputs is acceptable
-- [ ] No accepted input contains unresolved contradictions or meeting-note noise
+- [x] TPM confirms accepted input packages are ready for `speckit-specify`
+- [x] PO confirms the split from product spec to Spec Kit inputs is acceptable
+- [x] No accepted input contains unresolved contradictions or meeting-note noise
 
 ## Notes
 
@@ -55,8 +55,10 @@
   `spec-kit-inputs/us-stocks/speckit-input.md`（Status: Draft，不拆分，
   理由見 scope-decision.md §Split Feature Decisions）。
   `prespec_validate.py us-stocks` 機械檢查通過。
-- **下一步（待使用者明確表態，AI 不自行認定）**：Handoff Approval 三項
-  checkbox 均未打勾——需要 PO 確認「product spec 到 Spec Kit input 的
-  拆分方式可接受」、TPM 確認「input package 已可交給 speckit-specify」。
-  確認後才能把 speckit-input.md 狀態改為 `Accepted`、本檔案狀態改為
-  `Ready`，之後才能執行 `speckit-specify`（非本 skill 職責範圍）。
+- 2026-09-04（第五輪）：commit 完成（`9251e1e`）後，Stander 明確指示
+  「commit後handoff核准」——構成 ADR-0027 要求的 handoff approval 證據
+  （身兼 PO/TPM 單一使用者，一次表態滿足兩項確認）。
+  `spec-kit-inputs/us-stocks/speckit-input.md` 狀態改為 `Accepted`，
+  本檔案狀態改為 `Ready`，Handoff Approval 三項 checkbox 全部完成。
+  Pre-spec（ADR-0027 Step 1-2）到此正式完成。下一步是執行
+  `speckit-specify`——**不屬於本 skill 職責範圍**，需另外呼叫。
