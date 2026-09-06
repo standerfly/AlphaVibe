@@ -16,7 +16,7 @@
 | Security, privacy, compliance, or audit concern | Yes | Security/privacy requirements and audit expectations | Complete | product-spec.md §Data Model Note | Q-004 定案：交易截圖不永久保留，僅於辨識/核對流程中暫存，確認或取消後即刪除 |
 | Import, export, or batch processing | Yes | Validation rules, partial failure policy, and recovery behavior | Complete | product-spec.md §Error Handling Requirements | Q-003 定案：不論辨識完整度一律進入人工核對畫面，確認後才寫入，取消則捨棄暫存 |
 | High-risk, irreversible, payment, order, or control flow | No | Idempotency expectations, compensation behavior, and audit trail requirements | N/A | — | 本功能僅記錄交易歷史供回顧用途，不涉及實際下單或資金移動，沒有需要補償/復原的高風險控制流程 |
-| Operationally sensitive behavior | Optional | Observability, alerting, and manual recovery note | Deferred | scope-decision.md §Deferred Or Later | MVP 資料取得為按需互動觸發（非排程），排程自動監控與進階告警機制列為 Deferred，需使用者重新提出才評估 |
+| Operationally sensitive behavior | Yes | Observability, alerting, and manual recovery note | Complete | product-spec.md §Integration Note | Q-001第三輪推翻按需查詢決定，改為每日排程；額度用盡的降級行為已定義，比照market_scan.py先例 |
 
 ## Missing Artifact Gaps
 
