@@ -53,12 +53,22 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 完整流程說明：`docs/runbooks/pre-spec-workflow.md`；
 決策依據：`docs/adr/0027-prespec-workflow.md`。
 
+<!-- SPECKIT START -->
+目前進行中的 Spec Kit 技術規劃：`specs/003-us-stocks/plan.md`
+（美股獨立投資系統，分支 `003-us-stocks`）。
+<!-- SPECKIT END -->
+
 ## 分支規則
 
 - 功能分支：`function/<feature-slug>`（kebab-case），基底鎖定 `develop`（ADR-0027）。
-- **已知現況（2026-07-06）**：repo 目前**只有** `function/alphavibe` 分支，
-  `develop` 尚未建立。初始化腳本寫死以 develop 為基底，直接跑會失敗——
-  遇到新功能要初始化時，先問使用者要補建 `develop` 還是改用 `--no-branch`。
+- **更新（2026-09-06）**：`develop` 分支已建立（`origin/develop` 存在），
+  `prespec_init.py` 可正常以 develop 為基底初始化，2026-07-06 當時「develop
+  尚未建立」的已知現況已過時。Spec Kit 的功能分支（`speckit-git-feature`
+  建立，格式 `NNN-feature-name`）是獨立於 `function/<slug>` 的另一套編號，
+  務必先查 `function/alphavibe`（實際PR合併目標分支）的 `specs/` 底下已用
+  到哪些編號，避免撞號——`function/alphavibe` 已有 `001-entry-exit-foundation`／
+  `002-entry-exit-signals`，本地 `develop` 分支沒有 `specs/` 只是因為那兩份
+  規格沒回合到 develop，不能只看本地掃描結果。
 - 初始化腳本完整路徑：`.claude/skills/prespec/scripts/prespec_init.py`
   （不在 repo 根目錄）。不要手動開分支。
 
