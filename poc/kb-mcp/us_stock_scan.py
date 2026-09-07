@@ -29,52 +29,108 @@
   `_evaluate_condition()` docstring。
 - 條件能算出新狀態（`ok`/`alert`）：呼叫
   `store.update_watch_condition_evaluation()`。若本輪 `alert` 且前一次
-  不是 `alert`（新觸發，FR-012），呼叫 `notify_telegram()`（見下方 stub
-  說明）；持續 `alert` 不重複推播。
-- `notify_telegram()` 目前是**明確標記的 stub**——`function/stnd-gateway-web`
-  分支（本分支工作目錄沒有這支程式碼，tasks.md T027 開頭已確認）合併
-  進來之後，要把這裡換成真正呼叫該分支建立的 Telegram 閘道。
+  不是 `alert`（新觸發，FR-012），呼叫 `notify_telegram()`；持續
+  `alert` 不重複推播。
+
+**Telegram 推播（2026-09-08 接上）**：`function/stnd-gateway-web` 分支
+查證結果——真正的 Telegram bot 是完全獨立的專案
+`/Users/stander/My_project/AI/telegram_gateway/`（常駐 long-polling
+process，不在本 repo），STND 這邊既有的整合模式（`gateway_monitor.py`，
+該分支）刻意「獨立實作、不 import telegram_gateway」，只共用設定值
+（`~/.config/stnd-gateway/.env` 的 `TELEGRAM_BOT_TOKEN`／
+`ALLOWED_USER_IDS`），不共用程式碼。這裡照同一個既有慣例：直接呼叫
+Telegram Bot API 的 `sendMessage` HTTP 端點（`urllib`，不新增依賴，也不
+import `python-telegram-bot`），token 用跟 `gateway_monitor.py` 完全
+一致的手刻 KEY=VALUE parser 從共用 env 檔讀取，**絕不寫死進原始碼**。
 """
 import argparse
 import datetime
+import json
 import os
 import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import us_stock_price_client  # noqa: E402
 from us_stock_store import USStockStore  # noqa: E402
 
+# 共用設定檔路徑：跟 telegram_gateway／`gateway_monitor.py`
+# （`function/stnd-gateway-web` 分支）完全一致，可用
+# `STND_GATEWAY_ENV_FILE` 覆寫（供測試指向獨立複本，不動到真實設定檔）。
+_GATEWAY_ENV_FILE = Path(os.environ.get(
+    "STND_GATEWAY_ENV_FILE",
+    str(Path.home() / ".config" / "stnd-gateway" / ".env"),
+))
+
+
+def _read_env_value(env_path, key):
+    """每次呼叫都重讀檔案（不快取）。逐字比照
+    `gateway_monitor.py::_read_env_value()` 的既有寫法，維持兩邊一致。"""
+    if not env_path.exists():
+        return ""
+    try:
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            if k.strip() == key:
+                return v.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return ""
+
 
 def notify_telegram(message):
-    """Telegram 推播 stub（T027）。
+    """透過 Telegram Bot API 推播一則訊息給 `ALLOWED_USER_IDS`（共用
+    `~/.config/stnd-gateway/.env` 設定，逗號分隔可多人，目前只有使用者
+    本人一筆）。
 
-    **TODO（`function/stnd-gateway-web` 分支合併進來之後要做的事）**：
-    這支分支目前不在本分支（003-us-stocks）的工作目錄裡（已確認：
-    `grep -rl "telegram" app/ poc/kb-mcp/` 完全沒有命中既有程式碼），所以
-    這裡先不假裝知道那支分支的實際呼叫介面（HTTP 端點？直接 import 的
-    Python 函式？需要什麼認證/使用者識別參數？）。合併後請：
-    1. 查看該分支實際提供的推播介面（函式簽章或 HTTP API）
-    2. 把這個函式內部換成真正呼叫該介面，**保留相同的函式簽章**
-       `notify_telegram(message: str) -> bool`，這樣 `run_scan()` 呼叫端
-       跟這支檔案的測試（`test_us_stock_scan.py`）都不需要跟著改
-    3. 確認失敗時的行為：目前的設計是「推播失敗不影響監控狀態的正確性」
-       （spec.md Acceptance Scenario 5），也就是即使這個函式回傳
-       `False`，`run_scan()` 仍然照常更新 `status`／`last_evaluated_at`，
-       只是不更新 `last_notified_at`（讓下一輪仍是 alert 狀態時可以
-       重試推播，見 `run_scan()` 對回傳值的處理）——真正接上閘道後這個
-       行為應該維持，不要因為要「確保推播一定送出」而讓推播失敗回頭
-       影響監控狀態的寫入
-
-    目前：只把「本應推播的訊息內容」記錄到 stderr，回傳 `True`（假裝
-    推播成功）。回傳值刻意做成 bool 而非拋例外——呼叫端要能區分「推播
-    成功/失敗」來決定要不要更新 `last_notified_at`，例外會讓這個判斷變
-    複雜，且一次推播失敗不該中斷其餘股票/條件的評估（比照本檔案其餘
-    降級模式的一貫精神）。
+    設計取捨（維持既有降級精神，見本檔案開頭）：
+    - 直接打 `https://api.telegram.org/bot<token>/sendMessage`，不
+      import `python-telegram-bot`／`telegram_gateway`——那是常駐
+      long-polling process 的重量級框架，這裡只是「單次、無狀態」的
+      推播，用 `urllib` 發一個 POST 就夠，且比照
+      `us_stock_price_client.py` 既有的 HTTP client 選型
+    - 缺 token／缺白名單、或任何一個 chat_id 送失敗，都**不拋例外**，
+      回傳 `False`——呼叫端（`run_scan()`）靠這個 bool 決定要不要更新
+      `last_notified_at`，例外會讓那段邏輯複雜化，且一次推播失敗不該
+      中斷其餘股票/條件的評估
+    - 多個 `ALLOWED_USER_IDS` 時逐一發送；只要有一個成功就不算完全失敗
+      （回傳 `True`），避免其中一人封鎖 bot 就讓其他人也收不到
     """
-    sys.stderr.write("us_stock_scan[notify_telegram STUB]：%s\n" % message)
-    sys.stderr.flush()
-    return True
+    token = _read_env_value(_GATEWAY_ENV_FILE, "TELEGRAM_BOT_TOKEN")
+    allowed_ids_raw = _read_env_value(_GATEWAY_ENV_FILE, "ALLOWED_USER_IDS")
+    if not token or not allowed_ids_raw:
+        sys.stderr.write(
+            "us_stock_scan[notify_telegram]：%s 缺少 TELEGRAM_BOT_TOKEN 或"
+            " ALLOWED_USER_IDS，跳過推播\n" % _GATEWAY_ENV_FILE
+        )
+        return False
+
+    chat_ids = [x.strip() for x in allowed_ids_raw.split(",") if x.strip()]
+    any_success = False
+    for chat_id in chat_ids:
+        try:
+            payload = json.dumps({"chat_id": chat_id, "text": message}).encode("utf-8")
+            req = urllib.request.Request(
+                "https://api.telegram.org/bot%s/sendMessage" % token,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                resp.read()
+            any_success = True
+        except (urllib.error.URLError, urllib.error.HTTPError) as exc:
+            sys.stderr.write(
+                "us_stock_scan[notify_telegram]：推播失敗 chat_id=%s: %s\n"
+                % (chat_id, exc)
+            )
+    return any_success
 
 
 def _evaluate_condition(condition, outcome):

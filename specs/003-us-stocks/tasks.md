@@ -162,9 +162,15 @@ STEP 2），**不實作 STEP 1 的網頁拖曳上傳 UI**。T013/T017 依此執�
       見 data-model.md §3 狀態轉換規則），狀態轉為 `alert` 時呼叫既有
       Telegram 閘道（`function/stnd-gateway-web`）推播（depends on: T008, T026）
       ——**實作說明（2026-09-08）**：`function/stnd-gateway-web` 分支不在
-      本分支工作目錄內，改實作為明確標記的 stub `notify_telegram()`（見
-      `us_stock_scan.py` 該函式 docstring 的 TODO），狀態轉換判斷邏輯
-      （何時觸發/不觸發推播）完整實作並測試，傳輸層待該分支合併後接上
+      本分支工作目錄內，先實作為明確標記的 stub `notify_telegram()`，
+      狀態轉換判斷邏輯（何時觸發/不觸發推播）完整實作並測試。**同日
+      追加**：查證後發現真正的 Telegram bot 是完全獨立的專案
+      `AI/telegram_gateway/`（不在任何 AlphaVibe 分支內），STND 既有整合
+      模式（`function/stnd-gateway-web` 的 `gateway_monitor.py`）本來就是
+      「獨立實作、不 import telegram_gateway，只共用設定值」——已比照
+      同一慣例把 stub 換成真正呼叫 Telegram Bot API（`urllib` 直接打
+      `sendMessage`，token 從共用的 `~/.config/stnd-gateway/.env` 讀取，
+      不寫死進原始碼），不需要等那條分支合併
 - [X] T028 [P] [US3] `app/routers/us_stocks.py` 新增監控條件的 CRUD 端點
       （depends on: T005）——GET/POST/DELETE 三個端點，並同步擴充
       `GET /api/us-stocks/watchlist` 為四表聯集完整版（T030 範圍）

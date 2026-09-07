@@ -4,12 +4,14 @@
 
 執行：python3 -m unittest discover -s poc/kb-mcp/tests -p "test_us_stock*"
 """
+import json
 import os
 import shutil
 import sys
 import tempfile
 import unittest
 import unittest.mock
+import urllib.error
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -375,6 +377,109 @@ class WatchConditionEvaluationTest(unittest.TestCase):
         price_updates = self._updates_for(result)
         self.assertEqual(len(price_updates), 1)
         self.assertEqual(price_updates[0]["new_status"], "ok")
+
+
+class NotifyTelegramTest(unittest.TestCase):
+    """`notify_telegram()` 本身的 HTTP 呼叫邏輯——上面所有測試都是
+    mock 掉整個函式，完全沒測到這裡的實作，補上。全程用暫存設定檔
+    （`STND_GATEWAY_ENV_FILE` 覆寫），不動、不讀真正的
+    `~/.config/stnd-gateway/.env`，也不會真的打網路（mock urlopen）。
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.env_path = os.path.join(self.tmpdir, "fake.env")
+        self._orig_env_file = us_stock_scan._GATEWAY_ENV_FILE
+        self._orig_env_var = os.environ.get("STND_GATEWAY_ENV_FILE")
+
+    def tearDown(self):
+        us_stock_scan._GATEWAY_ENV_FILE = self._orig_env_file
+        if self._orig_env_var is None:
+            os.environ.pop("STND_GATEWAY_ENV_FILE", None)
+        else:
+            os.environ["STND_GATEWAY_ENV_FILE"] = self._orig_env_var
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _write_env(self, token="fake-token:ABC", allowed_ids="111,222"):
+        with open(self.env_path, "w", encoding="utf-8") as f:
+            f.write("TELEGRAM_BOT_TOKEN=%s\n" % token)
+            f.write("ALLOWED_USER_IDS=%s\n" % allowed_ids)
+        import pathlib
+        us_stock_scan._GATEWAY_ENV_FILE = pathlib.Path(self.env_path)
+
+    def test_missing_env_file_returns_false_no_network_call(self):
+        """設定檔不存在：直接回 False，不嘗試打網路。"""
+        import pathlib
+        us_stock_scan._GATEWAY_ENV_FILE = pathlib.Path(self.tmpdir) / "nope.env"
+        with unittest.mock.patch("urllib.request.urlopen") as mock_urlopen:
+            result = us_stock_scan.notify_telegram("測試訊息")
+        self.assertFalse(result)
+        mock_urlopen.assert_not_called()
+
+    def test_missing_token_returns_false(self):
+        self._write_env(token="", allowed_ids="111")
+        with unittest.mock.patch("urllib.request.urlopen") as mock_urlopen:
+            result = us_stock_scan.notify_telegram("測試訊息")
+        self.assertFalse(result)
+        mock_urlopen.assert_not_called()
+
+    def test_success_calls_correct_url_and_payload(self):
+        """驗證真的打到 Telegram Bot API 的 sendMessage 端點，payload
+        帶對的 chat_id／text，且 token 不外洩進任何例外訊息或回傳值。"""
+        self._write_env(token="fake-token:ABC", allowed_ids="111")
+        mock_resp = unittest.mock.MagicMock()
+        mock_resp.__enter__.return_value = mock_resp
+        mock_resp.read.return_value = b'{"ok":true}'
+        with unittest.mock.patch(
+                "urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+            result = us_stock_scan.notify_telegram("股價跌破門檻")
+        self.assertTrue(result)
+        mock_urlopen.assert_called_once()
+        request_obj = mock_urlopen.call_args[0][0]
+        self.assertEqual(
+            request_obj.full_url,
+            "https://api.telegram.org/botfake-token:ABC/sendMessage")
+        sent_payload = json.loads(request_obj.data.decode("utf-8"))
+        self.assertEqual(sent_payload, {"chat_id": "111", "text": "股價跌破門檻"})
+
+    def test_multiple_chat_ids_partial_failure_still_true(self):
+        """兩個白名單使用者，其中一個發送失敗（例如封鎖了bot）：
+        只要有一個成功就整體回傳True，不能因一人失敗就讓所有人都收不到。"""
+        self._write_env(token="fake-token:ABC", allowed_ids="111,222")
+        mock_resp = unittest.mock.MagicMock()
+        mock_resp.__enter__.return_value = mock_resp
+        mock_resp.read.return_value = b'{"ok":true}'
+
+        def _side_effect(req, timeout=None):
+            if b'"chat_id": "222"' in req.data:
+                raise urllib.error.URLError("blocked")
+            return mock_resp
+
+        with unittest.mock.patch(
+                "urllib.request.urlopen", side_effect=_side_effect):
+            result = us_stock_scan.notify_telegram("測試")
+        self.assertTrue(result)
+
+    def test_all_chat_ids_fail_returns_false(self):
+        self._write_env(token="fake-token:ABC", allowed_ids="111")
+        with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=urllib.error.URLError("network down")):
+            result = us_stock_scan.notify_telegram("測試")
+        self.assertFalse(result)
+
+    def test_network_failure_does_not_raise(self):
+        """網路層失敗（非HTTPError）也不能讓呼叫端整個炸掉——
+        FR相關：推播失敗不能影響其他股票/條件的評估流程。"""
+        self._write_env()
+        with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=urllib.error.URLError("timeout")):
+            try:
+                result = us_stock_scan.notify_telegram("測試")
+            except Exception as exc:  # noqa: BLE001
+                self.fail("notify_telegram 不應該拋出例外，實際拋出：%r" % exc)
+        self.assertFalse(result)
 
 
 if __name__ == "__main__":
