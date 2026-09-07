@@ -184,11 +184,11 @@ STEP 2），**不實作 STEP 1 的網頁拖曳上傳 UI**。T013/T017 依此執�
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T032 [P] `docs/architecture.md` 分頁地圖補上「美股」分頁列
-- [ ] T033 [P] `CLAUDE.md`「STND 分頁與程式碼位置」表補上美股列
-- [ ] T034 逐項執行 `quickstart.md` 的「部署後驗收重點」（尤其美股資料
+- [X] T032 [P] `docs/architecture.md` 分頁地圖補上「美股」分頁列
+- [X] T033 [P] `CLAUDE.md`「STND 分頁與程式碼位置」表補上美股列
+- [X] T034 逐項執行 `quickstart.md` 的「部署後驗收重點」（尤其美股資料
       完全碰不到台股既有表/工具這條，是 FR-015/016 的核心要求）
-- [ ] T035 [P] 確認 `web/src/components/AppShell.jsx` 的美股圖示（mockup
+- [X] T035 [P] 確認 `web/src/components/AppShell.jsx` 的美股圖示（mockup
       用 globe 線稿佔位，實作時可維持或替換）
 
 ---
