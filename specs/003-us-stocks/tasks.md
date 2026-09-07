@@ -89,30 +89,30 @@ STEP 2），**不實作 STEP 1 的網頁拖曳上傳 UI**。T013/T017 依此執�
 
 ### Tests for User Story 1
 
-- [ ] T012 [P] [US1] `poc/kb-mcp/tests/test_us_trade_text_parser.py`——
+- [X] T012 [P] [US1] `poc/kb-mcp/tests/test_us_trade_text_parser.py`——
       先寫測試（固定格式範例），此時應該 FAIL
 
 ### Implementation for User Story 1
 
-- [ ] T013 [P] [US1] 實作 `poc/kb-mcp/us_trade_text_parser.py`（正則表達式
+- [X] T013 [P] [US1] 實作 `poc/kb-mcp/us_trade_text_parser.py`（正則表達式
       解析交易文字，比照 `trade_ledger_parser.py` 既有模式），讓 T012 通過
-- [ ] T014 [US1] 在 `us_stock_mcp_server.py` 實作 `parse_and_save_us_trade`
+- [X] T014 [US1] 在 `us_stock_mcp_server.py` 實作 `parse_and_save_us_trade`
       工具（見 contracts/mcp-tools.md 工具一）（depends on: T013, T005）
-- [ ] T015 [P] [US1] 在 `us_stock_mcp_server.py` 實作 `get_us_trade_ledger`／
+- [X] T015 [P] [US1] 在 `us_stock_mcp_server.py` 實作 `get_us_trade_ledger`／
       `get_us_holdings`／`get_us_price_history` 三個工具（contracts 工具
       二/三/八）（depends on: T005）
-- [ ] T016 [US1] `app/routers/us_stocks.py` 新增 GET 端點：持股清單、交易
+- [X] T016 [US1] `app/routers/us_stocks.py` 新增 GET 端點：持股清單、交易
       列表、股價歷史（直接呼叫 `USStockStore`，不透過 MCP 協議，比照既有
       `app/` 直接 import `poc/kb-mcp/*.py` 的慣例）（depends on: T005）
-- [ ] T017 [US1] `web/src/pages/UsStockImport.jsx`——**只實作 STEP 2 核對
+- [X] T017 [US1] `web/src/pages/UsStockImport.jsx`——**只實作 STEP 2 核對
       確認畫面**（顯示 Claude 已解析出的待確認交易，供使用者修正/確認，
       confirm 後呼叫對應 API），STEP 1 上傳 UI 見本檔案開頭的範圍判斷
-- [ ] T018 [P] [US1] `web/src/pages/UsStockDetail.jsx` 的股價圖區塊——
+- [X] T018 [P] [US1] `web/src/pages/UsStockDetail.jsx` 的股價圖區塊——
       比照 `StockComboChart.jsx` 視覺風格（紅漲綠跌/紅買綠賣），資料源
       改接 T016 的端點
-- [ ] T019 [US1] `web/src/pages/UsStocks.jsx` landing 頁基本版（持股清單
+- [X] T019 [US1] `web/src/pages/UsStocks.jsx` landing 頁基本版（持股清單
       ＋現價＋漲跌；立場/監控狀態欄位留給 US2/US3 補上）
-- [ ] T020 [US1] `app/tests/test_smoke.py` 新增美股 router 的深度比對測試
+- [X] T020 [US1] `app/tests/test_smoke.py` 新增美股 router 的深度比對測試
       （比照既有模式，不只測 200，比對底層函式輸出）
 
 **Checkpoint**：US1 應可獨立完整運作與驗證

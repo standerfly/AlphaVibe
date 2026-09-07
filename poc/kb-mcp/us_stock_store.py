@@ -95,6 +95,21 @@ def _now():
     return datetime.datetime.now().isoformat(timespec="seconds")
 
 
+def _business_days_between(date_str_a, date_str_b):
+    """`date_str_a`／`date_str_b` 皆為 'YYYY-MM-DD'，回傳兩者之間（不含
+    頭尾本身）的平日（週一~週五）日期字串清單，用於
+    `price_history_with_gaps()` 偵測相鄰快照之間的資料缺口。"""
+    start = datetime.date.fromisoformat(date_str_a)
+    end = datetime.date.fromisoformat(date_str_b)
+    days = []
+    cur = start + datetime.timedelta(days=1)
+    while cur < end:
+        if cur.weekday() < 5:  # 0=週一 ... 4=週五
+            days.append(cur.isoformat())
+        cur += datetime.timedelta(days=1)
+    return days
+
+
 class USStockStore:
     def __init__(self, data_dir):
         self.data_dir = os.path.abspath(data_dir)
@@ -154,6 +169,85 @@ class USStockStore:
             rows = self.conn.execute(
                 "SELECT * FROM us_trades ORDER BY trade_date, id").fetchall()
         return [dict(r) for r in rows]
+
+    def update_trade(self, trade_id, ticker, trade_date, action, shares,
+                      price, amount=None):
+        """更新一筆既有交易紀錄（Phase 3 US1 T016/T017：匯入核對確認畫面
+        用——Claude 已在對話中呼叫 `save_trade`／`parse_and_save_us_trade`
+        寫入初版紀錄，使用者在網頁核對畫面修正欄位後呼叫這裡）。驗證規則
+        與 `save_trade` 相同。`trade_id` 不存在回傳 `None`，呼叫端據此
+        判斷要回 404（比照 data-model.md 對 `us_trades` 的驗證規則，
+        不另立一套）。"""
+        if self.get_trade(trade_id) is None:
+            return None
+        if action not in VALID_TRADE_ACTIONS:
+            raise ValueError(
+                "action 必須是 %s，收到：%s" % (VALID_TRADE_ACTIONS, action))
+        if shares is None or shares <= 0:
+            raise ValueError("shares 必須 > 0")
+        if price is None or price <= 0:
+            raise ValueError("price 必須 > 0")
+        if amount is None:
+            amount = shares * price
+        self.conn.execute(
+            "UPDATE us_trades SET ticker=?, trade_date=?, action=?,"
+            " shares=?, price=?, amount=? WHERE id=?",
+            (ticker, trade_date, action, shares, price, amount, trade_id),
+        )
+        self.conn.commit()
+        return self.get_trade(trade_id)
+
+    def list_recent_trades(self, limit=20):
+        """依 id（＝寫入順序）由新到舊回傳最近 N 筆交易——供匯入核對
+        確認畫面（T017）顯示「Claude 剛在對話中解析寫入的紀錄」，跟
+        `list_trades()`（依 `trade_date` 排序，給圖表/流水帳用）用途不
+        同，刻意分開兩個方法，不共用同一份排序邏輯。"""
+        rows = self.conn.execute(
+            "SELECT * FROM us_trades ORDER BY id DESC LIMIT ?",
+            (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    # ---------- 持股彙總（contracts 工具二 get_us_holdings，FR-013） ----------
+
+    def compute_holdings(self, ticker=None):
+        """依 `us_trades` 彙總計算目前持股。MVP 只算簡單加權平均成本，
+        不做 FIFO 精算（見 contracts/mcp-tools.md 工具二說明，精確 FIFO
+        損益列為未來擴充）。
+
+        `ticker` 省略時回傳全部「曾有交易」的股票各自一筆彙總——注意這
+        不是 `get_tracked_tickers()` 的四表聯集（純觀察中、尚無交易的
+        股票沒有持股可言，不該出現在持股彙總裡）。"""
+        if ticker:
+            return self._holdings_from_trades(ticker, self.list_trades(ticker))
+        tickers = sorted({row["ticker"] for row in self.list_trades()})
+        return {"holdings": [
+            self._holdings_from_trades(tk, self.list_trades(tk)) for tk in tickers
+        ]}
+
+    @staticmethod
+    def _holdings_from_trades(ticker, trades):
+        """單一股票的簡單加權平均成本彙總。`trades` 需已依時間排序
+        （`list_trades()` 回傳本來就依 trade_date, id 排序）。賣出後
+        `shares_held` 歸零時 `avg_cost` 重設為 `None`（沒有部位就沒有
+        「均價」這個概念，不留舊值造成誤解）。"""
+        shares_held = 0.0
+        avg_cost = None
+        realized = 0.0
+        for t in trades:
+            if t["action"] == "buy":
+                prior_cost = (avg_cost or 0.0) * shares_held
+                shares_held += t["shares"]
+                avg_cost = (prior_cost + t["shares"] * t["price"]) / shares_held \
+                    if shares_held else None
+            else:  # sell
+                if avg_cost is not None:
+                    realized += (t["price"] - avg_cost) * t["shares"]
+                shares_held -= t["shares"]
+                if shares_held <= 0:
+                    shares_held = 0.0
+                    avg_cost = None
+        return {"ticker": ticker, "shares_held": shares_held,
+                "avg_cost": avg_cost, "realized": realized}
 
     # ---------- us_stances ----------
 
@@ -295,6 +389,27 @@ class USStockStore:
             " ORDER BY snapshot_date DESC LIMIT ?",
             (ticker, days)).fetchall()
         return [dict(r) for r in reversed(rows)]
+
+    def price_history_with_gaps(self, ticker, days=90):
+        """股價走勢圖資料（contracts 工具八 `get_us_price_history`，
+        FR-003）：`us_price_snapshots` 依日期排序的時間序列，並標示相鄰
+        兩筆快照之間「本該有平日快照卻缺漏」的日期，供前端圖表決定要不要
+        顯示斷點。
+
+        缺口偵測用「平日（週一~週五）」當基準，不精確排除美股假日
+        （需要完整的 NYSE 假日表，超出本階段範圍）——寧可把假日也列成
+        「缺口」（前端頂多多顯示幾個無害的斷點提示），也不要漏掉真正的
+        資料缺口（額度用盡/排程失敗，見 data-model.md §4「歷史缺口」）。
+        """
+        snapshots = self.list_price_snapshots(ticker, days=days)
+        history = [{"date": s["snapshot_date"], "close_price": s["close_price"]}
+                   for s in snapshots]
+        gap_dates = []
+        for prev, cur in zip(snapshots, snapshots[1:]):
+            gap_dates.extend(_business_days_between(
+                prev["snapshot_date"], cur["snapshot_date"]))
+        return {"ticker": ticker, "days": days, "history": history,
+                "gap_dates": gap_dates}
 
     # ---------- 追蹤清單（FR-013：四表 ticker 聯集） ----------
 

@@ -236,6 +236,180 @@ class TrackedTickersTest(unittest.TestCase):
                          ["CRWD", "NET", "SNOW"])
 
 
+class UpdateTradeTest(unittest.TestCase):
+    """`update_trade()`（Phase 3 US1 T016/T017 支援方法）。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="us-stock-store-test-")
+        self.store = USStockStore(self.tmp)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp)
+
+    def test_update_existing_trade(self):
+        saved = self.store.save_trade(
+            ticker="NET", trade_date="2026-08-05", action="buy",
+            shares=10, price=298.40)
+        updated = self.store.update_trade(
+            saved["id"], ticker="NET", trade_date="2026-08-05",
+            action="buy", shares=12, price=300.0)
+        self.assertEqual(updated["shares"], 12)
+        self.assertEqual(updated["price"], 300.0)
+        self.assertEqual(updated["amount"], 3600.0)  # 重新計算
+
+    def test_update_missing_trade_returns_none(self):
+        result = self.store.update_trade(
+            9999, ticker="NET", trade_date="2026-08-05", action="buy",
+            shares=1, price=1)
+        self.assertIsNone(result)
+
+    def test_update_invalid_action_rejected(self):
+        saved = self.store.save_trade(
+            ticker="NET", trade_date="2026-08-05", action="buy",
+            shares=10, price=298.40)
+        with self.assertRaises(ValueError):
+            self.store.update_trade(
+                saved["id"], ticker="NET", trade_date="2026-08-05",
+                action="hold", shares=10, price=298.40)
+
+    def test_update_amount_manually_overridden(self):
+        saved = self.store.save_trade(
+            ticker="NET", trade_date="2026-08-05", action="buy",
+            shares=10, price=298.40)
+        updated = self.store.update_trade(
+            saved["id"], ticker="NET", trade_date="2026-08-05",
+            action="buy", shares=10, price=298.40, amount=3000.0)
+        self.assertEqual(updated["amount"], 3000.0)
+
+
+class ListRecentTradesTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="us-stock-store-test-")
+        self.store = USStockStore(self.tmp)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp)
+
+    def test_recent_trades_newest_first(self):
+        self.store.save_trade(ticker="NET", trade_date="2026-08-05",
+                               action="buy", shares=10, price=298.40)
+        self.store.save_trade(ticker="CRWD", trade_date="2026-08-06",
+                               action="buy", shares=5, price=350.0)
+        recent = self.store.list_recent_trades(limit=10)
+        self.assertEqual(recent[0]["ticker"], "CRWD")
+        self.assertEqual(recent[1]["ticker"], "NET")
+
+    def test_recent_trades_respects_limit(self):
+        for i in range(5):
+            self.store.save_trade(ticker="NET", trade_date="2026-08-05",
+                                   action="buy", shares=1, price=100 + i)
+        self.assertEqual(len(self.store.list_recent_trades(limit=3)), 3)
+
+
+class ComputeHoldingsTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="us-stock-store-test-")
+        self.store = USStockStore(self.tmp)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp)
+
+    def test_single_buy_holdings(self):
+        self.store.save_trade(ticker="NET", trade_date="2026-08-05",
+                               action="buy", shares=10, price=300.0)
+        holdings = self.store.compute_holdings("NET")
+        self.assertEqual(holdings["shares_held"], 10)
+        self.assertEqual(holdings["avg_cost"], 300.0)
+        self.assertEqual(holdings["realized"], 0.0)
+
+    def test_weighted_average_cost_across_two_buys(self):
+        self.store.save_trade(ticker="NET", trade_date="2026-08-05",
+                               action="buy", shares=10, price=300.0)
+        self.store.save_trade(ticker="NET", trade_date="2026-08-06",
+                               action="buy", shares=10, price=320.0)
+        holdings = self.store.compute_holdings("NET")
+        self.assertEqual(holdings["shares_held"], 20)
+        self.assertEqual(holdings["avg_cost"], 310.0)  # (10*300+10*320)/20
+
+    def test_sell_reduces_shares_and_realizes_pnl(self):
+        self.store.save_trade(ticker="NET", trade_date="2026-08-05",
+                               action="buy", shares=10, price=300.0)
+        self.store.save_trade(ticker="NET", trade_date="2026-08-10",
+                               action="sell", shares=4, price=350.0)
+        holdings = self.store.compute_holdings("NET")
+        self.assertEqual(holdings["shares_held"], 6)
+        self.assertEqual(holdings["avg_cost"], 300.0)  # 均價不變
+        self.assertEqual(holdings["realized"], 200.0)  # 4*(350-300)
+
+    def test_full_exit_resets_avg_cost_to_none(self):
+        self.store.save_trade(ticker="NET", trade_date="2026-08-05",
+                               action="buy", shares=10, price=300.0)
+        self.store.save_trade(ticker="NET", trade_date="2026-08-10",
+                               action="sell", shares=10, price=350.0)
+        holdings = self.store.compute_holdings("NET")
+        self.assertEqual(holdings["shares_held"], 0)
+        self.assertIsNone(holdings["avg_cost"])
+        self.assertEqual(holdings["realized"], 500.0)
+
+    def test_ticker_with_no_trades_returns_zero_holdings(self):
+        holdings = self.store.compute_holdings("NOPE")
+        self.assertEqual(holdings["shares_held"], 0.0)
+        self.assertIsNone(holdings["avg_cost"])
+
+    def test_all_tickers_mode_returns_list(self):
+        self.store.save_trade(ticker="NET", trade_date="2026-08-05",
+                               action="buy", shares=10, price=300.0)
+        self.store.save_trade(ticker="CRWD", trade_date="2026-08-06",
+                               action="buy", shares=5, price=350.0)
+        result = self.store.compute_holdings()
+        tickers = {h["ticker"] for h in result["holdings"]}
+        self.assertEqual(tickers, {"NET", "CRWD"})
+
+
+class PriceHistoryWithGapsTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="us-stock-store-test-")
+        self.store = USStockStore(self.tmp)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp)
+
+    def test_no_gap_on_consecutive_weekdays(self):
+        self.store.save_price_snapshot(
+            ticker="NET", snapshot_date="2026-09-03", close_price=280.0)  # 週四
+        self.store.save_price_snapshot(
+            ticker="NET", snapshot_date="2026-09-04", close_price=282.0)  # 週五
+        result = self.store.price_history_with_gaps("NET")
+        self.assertEqual(result["gap_dates"], [])
+        self.assertEqual(len(result["history"]), 2)
+
+    def test_weekend_between_snapshots_not_flagged_as_gap(self):
+        self.store.save_price_snapshot(
+            ticker="NET", snapshot_date="2026-09-04", close_price=282.0)  # 週五
+        self.store.save_price_snapshot(
+            ticker="NET", snapshot_date="2026-09-07", close_price=286.0)  # 下週一
+        result = self.store.price_history_with_gaps("NET")
+        self.assertEqual(result["gap_dates"], [])  # 中間只有週六日，非平日
+
+    def test_missing_weekday_flagged_as_gap(self):
+        self.store.save_price_snapshot(
+            ticker="NET", snapshot_date="2026-09-03", close_price=280.0)  # 週四
+        self.store.save_price_snapshot(
+            ticker="NET", snapshot_date="2026-09-08", close_price=290.0)  # 下週二
+        result = self.store.price_history_with_gaps("NET")
+        # 中間平日：週五(09-04)、週一(09-07) 兩天缺快照。
+        self.assertEqual(result["gap_dates"], ["2026-09-04", "2026-09-07"])
+
+    def test_ticker_with_no_snapshots_returns_empty_history(self):
+        result = self.store.price_history_with_gaps("NOPE")
+        self.assertEqual(result["history"], [])
+        self.assertEqual(result["gap_dates"], [])
+
+
 class IndependentDbIsolationTest(unittest.TestCase):
     """獨立 db 檔案隔離：不同 data_dir 的兩個 USStockStore 完全互不影響。"""
 

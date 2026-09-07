@@ -137,6 +137,9 @@ def main() -> int:
             ("GET /api/assets/pockets", "/api/assets/pockets", 200),
             ("GET /api/assets/accounts", "/api/assets/accounts", 200),
             ("GET /api/assets/holdings", "/api/assets/holdings", 200),
+            ("GET /api/us-stocks/healthz", "/api/us-stocks/healthz", 200),
+            ("GET /api/us-stocks/watchlist", "/api/us-stocks/watchlist", 200),
+            ("GET /api/us-stocks/trades/recent", "/api/us-stocks/trades/recent", 200),
         ]
         for label, path, expect_status in checks:
             status, body = _get(path)
@@ -391,6 +394,104 @@ def main() -> int:
                   "(expected status=%s actual status=%s)"
                   % (expected_status, actual_status))
             failures.append("mcp output mismatch")
+
+        # ---- 美股獨立系統（specs/003-us-stocks Phase 3 US1，T020）----
+        # 深度比對：直接在測試庫寫入交易紀錄（不透過 API），跟 API 讀取
+        # 路徑逐欄比對，不只測 200（比照本檔案其餘檢查的既有精神，見
+        # app/routers/us_stocks.py 檔頭 docstring）。這批寫入用的是完全
+        # 獨立的 USStockStore／us_stocks.db，不會碰到上面任何台股相關
+        # 檢查用到的 alphavibe.db（FR-015/016）。
+        from us_stock_store import USStockStore  # noqa: E402
+
+        us_store = USStockStore(data_dir)
+        try:
+            us_store.save_trade(ticker="NET", trade_date="2026-08-05",
+                                 action="buy", shares=10, price=298.40)
+            us_store.save_trade(ticker="NET", trade_date="2026-08-10",
+                                 action="sell", shares=3, price=310.25)
+            us_store.save_price_snapshot(
+                ticker="NET", snapshot_date="2026-09-05", close_price=280.0)
+            us_store.save_price_snapshot(
+                ticker="NET", snapshot_date="2026-09-06", close_price=286.96)
+            expected_us_holdings = us_store.compute_holdings("NET")
+            expected_us_ledger = us_store.list_trades("NET")
+            expected_us_history = us_store.price_history_with_gaps("NET")
+        finally:
+            us_store.close()
+
+        status, actual_us_holdings = _get("/api/us-stocks/holdings?ticker=NET")
+        if status == 200 and actual_us_holdings == expected_us_holdings:
+            print("PASS /api/us-stocks/holdings 輸出跟 USStockStore.compute_holdings() 一致")
+        else:
+            print("FAIL /api/us-stocks/holdings 跟底層函式不一致："
+                  "expected=%r actual=%r" % (expected_us_holdings, actual_us_holdings))
+            failures.append("us-stocks holdings mismatch")
+
+        status, actual_us_trades = _get("/api/us-stocks/trades?ticker=NET")
+        if status == 200 and (actual_us_trades or {}).get("entries") == expected_us_ledger:
+            print("PASS /api/us-stocks/trades 輸出跟 USStockStore.list_trades() 一致")
+        else:
+            print("FAIL /api/us-stocks/trades 跟底層函式不一致")
+            failures.append("us-stocks trades mismatch")
+
+        status, actual_us_history = _get("/api/us-stocks/price-history?ticker=NET")
+        if status == 200 and actual_us_history == expected_us_history:
+            print("PASS /api/us-stocks/price-history 輸出跟 "
+                  "USStockStore.price_history_with_gaps() 一致")
+        else:
+            print("FAIL /api/us-stocks/price-history 跟底層函式不一致："
+                  "expected=%r actual=%r" % (expected_us_history, actual_us_history))
+            failures.append("us-stocks price-history mismatch")
+
+        status, us_watchlist_body = _get("/api/us-stocks/watchlist")
+        us_watchlist_row = next(
+            (r for r in (us_watchlist_body or {}).get("watchlist", [])
+             if r["ticker"] == "NET"), None)
+        if (status == 200 and us_watchlist_row is not None
+                and us_watchlist_row["shares_held"] == expected_us_holdings["shares_held"]
+                and us_watchlist_row["avg_cost"] == expected_us_holdings["avg_cost"]
+                and us_watchlist_row["current_price"] == 286.96):
+            print("PASS /api/us-stocks/watchlist 含 NET，持股/現價跟底層資料一致")
+        else:
+            print("FAIL /api/us-stocks/watchlist 跟底層資料兜不起來：%r" % us_watchlist_row)
+            failures.append("us-stocks watchlist mismatch")
+
+        # /api/us-stocks/healthz 的 db_path 必須是獨立的 us_stocks.db，
+        # 不是 alphavibe.db——這是 FR-015/016「完全獨立」在執行期的最低
+        # 健檢，完整驗證見 quickstart.md「部署後驗收重點」（Phase 6 T034）。
+        status, us_healthz = _get("/api/us-stocks/healthz")
+        if status == 200 and (us_healthz or {}).get("db_path", "").endswith("us_stocks.db"):
+            print("PASS /api/us-stocks/healthz 確認查的是獨立的 us_stocks.db")
+        else:
+            print("FAIL /api/us-stocks/healthz db_path 不是預期的 us_stocks.db：%r" % us_healthz)
+            failures.append("us-stocks db isolation check")
+
+        # POST /api/us-stocks/trades/confirm（T017 匯入核對確認畫面用）：
+        # 送出既有紀錄的修正值，確認 store.update_trade() 真的落庫。
+        trade_id = expected_us_ledger[0]["id"]
+        confirm_status, confirm_raw = _post(
+            "/api/us-stocks/trades/confirm",
+            json.dumps({"trades": [{
+                "id": trade_id, "ticker": "NET", "trade_date": "2026-08-05",
+                "action": "buy", "shares": 12, "price": 300.0,
+            }]}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        confirm_body = json.loads(confirm_raw.decode("utf-8")) if confirm_raw else {}
+        us_store2 = USStockStore(data_dir)
+        try:
+            updated_trade = us_store2.get_trade(trade_id)
+        finally:
+            us_store2.close()
+        if (confirm_status == 200 and confirm_body.get("errors") == []
+                and updated_trade is not None
+                and updated_trade["shares"] == 12 and updated_trade["price"] == 300.0):
+            print("PASS /api/us-stocks/trades/confirm 正確更新既有交易紀錄")
+        else:
+            print("FAIL /api/us-stocks/trades/confirm 未正確更新："
+                  "status=%s body=%r updated=%r"
+                  % (confirm_status, confirm_body, updated_trade))
+            failures.append("us-stocks confirm mismatch")
 
         # 2026-08-22 教訓：get_kb_store() 是 sync generator dependency，
         # Starlette 用 anyio thread pool 執行，「建立」跟「關閉」不保證
