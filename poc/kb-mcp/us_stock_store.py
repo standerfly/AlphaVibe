@@ -19,6 +19,14 @@
 限制：這台開發機只有 Python 3.9.6，不使用 3.10+ 語法（match-case、
 `X | Y` 型別聯集寫法）；僅用標準庫（`sqlite3`），比照 `kb_store.py`
 既有慣例。
+
+**Phase 5（US3，T026）新增**：`us_watch_conditions` 的評估／推播狀態轉換
+方法——`update_watch_condition_evaluation()`／`mark_watch_condition_notified()`
+／`_is_stale()`／`list_watch_conditions_with_stale()`／
+`watch_status_for_ticker()`／`delete_watch_condition()`，對應
+data-model.md §3 狀態轉換規則與 contracts 工具六/七/九。實際「排程時機
+去呼叫這些方法、額度用盡時完全不呼叫」的邏輯在 `us_stock_scan.py`，這裡
+只提供狀態轉換的基本操作，不內含排程降級判斷。
 """
 import datetime
 import os
@@ -85,6 +93,13 @@ VALID_STANCE_DIRECTIONS = ("bullish", "bearish", "neutral")
 VALID_STANCE_STATUSES = ("active", "closed")
 VALID_WATCH_COMPARATORS = ("lt", "gt")
 VALID_WATCH_STATUSES = ("ok", "alert", "insufficient_data")
+# Phase 5（US3，T026）新增：metric_type 具體清單依 research.md §5／
+# data-model.md §3「留待實作時依 FMP 實際可取得的欄位定案」——定案為
+# `us_price_snapshots` 現有 3 個可查詢欄位（price 對應 close_price），
+# `nrr` 等 contracts/mcp-tools.md 範例文字提到、但 schema 目前沒有對應
+# 欄位的指標暫不支援，未來要擴充需先在 us_price_snapshots／price_client
+# 加對應欄位才有意義評估。
+VALID_WATCH_METRIC_TYPES = ("price", "gaap_gross_margin", "revenue_yoy")
 
 _TRACKED_TABLES = (
     "us_trades", "us_stances", "us_watch_conditions", "us_price_snapshots",
@@ -317,13 +332,17 @@ class USStockStore:
 
     def save_watch_condition(self, ticker, metric_type, comparator, threshold):
         """新增一筆監控條件。新建立時固定 `status='insufficient_data'`、
-        `last_evaluated_at=NULL`（data-model.md §3 狀態轉換規則）——狀態
-        評估／推播邏輯是 Phase 5（US3，T027）的擴充範圍，這裡只負責
-        schema 與新增/查詢。"""
+        `last_evaluated_at=NULL`（data-model.md §3 狀態轉換規則）。狀態
+        評估／推播邏輯（Phase 5，US3，T027）見下方
+        `update_watch_condition_evaluation`／`mark_watch_condition_notified`。"""
         if comparator not in VALID_WATCH_COMPARATORS:
             raise ValueError(
                 "comparator 必須是 %s，收到：%s"
                 % (VALID_WATCH_COMPARATORS, comparator))
+        if metric_type not in VALID_WATCH_METRIC_TYPES:
+            raise ValueError(
+                "metric_type 必須是 %s，收到：%s"
+                % (VALID_WATCH_METRIC_TYPES, metric_type))
         created_at = _now()
         cur = self.conn.execute(
             "INSERT INTO us_watch_conditions"
@@ -349,6 +368,86 @@ class USStockStore:
             rows = self.conn.execute(
                 "SELECT * FROM us_watch_conditions ORDER BY id").fetchall()
         return [dict(r) for r in rows]
+
+    def delete_watch_condition(self, condition_id):
+        """刪除一筆監控條件（T028 CRUD 的 D）。contracts/mcp-tools.md 沒有
+        定義對應的 MCP 工具（監控條件的新增走網頁表單直接呼叫 REST 端點，
+        不像交易/立場是 agent 對話中寫入），所以這裡只有 store 方法＋
+        REST 端點，不補 MCP 工具。回傳刪除前的紀錄（`None`＝找不到，呼叫
+        端據此判斷要不要回 404，比照 `update_trade()` 的既有慣例）。"""
+        existing = self.get_watch_condition(condition_id)
+        if existing is None:
+            return None
+        self.conn.execute(
+            "DELETE FROM us_watch_conditions WHERE id=?", (condition_id,))
+        self.conn.commit()
+        return existing
+
+    @staticmethod
+    def _is_stale(last_evaluated_at, today_str=None):
+        """`last_evaluated_at` 是否代表「不是今天評估的」（data-model.md
+        §3：`is_stale` 衍生欄位，比對是否為當日排程執行後）。
+
+        `last_evaluated_at` 為 `None`（從未成功評估過，屬於「資料不足」）
+        時回傳 `False`——is_stale 只代表「曾經評估過、但不是今天」，不能
+        跟「從未評估過」混為一談，否則前端會把「資料不足」誤標成「未更新
+        （無額度）」（FR-017 明文禁止的誤判）。`today_str` 供測試注入固定
+        日期，未提供則用系統當天日期。"""
+        if not last_evaluated_at:
+            return False
+        today_str = today_str or datetime.date.today().isoformat()
+        return last_evaluated_at[:10] != today_str
+
+    def list_watch_conditions_with_stale(self, ticker=None, today_str=None):
+        """`list_watch_conditions()` 加上衍生欄位 `is_stale`（contracts
+        工具七 `get_us_watch_conditions` 的回傳形狀）。"""
+        conditions = self.list_watch_conditions(ticker)
+        for c in conditions:
+            c["is_stale"] = self._is_stale(c["last_evaluated_at"], today_str)
+        return conditions
+
+    def update_watch_condition_evaluation(self, condition_id, status,
+                                           evaluated_at=None):
+        """排程「成功評估」後呼叫：更新 `status`／`last_evaluated_at`
+        （data-model.md §3 狀態轉換規則）。**額度用盡跳過的股票，呼叫端
+        完全不該呼叫這個方法**——那些條件的這兩欄位要維持原樣不動，這是
+        `is_stale` 判斷「未更新（無額度）」的依據，見 `_is_stale()`。"""
+        if status not in VALID_WATCH_STATUSES:
+            raise ValueError(
+                "status 必須是 %s，收到：%s" % (VALID_WATCH_STATUSES, status))
+        evaluated_at = evaluated_at or _now()
+        self.conn.execute(
+            "UPDATE us_watch_conditions SET status=?, last_evaluated_at=?"
+            " WHERE id=?",
+            (status, evaluated_at, condition_id))
+        self.conn.commit()
+        return self.get_watch_condition(condition_id)
+
+    def mark_watch_condition_notified(self, condition_id, notified_at=None):
+        """推播成功送出後記錄 `last_notified_at`（FR-012「狀態轉為已觸發
+        才推播、同一項門檻持續已觸發不重複推播」判斷依據）。"""
+        notified_at = notified_at or _now()
+        self.conn.execute(
+            "UPDATE us_watch_conditions SET last_notified_at=? WHERE id=?",
+            (notified_at, condition_id))
+        self.conn.commit()
+        return self.get_watch_condition(condition_id)
+
+    def watch_status_for_ticker(self, ticker, today_str=None):
+        """單一股票的監控觸發狀態彙總（landing 頁 contracts 工具九用，
+        FR-013）。一檔股票可能有多筆監控條件，取「最需要使用者注意」的
+        狀態，優先序 alert > ok > insufficient_data；`is_stale` 只要任一
+        條件為 true 就整體算 true（代表「這檔股票至少有一項門檻今天沒
+        刷新到」）。沒有任何監控條件時回傳 `watch_status=None`、
+        `is_stale=False`（＝「尚未設定監控」，不是「資料不足」——資料
+        不足是「設了門檻但抓不到資料」，兩者語意不同）。"""
+        conditions = self.list_watch_conditions_with_stale(ticker, today_str)
+        if not conditions:
+            return {"watch_status": None, "is_stale": False}
+        priority = {"alert": 3, "ok": 2, "insufficient_data": 1}
+        best = max(conditions, key=lambda c: priority.get(c["status"], 0))
+        is_stale = any(c["is_stale"] for c in conditions)
+        return {"watch_status": best["status"], "is_stale": is_stale}
 
     # ---------- us_price_snapshots ----------
 

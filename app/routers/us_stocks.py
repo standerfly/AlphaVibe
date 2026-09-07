@@ -10,7 +10,22 @@ Phase 4（US2，T022）新增個股「投資立場」查詢端點（`GET
 `parse_and_save_us_trade` 也是對話中直接寫入，網頁端不重複一套寫入
 表單），這裡只負責讀取供個股詳情頁「投資立場」卡片（T024）顯示。
 
-監控條件（`us_watch_conditions`）的 CRUD 端點留待 Phase 5（T028）。
+Phase 5（US3，T028）新增監控條件（`us_watch_conditions`）完整 CRUD 端點
+——跟交易/立場不同，監控條件的「新增」刻意設計成**直接由網頁表單呼叫這裡
+的 POST 端點**，不透過 Claude 對話（門檻設定是結構化數值輸入，不需要
+agent 讀圖/理解對話語意，見 `poc/kb-mcp/us_stock_mcp_server.py` 對應
+docstring 的取捨說明；MCP 工具版本 `save_us_watch_condition` 仍保留供
+agent 在對話中也能設定）。新增 `DELETE
+/api/us-stocks/watch-conditions/{id}`——contracts/mcp-tools.md 沒有定義
+對應的 MCP 工具，這裡是本 router 獨有、只走 REST 的端點（比照
+`store.delete_watch_condition()` 的既有設計理由）。
+
+T030 也同步擴充了 `GET /api/us-stocks/watchlist`：改用
+`get_tracked_tickers()` 四表聯集（而非只看「有交易」的股票），涵蓋
+spec.md Edge Cases「純觀察中的股票」，並補上 `stance_direction`／
+`stance_summary`／`watch_status`／`is_stale` 欄位（對應 contracts 工具九
+`get_us_watchlist` 的回傳形狀，但實作在這支 REST 端點裡，理由見
+`us_stock_mcp_server.py` 對 `get_us_watchlist` 的範圍註記）。
 
 **完全獨立於既有台股 router**：不 import `app/routers/dashboard.py`／
 `screen.py`／`market_scan.py`／`holdings.py`／`stock_detail.py`／
@@ -37,7 +52,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.us_stock_deps import USStockStore, get_us_stock_store
@@ -86,25 +101,34 @@ def healthz(store: USStockStore = Depends(get_us_stock_store)) -> Dict[str, Any]
 
 @router.get("/api/us-stocks/watchlist")
 def get_watchlist(store: USStockStore = Depends(get_us_stock_store)) -> Dict[str, Any]:
-    """美股 landing 頁清單（T019）：目前「有交易」的股票各一筆，含持股
-    彙總＋現價／漲跌。立場摘要／監控觸發狀態欄位留給 Phase 4/5（T030）
-    補上，這裡刻意不假裝有這些資料（見 tasks.md T019 範圍註記）。
+    """美股 landing 頁清單（T019 基本版，T030 補齊完整版）：改用
+    `get_tracked_tickers()` 四表聯集（不再只看「有交易」的股票）——涵蓋
+    spec.md Edge Cases「純觀察中的股票」：只設了監控條件或立場、還沒有
+    任何交易的股票，也要出現在 landing 清單（FR-013）。
 
-    刻意用「有交易的股票」而非 `get_tracked_tickers()` 四表聯集——Phase 3
-    還沒有立場/監控條件功能，聯集在這個階段等於「有交易的股票」，直接用
-    `compute_holdings()` 的清單語意更清楚，且不會在 Phase 4/5 加入
-    純觀察標的後意外把「無持股」的列也混進這支持股導向的端點。
+    每筆同時附上：持股彙總（`compute_holdings(ticker)` 對沒交易過的
+    股票本來就回傳 `shares_held=0.0`／`avg_cost=None`，不需要另外判斷有
+    沒有交易）、現價／漲跌、立場摘要（最新一筆 active 立場，沒有則
+    `None`）、監控觸發狀態彙總＋`is_stale`（`watch_status_for_ticker()`，
+    沒有任何監控條件時 `watch_status=None`）。
     """
-    holdings = store.compute_holdings()["holdings"]
+    tickers = store.get_tracked_tickers()
     rows = []
-    for h in holdings:
-        current_price, price_change_pct = _latest_price_and_change(store, h["ticker"])
+    for ticker in tickers:
+        holding = store.compute_holdings(ticker)
+        current_price, price_change_pct = _latest_price_and_change(store, ticker)
+        stance = store.get_latest_stance(ticker, include_closed=False)
+        watch = store.watch_status_for_ticker(ticker)
         rows.append({
-            "ticker": h["ticker"],
-            "shares_held": h["shares_held"],
-            "avg_cost": h["avg_cost"],
+            "ticker": ticker,
+            "shares_held": holding["shares_held"],
+            "avg_cost": holding["avg_cost"],
             "current_price": current_price,
             "price_change_pct": price_change_pct,
+            "stance_direction": stance["direction"] if stance else None,
+            "stance_summary": stance["summary"] if stance else None,
+            "watch_status": watch["watch_status"],
+            "is_stale": watch["is_stale"],
         })
     return {"watchlist": rows}
 
@@ -176,6 +200,61 @@ def get_stance(
                 "stances": store.list_stances(ticker, include_closed=True)}
     return {"ticker": ticker,
             "stance": store.get_latest_stance(ticker, include_closed=False)}
+
+
+@router.get("/api/us-stocks/watch-conditions")
+def list_watch_conditions(
+    ticker: Optional[str] = Query(None, description="省略＝回傳全部股票的監控條件"),
+    store: USStockStore = Depends(get_us_stock_store),
+) -> Dict[str, Any]:
+    """監控條件查詢（contracts 工具七 `get_us_watch_conditions` 的 REST
+    版本，T028/T029）。每筆條件帶 `is_stale` 衍生欄位——`true` 時前端
+    應顯示「未更新（無額度）」，`status` 本身維持上一次成功評估的值
+    （data-model.md §3，見 `USStockStore.list_watch_conditions_with_stale()`）。
+    """
+    return {"conditions": store.list_watch_conditions_with_stale(ticker)}
+
+
+class WatchConditionCreate(BaseModel):
+    """新增監控條件（contracts 工具六 `save_us_watch_condition` 的 REST
+    版本）——跟交易/立場不同，這是網頁表單直接呼叫的寫入端點（見本檔案
+    開頭 docstring 的取捨說明）。"""
+    ticker: str
+    metric_type: str
+    comparator: str
+    threshold: float
+
+
+@router.post("/api/us-stocks/watch-conditions")
+def create_watch_condition(
+    body: WatchConditionCreate,
+    store: USStockStore = Depends(get_us_stock_store),
+) -> Dict[str, Any]:
+    """新建立時固定 `status='insufficient_data'`／`last_evaluated_at=None`
+    （`USStockStore.save_watch_condition()` 既有規則），要等下一次排程
+    評估（`us_stock_scan.py` T027）才會轉為 `ok`/`alert`。`metric_type`／
+    `comparator` 不合法時 `USStockStore` 會拋 `ValueError`，這裡轉成
+    400（比照本 router 其餘端點對輸入驗證錯誤的既有處理方式，見
+    `confirm_trades` 對單筆錯誤的處理精神，但這裡是單筆建立，直接讓
+    FastAPI 的例外處理回 400 即可，不用逐筆收集 errors）。"""
+    try:
+        return store.save_watch_condition(
+            body.ticker, body.metric_type, body.comparator, body.threshold)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.delete("/api/us-stocks/watch-conditions/{condition_id}")
+def remove_watch_condition(
+    condition_id: int,
+    store: USStockStore = Depends(get_us_stock_store),
+) -> Dict[str, Any]:
+    """刪除一筆監控條件（T028 CRUD 的 D，contracts 沒有定義對應 MCP
+    工具，見本檔案開頭 docstring）。找不到回 404。"""
+    deleted = store.delete_watch_condition(condition_id)
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="watch condition not found")
+    return {"deleted": deleted}
 
 
 class ConfirmedTrade(BaseModel):

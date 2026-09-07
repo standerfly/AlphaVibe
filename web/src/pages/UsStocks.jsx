@@ -2,16 +2,18 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiGet } from '../api/client.js'
 
-/* 美股分頁 landing 頁（Phase 3 US1，T019）：持股清單＋現價＋漲跌。
-   立場摘要／監控觸發狀態欄位刻意留空——那是 Phase 4/5（T024/T030）的
-   工作，見 specs/003-us-stocks/tasks.md T019 範圍註記，這裡不假裝有
-   這些資料。
+/* 美股分頁 landing 頁：持股清單＋現價＋漲跌（Phase 3 US1，T019）；
+   Phase 5（US3，T030）補上立場摘要＋監控觸發狀態欄位，完成完整版
+   landing 頁。
 
    串接 GET /api/us-stocks/watchlist（app/routers/us_stocks.py），完全
    獨立於既有台股 /api/holdings、/api/dashboard 等端點（FR-015/016）。
+   T030 起該端點改用四表聯集（含純觀察中、尚無交易的股票，spec.md Edge
+   Cases），所以這裡不能假設每一列都有 shares_held > 0。
    視覺沿用既有 .stock-list/.stock-row 系列樣式（見
    web/src/styles/tokens.css），跟 Dashboard.jsx 的清單卡視覺一致，不
-   發明新的排版語言。 */
+   發明新的排版語言；監控狀態 pill／立場徽章沿用 UsStockDetail.jsx 同一
+   套 WATCH_STATUS_*／direction-badge 視覺語言，不重新發明一套配色。 */
 
 function money(v) {
   return v == null ? '—' : v.toLocaleString('en-US', { maximumFractionDigits: 2 })
@@ -19,6 +21,10 @@ function money(v) {
 function pct(v) {
   return v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`
 }
+
+const DIRECTION_LABEL = { bullish: '偏多', bearish: '偏空', neutral: '觀望' }
+const WATCH_STATUS_PILL = { ok: 'ok', alert: 'alert', insufficient_data: 'pending' }
+const WATCH_STATUS_LABEL = { ok: '未觸發', alert: '已觸發', insufficient_data: '資料不足' }
 
 export default function UsStocks() {
   const [data, setData] = useState(null)
@@ -62,9 +68,21 @@ export default function UsStocks() {
               <div className="stock-row__id">
                 <div className="stock-row__name-line">
                   <span className="stock-row__name">{r.ticker}</span>
+                  {r.stance_direction && (
+                    <span className={'direction-badge ' + r.stance_direction}>
+                      {DIRECTION_LABEL[r.stance_direction] || r.stance_direction}
+                    </span>
+                  )}
+                  {r.watch_status && (
+                    <span className={'pill ' + (WATCH_STATUS_PILL[r.watch_status] || 'pending')}>
+                      {WATCH_STATUS_LABEL[r.watch_status] || r.watch_status}
+                    </span>
+                  )}
+                  {r.is_stale && <span className="meta">未更新（無額度）</span>}
                 </div>
                 <div className="stock-row__sub">
                   持股 {r.shares_held} 股｜均價 {money(r.avg_cost)}
+                  {r.stance_summary ? `｜${r.stance_summary}` : ''}
                 </div>
               </div>
               <div className="stock-row__price">

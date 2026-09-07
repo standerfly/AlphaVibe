@@ -19,11 +19,23 @@ import `kb_store.py` 或任何既有台股工具的程式碼（`research.md` §2
 立場列表——兩種模式回傳形狀不同（單一物件 vs 陣列），呼叫端需依
 `include_closed` 參數判斷，不是同一個 key 底下切換型別。
 
-其餘 3 個工具（`save_us_watch_condition`／`get_us_watch_conditions`／
-`get_us_watchlist`）留待 Phase 5（US3）逐一補上——`get_us_watchlist`
-（工具九，四表聯集彙整含立場/監控狀態）也不在本階段範圍：landing 頁的
-「現價/漲跌」需求改由 `app/routers/us_stocks.py` 直接組合 `USStockStore`
-既有方法完成，避免提前實作出還用不到監控欄位的半成品工具。
+**Phase 5（US3，T026）新增 2 個工具**——`save_us_watch_condition`／
+`get_us_watch_conditions`（contracts 工具六/七）。監控條件的「新增」走
+網頁表單直接呼叫 REST 端點（`app/routers/us_stocks.py`，T028）而非 agent
+對話，跟 trades/stances 的寫入模式不同——這裡仍提供 MCP 工具版本供 agent
+在對話中也能直接幫使用者設定監控門檻（例如「幫我在 NET 跌破 250 時提醒
+我」這類自然語言請求）。`get_us_watch_conditions` 回傳的每筆條件都帶
+`is_stale` 衍生欄位（`USStockStore.list_watch_conditions_with_stale()`）。
+
+排程評估／推播邏輯（`update_watch_condition_evaluation`／
+`mark_watch_condition_notified`／Telegram 推播 stub）在 `us_stock_scan.py`，
+不是 MCP 工具的職責——MCP 工具只負責「使用者/agent 主動設定與查詢監控
+條件」，不負責背景排程的自動評估。
+
+`get_us_watchlist`（工具九，四表聯集彙整含立場/監控狀態）仍不在 MCP
+server 範圍：landing 頁改由 `app/routers/us_stocks.py` 直接組合
+`USStockStore` 既有方法完成（`GET /api/us-stocks/watchlist`），避免同一份
+彙整邏輯要在 MCP 工具與 REST 端點各寫一次、日後改一邊忘了改另一邊。
 
 **這次也不整合進正式 MCP 啟動流程**——不會被 `server.py`／
 `server_readonly.py`／任何 launchd/ngrok 常駐設定引用，純粹是可以獨立
@@ -149,6 +161,44 @@ TOOLS = [
             "required": ["ticker"],
         },
     },
+    {
+        "name": "save_us_watch_condition",
+        "description": "新增一筆監控門檻（例如股價、毛利率）。新建立時狀態固定為 insufficient_data，要等下一次排程評估才會轉為 ok/alert。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string"},
+                "metric_type": {
+                    "type": "string",
+                    "enum": ["price", "gaap_gross_margin", "revenue_yoy"],
+                    "description": "指標類型：price=股價, gaap_gross_margin=毛利率, revenue_yoy=營收年增率",
+                },
+                "comparator": {
+                    "type": "string",
+                    "enum": ["lt", "gt"],
+                    "description": "lt=小於門檻時觸發, gt=大於門檻時觸發",
+                },
+                "threshold": {"type": "number", "description": "門檻數值"},
+            },
+            "required": ["ticker", "metric_type", "comparator", "threshold"],
+        },
+    },
+    {
+        "name": "get_us_watch_conditions",
+        "description": (
+            "取得監控條件與目前狀態（status: ok=未觸發/alert=已觸發/"
+            "insufficient_data=資料不足）。每筆額外帶 is_stale 衍生欄位："
+            "true 時代表 last_evaluated_at 不是今天，前端應顯示「未更新"
+            "（無額度）」而非直接採信 status（status 在這種情況下維持上一次"
+            "成功評估的值）。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "省略＝回傳全部股票的監控條件"},
+            },
+        },
+    },
 ]
 
 
@@ -214,6 +264,20 @@ class Server:
                         "stances": self.store.list_stances(ticker, include_closed=True)}
             return {"ticker": ticker,
                     "stance": self.store.get_latest_stance(ticker, include_closed=False)}
+        if name == "save_us_watch_condition":
+            ticker = args.get("ticker")
+            metric_type = args.get("metric_type")
+            comparator = args.get("comparator")
+            threshold = args.get("threshold")
+            if not ticker or not metric_type or not comparator or threshold is None:
+                raise ValueError(
+                    "save_us_watch_condition 需要 ticker/metric_type/"
+                    "comparator/threshold 參數")
+            return self.store.save_watch_condition(
+                ticker, metric_type, comparator, threshold)
+        if name == "get_us_watch_conditions":
+            ticker = args.get("ticker")
+            return {"conditions": self.store.list_watch_conditions_with_stale(ticker)}
         raise ValueError("未知或尚未實作的工具：%s" % name)
 
     # ---- JSON-RPC 處理（比照 server.py::Server.handle 的既有樣板） ----

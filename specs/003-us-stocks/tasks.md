@@ -154,21 +154,26 @@ STEP 2），**不實作 STEP 1 的網頁拖曳上傳 UI**。T013/T017 依此執�
 
 ### Implementation for User Story 3
 
-- [ ] T026 [P] [US3] 在 `us_stock_mcp_server.py` 實作
+- [X] T026 [P] [US3] 在 `us_stock_mcp_server.py` 實作
       `save_us_watch_condition`／`get_us_watch_conditions` 工具（contracts
       工具六/七）（depends on: T005）
-- [ ] T027 [US3] 擴充 `us_stock_scan.py`：排程執行時比對每個監控條件，
+- [X] T027 [US3] 擴充 `us_stock_scan.py`：排程執行時比對每個監控條件，
       更新 `status`／`last_evaluated_at`（額度用盡時**不更新**這兩個欄位，
       見 data-model.md §3 狀態轉換規則），狀態轉為 `alert` 時呼叫既有
       Telegram 閘道（`function/stnd-gateway-web`）推播（depends on: T008, T026）
-- [ ] T028 [P] [US3] `app/routers/us_stocks.py` 新增監控條件的 CRUD 端點
-      （depends on: T005）
-- [ ] T029 [US3] `web/src/pages/UsStockDetail.jsx` 加入「關注條件」卡片，
+      ——**實作說明（2026-09-08）**：`function/stnd-gateway-web` 分支不在
+      本分支工作目錄內，改實作為明確標記的 stub `notify_telegram()`（見
+      `us_stock_scan.py` 該函式 docstring 的 TODO），狀態轉換判斷邏輯
+      （何時觸發/不觸發推播）完整實作並測試，傳輸層待該分支合併後接上
+- [X] T028 [P] [US3] `app/routers/us_stocks.py` 新增監控條件的 CRUD 端點
+      （depends on: T005）——GET/POST/DELETE 三個端點，並同步擴充
+      `GET /api/us-stocks/watchlist` 為四表聯集完整版（T030 範圍）
+- [X] T029 [US3] `web/src/pages/UsStockDetail.jsx` 加入「關注條件」卡片，
       三態 pill（未觸發/已觸發/資料不足）＋「未更新（無額度）」標記
       （depends on: T028）
-- [ ] T030 [US3] `web/src/pages/UsStocks.jsx` landing 頁補上監控觸發狀態
+- [X] T030 [US3] `web/src/pages/UsStocks.jsx` landing 頁補上監控觸發狀態
       欄位，完成完整版 landing 頁（depends on: T019, T028）
-- [ ] T031 [P] [US3] `poc/kb-mcp/tests/test_us_stock_scan.py` 補監控條件
+- [X] T031 [P] [US3] `poc/kb-mcp/tests/test_us_stock_scan.py` 補監控條件
       評估＋推播觸發的測試（mock Telegram 閘道呼叫，驗證額度用盡時「未
       更新（無額度）」與「資料不足」不會混淆——FR-017 是本次規劃最容易
       做錯的地方）

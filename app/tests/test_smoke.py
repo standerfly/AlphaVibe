@@ -49,6 +49,18 @@ def _post(path: str, body: bytes, headers: dict = None, timeout: float = 10.0):
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read()
 
+
+def _delete(path: str, timeout: float = 10.0):
+    """Phase 5（US3，T028）新增：`DELETE /api/us-stocks/watch-conditions/{id}`
+    是這個 repo 第一個真正的 DELETE 端點，`_get`／`_post` 都不適用，補一個
+    對稱的極簡 helper。"""
+    req = urllib.request.Request(_BASE + path, method="DELETE")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read()
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _APP_ROOT = os.path.abspath(os.path.join(_HERE, "..", ".."))
 _PRODUCTION_DATA_DIR = os.path.abspath(
@@ -525,6 +537,73 @@ def main() -> int:
             print("FAIL /api/us-stocks/stance 跟底層函式不一致或 full_note 被截斷："
                   "expected=%r actual=%r" % (expected_us_stance, actual_us_stance))
             failures.append("us-stocks stance mismatch")
+
+        # ---- 美股「關注條件」（specs/003-us-stocks Phase 5 US3，T028）----
+        # 深度比對：POST 新增 → GET 查詢比對底層 store 輸出 → DELETE 刪除
+        # → 確認真的從底層消失。同時驗證 watchlist 在有監控條件之後帶出
+        # watch_status（先前 T020 那次查詢 NET 時還沒有任何監控條件，
+        # 所以那裡看不到這個欄位有值，這裡補上完整驗證）。
+        create_status, create_raw = _post(
+            "/api/us-stocks/watch-conditions",
+            json.dumps({
+                "ticker": "NET", "metric_type": "price",
+                "comparator": "lt", "threshold": 250,
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        created_condition = json.loads(create_raw.decode("utf-8")) if create_raw else {}
+        us_store4 = USStockStore(data_dir)
+        try:
+            expected_conditions = us_store4.list_watch_conditions_with_stale("NET")
+        finally:
+            us_store4.close()
+
+        list_status, list_body = _get("/api/us-stocks/watch-conditions?ticker=NET")
+        if (create_status == 200 and created_condition.get("status") == "insufficient_data"
+                and list_status == 200
+                and (list_body or {}).get("conditions") == expected_conditions):
+            print("PASS /api/us-stocks/watch-conditions 新增/查詢輸出跟 "
+                  "USStockStore.list_watch_conditions_with_stale() 一致")
+        else:
+            print("FAIL /api/us-stocks/watch-conditions 新增/查詢跟底層函式不一致："
+                  "create=%r list=%r expected=%r"
+                  % (created_condition, list_body, expected_conditions))
+            failures.append("us-stocks watch-conditions crud mismatch")
+
+        watchlist_status2, watchlist_body2 = _get("/api/us-stocks/watchlist")
+        watchlist_row2 = next(
+            (r for r in (watchlist_body2 or {}).get("watchlist", [])
+             if r["ticker"] == "NET"), None)
+        if (watchlist_status2 == 200 and watchlist_row2 is not None
+                and watchlist_row2.get("watch_status") == "insufficient_data"
+                and watchlist_row2.get("stance_direction") == "bullish"):
+            print("PASS /api/us-stocks/watchlist 帶出 watch_status／"
+                  "stance_direction（T030 完整版 landing 頁欄位）")
+        else:
+            print("FAIL /api/us-stocks/watchlist 缺少或錯誤的 watch_status/"
+                  "stance_direction：%r" % watchlist_row2)
+            failures.append("us-stocks watchlist watch_status mismatch")
+
+        condition_id = created_condition.get("id")
+        delete_status, _ = _delete("/api/us-stocks/watch-conditions/%s" % condition_id)
+        us_store5 = USStockStore(data_dir)
+        try:
+            deleted_check = us_store5.get_watch_condition(condition_id)
+        finally:
+            us_store5.close()
+        if delete_status == 200 and deleted_check is None:
+            print("PASS DELETE /api/us-stocks/watch-conditions/{id} 真的從底層刪除")
+        else:
+            print("FAIL DELETE /api/us-stocks/watch-conditions/{id} 未正確刪除："
+                  "status=%s remaining=%r" % (delete_status, deleted_check))
+            failures.append("us-stocks watch-conditions delete mismatch")
+
+        delete_missing_status, _ = _delete("/api/us-stocks/watch-conditions/999999")
+        if delete_missing_status == 404:
+            print("PASS DELETE 不存在的監控條件回 404")
+        else:
+            print("FAIL DELETE 不存在的監控條件應回 404，實際：%s" % delete_missing_status)
+            failures.append("us-stocks watch-conditions delete-missing mismatch")
 
         # 2026-08-22 教訓：get_kb_store() 是 sync generator dependency，
         # Starlette 用 anyio thread pool 執行，「建立」跟「關閉」不保證

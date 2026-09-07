@@ -248,6 +248,95 @@ class WatchConditionCrudTest(unittest.TestCase):
         self.assertEqual(len(self.store.list_watch_conditions("NET")), 1)
         self.assertEqual(len(self.store.list_watch_conditions()), 2)
 
+    def test_invalid_metric_type_rejected(self):
+        with self.assertRaises(ValueError):
+            self.store.save_watch_condition(
+                ticker="NET", metric_type="nrr", comparator="lt", threshold=1)
+
+    # ---- T026（Phase 5 US3）新增：狀態轉換／is_stale／刪除 ----
+
+    def test_update_watch_condition_evaluation_sets_status_and_timestamp(self):
+        saved = self.store.save_watch_condition(
+            ticker="NET", metric_type="price", comparator="lt", threshold=250)
+        updated = self.store.update_watch_condition_evaluation(
+            saved["id"], "alert", evaluated_at="2026-09-07T06:00:00")
+        self.assertEqual(updated["status"], "alert")
+        self.assertEqual(updated["last_evaluated_at"], "2026-09-07T06:00:00")
+
+    def test_update_watch_condition_evaluation_rejects_invalid_status(self):
+        saved = self.store.save_watch_condition(
+            ticker="NET", metric_type="price", comparator="lt", threshold=250)
+        with self.assertRaises(ValueError):
+            self.store.update_watch_condition_evaluation(saved["id"], "bogus")
+
+    def test_mark_watch_condition_notified(self):
+        saved = self.store.save_watch_condition(
+            ticker="NET", metric_type="price", comparator="lt", threshold=250)
+        self.assertIsNone(saved["last_notified_at"])
+        updated = self.store.mark_watch_condition_notified(
+            saved["id"], notified_at="2026-09-07T06:00:05")
+        self.assertEqual(updated["last_notified_at"], "2026-09-07T06:00:05")
+
+    def test_is_stale_false_when_never_evaluated(self):
+        """last_evaluated_at=None（從未評估過）＝「資料不足」，is_stale
+        必須是 False，不能跟「未更新（無額度）」混淆（FR-017 核心規則）。"""
+        self.assertFalse(self.store._is_stale(None, today_str="2026-09-07"))
+
+    def test_is_stale_true_when_not_evaluated_today(self):
+        self.assertTrue(self.store._is_stale(
+            "2026-09-06T06:00:00", today_str="2026-09-07"))
+
+    def test_is_stale_false_when_evaluated_today(self):
+        self.assertFalse(self.store._is_stale(
+            "2026-09-07T06:00:00", today_str="2026-09-07"))
+
+    def test_list_watch_conditions_with_stale_annotates_each_row(self):
+        self.store.save_watch_condition(
+            ticker="NET", metric_type="price", comparator="lt", threshold=250)
+        rows = self.store.list_watch_conditions_with_stale(
+            "NET", today_str="2026-09-07")
+        self.assertEqual(len(rows), 1)
+        # 從未評估過：is_stale 必須是 False（不是「未更新」，是「資料不足」）。
+        self.assertFalse(rows[0]["is_stale"])
+
+    def test_delete_watch_condition(self):
+        saved = self.store.save_watch_condition(
+            ticker="NET", metric_type="price", comparator="lt", threshold=250)
+        deleted = self.store.delete_watch_condition(saved["id"])
+        self.assertEqual(deleted["id"], saved["id"])
+        self.assertIsNone(self.store.get_watch_condition(saved["id"]))
+        self.assertEqual(self.store.list_watch_conditions("NET"), [])
+
+    def test_delete_missing_watch_condition_returns_none(self):
+        self.assertIsNone(self.store.delete_watch_condition(9999))
+
+    def test_watch_status_for_ticker_no_conditions(self):
+        result = self.store.watch_status_for_ticker("NOPE")
+        self.assertIsNone(result["watch_status"])
+        self.assertFalse(result["is_stale"])
+
+    def test_watch_status_for_ticker_prioritizes_alert(self):
+        c1 = self.store.save_watch_condition(
+            ticker="NET", metric_type="price", comparator="lt", threshold=250)
+        c2 = self.store.save_watch_condition(
+            ticker="NET", metric_type="gaap_gross_margin", comparator="lt", threshold=0.5)
+        self.store.update_watch_condition_evaluation(
+            c1["id"], "ok", evaluated_at="2026-09-07T06:00:00")
+        self.store.update_watch_condition_evaluation(
+            c2["id"], "alert", evaluated_at="2026-09-07T06:00:00")
+        result = self.store.watch_status_for_ticker("NET", today_str="2026-09-07")
+        self.assertEqual(result["watch_status"], "alert")
+        self.assertFalse(result["is_stale"])
+
+    def test_watch_status_for_ticker_is_stale_if_any_condition_stale(self):
+        c1 = self.store.save_watch_condition(
+            ticker="NET", metric_type="price", comparator="lt", threshold=250)
+        self.store.update_watch_condition_evaluation(
+            c1["id"], "ok", evaluated_at="2026-09-06T06:00:00")  # 不是「今天」
+        result = self.store.watch_status_for_ticker("NET", today_str="2026-09-07")
+        self.assertEqual(result["watch_status"], "ok")
+        self.assertTrue(result["is_stale"])
+
 
 class PriceSnapshotTest(unittest.TestCase):
     def setUp(self):

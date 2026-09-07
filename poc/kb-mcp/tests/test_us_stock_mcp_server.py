@@ -1,5 +1,6 @@
 """`us_stock_mcp_server.py` 測試（Phase 3 US1 T014/T015 ＋ Phase 4 US2
-T021）：TOOLS 註冊、`Server.call_tool` dispatch、JSON-RPC `handle()` 串接。
+T021 ＋ Phase 5 US3 T026）：TOOLS 註冊、`Server.call_tool` dispatch、
+JSON-RPC `handle()` 串接。
 
 執行：python3 -m unittest discover -s poc/kb-mcp/tests -p "test_us_stock*"
 """
@@ -16,12 +17,13 @@ import us_stock_mcp_server  # noqa: E402
 
 
 class ToolsListTest(unittest.TestCase):
-    def test_six_phase3_and_phase4_tools_registered(self):
+    def test_eight_phase3_phase4_phase5_tools_registered(self):
         names = {t["name"] for t in us_stock_mcp_server.TOOLS}
         self.assertEqual(names, {
             "parse_and_save_us_trade", "get_us_holdings",
             "get_us_trade_ledger", "get_us_price_history",
             "save_us_stance", "get_us_stance",
+            "save_us_watch_condition", "get_us_watch_conditions",
         })
 
     def test_each_tool_has_input_schema(self):
@@ -155,6 +157,49 @@ class ServerCallToolTest(unittest.TestCase):
         out = self.srv.call_tool("get_us_stance", {"ticker": "NET"})
         self.assertEqual(out["stance"]["full_note"], long_note)
         self.assertEqual(len(out["stance"]["full_note"]), len(long_note))
+
+    # ---- Phase 5 US3（T026）：save_us_watch_condition／get_us_watch_conditions ----
+
+    def test_save_us_watch_condition_writes_to_store(self):
+        out = self.srv.call_tool("save_us_watch_condition", {
+            "ticker": "NET", "metric_type": "price", "comparator": "lt",
+            "threshold": 250,
+        })
+        self.assertEqual(out["ticker"], "NET")
+        self.assertEqual(out["status"], "insufficient_data")
+        self.assertIsNone(out["last_evaluated_at"])
+        self.assertEqual(len(self.srv.store.list_watch_conditions("NET")), 1)
+
+    def test_save_us_watch_condition_missing_required_field_raises(self):
+        with self.assertRaises(ValueError):
+            self.srv.call_tool("save_us_watch_condition", {
+                "ticker": "NET", "metric_type": "price", "comparator": "lt",
+                # 缺 threshold
+            })
+
+    def test_save_us_watch_condition_invalid_comparator_raises(self):
+        with self.assertRaises(ValueError):
+            self.srv.call_tool("save_us_watch_condition", {
+                "ticker": "NET", "metric_type": "price", "comparator": "eq",
+                "threshold": 250,
+            })
+
+    def test_get_us_watch_conditions_single_ticker_includes_is_stale(self):
+        self.srv.store.save_watch_condition(
+            ticker="NET", metric_type="price", comparator="lt", threshold=250)
+        out = self.srv.call_tool("get_us_watch_conditions", {"ticker": "NET"})
+        self.assertEqual(len(out["conditions"]), 1)
+        self.assertIn("is_stale", out["conditions"][0])
+        # 從未評估過：is_stale 必須是 False（見 us_stock_store.py 對應規則）。
+        self.assertFalse(out["conditions"][0]["is_stale"])
+
+    def test_get_us_watch_conditions_omitted_ticker_returns_all(self):
+        self.srv.store.save_watch_condition(
+            ticker="NET", metric_type="price", comparator="lt", threshold=250)
+        self.srv.store.save_watch_condition(
+            ticker="CRWD", metric_type="price", comparator="gt", threshold=400)
+        out = self.srv.call_tool("get_us_watch_conditions", {})
+        self.assertEqual(len(out["conditions"]), 2)
 
 
 class JsonRpcHandleTest(unittest.TestCase):
