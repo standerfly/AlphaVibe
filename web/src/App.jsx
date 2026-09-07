@@ -5,6 +5,7 @@ import DashboardList from './pages/Dashboard.jsx'
 import StockDetail from './pages/StockDetail.jsx'
 import Assets from './pages/Assets.jsx'
 import Photos from './pages/Photos.jsx'
+import UsStocks from './pages/UsStocks.jsx'
 
 export default function App() {
   return (
@@ -13,6 +14,7 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/dashboard" element={<DashboardList />} />
         <Route path="/dashboard/:code" element={<StockDetail />} />
+        <Route path="/us-stocks" element={<UsStocks />} />
         <Route path="/assets" element={<Assets />} />
         <Route path="/photos" element={<Photos />} />
         <Route path="*" element={<Home />} />

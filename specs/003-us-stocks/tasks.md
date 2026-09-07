@@ -36,13 +36,13 @@ STEP 2），**不實作 STEP 1 的網頁拖曳上傳 UI**。T013/T017 依此執�
 
 ## Phase 1: Setup
 
-- [ ] T001 建立 `poc/kb-mcp/us_stock_store.py` 骨架（空類別＋import），並在
+- [X] T001 建立 `poc/kb-mcp/us_stock_store.py` 骨架（空類別＋import），並在
       `poc/data/.gitignore`（若無則新增）確認 `us_stocks.db` 會被忽略
-- [ ] T002 [P] 建立 `poc/kb-mcp/us_stock_mcp_server.py` 骨架（server 註冊
+- [X] T002 [P] 建立 `poc/kb-mcp/us_stock_mcp_server.py` 骨架（server 註冊
       樣板，尚無實際工具）
-- [ ] T003 [P] 建立 `app/routers/us_stocks.py` 骨架，並在 `app/main.py`
+- [X] T003 [P] 建立 `app/routers/us_stocks.py` 骨架，並在 `app/main.py`
       註冊此 router（比照既有 router 的 include_router 慣例）
-- [ ] T004 [P] `web/src/components/AppShell.jsx` 的 `TABS` 常數新增「美股」
+- [X] T004 [P] `web/src/components/AppShell.jsx` 的 `TABS` 常數新增「美股」
       項目＋圖示；`web/src/App.jsx` 新增對應路由（先指向佔位頁面）
 
 ---
@@ -51,27 +51,27 @@ STEP 2），**不實作 STEP 1 的網頁拖曳上傳 UI**。T013/T017 依此執�
 
 **⚠️ 這個 Phase 完成前，任何 User Story 都不能開始**
 
-- [ ] T005 在 `poc/kb-mcp/us_stock_store.py` 實作 `USStockStore` 類別與
+- [X] T005 在 `poc/kb-mcp/us_stock_store.py` 實作 `USStockStore` 類別與
       4 張表 schema（`us_trades`／`us_stances`／`us_watch_conditions`／
       `us_price_snapshots`，欄位定義見 `data-model.md`）——**不得**在
       `__init__` 掛任何有副作用的種子寫入邏輯（2026-08-22 資產表事故教訓，
       見 CLAUDE.md 教訓紀錄）
-- [ ] T006 [P] 為 `USStockStore` 的資料目錄解析加上安全防呆（比照
+- [X] T006 [P] 為 `USStockStore` 的資料目錄解析加上安全防呆（比照
       `app/deps.py::_resolve_data_dir()` 的既有模式：未明確設定環境變數
       拒絕啟動，指向正式路徑需額外旗標）
-- [ ] T007 [P] 實作 `poc/kb-mcp/us_stock_price_client.py`：FMP 主要來源＋
+- [X] T007 [P] 實作 `poc/kb-mcp/us_stock_price_client.py`：FMP 主要來源＋
       備援來源（Alpha Vantage 或 yfinance，二擇一定案，見 research.md §1
       待辦）的 HTTP client，失敗回傳 `{"error": ...}` 而非拋例外（比照
       `finmind_client.py:43-53` 的既有模式）
-- [ ] T008 實作 `poc/kb-mcp/us_stock_scan.py` CLI 入口：迴圈處理所有追蹤中
+- [X] T008 實作 `poc/kb-mcp/us_stock_scan.py` CLI 入口：迴圈處理所有追蹤中
       股票，呼叫 T007 的 client 取得價格/基本面資料寫入 `us_price_snapshots`；
       單一股票失敗不中斷其餘股票（比照 `market_scan.py:307-319`）
       （depends on: T005, T007）
-- [ ] T009 [P] `poc/kb-mcp/tests/test_us_stock_store.py`：schema 建立、
+- [X] T009 [P] `poc/kb-mcp/tests/test_us_stock_store.py`：schema 建立、
       CRUD、獨立 db 檔案隔離的基本測試
-- [ ] T010 [P] `poc/kb-mcp/tests/test_us_stock_scan.py`：mock price client，
+- [X] T010 [P] `poc/kb-mcp/tests/test_us_stock_scan.py`：mock price client，
       驗證單一股票失敗時其餘股票仍正常寫入（graceful degradation）
-- [ ] T011 在 `quickstart.md` 補上實際部署 `com.alphavibe.usstockscan.plist`
+- [X] T011 在 `quickstart.md` 補上實際部署 `com.alphavibe.usstockscan.plist`
       的操作步驟（比照 `com.alphavibe.marketscan.plist` 的既有先例，
       **不**建立 repo 內的 plist 範本檔——這個 repo 從來沒有這類範本，
       plist 是直接手動建在使用者機器上）
