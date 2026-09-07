@@ -128,17 +128,17 @@ STEP 2），**不實作 STEP 1 的網頁拖曳上傳 UI**。T013/T017 依此執�
 
 ### Implementation for User Story 2
 
-- [ ] T021 [P] [US2] 在 `us_stock_mcp_server.py` 實作 `save_us_stance`／
+- [X] T021 [P] [US2] 在 `us_stock_mcp_server.py` 實作 `save_us_stance`／
       `get_us_stance` 工具（contracts 工具四/五）（depends on: T005）
-- [ ] T022 [P] [US2] `app/routers/us_stocks.py` 新增 GET 端點：個股立場
+- [X] T022 [P] [US2] `app/routers/us_stocks.py` 新增 GET 端點：個股立場
       （depends on: T005）
-- [ ] T023 [US2] `web/src/components/UsStockResearchNote.jsx`——完整研究
+- [X] T023 [US2] `web/src/components/UsStockResearchNote.jsx`——完整研究
       筆記渲染元件，比照 STND 既有卡片/字體/配色系統，**內容不得因版面
       密度砍減**（FR-009，這是 2026-09-04 對話中使用者明確否決過壓縮版
       的地方，見 `docs/spec-intake/us-stocks/` 的決策紀錄）
-- [ ] T024 [US2] `web/src/pages/UsStockDetail.jsx` 加入「投資立場」卡片，
+- [X] T024 [US2] `web/src/pages/UsStockDetail.jsx` 加入「投資立場」卡片，
       連結到 T023 的完整研究筆記元件（depends on: T023, T022）
-- [ ] T025 [P] [US2] `poc/kb-mcp/tests/test_us_stock_store.py` 補立場相關
+- [X] T025 [P] [US2] `poc/kb-mcp/tests/test_us_stock_store.py` 補立場相關
       的 CRUD 測試
 
 **Checkpoint**：US1 + US2 應可各自獨立運作

@@ -10,13 +10,20 @@ import `kb_store.py` 或任何既有台股工具的程式碼（`research.md` §2
 
 **Phase 3（US1）已實作 4 個工具**——`parse_and_save_us_trade`／
 `get_us_holdings`／`get_us_trade_ledger`／`get_us_price_history`（對應
-`specs/003-us-stocks/contracts/mcp-tools.md` 工具一/二/三/八）。其餘 5 個
-（`save_us_stance`／`get_us_stance`／`save_us_watch_condition`／
-`get_us_watch_conditions`／`get_us_watchlist`）留待 Phase 4/5（US2/US3）
-逐一補上——`get_us_watchlist`（工具九，四表聯集彙整含立場/監控狀態）也
-不在 Phase 3 範圍內：Phase 3 landing 頁的「現價/漲跌」需求改由
-`app/routers/us_stocks.py` 直接組合 `USStockStore` 既有方法完成，避免
-提前實作出還用不到立場/監控欄位的半成品工具。
+`specs/003-us-stocks/contracts/mcp-tools.md` 工具一/二/三/八）。
+
+**Phase 4（US2，T021）新增 2 個工具**——`save_us_stance`／`get_us_stance`
+（contracts 工具四/五）：agent 與使用者討論後的投資立場／研究筆記寫入與
+查詢。`get_us_stance` 預設只回傳最新一筆 `status='active'` 立場（含完整
+`full_note`，不截斷，FR-009），`include_closed=true` 時改回傳全部歷史
+立場列表——兩種模式回傳形狀不同（單一物件 vs 陣列），呼叫端需依
+`include_closed` 參數判斷，不是同一個 key 底下切換型別。
+
+其餘 3 個工具（`save_us_watch_condition`／`get_us_watch_conditions`／
+`get_us_watchlist`）留待 Phase 5（US3）逐一補上——`get_us_watchlist`
+（工具九，四表聯集彙整含立場/監控狀態）也不在本階段範圍：landing 頁的
+「現價/漲跌」需求改由 `app/routers/us_stocks.py` 直接組合 `USStockStore`
+既有方法完成，避免提前實作出還用不到監控欄位的半成品工具。
 
 **這次也不整合進正式 MCP 啟動流程**——不會被 `server.py`／
 `server_readonly.py`／任何 launchd/ngrok 常駐設定引用，純粹是可以獨立
@@ -34,8 +41,9 @@ from us_stock_store import USStockStore  # noqa: E402
 SUPPORTED_PROTOCOL_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18")
 DEFAULT_PROTOCOL_VERSION = "2024-11-05"
 
-# Phase 3（US1）4 個工具，對應 contracts/mcp-tools.md 工具一/二/三/八。
-# 其餘 5 個工具留待 Phase 4/5，見本檔案開頭 docstring。
+# Phase 3（US1）4 個工具＋Phase 4（US2）新增 2 個工具，對應
+# contracts/mcp-tools.md 工具一/二/三/四/五/八。其餘 3 個工具留待
+# Phase 5，見本檔案開頭 docstring。
 TOOLS = [
     {
         "name": "parse_and_save_us_trade",
@@ -91,6 +99,56 @@ TOOLS = [
             "required": ["ticker"],
         },
     },
+    {
+        "name": "save_us_stance",
+        "description": (
+            "把 agent 與使用者討論後的投資立場與完整研究筆記存入 "
+            "us_stances 表。一檔股票可有多筆，每次重新討論後勢都新增一筆"
+            "（不覆蓋舊的）。full_note 是完整研究筆記內容，不得省略章節"
+            "（FR-009）。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string"},
+                "direction": {
+                    "type": "string",
+                    "enum": ["bullish", "bearish", "neutral"],
+                    "description": "買/賣/觀望方向",
+                },
+                "bear_price": {"type": "number", "description": "Bear 情境價格帶下緣"},
+                "bear_price_high": {"type": "number", "description": "Bear 情境價格帶上緣"},
+                "base_price_low": {"type": "number", "description": "Base 情境價格帶下緣"},
+                "base_price_high": {"type": "number", "description": "Base 情境價格帶上緣"},
+                "bull_price": {"type": "number", "description": "Bull 情境價格帶下緣"},
+                "summary": {"type": "string", "description": "論點摘要（短文字，供列表/卡片顯示）"},
+                "full_note": {
+                    "type": "string",
+                    "description": "完整研究筆記內容，Markdown格式，FR-009渲染來源，不得省略章節",
+                },
+            },
+            "required": ["ticker", "direction", "summary", "full_note"],
+        },
+    },
+    {
+        "name": "get_us_stance",
+        "description": (
+            "取得個股詳情頁「投資立場」卡片與完整研究筆記內容。預設只回傳"
+            "最新一筆 status='active' 的立場（含 full_note 完整內容，不"
+            "截斷）；include_closed=true 時回傳全部歷史立場列表。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string"},
+                "include_closed": {
+                    "type": "boolean",
+                    "description": "true＝回傳全部歷史立場列表；省略/false＝只回傳最新一筆active立場",
+                },
+            },
+            "required": ["ticker"],
+        },
+    },
 ]
 
 
@@ -131,6 +189,31 @@ class Server:
                 raise ValueError("get_us_price_history 需要 ticker 參數")
             days = args.get("days") or 90
             return self.store.price_history_with_gaps(ticker, days)
+        if name == "save_us_stance":
+            ticker = args.get("ticker")
+            direction = args.get("direction")
+            summary = args.get("summary")
+            full_note = args.get("full_note")
+            if not ticker or not direction or not summary or not full_note:
+                raise ValueError(
+                    "save_us_stance 需要 ticker/direction/summary/full_note 參數")
+            return self.store.save_stance(
+                ticker, direction, summary, full_note,
+                bear_price=args.get("bear_price"),
+                bear_price_high=args.get("bear_price_high"),
+                base_price_low=args.get("base_price_low"),
+                base_price_high=args.get("base_price_high"),
+                bull_price=args.get("bull_price"),
+            )
+        if name == "get_us_stance":
+            ticker = args.get("ticker")
+            if not ticker:
+                raise ValueError("get_us_stance 需要 ticker 參數")
+            if args.get("include_closed"):
+                return {"ticker": ticker,
+                        "stances": self.store.list_stances(ticker, include_closed=True)}
+            return {"ticker": ticker,
+                    "stance": self.store.get_latest_stance(ticker, include_closed=False)}
         raise ValueError("未知或尚未實作的工具：%s" % name)
 
     # ---- JSON-RPC 處理（比照 server.py::Server.handle 的既有樣板） ----

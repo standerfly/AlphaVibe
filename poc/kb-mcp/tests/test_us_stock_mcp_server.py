@@ -1,5 +1,5 @@
-"""`us_stock_mcp_server.py` 測試（Phase 3 US1，T014/T015）：TOOLS 註冊、
-`Server.call_tool` dispatch、JSON-RPC `handle()` 串接。
+"""`us_stock_mcp_server.py` 測試（Phase 3 US1 T014/T015 ＋ Phase 4 US2
+T021）：TOOLS 註冊、`Server.call_tool` dispatch、JSON-RPC `handle()` 串接。
 
 執行：python3 -m unittest discover -s poc/kb-mcp/tests -p "test_us_stock*"
 """
@@ -16,11 +16,12 @@ import us_stock_mcp_server  # noqa: E402
 
 
 class ToolsListTest(unittest.TestCase):
-    def test_four_phase3_tools_registered(self):
+    def test_six_phase3_and_phase4_tools_registered(self):
         names = {t["name"] for t in us_stock_mcp_server.TOOLS}
         self.assertEqual(names, {
             "parse_and_save_us_trade", "get_us_holdings",
             "get_us_trade_ledger", "get_us_price_history",
+            "save_us_stance", "get_us_stance",
         })
 
     def test_each_tool_has_input_schema(self):
@@ -94,6 +95,67 @@ class ServerCallToolTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.srv.call_tool("no_such_tool", {})
 
+    # ---- Phase 4 US2（T021）：save_us_stance／get_us_stance ----
+
+    def test_save_us_stance_writes_to_store(self):
+        out = self.srv.call_tool("save_us_stance", {
+            "ticker": "NET", "direction": "bullish",
+            "summary": "偏多．等回檔", "full_note": "# 標題\n\n完整內容",
+            "bear_price": 200, "bull_price": 330,
+        })
+        self.assertEqual(out["ticker"], "NET")
+        self.assertEqual(out["direction"], "bullish")
+        self.assertEqual(out["full_note"], "# 標題\n\n完整內容")
+        self.assertEqual(len(self.srv.store.list_stances("NET")), 1)
+
+    def test_save_us_stance_missing_required_field_raises(self):
+        with self.assertRaises(ValueError):
+            self.srv.call_tool("save_us_stance", {
+                "ticker": "NET", "direction": "bullish", "summary": "偏多",
+                # 缺 full_note
+            })
+
+    def test_get_us_stance_requires_ticker(self):
+        with self.assertRaises(ValueError):
+            self.srv.call_tool("get_us_stance", {})
+
+    def test_get_us_stance_default_returns_latest_active_only(self):
+        self.srv.store.save_stance(ticker="NET", direction="bullish",
+                                    summary="偏多", full_note="筆記一")
+        out = self.srv.call_tool("get_us_stance", {"ticker": "NET"})
+        self.assertEqual(out["ticker"], "NET")
+        self.assertIn("stance", out)
+        self.assertNotIn("stances", out)
+        self.assertEqual(out["stance"]["summary"], "偏多")
+
+    def test_get_us_stance_no_stance_returns_none(self):
+        out = self.srv.call_tool("get_us_stance", {"ticker": "NOPE"})
+        self.assertIsNone(out["stance"])
+
+    def test_get_us_stance_include_closed_returns_full_history_list(self):
+        self.srv.store.save_stance(ticker="NET", direction="bullish",
+                                    summary="舊立場", full_note="筆記一",
+                                    status="closed")
+        self.srv.store.save_stance(ticker="NET", direction="bearish",
+                                    summary="新立場", full_note="筆記二")
+        out = self.srv.call_tool(
+            "get_us_stance", {"ticker": "NET", "include_closed": True})
+        self.assertIn("stances", out)
+        self.assertNotIn("stance", out)
+        self.assertEqual(len(out["stances"]), 2)
+
+    def test_get_us_stance_full_note_not_truncated(self):
+        """FR-009：完整研究筆記（多段落）經 MCP 工具存取來回，長度與
+        逐字內容都必須完整無截斷。"""
+        long_note = "第一段內容。\n\n第二段內容，測試多段落。\n\n" * 20
+        self.srv.call_tool("save_us_stance", {
+            "ticker": "NET", "direction": "neutral", "summary": "觀望",
+            "full_note": long_note,
+        })
+        out = self.srv.call_tool("get_us_stance", {"ticker": "NET"})
+        self.assertEqual(out["stance"]["full_note"], long_note)
+        self.assertEqual(len(out["stance"]["full_note"]), len(long_note))
+
 
 class JsonRpcHandleTest(unittest.TestCase):
     """`handle()` 串接：tools/call 走完整 JSON-RPC 路徑（見 server.py
@@ -129,6 +191,25 @@ class JsonRpcHandleTest(unittest.TestCase):
             "params": {"name": "get_us_trade_ledger", "arguments": {}},
         })
         self.assertTrue(resp["result"]["isError"])
+
+    def test_save_and_get_us_stance_via_jsonrpc(self):
+        save_resp = self.srv.handle({
+            "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+            "params": {
+                "name": "save_us_stance",
+                "arguments": {
+                    "ticker": "NET", "direction": "bullish",
+                    "summary": "偏多．等回檔", "full_note": "完整研究筆記內容",
+                },
+            },
+        })
+        self.assertFalse(save_resp["result"]["isError"])
+        get_resp = self.srv.handle({
+            "jsonrpc": "2.0", "id": 5, "method": "tools/call",
+            "params": {"name": "get_us_stance", "arguments": {"ticker": "NET"}},
+        })
+        self.assertFalse(get_resp["result"]["isError"])
+        self.assertIn("完整研究筆記內容", get_resp["result"]["content"][0]["text"])
 
 
 if __name__ == "__main__":

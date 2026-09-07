@@ -2,8 +2,15 @@
 
 Phase 3（US1，`specs/003-us-stocks/tasks.md` T016）新增交易紀錄匯入與
 股價走勢對照所需的業務端點：持股清單、交易列表/最近匯入、股價歷史、
-匯入核對確認寫入，以及 landing 頁彙整用的 watchlist。立場（`us_stances`）
-與監控條件（`us_watch_conditions`）的 CRUD 端點留待 Phase 4/5（T022/T028）。
+匯入核對確認寫入，以及 landing 頁彙整用的 watchlist。
+
+Phase 4（US2，T022）新增個股「投資立場」查詢端點（`GET
+/api/us-stocks/stance`）——寫入仍是 Claude 在對話中呼叫
+`save_us_stance` MCP 工具完成（比照 T016 對 `us_trades` 的既有設計：
+`parse_and_save_us_trade` 也是對話中直接寫入，網頁端不重複一套寫入
+表單），這裡只負責讀取供個股詳情頁「投資立場」卡片（T024）顯示。
+
+監控條件（`us_watch_conditions`）的 CRUD 端點留待 Phase 5（T028）。
 
 **完全獨立於既有台股 router**：不 import `app/routers/dashboard.py`／
 `screen.py`／`market_scan.py`／`holdings.py`／`stock_detail.py`／
@@ -142,6 +149,33 @@ def get_price_history(
     """股價走勢圖資料（contracts 工具八 `get_us_price_history` 的 REST
     版本），含資料缺口日期，供前端圖表判斷是否顯示斷點（T018）。"""
     return store.price_history_with_gaps(ticker, days)
+
+
+@router.get("/api/us-stocks/stance")
+def get_stance(
+    ticker: str = Query(..., description="查詢單一股票的投資立場"),
+    include_closed: bool = Query(
+        False,
+        description="true＝回傳全部歷史立場列表；省略/false＝只回傳最新一筆active立場",
+    ),
+    store: USStockStore = Depends(get_us_stock_store),
+) -> Dict[str, Any]:
+    """個股「投資立場」查詢（contracts 工具五 `get_us_stance` 的 REST
+    版本，T022）。預設回傳最新一筆 `status='active'` 立場（含完整
+    `full_note`，不截斷——FR-009 要求呈現時不得因版面密度砍減內容；
+    `include_closed=true` 回傳全部歷史立場列表，供未來需要回顧舊立場時
+    使用，T024 目前的個股詳情頁只用預設模式）。
+
+    兩種模式回傳形狀不同：預設模式回傳單一 `stance` 物件（或 `None`＝
+    尚無立場紀錄）；`include_closed=true` 回傳 `stances` 陣列——呼叫端
+    需依 `include_closed` 參數判斷要讀哪個 key，不是同一個 key 底下
+    切換型別。
+    """
+    if include_closed:
+        return {"ticker": ticker,
+                "stances": store.list_stances(ticker, include_closed=True)}
+    return {"ticker": ticker,
+            "stance": store.get_latest_stance(ticker, include_closed=False)}
 
 
 class ConfirmedTrade(BaseModel):

@@ -493,6 +493,39 @@ def main() -> int:
                   % (confirm_status, confirm_body, updated_trade))
             failures.append("us-stocks confirm mismatch")
 
+        # ---- 美股「投資立場」（specs/003-us-stocks Phase 4 US2，T022）----
+        # 深度比對：直接在測試庫寫入立場（含多段落 full_note，模擬真實
+        # 研究筆記長度），跟 API 讀取路徑逐欄比對，特別驗證 full_note
+        # 沒有被任何一層（router/序列化）截斷（FR-009）。
+        us_full_note = (
+            "# NET 研究筆記（煙霧測試用）\n\n"
+            "## 一、核心結論\n\n第一段落內容，測試多行文字完整保留。\n\n"
+            "## 二、財報數字\n\n| 指標 | 數值 |\n|---|---|\n| 營收 | $696.1M |\n\n"
+            "## 三、風險點\n\n- 風險一\n- 風險二\n\n"
+            "> 這是一段引用文字。\n"
+        )
+        us_store3 = USStockStore(data_dir)
+        try:
+            us_store3.save_stance(
+                ticker="NET", direction="bullish", summary="偏多．等回檔",
+                full_note=us_full_note, bear_price=200, bull_price=330)
+            expected_us_stance = us_store3.get_latest_stance("NET")
+        finally:
+            us_store3.close()
+
+        status, actual_us_stance_body = _get("/api/us-stocks/stance?ticker=NET")
+        actual_us_stance = (actual_us_stance_body or {}).get("stance")
+        if (status == 200 and actual_us_stance == expected_us_stance
+                and actual_us_stance is not None
+                and actual_us_stance["full_note"] == us_full_note
+                and len(actual_us_stance["full_note"]) == len(us_full_note)):
+            print("PASS /api/us-stocks/stance 輸出跟 USStockStore.get_latest_stance() "
+                  "一致，full_note 完整無截斷")
+        else:
+            print("FAIL /api/us-stocks/stance 跟底層函式不一致或 full_note 被截斷："
+                  "expected=%r actual=%r" % (expected_us_stance, actual_us_stance))
+            failures.append("us-stocks stance mismatch")
+
         # 2026-08-22 教訓：get_kb_store() 是 sync generator dependency，
         # Starlette 用 anyio thread pool 執行，「建立」跟「關閉」不保證
         # 同一條 worker thread——沒有 check_same_thread=False 時，正式

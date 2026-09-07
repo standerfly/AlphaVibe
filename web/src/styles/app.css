@@ -303,8 +303,54 @@ details.collapse summary::marker { color: var(--accent); }
    不留白造成誤會（比照既有「尚無立場」的處理原則）。 */
 .stock-row__tag-line { display: flex; gap: .35rem; margin-top: .3rem; flex-wrap: wrap; }
 
+/* 美股「投資立場」卡片（Phase 4 US2 T024，見
+   web/src/pages/UsStockDetail.jsx）：Bear/Base/Bull 三情境價格帶沿用
+   既有 .holdings-grid 三欄 val-item 視覺（同一種「三個數字並排」語意，
+   另外命名是因為語意不同——一個是持股彙總，一個是情境價格帶，避免以後
+   兩邊各自演化時互相牽動）。direction 徽章沿用 .trade-row__tag 的
+   紅買綠賣配色（bullish≈買方向=紅、bearish≈賣方向=綠），跟本頁走勢圖
+   「紅漲綠跌/紅買綠賣」是同一套視覺語言，不是另創語意。 */
+.stance-bands { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; margin: .7rem 0; }
+.stance-bands .val-item .value { font-size: .88rem; }
+.direction-badge { font-size: .74rem; font-weight: 700; padding: .15rem .6rem;
+  border-radius: 999px; display: inline-block; }
+.direction-badge.bullish { color: var(--red-ink); background: var(--red-soft); }
+.direction-badge.bearish { color: var(--green); background: var(--paper-sunken); }
+.direction-badge.neutral { color: var(--ink-dim); background: var(--paper-sunken); }
+.stance-summary { margin: .6rem 0; font-size: .88rem; overflow-wrap: break-word; }
+.stance-note-toggle { margin-top: .8rem; padding-top: .8rem; border-top: 1px solid var(--rule); }
+
+/* 美股「完整研究筆記」渲染（Phase 4 US2 T023，見
+   web/src/components/UsStockResearchNote.jsx）：full_note 是 Markdown
+   文字，這裡是自製的輕量解析＋渲染樣式（不新增 react-markdown 之類的
+   npm 依賴，見該元件檔頭取捨說明）。標題階層從 h3 開始（不是 h1/h2）
+   ——.card__head h2 已經是卡片本身的標題，筆記內部再出現 h1/h2 會跟卡片
+   標題同層級混淆，見元件內 renderBlock 的階層對映註解。 */
+.us-note { font-size: .88rem; line-height: 1.7; }
+.us-note__title { font-size: .8rem; font-weight: 700; color: var(--ink-dim); margin-bottom: .5rem; }
+.us-note__heading { font-weight: 700; margin: 1.2rem 0 .5rem; color: var(--ink); }
+.us-note__heading:first-child { margin-top: 0; }
+.us-note h3.us-note__heading { font-size: 1rem; border-bottom: 1px solid var(--rule); padding-bottom: .3rem; }
+.us-note h4.us-note__heading { font-size: .92rem; }
+.us-note h5.us-note__heading, .us-note h6.us-note__heading { font-size: .88rem; color: var(--ink-dim); }
+.us-note__p { margin: 0 0 .8rem; overflow-wrap: break-word; }
+.us-note__list { margin: 0 0 .8rem; padding-left: 1.3rem; }
+.us-note__list li { margin-bottom: .3rem; overflow-wrap: break-word; }
+.us-note__quote { margin: 0 0 .8rem; padding: .5rem .9rem; border-left: 3px solid var(--accent);
+  background: var(--accent-soft); color: var(--ink); border-radius: 0 6px 6px 0; }
+.us-note__quote p { margin: 0 0 .3rem; overflow-wrap: break-word; }
+.us-note__quote p:last-child { margin-bottom: 0; }
+.us-note__hr { border: none; border-top: 1px solid var(--rule); margin: 1rem 0; }
+.us-note__table-wrap { overflow-x: auto; margin: 0 0 .8rem; }
+.us-note__table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.us-note__table th, .us-note__table td { padding: .4rem .6rem; border-bottom: 1px solid var(--rule);
+  text-align: left; white-space: nowrap; }
+.us-note__table th { color: var(--ink-dim); font-weight: 600; background: var(--paper-sunken); }
+.us-note code { background: var(--paper-sunken); border-radius: 4px; padding: .05rem .35rem; font-size: .85em; }
+
 @media (max-width: 640px) {
   .pocket-grid { grid-template-columns: 1fr; }
   .buildup-grid { grid-template-columns: repeat(3, 1fr); }
   .simulate-result-grid { grid-template-columns: 1fr; }
+  .stance-bands { grid-template-columns: repeat(3, 1fr); }
 }

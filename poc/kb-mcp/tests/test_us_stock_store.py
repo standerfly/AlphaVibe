@@ -145,6 +145,79 @@ class StanceCrudTest(unittest.TestCase):
         self.assertIsNotNone(
             self.store.get_latest_stance("NET", include_closed=True))
 
+    # ---- T025（Phase 4 US2）新增：立場相關 CRUD 補強測試 ----
+
+    def test_price_bands_stored_and_retrieved(self):
+        """五個情境價格帶欄位（bear/bear_high/base_low/base_high/bull）
+        個別存取正確，未提供的維持 None（contracts 工具四這幾個欄位皆
+        非必填）。"""
+        saved = self.store.save_stance(
+            ticker="NET", direction="bullish", summary="偏多．等回檔",
+            full_note="筆記內容", bear_price=200, bear_price_high=230,
+            base_price_low=250, base_price_high=300, bull_price=330)
+        self.assertEqual(saved["bear_price"], 200)
+        self.assertEqual(saved["bear_price_high"], 230)
+        self.assertEqual(saved["base_price_low"], 250)
+        self.assertEqual(saved["base_price_high"], 300)
+        self.assertEqual(saved["bull_price"], 330)
+
+    def test_price_bands_default_to_none(self):
+        saved = self.store.save_stance(
+            ticker="NET", direction="neutral", summary="觀望",
+            full_note="筆記內容")
+        for field in ("bear_price", "bear_price_high", "base_price_low",
+                       "base_price_high", "bull_price"):
+            self.assertIsNone(saved[field])
+
+    def test_full_note_round_trips_without_truncation(self):
+        """FR-009 核心驗證：完整研究筆記（多段落/多小標題/表格/清單/
+        引用，模擬真實研究筆記長度與結構，見
+        docs/research/2026-09-04-cloudflare-net-outlook.md 樣本）存入後
+        取出必須逐字元相同——不得因為任何長度/欄位限制被截斷。"""
+        full_note = (
+            "# NET 研究筆記（測試用）\n\n"
+            "## 一、核心結論\n\n"
+            "基本面非常強，但估值極高；適合等回檔，不適合因 AI 題材追高。"
+            "這是第一段落，測試多行文字是否會被完整保留，不因為排版考量"
+            "被截斷或省略。\n\n"
+            "## 二、財報數字\n\n"
+            "| 指標 | Q2 2026 | YoY |\n|---|---|---|\n"
+            "| 營收 | $696.1M | +36% |\n| GAAP 毛利率 | 71.8% | 下滑 |\n\n"
+            "## 三、風險點\n\n"
+            "- 毛利率連續下滑，需觀察 2-3 季\n"
+            "- 競爭護城河風險未被充分討論\n"
+            "- 買點區間偏寬，不易當作具體門檻\n\n"
+            "## 四、待追蹤指標\n\n"
+            "1. 營收成長率能否維持 >=30%\n"
+            "2. 毛利率是否止跌回升\n"
+            "3. 股價是否跌破 $250\n\n"
+            "> 這是一段引用文字，測試 blockquote 是否完整保留。\n"
+        )
+        saved = self.store.save_stance(
+            ticker="NET", direction="bullish", summary="偏多．等回檔",
+            full_note=full_note)
+        self.assertEqual(saved["full_note"], full_note)
+        fetched = self.store.get_latest_stance("NET")
+        self.assertEqual(fetched["full_note"], full_note)
+        self.assertEqual(len(fetched["full_note"]), len(full_note))
+        for marker in ("一、核心結論", "二、財報數字", "三、風險點",
+                        "四、待追蹤指標"):
+            self.assertIn(marker, fetched["full_note"])
+
+    def test_list_stances_active_only_filter(self):
+        """`list_stances(include_closed=False)`：只回傳 active 立場，
+        `include_closed=True`（預設）回傳全部歷史（含 closed）。"""
+        self.store.save_stance(ticker="NET", direction="bullish",
+                                summary="舊立場", full_note="筆記一",
+                                status="closed")
+        self.store.save_stance(ticker="NET", direction="bearish",
+                                summary="新立場", full_note="筆記二")
+        active_only = self.store.list_stances("NET", include_closed=False)
+        self.assertEqual(len(active_only), 1)
+        self.assertEqual(active_only[0]["summary"], "新立場")
+        all_history = self.store.list_stances("NET", include_closed=True)
+        self.assertEqual(len(all_history), 2)
+
 
 class WatchConditionCrudTest(unittest.TestCase):
     def setUp(self):
