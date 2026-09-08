@@ -12,9 +12,10 @@ API 文件的一般 schema 寫的，這次任務範圍沒有可用的 FMP API ke
 呼叫驗證——下一輪真正整測時，**務必**先用真實 key 打一次確認欄位名稱
 與本檔案假設一致，不一致要照實際回應調整，不要假設這裡寫的就是對的。
 
-備援來源（Alpha Vantage 或 yfinance，二擇一定案，見 `research.md` §1
-待辦）：這一輪只留好可掛載的函式簽名（`get_quote_fallback`），**尚未
-實作備援邏輯本身**——呼叫會如實回傳「尚未實作」的錯誤，不假裝有資料。
+備援來源（2026-09-08 定案：yfinance，見 `get_quote_fallback()` docstring）
+——不裝 `yfinance` 套件本身，直接打它底層用的 Yahoo Finance 公開端點，
+維持零第三方依賴；`us_stock_scan.py` 的 `_scan_one_ticker()` 已接上：
+FMP 失敗時自動嘗試這個備援，備援也失敗才真的視為這輪跳過。
 
 token 來源優先序：參數 > 環境變數 `FMP_API_KEY` > `data_dir/fmp_token.txt`
 （比照 `finmind_client.py::_read_token` 的既有慣例，見 quickstart.md
@@ -135,18 +136,64 @@ def get_fundamentals(ticker, data_dir=None, token=None):
     }
 
 
-def get_quote_fallback(ticker, data_dir=None):
-    """備援報價來源留好的介面（Alpha Vantage 或 yfinance，二擇一定案，
-    見 `research.md` §1 待辦）。**這一輪只留函式簽名，尚未實作備援邏輯
-    本身**——呼叫時如實回傳「尚未實作」，不假裝有資料、不猜測回應格式。
+_YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/%s"
+# Yahoo 這個非官方端點對沒有瀏覽器特徵的 User-Agent 容易直接拒絕連線
+# （跟 FMP 官方 API 不同，FMP 用簡單識別用途的 UA 就接受）；這裡用常見
+# 瀏覽器 UA 字串換取穩定回應，不是要偽裝身分。
+_YAHOO_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 
-    未來實作時預期回傳格式應與 `get_quote()` 一致：成功時
-    `{"ticker":.., "close_price":.., "change_pct":.., "source": "alpha_vantage"}`
-    （或 `"yfinance"`），失敗時 `{"error": ...}`。
+
+def get_quote_fallback(ticker, data_dir=None):
+    """備援報價來源（2026-09-08 定案：yfinance，見 `research.md` §1）。
+
+    **不安裝 `yfinance` PyPI 套件本身**——該套件會額外拉進
+    `pandas`／`numpy` 等重量級依賴，跟本檔案（及 FMP client／Telegram
+    推播）刻意維持「零第三方依賴、只用 `urllib` 標準庫」的既有風格不
+    一致。這裡直接呼叫 `yfinance` 套件底層實際使用的同一個 Yahoo
+    Finance 公開圖表端點（`/v8/finance/chart/{ticker}`），效果一致但
+    不多背一份依賴——`data_dir` 參數保留但目前用不到（Yahoo 這個端點
+    不需要 API key），維持與 `get_quote()` 一致的呼叫介面。
+
+    **非官方端點，Yahoo 隨時可能改格式或封鎖**——這是 `research.md` §1
+    已經記錄過的已知風險（ToS 灰色地帶、無穩定性保證），不是這裡新引入
+    的風險，只是提醒：這裡的欄位解析（`regularMarketPrice`／
+    `previousClose`）沒有官方文件保證，未來若 Yahoo 改格式，這裡會
+    開始回傳 `{"error": ...}`（不會靜默回傳錯誤數字），需要重新調整。
+
+    回傳格式與 `get_quote()` 一致：成功
+    `{"ticker":.., "close_price":.., "change_pct":.., "source": "yfinance"}`，
+    失敗 `{"error": ...}`。不提供基本面資料（毛利率/營收年增率）——這個
+    端點只有報價，`us_stock_scan.py` 呼叫端已經把基本面查詢獨立處理，
+    這裡失敗不影響那邊。
     """
+    url = _YAHOO_CHART_URL % urllib.parse.quote(ticker)
+    req = urllib.request.Request(url, headers={"User-Agent": _YAHOO_USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return {"error": "yfinance(Yahoo) HTTP %s：%s" % (exc.code, ticker)}
+    except Exception as exc:  # 網路不通、逾時、JSON 壞掉——不拋例外
+        return {"error": "yfinance(Yahoo) 呼叫失敗（%s）：%s" % (ticker, exc)}
+
+    try:
+        result = payload["chart"]["result"][0]
+        meta = result["meta"]
+        close_price = meta["regularMarketPrice"]
+        prev_close = meta.get("previousClose") or meta.get("chartPreviousClose")
+    except (KeyError, IndexError, TypeError):
+        return {"error": "yfinance(Yahoo) 回應格式不符預期：%s" % ticker}
+
+    change_pct = None
+    if prev_close:
+        change_pct = round((close_price - prev_close) / prev_close * 100, 2)
+
     return {
-        "error": (
-            "備援報價來源尚未實作（Alpha Vantage/yfinance 二擇一待定案，"
-            "見 research.md §1）：%s" % ticker
-        )
+        "ticker": ticker,
+        "close_price": close_price,
+        "change_pct": change_pct,
+        "source": "yfinance",
     }

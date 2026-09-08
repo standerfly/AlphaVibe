@@ -33,6 +33,16 @@ def _fake_get_fundamentals(ticker, data_dir=None, token=None):
             "revenue_yoy": 0.12, "source": "fmp"}
 
 
+def _fallback_also_fails(ticker, data_dir=None):
+    """`get_quote_fallback`（yfinance）在測試裡的預設替身——備援也失敗，
+    保留這些測試原本「這檔股票這輪真的完全抓不到資料」的語意，同時避免
+    在跑測試時意外打真的網路（2026-09-08 接上真正的 yfinance 備援後
+    補上，原本這幾個測試只 mock `get_quote`，備援函式當時還是回傳
+    「尚未實作」的 stub 不會真的連網；現在備援是真的 HTTP 呼叫了，
+    不 mock 這個就會在跑測試時打向 Yahoo）。"""
+    return {"error": "yfinance(Yahoo) 測試替身：模擬備援也失敗：%s" % ticker}
+
+
 class RunScanGracefulDegradationTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="us-stock-scan-test-")
@@ -52,6 +62,9 @@ class RunScanGracefulDegradationTest(unittest.TestCase):
     def test_one_ticker_failure_does_not_block_others(self):
         with unittest.mock.patch.object(
                 us_stock_price_client, "get_quote", side_effect=_fake_get_quote), \
+             unittest.mock.patch.object(
+                us_stock_price_client, "get_quote_fallback",
+                side_effect=_fallback_also_fails), \
              unittest.mock.patch.object(
                 us_stock_price_client, "get_fundamentals",
                 side_effect=_fake_get_fundamentals):
@@ -73,6 +86,9 @@ class RunScanGracefulDegradationTest(unittest.TestCase):
         data-model.md §4 的預期行為），成功的股票正常寫入。"""
         with unittest.mock.patch.object(
                 us_stock_price_client, "get_quote", side_effect=_fake_get_quote), \
+             unittest.mock.patch.object(
+                us_stock_price_client, "get_quote_fallback",
+                side_effect=_fallback_also_fails), \
              unittest.mock.patch.object(
                 us_stock_price_client, "get_fundamentals",
                 side_effect=_fake_get_fundamentals):
@@ -98,6 +114,9 @@ class RunScanGracefulDegradationTest(unittest.TestCase):
 
         with unittest.mock.patch.object(
                 us_stock_price_client, "get_quote", side_effect=_fake_get_quote), \
+             unittest.mock.patch.object(
+                us_stock_price_client, "get_quote_fallback",
+                side_effect=_fallback_also_fails), \
              unittest.mock.patch.object(
                 us_stock_price_client, "get_fundamentals",
                 side_effect=failing_fundamentals):
@@ -125,6 +144,9 @@ class MainCliExitCodeTest(unittest.TestCase):
     def test_partial_failure_returns_nonzero_but_still_writes_success(self):
         with unittest.mock.patch.object(
                 us_stock_price_client, "get_quote", side_effect=_fake_get_quote), \
+             unittest.mock.patch.object(
+                us_stock_price_client, "get_quote_fallback",
+                side_effect=_fallback_also_fails), \
              unittest.mock.patch.object(
                 us_stock_price_client, "get_fundamentals",
                 side_effect=_fake_get_fundamentals):
@@ -275,6 +297,9 @@ class WatchConditionEvaluationTest(unittest.TestCase):
                 us_stock_price_client, "get_quote",
                 side_effect=_quote_quota_exhausted), \
              unittest.mock.patch.object(
+                us_stock_price_client, "get_quote_fallback",
+                side_effect=_fallback_also_fails), \
+             unittest.mock.patch.object(
                 us_stock_scan, "notify_telegram", return_value=True) as mock_notify:
             result2 = us_stock_scan.run_scan(self.tmp)
 
@@ -302,6 +327,9 @@ class WatchConditionEvaluationTest(unittest.TestCase):
         with unittest.mock.patch.object(
                 us_stock_price_client, "get_quote",
                 side_effect=_quote_quota_exhausted), \
+             unittest.mock.patch.object(
+                us_stock_price_client, "get_quote_fallback",
+                side_effect=_fallback_also_fails), \
              unittest.mock.patch.object(
                 us_stock_scan, "notify_telegram", return_value=True) as mock_notify:
             us_stock_scan.run_scan(self.tmp)
