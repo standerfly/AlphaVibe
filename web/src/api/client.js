@@ -47,3 +47,26 @@ export async function apiPost(path, body) {
   }
   return res.json()
 }
+
+/* DELETE helper（Phase 5 US3 T029 第一次用到——監控條件卡片的刪除按鈕，
+   `app/routers/us_stocks.py::remove_watch_condition`）。既有 Assets.jsx
+   的「封存」動作是用 POST 到 /archive 端點模擬刪除，但監控條件是真的要
+   移除整筆列（不是可回顧的歷史紀錄），用標準 DELETE 方法更直接對應
+   語意，這裡補一個對稱於 apiPost 的極簡 helper，不強行套用 archive
+   那套慣例。*/
+export async function apiDelete(path) {
+  const res = await fetch(path, { method: 'DELETE' })
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const data = await res.json()
+      if (data && data.detail) {
+        detail = `：${typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)}`
+      }
+    } catch (_err) {
+      // 忽略非 JSON 回應。
+    }
+    throw new ApiError(`${path} 回傳 ${res.status}${detail}`, res.status, path)
+  }
+  return res.json()
+}

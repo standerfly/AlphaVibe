@@ -32,6 +32,7 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 | 首頁 | `web/src/pages/Home.jsx` | 彙總其他分頁 API | 本 repo |
 | 投資（原「儀表板」，2026-08-24 更名） | `Dashboard.jsx`／`StockDetail.jsx` | `dashboard.py`／`screen.py`／`market_scan.py`／`holdings.py`／`holdings_import.py`／`stock_detail.py`／`actions.py` | `poc/kb-mcp/`（report.py／screener.py／frameworks.py，未重寫） |
 | 資產 | `Assets.jsx` | `assets.py` | `kb_store.py` 新增 5 張表，手動輸入，無外部依賴 |
+| 美股（2026-09-08新增） | `UsStocks.jsx`／`UsStockDetail.jsx`／`UsStockImport.jsx` | `app/routers/us_stocks.py` | `poc/kb-mcp/us_stock_store.py`（獨立`USStockStore`+獨立db`us_stocks.db`，刻意不共用`KBStore`/`alphavibe.db`——美股與台股要完全獨立是產品硬性要求，非技術偏好）；Telegram推播暫為stub，`function/stnd-gateway-web`未合併進develop |
 | 相簿 | `Photos.jsx`（MVP 僅入口） | 尚無 | 未來：AutoGallery 資料模型參考（僅有 README 內容，本機實際 repo 路徑未定位到，見 clarification-log） |
 | 旅遊（未來，尚未建立） | — | — | 內容/研究在**另一個獨立專案** `/Users/stander/My_project/mytravel/`——若要做這個分頁，程式碼仍會建在這個 repo，但要不要整合 mytravel 的資料、整合到多深，屬於獨立待討論的範圍決策，不要預設 |
 
@@ -53,12 +54,22 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 完整流程說明：`docs/runbooks/pre-spec-workflow.md`；
 決策依據：`docs/adr/0027-prespec-workflow.md`。
 
+<!-- SPECKIT START -->
+目前進行中的 Spec Kit 技術規劃：`specs/003-us-stocks/plan.md`
+（美股獨立投資系統，分支 `003-us-stocks`）。
+<!-- SPECKIT END -->
+
 ## 分支規則
 
 - 功能分支：`function/<feature-slug>`（kebab-case），基底鎖定 `develop`（ADR-0027）。
-- **已知現況（2026-07-06）**：repo 目前**只有** `function/alphavibe` 分支，
-  `develop` 尚未建立。初始化腳本寫死以 develop 為基底，直接跑會失敗——
-  遇到新功能要初始化時，先問使用者要補建 `develop` 還是改用 `--no-branch`。
+- **更新（2026-09-06）**：`develop` 分支已建立（`origin/develop` 存在），
+  `prespec_init.py` 可正常以 develop 為基底初始化，2026-07-06 當時「develop
+  尚未建立」的已知現況已過時。Spec Kit 的功能分支（`speckit-git-feature`
+  建立，格式 `NNN-feature-name`）是獨立於 `function/<slug>` 的另一套編號，
+  務必先查 `function/alphavibe`（實際PR合併目標分支）的 `specs/` 底下已用
+  到哪些編號，避免撞號——`function/alphavibe` 已有 `001-entry-exit-foundation`／
+  `002-entry-exit-signals`，本地 `develop` 分支沒有 `specs/` 只是因為那兩份
+  規格沒回合到 develop，不能只看本地掃描結果。
 - 初始化腳本完整路徑：`.claude/skills/prespec/scripts/prespec_init.py`
   （不在 repo 根目錄）。不要手動開分支。
 

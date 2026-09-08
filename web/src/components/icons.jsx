@@ -53,6 +53,16 @@ export function PhotosIcon(props) {
   )
 }
 
+export function UsStocksIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M3.5 12h17" />
+      <path d="M12 3.5c2.8 2.3 4.3 5.3 4.3 8.5s-1.5 6.2-4.3 8.5c-2.8-2.3-4.3-5.3-4.3-8.5S9.2 5.8 12 3.5Z" />
+    </svg>
+  )
+}
+
 export function SearchIcon(props) {
   return (
     <svg {...base} {...props}>

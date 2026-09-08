@@ -83,6 +83,7 @@ from app.routers import market_scan as market_scan_router
 from app.routers import mcp as mcp_router
 from app.routers import screen as screen_router
 from app.routers import stock_detail as stock_detail_router
+from app.routers import us_stocks as us_stocks_router
 
 app = FastAPI(title="AlphaVibe App (skeleton)")
 app.add_middleware(DashboardAuthMiddleware)
@@ -95,6 +96,10 @@ app.include_router(actions_router.router)
 app.include_router(holdings_import_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(assets_router.router)
+# 美股獨立投資系統（specs/003-us-stocks）：這一步只有骨架端點
+# （/api/us-stocks/healthz），完整業務端點見該 router 檔頭 docstring。
+# 完全獨立於上面幾個既有台股 router，不共用任何程式碼或資料（FR-015/016）。
+app.include_router(us_stocks_router.router)
 
 
 @app.get("/api/healthz")

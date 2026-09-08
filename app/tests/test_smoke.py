@@ -49,6 +49,18 @@ def _post(path: str, body: bytes, headers: dict = None, timeout: float = 10.0):
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read()
 
+
+def _delete(path: str, timeout: float = 10.0):
+    """Phase 5（US3，T028）新增：`DELETE /api/us-stocks/watch-conditions/{id}`
+    是這個 repo 第一個真正的 DELETE 端點，`_get`／`_post` 都不適用，補一個
+    對稱的極簡 helper。"""
+    req = urllib.request.Request(_BASE + path, method="DELETE")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read()
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _APP_ROOT = os.path.abspath(os.path.join(_HERE, "..", ".."))
 _PRODUCTION_DATA_DIR = os.path.abspath(
@@ -137,6 +149,9 @@ def main() -> int:
             ("GET /api/assets/pockets", "/api/assets/pockets", 200),
             ("GET /api/assets/accounts", "/api/assets/accounts", 200),
             ("GET /api/assets/holdings", "/api/assets/holdings", 200),
+            ("GET /api/us-stocks/healthz", "/api/us-stocks/healthz", 200),
+            ("GET /api/us-stocks/watchlist", "/api/us-stocks/watchlist", 200),
+            ("GET /api/us-stocks/trades/recent", "/api/us-stocks/trades/recent", 200),
         ]
         for label, path, expect_status in checks:
             status, body = _get(path)
@@ -391,6 +406,204 @@ def main() -> int:
                   "(expected status=%s actual status=%s)"
                   % (expected_status, actual_status))
             failures.append("mcp output mismatch")
+
+        # ---- 美股獨立系統（specs/003-us-stocks Phase 3 US1，T020）----
+        # 深度比對：直接在測試庫寫入交易紀錄（不透過 API），跟 API 讀取
+        # 路徑逐欄比對，不只測 200（比照本檔案其餘檢查的既有精神，見
+        # app/routers/us_stocks.py 檔頭 docstring）。這批寫入用的是完全
+        # 獨立的 USStockStore／us_stocks.db，不會碰到上面任何台股相關
+        # 檢查用到的 alphavibe.db（FR-015/016）。
+        from us_stock_store import USStockStore  # noqa: E402
+
+        us_store = USStockStore(data_dir)
+        try:
+            us_store.save_trade(ticker="NET", trade_date="2026-08-05",
+                                 action="buy", shares=10, price=298.40)
+            us_store.save_trade(ticker="NET", trade_date="2026-08-10",
+                                 action="sell", shares=3, price=310.25)
+            us_store.save_price_snapshot(
+                ticker="NET", snapshot_date="2026-09-05", close_price=280.0)
+            us_store.save_price_snapshot(
+                ticker="NET", snapshot_date="2026-09-06", close_price=286.96)
+            expected_us_holdings = us_store.compute_holdings("NET")
+            expected_us_ledger = us_store.list_trades("NET")
+            expected_us_history = us_store.price_history_with_gaps("NET")
+        finally:
+            us_store.close()
+
+        status, actual_us_holdings = _get("/api/us-stocks/holdings?ticker=NET")
+        if status == 200 and actual_us_holdings == expected_us_holdings:
+            print("PASS /api/us-stocks/holdings 輸出跟 USStockStore.compute_holdings() 一致")
+        else:
+            print("FAIL /api/us-stocks/holdings 跟底層函式不一致："
+                  "expected=%r actual=%r" % (expected_us_holdings, actual_us_holdings))
+            failures.append("us-stocks holdings mismatch")
+
+        status, actual_us_trades = _get("/api/us-stocks/trades?ticker=NET")
+        if status == 200 and (actual_us_trades or {}).get("entries") == expected_us_ledger:
+            print("PASS /api/us-stocks/trades 輸出跟 USStockStore.list_trades() 一致")
+        else:
+            print("FAIL /api/us-stocks/trades 跟底層函式不一致")
+            failures.append("us-stocks trades mismatch")
+
+        status, actual_us_history = _get("/api/us-stocks/price-history?ticker=NET")
+        if status == 200 and actual_us_history == expected_us_history:
+            print("PASS /api/us-stocks/price-history 輸出跟 "
+                  "USStockStore.price_history_with_gaps() 一致")
+        else:
+            print("FAIL /api/us-stocks/price-history 跟底層函式不一致："
+                  "expected=%r actual=%r" % (expected_us_history, actual_us_history))
+            failures.append("us-stocks price-history mismatch")
+
+        status, us_watchlist_body = _get("/api/us-stocks/watchlist")
+        us_watchlist_row = next(
+            (r for r in (us_watchlist_body or {}).get("watchlist", [])
+             if r["ticker"] == "NET"), None)
+        if (status == 200 and us_watchlist_row is not None
+                and us_watchlist_row["shares_held"] == expected_us_holdings["shares_held"]
+                and us_watchlist_row["avg_cost"] == expected_us_holdings["avg_cost"]
+                and us_watchlist_row["current_price"] == 286.96):
+            print("PASS /api/us-stocks/watchlist 含 NET，持股/現價跟底層資料一致")
+        else:
+            print("FAIL /api/us-stocks/watchlist 跟底層資料兜不起來：%r" % us_watchlist_row)
+            failures.append("us-stocks watchlist mismatch")
+
+        # /api/us-stocks/healthz 的 db_path 必須是獨立的 us_stocks.db，
+        # 不是 alphavibe.db——這是 FR-015/016「完全獨立」在執行期的最低
+        # 健檢，完整驗證見 quickstart.md「部署後驗收重點」（Phase 6 T034）。
+        status, us_healthz = _get("/api/us-stocks/healthz")
+        if status == 200 and (us_healthz or {}).get("db_path", "").endswith("us_stocks.db"):
+            print("PASS /api/us-stocks/healthz 確認查的是獨立的 us_stocks.db")
+        else:
+            print("FAIL /api/us-stocks/healthz db_path 不是預期的 us_stocks.db：%r" % us_healthz)
+            failures.append("us-stocks db isolation check")
+
+        # POST /api/us-stocks/trades/confirm（T017 匯入核對確認畫面用）：
+        # 送出既有紀錄的修正值，確認 store.update_trade() 真的落庫。
+        trade_id = expected_us_ledger[0]["id"]
+        confirm_status, confirm_raw = _post(
+            "/api/us-stocks/trades/confirm",
+            json.dumps({"trades": [{
+                "id": trade_id, "ticker": "NET", "trade_date": "2026-08-05",
+                "action": "buy", "shares": 12, "price": 300.0,
+            }]}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        confirm_body = json.loads(confirm_raw.decode("utf-8")) if confirm_raw else {}
+        us_store2 = USStockStore(data_dir)
+        try:
+            updated_trade = us_store2.get_trade(trade_id)
+        finally:
+            us_store2.close()
+        if (confirm_status == 200 and confirm_body.get("errors") == []
+                and updated_trade is not None
+                and updated_trade["shares"] == 12 and updated_trade["price"] == 300.0):
+            print("PASS /api/us-stocks/trades/confirm 正確更新既有交易紀錄")
+        else:
+            print("FAIL /api/us-stocks/trades/confirm 未正確更新："
+                  "status=%s body=%r updated=%r"
+                  % (confirm_status, confirm_body, updated_trade))
+            failures.append("us-stocks confirm mismatch")
+
+        # ---- 美股「投資立場」（specs/003-us-stocks Phase 4 US2，T022）----
+        # 深度比對：直接在測試庫寫入立場（含多段落 full_note，模擬真實
+        # 研究筆記長度），跟 API 讀取路徑逐欄比對，特別驗證 full_note
+        # 沒有被任何一層（router/序列化）截斷（FR-009）。
+        us_full_note = (
+            "# NET 研究筆記（煙霧測試用）\n\n"
+            "## 一、核心結論\n\n第一段落內容，測試多行文字完整保留。\n\n"
+            "## 二、財報數字\n\n| 指標 | 數值 |\n|---|---|\n| 營收 | $696.1M |\n\n"
+            "## 三、風險點\n\n- 風險一\n- 風險二\n\n"
+            "> 這是一段引用文字。\n"
+        )
+        us_store3 = USStockStore(data_dir)
+        try:
+            us_store3.save_stance(
+                ticker="NET", direction="bullish", summary="偏多．等回檔",
+                full_note=us_full_note, bear_price=200, bull_price=330)
+            expected_us_stance = us_store3.get_latest_stance("NET")
+        finally:
+            us_store3.close()
+
+        status, actual_us_stance_body = _get("/api/us-stocks/stance?ticker=NET")
+        actual_us_stance = (actual_us_stance_body or {}).get("stance")
+        if (status == 200 and actual_us_stance == expected_us_stance
+                and actual_us_stance is not None
+                and actual_us_stance["full_note"] == us_full_note
+                and len(actual_us_stance["full_note"]) == len(us_full_note)):
+            print("PASS /api/us-stocks/stance 輸出跟 USStockStore.get_latest_stance() "
+                  "一致，full_note 完整無截斷")
+        else:
+            print("FAIL /api/us-stocks/stance 跟底層函式不一致或 full_note 被截斷："
+                  "expected=%r actual=%r" % (expected_us_stance, actual_us_stance))
+            failures.append("us-stocks stance mismatch")
+
+        # ---- 美股「關注條件」（specs/003-us-stocks Phase 5 US3，T028）----
+        # 深度比對：POST 新增 → GET 查詢比對底層 store 輸出 → DELETE 刪除
+        # → 確認真的從底層消失。同時驗證 watchlist 在有監控條件之後帶出
+        # watch_status（先前 T020 那次查詢 NET 時還沒有任何監控條件，
+        # 所以那裡看不到這個欄位有值，這裡補上完整驗證）。
+        create_status, create_raw = _post(
+            "/api/us-stocks/watch-conditions",
+            json.dumps({
+                "ticker": "NET", "metric_type": "price",
+                "comparator": "lt", "threshold": 250,
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        created_condition = json.loads(create_raw.decode("utf-8")) if create_raw else {}
+        us_store4 = USStockStore(data_dir)
+        try:
+            expected_conditions = us_store4.list_watch_conditions_with_stale("NET")
+        finally:
+            us_store4.close()
+
+        list_status, list_body = _get("/api/us-stocks/watch-conditions?ticker=NET")
+        if (create_status == 200 and created_condition.get("status") == "insufficient_data"
+                and list_status == 200
+                and (list_body or {}).get("conditions") == expected_conditions):
+            print("PASS /api/us-stocks/watch-conditions 新增/查詢輸出跟 "
+                  "USStockStore.list_watch_conditions_with_stale() 一致")
+        else:
+            print("FAIL /api/us-stocks/watch-conditions 新增/查詢跟底層函式不一致："
+                  "create=%r list=%r expected=%r"
+                  % (created_condition, list_body, expected_conditions))
+            failures.append("us-stocks watch-conditions crud mismatch")
+
+        watchlist_status2, watchlist_body2 = _get("/api/us-stocks/watchlist")
+        watchlist_row2 = next(
+            (r for r in (watchlist_body2 or {}).get("watchlist", [])
+             if r["ticker"] == "NET"), None)
+        if (watchlist_status2 == 200 and watchlist_row2 is not None
+                and watchlist_row2.get("watch_status") == "insufficient_data"
+                and watchlist_row2.get("stance_direction") == "bullish"):
+            print("PASS /api/us-stocks/watchlist 帶出 watch_status／"
+                  "stance_direction（T030 完整版 landing 頁欄位）")
+        else:
+            print("FAIL /api/us-stocks/watchlist 缺少或錯誤的 watch_status/"
+                  "stance_direction：%r" % watchlist_row2)
+            failures.append("us-stocks watchlist watch_status mismatch")
+
+        condition_id = created_condition.get("id")
+        delete_status, _ = _delete("/api/us-stocks/watch-conditions/%s" % condition_id)
+        us_store5 = USStockStore(data_dir)
+        try:
+            deleted_check = us_store5.get_watch_condition(condition_id)
+        finally:
+            us_store5.close()
+        if delete_status == 200 and deleted_check is None:
+            print("PASS DELETE /api/us-stocks/watch-conditions/{id} 真的從底層刪除")
+        else:
+            print("FAIL DELETE /api/us-stocks/watch-conditions/{id} 未正確刪除："
+                  "status=%s remaining=%r" % (delete_status, deleted_check))
+            failures.append("us-stocks watch-conditions delete mismatch")
+
+        delete_missing_status, _ = _delete("/api/us-stocks/watch-conditions/999999")
+        if delete_missing_status == 404:
+            print("PASS DELETE 不存在的監控條件回 404")
+        else:
+            print("FAIL DELETE 不存在的監控條件應回 404，實際：%s" % delete_missing_status)
+            failures.append("us-stocks watch-conditions delete-missing mismatch")
 
         # 2026-08-22 教訓：get_kb_store() 是 sync generator dependency，
         # Starlette 用 anyio thread pool 執行，「建立」跟「關閉」不保證
