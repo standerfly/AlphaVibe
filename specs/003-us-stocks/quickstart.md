@@ -26,8 +26,10 @@ STND 新增獨立「美股」分頁：截圖匯入交易、股價走勢圖疊加
 比照既有 `poc/kb-mcp/tests/` 與 `app/tests/test_smoke.py` 的模式：
 
 ```bash
-# 儲存層測試（新增 test_us_stock_store.py 後）
-python3 -m unittest discover -s poc/kb-mcp/tests -p "test_us_stock*"
+# 儲存層測試——2026-09-08起務必用 .venv/bin/python3，不能用裸 python3：
+# poc/kb-mcp/ 裝了 yfinance 之後有了第一個第三方依賴，本機預設 python3
+# 指向另一個專案（AI-stock-km-v1）的虛擬環境，沒有這個套件會import失敗
+.venv/bin/python3 -m unittest discover -s poc/kb-mcp/tests -p "test_us_stock*"
 
 # FastAPI router 深度比對測試（若有新增 app/tests 對應測試）
 ALPHAVIBE_DATA_DIR=<獨立測試庫路徑> .venv/bin/python3 -m app.tests.test_smoke
@@ -46,15 +48,26 @@ gitignore），**絕對不要**指向 `poc/data/`（正式庫）——這是本 
 python3 poc/kb-mcp/us_stock_scan.py --trigger manual
 ```
 
-## 已知的技術待辦（非阻塞，留待實作階段解決）
+## 已知的技術待辦（2026-09-08 用真實 FMP key 整測後更新狀態）
 
-- 備援報價來源最終選定（Alpha Vantage 或 yfinance）——research.md §1
-  已列出兩者利弊，需要在寫 `us_stock_price_client.py` 時定案
-- HTTP client 函式庫沿用 `finmind_client.py` 的既有慣例，實作前先看
-  該檔案確認用的是哪個函式庫
-- API 金鑰儲存方式——比照 `finmind_token.txt` 的既有先例，或改用環境變數，
-  待實作時決定
+- ✅ 備援報價來源：yfinance 套件（`poc/kb-mcp/requirements.txt`，
+  `.venv/bin/pip install -r poc/kb-mcp/requirements.txt`）。**這是
+  `poc/kb-mcp/` 第一個第三方依賴**——原本設計是手刻直接打 Yahoo 端點
+  維持零依賴，真實整測時發現被 HTTP 429 擋下（Yahoo 需要 session/
+  crumb/TLS 指紋處理），改裝真正套件
+- ✅ HTTP client 函式庫：`urllib` 標準庫（FMP／Telegram 皆同），yfinance
+  備援例外（見上）
+- ✅ API 金鑰儲存：`poc/data/fmp_token.txt`（比照 `finmind_token.txt`
+  先例，不進 git）
+- ⚠️ **2026-09-08 真實整測新發現**：FMP 端點已於 2025-08-31 停用舊版
+  `/api/v3/`，改用 `/stable/` + query string（`?symbol=...`）——已修正
+  `us_stock_price_client.py`。**另外發現 FMP 免費層除了額度限制，
+  還有股票代碼白名單**：AAPL/MSFT/TSLA 等大型股可查，NET/GOOG/CRWD
+  這類回傳 HTTP 402「訂閱方案不含此股票」——這代表 yfinance 備援在
+  實際使用情境下觸發頻率遠高於原本「純額度備援」的設計預期，追蹤股票
+  清單裡有多少檔真的能用 FMP 查到，需要實際使用時逐一確認
 - `metric_type` 的完整列舉值清單——依 FMP 實際可取得的基本面欄位定案
+  （尚未處理，欄位名稱`revenue`/`grossProfit`已confirm正確）
 
 ## launchd 部署步驟（`us_stock_scan.py` 每日排程）
 
@@ -66,7 +79,11 @@ python3 poc/kb-mcp/us_stock_scan.py --trigger manual
 1. 建立 `~/Library/LaunchAgents/com.alphavibe.usstockscan.plist`，內容
    比照下列骨架（`StartCalendarInterval` 用 `research.md` §4 建議的
    台北時間 06:00，跟既有 `marketscan` 的 02:00、`moduled` 的 17:00
-   錯開，避免排程互相搶佔系統資源）：
+   錯開，避免排程互相搶佔系統資源）。**直譯器務必用
+   `.venv/bin/python3`，不要照抄 `marketscan.plist` 用 `/usr/bin/python3`**
+   ——2026-09-08 起 `us_stock_price_client.py` 的 yfinance 備援依賴裝在
+   `poc/kb-mcp/requirements.txt`（`AlphaVibe/.venv`），系統 Python 沒有
+   這個套件，排程若用系統 Python 執行，備援會直接 import 失敗：
 
    ```xml
    <?xml version="1.0" encoding="UTF-8"?>
@@ -78,7 +95,7 @@ python3 poc/kb-mcp/us_stock_scan.py --trigger manual
      <string>com.alphavibe.usstockscan</string>
      <key>ProgramArguments</key>
      <array>
-       <string>/usr/bin/python3</string>
+       <string>/Users/stander/My_project/AlphaVibe/.venv/bin/python3</string>
        <string>/Users/stander/My_project/AlphaVibe/poc/kb-mcp/us_stock_scan.py</string>
        <string>--trigger</string>
        <string>scheduled</string>
