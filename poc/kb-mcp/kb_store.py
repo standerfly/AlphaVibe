@@ -100,6 +100,16 @@ CREATE TABLE IF NOT EXISTS stock_valuation_snapshots (
     revenue_error TEXT,
     checked_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS exit_thresholds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL,
+    stop_loss REAL,
+    take_profit REAL,
+    reason TEXT,
+    source_ref TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_exit_thresholds_code ON exit_thresholds(code, id DESC);
 CREATE TABLE IF NOT EXISTS stock_price_history (
     code TEXT NOT NULL,
     date TEXT NOT NULL,
@@ -149,7 +159,8 @@ CREATE TABLE IF NOT EXISTS market_scan_runs (
     run_at TEXT NOT NULL,
     total_scanned INTEGER,
     benchmark_drawdown_pct REAL,
-    benchmark_error TEXT
+    benchmark_error TEXT,
+    emerging_error TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_market_scan_runs ON market_scan_runs(framework_id, run_at DESC);
 CREATE TABLE IF NOT EXISTS market_scan_results (
@@ -275,6 +286,7 @@ _MIGRATIONS = {
         ("total_scanned", "INTEGER"),
         ("benchmark_drawdown_pct", "REAL"),
         ("benchmark_error", "TEXT"),
+        ("emerging_error", "TEXT"),
     ],
     "market_scan_results": [
         ("market_drawdown_pct", "REAL"),
@@ -722,8 +734,22 @@ class KBStore:
             "SELECT max(snapshot_date) AS d FROM holdings").fetchone()["d"]
         if latest is None:
             return {"snapshot_date": None, "count": 0, "holdings": []}
+        # 2026-09-02（交易紀錄自動同步持股快照）：同一天同代碼可能出現兩列
+        # ——holdings_sync.py 每次交易匯入後會重寫「今天完整快照」，若當天
+        # 稍後又手動上傳一次券商持股報告，兩者都落在同一個
+        # snapshot_date，靠 id AUTOINCREMENT 嚴格遞增取後寫入者勝出（券商
+        # 報告永遠優先於自動推算，見product-spec決策），不需要額外的
+        # 「來源優先權」欄位。同時篩掉 shares<=0（賣出歸零/已出清的代碼）
+        # ——這代表「是否持有」，不該再出現在最新持股清單。get_holdings
+        # (code=X) 這條「查歷史」的分支不受影響，仍完整保留每一列
+        # （含shares=0那筆），供需要「出清那一刻」的呼叫端使用。
         rows = self.conn.execute(
-            "SELECT * FROM holdings WHERE snapshot_date=? ORDER BY code",
+            "SELECT h.* FROM holdings h"
+            " INNER JOIN (SELECT code, max(id) AS max_id FROM holdings"
+            "             WHERE snapshot_date=? GROUP BY code) t"
+            " ON h.id = t.max_id"
+            " WHERE h.shares > 0"
+            " ORDER BY h.code",
             (latest,),
         ).fetchall()
         return {"snapshot_date": latest, "count": len(rows),
@@ -1151,6 +1177,95 @@ class KBStore:
         ).fetchall()
         return {"code": code, "count": len(rows), "entries": [dict(r) for r in rows]}
 
+    # ---------- 停損停利門檻（002-entry-exit-signals FR-001~FR-003）----------
+    # 刻意採 append-only + max(id) 取最新，跟 stances 同模式，而不是
+    # position_plans 的 INSERT OR REPLACE——門檻背後有討論脈絡，
+    # 要能回答「當初為什麼設在這裡」，覆寫掉就查不到了。
+
+    def save_exit_threshold(self, code, stop_loss=None, take_profit=None,
+                            reason=None, source_ref=None):
+        """新增一筆門檻設定（append-only，不覆寫舊值）。
+
+        stop_loss 與 take_profit 至少要給一個；給定的值必須 > 0；
+        兩者都給時 stop_loss 必須小於 take_profit（否則是明顯的設定錯誤，
+        直接擋下而不是存進去讓它每天誤觸發）。
+        """
+        if not code:
+            raise ValueError("code 為必填")
+        if stop_loss is None and take_profit is None:
+            raise ValueError("stop_loss 與 take_profit 至少要給一個")
+        parsed = {}
+        for name, value in (("stop_loss", stop_loss), ("take_profit", take_profit)):
+            if value is None:
+                parsed[name] = None
+                continue
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                raise ValueError("%s 必須是數字" % name)
+            if number <= 0:
+                raise ValueError("%s 必須大於 0" % name)
+            parsed[name] = number
+        if (parsed["stop_loss"] is not None and parsed["take_profit"] is not None
+                and parsed["stop_loss"] >= parsed["take_profit"]):
+            raise ValueError("stop_loss 必須小於 take_profit")
+
+        created_at = _now()
+        cur = self.conn.execute(
+            "INSERT INTO exit_thresholds"
+            " (code, stop_loss, take_profit, reason, source_ref, created_at)"
+            " VALUES (?,?,?,?,?,?)",
+            (code, parsed["stop_loss"], parsed["take_profit"], reason,
+             source_ref or "對話設定", created_at))
+        self.conn.commit()
+        return {"saved": True, "id": cur.lastrowid, "code": code,
+                "stop_loss": parsed["stop_loss"], "take_profit": parsed["take_profit"],
+                "reason": reason, "created_at": created_at}
+
+    def get_exit_threshold(self, code):
+        """該標的最新一筆門檻；**從未設定回 None**。
+
+        呼叫端據此顯示「尚未設定」，不要自己編一個預設門檻——沒討論過的
+        標的看起來像已經有策略，比沒有更危險（FR-003）。
+        """
+        if not code:
+            raise ValueError("code 為必填")
+        row = self.conn.execute(
+            "SELECT * FROM exit_thresholds WHERE code=? ORDER BY id DESC LIMIT 1",
+            (code,)).fetchone()
+        return dict(row) if row else None
+
+    def get_all_exit_thresholds(self):
+        """每檔最新一筆，供批次判斷。"""
+        rows = self.conn.execute(
+            "SELECT t.* FROM exit_thresholds t"
+            " INNER JOIN (SELECT code, max(id) AS mid FROM exit_thresholds"
+            "             GROUP BY code) latest ON t.id = latest.mid"
+        ).fetchall()
+        return {r["code"]: dict(r) for r in rows}
+
+    def get_exit_threshold_history(self, code):
+        """該標的完整設定歷史，舊到新——這是 append-only 的意義所在。"""
+        if not code:
+            raise ValueError("code 為必填")
+        rows = self.conn.execute(
+            "SELECT * FROM exit_thresholds WHERE code=? ORDER BY id", (code,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_all_trade_entries(self):
+        """回傳全部標的的交易流水（依 code、date、id 排序）。
+
+        給 FIFO 損益的全量計算用（FR-011）：既有 get_trade_ledger(code)
+        必須逐檔查，60 檔就是 60 次查詢；這裡一次查回由呼叫端在記憶體
+        分組，資料量小（實測 537 筆）成本可忽略。
+        刻意另開新方法而非改 get_trade_ledger 的簽名，避免影響既有呼叫端。
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM trade_ledger ORDER BY code, date, id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def trade_ledger_order_ref_exists(self, order_ref):
         """委託書號防重複查詢：trade_ledger 裡是否已存在相同 order_ref 的
         既有列（非 NULL 比對，SQLite `=` 對 NULL 一律不成立，不需要額外
@@ -1270,11 +1385,12 @@ class KBStore:
         cur = self.conn.execute(
             "INSERT INTO market_scan_runs (framework_id, trigger_source,"
             " candidate_count, meets_count, twse_error, tpex_error, run_at,"
-            " total_scanned, benchmark_drawdown_pct, benchmark_error)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            " total_scanned, benchmark_drawdown_pct, benchmark_error, emerging_error)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (framework_id, trigger_source, candidate_count, meets_count,
              market_errors.get("TWSE"), market_errors.get("TPEx"), run_at,
-             total_scanned, benchmark.get("window_drawdown_pct"), benchmark.get("error")),
+             total_scanned, benchmark.get("window_drawdown_pct"), benchmark.get("error"),
+             market_errors.get("興櫃")),
         )
         run_id = cur.lastrowid
         for row in rows:

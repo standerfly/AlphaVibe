@@ -1,4 +1,5 @@
 """追溯層測試：分析快照＋來源、持股快照、新 MCP 工具、report 呈現。"""
+import inspect
 import os
 import re
 import shutil
@@ -166,6 +167,54 @@ class HoldingsTest(unittest.TestCase):
         codes = {h["code"] for h in latest["holdings"]}
         self.assertEqual(codes, {"2308", "2337"})
 
+    def test_same_day_same_code_two_rows_returns_higher_id_row(self):
+        """2026-09-02（交易紀錄自動同步）回歸測試：同一天同代碼出現兩列
+        （例如自動同步先寫、券商報告後補上不同數字）時，get_holdings()
+        該回傳id較大（後寫入）那列，不是任意一列或兩列都回。"""
+        self.store.save_holdings(
+            [{"code": "2330", "name": "台積電", "shares": 1000, "avg_cost": 880.0}],
+            snapshot_date="2026-09-01", source_ref="第一次")
+        self.store.save_holdings(
+            [{"code": "2330", "name": "台積電", "shares": 2000, "avg_cost": 900.0}],
+            snapshot_date="2026-09-01", source_ref="第二次")
+
+        latest = self.store.get_holdings()
+        self.assertEqual(latest["count"], 1)
+        self.assertEqual(latest["holdings"][0]["shares"], 2000)
+        self.assertEqual(latest["holdings"][0]["avg_cost"], 900.0)
+        self.assertEqual(latest["holdings"][0]["source_ref"], "第二次")
+
+    def test_shares_zero_excluded_from_unbound_query(self):
+        """shares<=0（賣出歸零/已出清）的代碼，不該出現在不帶code的
+        get_holdings()結果——代表「是否持有」，該檔已經出清了。"""
+        self.store.save_holdings(
+            [{"code": "2330", "name": "台積電", "shares": 1000, "avg_cost": 880.0},
+             {"code": "6805", "name": "鴻勁", "shares": 500, "avg_cost": 1000.0}],
+            snapshot_date="2026-09-01")
+        self.store.save_holdings(
+            [{"code": "2330", "name": "台積電", "shares": 0, "avg_cost": 880.0}],
+            snapshot_date="2026-09-01", source_ref="賣出歸零")
+
+        latest = self.store.get_holdings()
+        self.assertEqual(latest["count"], 1)
+        self.assertEqual(latest["holdings"][0]["code"], "6805")
+
+    def test_get_holdings_with_code_still_includes_shares_zero_history(self):
+        """get_holdings(code=X)查歷史的分支不受shares<=0篩選影響，仍要
+        完整保留每一列（含shares=0那筆），供需要『出清那一刻』的呼叫端
+        使用。"""
+        self.store.save_holdings(
+            [{"code": "2330", "name": "台積電", "shares": 1000, "avg_cost": 880.0}],
+            snapshot_date="2026-09-01")
+        self.store.save_holdings(
+            [{"code": "2330", "name": "台積電", "shares": 0, "avg_cost": 880.0}],
+            snapshot_date="2026-09-01", source_ref="賣出歸零")
+
+        history = self.store.get_holdings("2330")
+        self.assertEqual(history["count"], 2)
+        shares_values = {h["shares"] for h in history["history"]}
+        self.assertEqual(shares_values, {1000, 0})
+
 
 class ServerToolsTest(unittest.TestCase):
     """直接以 Server 類別呼叫（協定層已有既有 E2E 測試涵蓋）。"""
@@ -178,11 +227,15 @@ class ServerToolsTest(unittest.TestCase):
         self.server.store.close()
         shutil.rmtree(self.tmp)
 
-    def test_tools_list_has_forty_three(self):
+    def test_tools_list_has_forty_seven(self):
         """2026-08-19：40→43。save_position_plan／get_position_plan（加碼
-        計畫總額度）＋check_auto_score（Score自動化四項評分）。"""
+        計畫總額度）＋check_auto_score（Score自動化四項評分）。
+        2026-09-02：43→45。get_position_pnl／get_price_position
+        （001-entry-exit-foundation 階段A，FR-001~FR-012）。
+        2026-09-03：45→47。save_exit_threshold／get_exit_threshold
+        （002-entry-exit-signals 階段B，FR-001~FR-004）。"""
         names = [t["name"] for t in server.TOOLS]
-        self.assertEqual(len(names), 43)
+        self.assertEqual(len(names), 47)
         for expected in ("save_snapshot", "get_snapshots",
                          "save_holdings", "get_holdings",
                          "save_stock_alias", "get_stock_alias",
@@ -959,6 +1012,147 @@ class ReportTraceabilityTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EntryExitFoundationTraceabilityTest(unittest.TestCase):
+    """001-entry-exit-foundation 階段A 的需求↔實作↔測試對照（FR-001~FR-014）。
+
+    規格：specs/001-entry-exit-foundation/spec.md
+    這個類別只做「對照關係還在不在」的守門，細部行為由 tests/test_pnl.py
+    與 tests/test_price_position.py 涵蓋。
+    """
+
+    FR_MAP = {
+        "FR-001": ("FIFO 已實現損益", "pnl.compute_position_pnl"),
+        "FR-002": ("未實現損益", "pnl.compute_position_pnl"),
+        "FR-003": ("已出清標的仍回傳已實現損益", "pnl.compute_position_pnl"),
+        "FR-004": ("賣超回 history_incomplete＋缺口股數", "pnl.compute_position_pnl"),
+        "FR-005": ("標示 FIFO 與未扣交易成本", "pnl.COST_METHOD"),
+        "FR-006": ("疑似重複列照原樣計入＋警示", "pnl._count_suspected_duplicates"),
+        "FR-007": ("歷史收盤價百分位", "price_position.compute"),
+        "FR-008": ("揭露樣本數與涵蓋期間", "price_position.compute"),
+        "FR-009": ("資料不足回 None 不回 0", "price_position.compute"),
+        "FR-010": ("只用既有快取不查外部 API", "price_position.compute"),
+        "FR-011": ("批次查詢單檔問題不影響整批", "pnl.compute_all_positions"),
+        "FR-012": ("MCP 工具化", "server.TOOLS"),
+        "FR-013": ("不改既有浮動損益顯示", "report._chart_stats_html"),
+        "FR-014": ("一次性回補歷史深度，日常窗口不變", "screener.PRICE_WINDOW_DAYS"),
+    }
+
+    def test_all_frs_have_implementation(self):
+        """每條 FR 都有對應的實作符號存在（不是空殼登記）。"""
+        import pnl
+        import price_position
+        import screener
+
+        modules = {"pnl": pnl, "price_position": price_position,
+                   "server": server, "report": report, "screener": screener}
+        for fr, (desc, symbol) in sorted(self.FR_MAP.items()):
+            module_name, attr = symbol.split(".", 1)
+            module = modules[module_name]
+            self.assertTrue(hasattr(module, attr),
+                            "%s（%s）對應的 %s 不存在" % (fr, desc, symbol))
+
+    def test_fr013_existing_pnl_display_untouched(self):
+        """FR-013：既有的加權平均損益顯示不得被改成 FIFO。
+
+        用行為斷言而非 docstring 字串比對（字串比對太脆弱）：
+        買 100@10、買 100@20、賣 150@30 這組資料——
+          既有做法（全部買進加權平均，不扣賣出）→ 15.0
+          FIFO 剩餘批次成本                      → 20.0
+        回 15.0 才代表既有邏輯沒被改掉。
+        """
+        entries = [
+            {"action": "買", "shares": 100, "price": 10.0},
+            {"action": "買", "shares": 100, "price": 20.0},
+            {"action": "賣", "shares": 150, "price": 30.0},
+        ]
+        self.assertAlmostEqual(report._avg_cost_for_chart(None, entries), 15.0)
+
+    def test_fr014_daily_window_not_widened(self):
+        """FR-014 的 MUST NOT：不得增加每日排程的外部 API 呼叫次數。
+
+        2026-09-02 獨立驗收抓到的問題：原本以為加長 PRICE_WINDOW_DAYS
+        只是「同一次呼叫多拿一點」，實測證實 twse_price_client 是逐月抓
+        （_months_needed = window_days // 20 + 2），窗口變長＝等比例多打
+        HTTP：120 天 8 次／檔、400 天 22 次／檔（上櫃股再乘 2）。
+        改用一次性腳本 backfill_price_history_once.py 補深度，
+        每日排程窗口維持 120。
+
+        這個測試就是釘住那條 MUST NOT——有人再想調大 PRICE_WINDOW_DAYS
+        時會先撞到這裡。
+        """
+        import screener
+        import twse_price_client
+
+        self.assertEqual(screener.PRICE_WINDOW_DAYS, 120)
+        self.assertEqual(
+            twse_price_client._months_needed(screener.PRICE_WINDOW_DAYS), 8,
+            "每日排程每檔的抓取月數變了＝API 呼叫次數變了，違反 FR-014 的 MUST NOT")
+
+    def test_fr014_backfill_script_exists(self):
+        """FR-014 的達成手段：一次性回補腳本存在且可 import。"""
+        import backfill_price_history_once as backfill
+        self.assertTrue(hasattr(backfill, "main"))
+        # 冪等性靠 save_price_history_points 的 INSERT OR REPLACE，
+        # 估算函式讓執行者事前知道要打幾次 API
+        estimate = backfill._estimate_calls(["2330", "2337"], 400)
+        self.assertEqual(estimate["months_per_code"], 22)
+        self.assertEqual(estimate["best_case"], 44)
+
+
+class EntryExitSignalsTraceabilityTest(unittest.TestCase):
+    """002-entry-exit-signals 階段B 的需求↔實作↔測試對照（FR-001~FR-015）。
+
+    規格：specs/002-entry-exit-signals/spec.md
+    細部行為由 tests/test_exit_signals.py 涵蓋，這裡只守「對照關係還在不在」。
+    """
+
+    FR_MAP = {
+        "FR-001": ("門檻設定與歷史保留", "kb_store.KBStore.save_exit_threshold"),
+        "FR-002": ("觸發判斷", "exit_signals.evaluate_threshold"),
+        "FR-003": ("未設定不得當成安全", "exit_signals.evaluate_threshold"),
+        "FR-004": ("對話設定、寫入工具不進唯讀白名單", "server.TOOLS"),
+        "FR-005": ("背離偵測", "exit_signals.detect_divergence"),
+        "FR-006": ("單邊資料不足不下結論", "exit_signals.detect_divergence"),
+        "FR-007": ("營收趨勢期數擴大", "exit_signals.revenue_trend"),
+        "FR-008": ("觸發時建議", "exit_signals.build_suggestion"),
+        "FR-009": ("建議產不出來訊號不被吞", "exit_signals.suggestion_or_note"),
+        "FR-010": ("併入每日流程", "review_engine.run_module_d_review"),
+        "FR-011": ("新訊號失敗不影響既有檢查", "review_engine.run_module_d_review"),
+        "FR-012": ("零新增外部呼叫", "exit_signals.TRIGGERED_STATUSES"),
+        "FR-013": ("不寫入 stances", "review_engine.run_module_d_review"),
+        "FR-014": ("頁面接上 FIFO", "report._chart_stats_html"),
+        "FR-015": ("兩種口徑並存並標明", "report._chart_stats_html"),
+    }
+
+    def test_all_frs_have_implementation(self):
+        import exit_signals
+        import kb_store
+        modules = {"exit_signals": exit_signals, "kb_store": kb_store,
+                   "review_engine": review_engine, "report": report,
+                   "server": server}
+        for fr, (desc, symbol) in sorted(self.FR_MAP.items()):
+            module_name, attr = symbol.split(".", 1)
+            target = modules[module_name]
+            for part in attr.split("."):
+                self.assertTrue(hasattr(target, part),
+                                "%s（%s）對應的 %s 不存在" % (fr, desc, symbol))
+                target = getattr(target, part)
+
+    def test_fr004_write_tool_not_in_readonly(self):
+        """FR-004：門檻設定是寫入操作，唯讀路徑依設計不得看到。"""
+        import server_readonly
+        self.assertNotIn("save_exit_threshold", server_readonly.READONLY_TOOLS)
+        self.assertIn("get_exit_threshold", server_readonly.READONLY_TOOLS)
+
+    def test_fr012_signal_module_has_no_external_client(self):
+        """FR-012：訊號模組不得自己去打外部 API。"""
+        import exit_signals
+        with open(exit_signals.__file__, encoding="utf-8") as handle:
+            source = handle.read()
+        for forbidden in ("finmind_client", "twse_price_client", "urllib"):
+            self.assertNotIn("import %s" % forbidden, source)
 
 
 class RevenueYoyLookbackTest(unittest.TestCase):

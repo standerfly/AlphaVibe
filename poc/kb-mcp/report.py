@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from kb_store import KBStore  # noqa: E402
 import frameworks  # noqa: E402
+import pnl  # noqa: E402
 import screener  # noqa: E402
 
 # 台股慣例：紅漲綠跌 → 偏多紅、偏空綠
@@ -1919,7 +1920,7 @@ def _avg_cost_for_chart(holding_row, entries):
     return buy_value / buy_shares
 
 
-def _chart_stats_html(current_price, avg_cost, avg_cost_label):
+def _chart_stats_html(current_price, avg_cost, avg_cost_label, fifo=None):
     """走勢圖右上方的現價／均價／浮動損益（2026-08-09，PO比對mockup反饋
     補上——原mockup的chart-stats一直沒接進正式頁面）。浮動損益＝
     (現價-均價)/均價，兩者缺一個就不算、不臆測，只顯示「—」。台股慣例
@@ -1931,12 +1932,39 @@ def _chart_stats_html(current_price, avg_cost, avg_cost_label):
     if avg_cost is not None:
         parts.append("<div class=\"stat\"><b style=\"color:var(--amber)\">%s</b>"
                      "<span>%s</span></div>" % (esc(_fmt_price(avg_cost)), esc(avg_cost_label)))
-        if current_price is not None:
+        # FR-014：FIFO 算得出來時，「浮動損益」這一格顯示的就是 FIFO 數字
+        # ——頁面與 get_position_pnl 必須一致（SC-004）。實測正式資料 14 檔
+        # 可算的標的中有 5 檔兩種口徑不同，其中 3131 連正負號都相反，
+        # 並列而不統一會讓 PO 在頁面看到的跟對話問到的對不起來。
+        # FIFO 算不出來時（history_incomplete）才退回估算值並標明口徑，
+        # 那是 FR-015 的範圍（PO 裁決 Q2-C）。
+        fifo_ok = bool(fifo and fifo.get("status") == "ok"
+                       and fifo.get("unrealized_pct") is not None)
+        if fifo_ok:
+            pnl_pct = fifo["unrealized_pct"]
+            pnl_label = "浮動損益（FIFO・未扣交易成本）"
+        elif current_price is not None:
             pnl_pct = (current_price - avg_cost) / avg_cost * 100
+            pnl_label = "浮動損益（加權平均估算・非 FIFO）"
+        else:
+            pnl_pct = None
+            pnl_label = None
+        if pnl_pct is not None:
             color = ("var(--red)" if pnl_pct > 0 else
                     "var(--green)" if pnl_pct < 0 else "var(--ink-dim)")
             parts.append("<div class=\"stat\"><b style=\"color:%s\">%+.1f%%</b>"
-                         "<span>浮動損益</span></div>" % (color, pnl_pct))
+                         "<span>%s</span></div>" % (color, pnl_pct, esc(pnl_label)))
+    # 002-entry-exit-signals FR-014／FR-015：接上階段A 的 FIFO 損益。
+    # PO 裁決 Q2-C——兩種口徑**並存**且各自標明，不是單純替換：實測 60 檔
+    # 中 21 檔賣超（流水表起始日之前的部位沒有進場紀錄），單純換成 FIFO 會
+    # 讓 1/3 標的的損益數字突然消失，那是 PO 每天在看的頁面上的可見退步。
+    if fifo:
+        status = fifo.get("status")
+        if status == "history_incomplete":
+            shortfall = fifo.get("shortfall_shares")
+            parts.append("<div class=\"stat stat--fifo-na\"><b>—</b>"
+                         "<span>FIFO 無法計算：歷史不完整（缺口 %s 股）</span></div>"
+                         % esc(_fmt_price(shortfall) if shortfall is not None else "?"))
     parts.append("</div>")
     return "".join(parts)
 
@@ -1983,13 +2011,22 @@ def _holdings_card_html(store, code):
         history = store.get_cached_price_history(code)
         aligned = _combo_chart_aligned_trades(history, ledger)
         avg_cost = _avg_cost_for_chart(holding_row, ledger)
+        # FR-015：估算值要標明口徑，不能讓它看起來像 FIFO 的結果
         if holding_row and holding_row.get("avg_cost") is not None:
-            avg_cost_label = "均價"
+            avg_cost_label = "均價（快照）"
         else:
-            avg_cost_label = "均價（%d筆）" % sum(1 for e in ledger if e["action"] == "買")
-        price_info = store.get_stock_prices().get(code)
+            avg_cost_label = ("均價（%d筆）・加權平均估算・未扣賣出・非 FIFO"
+                              % sum(1 for e in ledger if e["action"] == "買"))
+        prices_map = store.get_stock_prices()
+        price_info = prices_map.get(code)
         current_price = price_info["price"] if price_info else None
-        parts.append(_chart_stats_html(current_price, avg_cost, avg_cost_label))
+        fifo = None
+        try:
+            fifo = pnl.compute_position_pnl(code, ledger, prices_map)
+        except Exception:   # 損益算不出來不該讓整張卡掛掉
+            fifo = None
+        parts.append(_chart_stats_html(current_price, avg_cost, avg_cost_label,
+                                       fifo=fifo))
         parts.append(_render_combo_chart_svg(history, aligned, avg_cost=avg_cost))
         if len(history) >= 2:
             has_sell = any(e["action"] == "賣" for e in ledger)
@@ -2510,8 +2547,10 @@ def render_market_scan_page(selected_id, latest, error=None):
 
     parts.append("<details class=\"philomod\"><summary>這是什麼？</summary><pre>"
                  "用 TWSE/TPEx 官方批次資料，在框架鎖定的產業別內自動找候選"
-                 "（不用手動貼代碼），範圍只有上市＋上櫃（興櫃沒有官方批次PER"
-                 "資料，不在這次掃描範圍）。每天 02:00 也會自動掃描一次，"
+                 "（不用手動貼代碼），涵蓋上市＋上櫃＋興櫃（2026-09-03起）。"
+                 "興櫃沒有官方批次PER資料，改用「先以產業別＋營收年增率篩出"
+                 "小批候選、再逐檔查估值」的方式補齊，估值精確度低於上市/"
+                 "上櫃，候選列的備註欄會標明。每天 02:00 也會自動掃描一次，"
                  "這裡永遠顯示最近一次結果。</pre></details>")
 
     # 框架若有量化規則做不到的條件（例如 revenue_high_price_dip 的 EPS 上修
@@ -2545,7 +2584,7 @@ def render_market_scan_page(selected_id, latest, error=None):
     trigger_text = {"manual": "手動觸發", "scheduled": "排程自動"}.get(
         run.get("trigger_source"), esc(run.get("trigger_source")))
     total_scanned = run.get("total_scanned")
-    scanned_text = ("本次掃描全市場（上市+上櫃）共 %d 檔，其中" % total_scanned
+    scanned_text = ("本次掃描全市場（上市+上櫃+興櫃）共 %d 檔，其中" % total_scanned
                     if total_scanned is not None else "")
     benchmark_dd = run.get("benchmark_drawdown_pct")
     benchmark_text = ("｜同期大盤回檔 %s%%" % _fmt_pct(benchmark_dd)
@@ -2556,13 +2595,16 @@ def render_market_scan_page(selected_id, latest, error=None):
 
     twse_err = run.get("twse_error")
     tpex_err = run.get("tpex_error")
-    if twse_err or tpex_err:
+    emerging_err = run.get("emerging_error")
+    if twse_err or tpex_err or emerging_err:
         parts.append("<p class=\"empty\" style=\"color:var(--red)\">")
         if twse_err:
             parts.append("TWSE 資料源異常：%s　" % esc(twse_err))
         if tpex_err:
-            parts.append("TPEx 資料源異常：%s" % esc(tpex_err))
-        parts.append("（該市場當次候選數會變少，不影響另一邊）</p>")
+            parts.append("TPEx 資料源異常：%s　" % esc(tpex_err))
+        if emerging_err:
+            parts.append("興櫃資料源異常：%s" % esc(emerging_err))
+        parts.append("（該市場當次候選數會變少，不影響其他市場）</p>")
 
     benchmark_err = run.get("benchmark_error")
     if benchmark_err:
@@ -2579,7 +2621,7 @@ def render_market_scan_page(selected_id, latest, error=None):
                      "<th>代碼</th><th>名稱</th><th>市場</th><th>產業別</th>"
                      "<th>PER</th><th>營收年增率</th><th>PEG</th><th>回檔幅度</th>"
                      "<th>超額跌幅</th><th>PBR</th><th>殖利率</th>"
-                     "<th>目前價</th><th>加入追蹤</th></tr></thead><tbody>")
+                     "<th>目前價</th><th>加入追蹤</th><th>備註</th></tr></thead><tbody>")
         for r in hit_rows:
             parts.append(_market_scan_row_html(r, highlight=False, run_id=run_id))
         parts.append("</tbody></table></div>")
@@ -2745,9 +2787,11 @@ def render_track_error_page(message):
 def _market_scan_row_html(r, highlight, run_id):
     """/market-scan 結果表格的單一列。highlight=True 才畫黃底（符合框架
     候選區塊裡全部列都符合，畫了反而是雜訊，所以那裡傳 False）。
-    highlight=True 時多渲染「符合框架」「備註」兩欄，維持與全部候選表格
-    的欄位對齊；highlight=False（符合框架區塊）省略這兩欄，因為值恆為
-    「符合」「—」，不提供資訊。每列都有「加入追蹤」表單（兩個區塊都有，
+    highlight=True 時多渲染「符合框架」欄；「備註」欄兩邊都渲染
+    （2026-09-03 修正：原本符合框架區塊省略備註欄，理由是「值恆為
+    —，不提供資訊」，但興櫃候選的估值精確度警語一定要顯示，即使
+    在符合框架區塊也不能省略，否則使用者可能誤以為興櫃候選跟上市/
+    上櫃候選一樣可信）。每列都有「加入追蹤」表單（兩個區塊都有，
     不限符合框架的候選）。"""
     peg_text = ("%.2f" % r["peg"]) if r["peg"] is not None else "—"
     yoy_text = ("%.1f%%" % (r["revenue_yoy"] * 100)) if r["revenue_yoy"] is not None else "—"
@@ -2773,12 +2817,22 @@ def _market_scan_row_html(r, highlight, run_id):
         % (esc(r["code"]), esc(r["name"]), esc(r.get("market")), esc(r.get("industry")),
            per_text, yoy_text, peg_text, drawdown_text, excess_drawdown_text,
            pbr_text, dividend_yield_text, esc(r.get("current_price")), track_form))
+    # 興櫃候選的 PER/PEG 精確度低於正式上市櫃股（半年報/年報EPS、估算
+    # 股數，見 tpex_client.CAVEATS），備註欄一律標明，不能讓使用者誤以為
+    # 跟上市/上櫃候選一樣可信（roadmap.md 明文要求）；符合框架區塊也不
+    # 例外。跟既有 error 並存時兩者都顯示，不互相蓋掉。
+    note_parts = []
+    if r.get("market") == "興櫃":
+        note_parts.append("興櫃估值為粗估（半年報/年報EPS，非TTM），精確度低於上市/上櫃")
+    if r.get("error"):
+        note_parts.append(esc(r.get("error")))
+    note = "；".join(note_parts) if note_parts else "—"
+
     if not highlight:
-        return "<tr>%s</tr>" % base
+        return "<tr>%s<td data-label=\"備註\">%s</td></tr>" % (base, note)
     hit = r.get("meets_framework")
     row_style = " class=\"row-highlight\"" if hit else ""
     hit_text = "符合" if hit else "—"
-    note = esc(r.get("error")) if r.get("error") else "—"
     return ("<tr%s>%s<td data-label=\"符合框架\" class=\"stance\">%s</td>"
             "<td data-label=\"備註\">%s</td></tr>"
             % (row_style, base, hit_text, note))

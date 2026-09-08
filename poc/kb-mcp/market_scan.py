@@ -10,8 +10,14 @@
 Stage A 只負責用 PER＋營收年增率把 1700+ 檔縮小到幾十~一百多檔候選，
 把逐檔查詢的成本壓在可接受範圍。
 
-⚠️ 範圍只有「上市＋上櫃」：興櫃沒有官方批次 PER 端點，維持現況用
-`tpex_client.get_emerging_stock_valuation()` 逐檔估算，不受這個模組影響。
+⚠️ 興櫃沒有官方批次 PER 端點，篩選流程跟上市/上櫃不同（2026-09-03
+補齊，見 `_scan_emerging`）：用興櫃月營收批次端點（t187ap05_R，欄位形狀
+跟上市/上櫃營收批次端點一致）先以「產業別＋營收年增率」篩出小批候選，
+只對這批候選逐檔呼叫既有的 `tpex_client.get_emerging_stock_valuation()`
+補估算 PER 才能算出 PEG——這個函式的估值精確度本來就低於正式上市櫃股
+（半年報/年報EPS、估算股數），呼叫端要如實呈現，不能跟上市櫃候選混為
+一談。PBR 不計算（`include_pbr=False`）：候選篩選只需要 PER 算 PEG，
+多算 PBR 只是多打一次 FinMind（額度共用池，見下方教訓），沒有實質用途。
 
 僅標準庫（urllib），錯誤處理風格比照 finmind_client.py／tpex_client.py：
 不丟例外、回傳 {"error": ...}。TWSE／TPEx 兩個資料源各自獨立
@@ -26,6 +32,7 @@ import urllib.request
 import benchmark
 import frameworks
 import screener
+import tpex_client
 
 TIMEOUT = 15
 USER_AGENT = "alphavibe-kb-poc"
@@ -34,6 +41,9 @@ TWSE_PER_URL = "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL"
 TWSE_REVENUE_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap05_L"
 TPEX_PER_URL = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis"
 TPEX_REVENUE_URL = "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O"
+# 興櫃月營收批次端點（2026-09-03 實測確認，359 筆，欄位與上市/上櫃營收批次
+# 端點同形狀：公司代號/公司名稱/產業別/營業收入-去年同月增減(%)/資料年月）。
+TPEX_EMERGING_REVENUE_URL = "https://www.tpex.org.tw/openapi/v1/t187ap05_R"
 
 # PBR／殖利率的來源欄位名，兩個批次端點的命名不同。2026-07-28 實跑確認：
 # TWSE BWIBBU_ALL 用 PBratio／DividendYield；TPEx tpex_mainboard_peratio_analysis
@@ -182,18 +192,107 @@ def _scan_market(market, per_url, revenue_url, per_code_field, per_ratio_field,
                 "candidates": [], "total_scanned": 0}
 
 
-def scan_candidates(framework, cache=None):
-    """對框架鎖定的產業別做全市場（上市+上櫃）批次初篩。
+def _scan_emerging(industries, peg_max, revenue_yoy_min, data_dir=None,
+                    batch_cache=None, valuation_cache=None, valuation_fn=None):
+    """興櫃候選初篩（2026-09-03 補齊已知限制，見 roadmap.md）。
+
+    跟 `_scan_market` 分開寫而不是共用同一個函式，是因為興櫃沒有批次 PER
+    端點，流程本質不同：
+    1. 用 t187ap05_R 先以「產業別＋營收年增率」篩出小批候選（邏輯與
+       `_scan_market` 的營收篩選段一致）。
+    2. 只對這批候選逐檔呼叫既有的 `tpex_client.get_emerging_stock_
+       valuation()` 補估算 PER，才能算出 PEG。實測全市場 359 檔興櫃、
+       電子相關產業＋正成長門檻下約 40~50 檔通過第 1 步，規模不小，
+       所以第 2 步務必共用 valuation_cache（見下）避免逐檔重打三個
+       TPEx 批次端點。
+
+    valuation_cache：可選 dict，透傳給 `get_emerging_stock_valuation()`
+    的 `cache` 參數。**務必**在同一次 `run_scan()`／`run_scans()` 呼叫中
+    共用同一份，否則興櫃的三個 TPEx 端點會被逐檔重打（40~50 次 x 3），
+    不是浪費 FinMind 額度（PBR 已跳過不查），但仍是不必要的 TPEx 流量與
+    延遲。
+
+    valuation_fn：可選，預設 `tpex_client.get_emerging_stock_valuation`，
+    測試時可替換成假函式，不必真的打 TPEx/FinMind。
+
+    整段包 try/except，任何一步失敗都回傳空候選＋error，不丟例外，跟
+    `_scan_market` 的失敗處理風格一致——興櫃這條路徑掛了不該連累
+    上市/上櫃的候選。
+    """
+    valuation_fn = valuation_fn or tpex_client.get_emerging_stock_valuation
+    try:
+        revenue_resp = _fetch_json(TPEX_EMERGING_REVENUE_URL, "興櫃", cache=batch_cache)
+        if "error" in revenue_resp:
+            return {"market": "興櫃", "error": revenue_resp["error"],
+                    "candidates": [], "total_scanned": 0}
+        total_scanned = len(revenue_resp["data"])
+
+        pre_filtered = []
+        for row in revenue_resp["data"]:
+            industry = row.get("產業別")
+            if industry not in industries:
+                continue
+            code = row.get("公司代號")
+            if not code:
+                continue
+            yoy_pct = _to_float(row.get("營業收入-去年同月增減(%)"))
+            yoy = yoy_pct / 100 if yoy_pct is not None else None
+            if revenue_yoy_min is not None and (yoy is None or yoy <= revenue_yoy_min):
+                continue
+            pre_filtered.append({
+                "code": code, "name": row.get("公司名稱"), "industry": industry,
+                "revenue_yoy": yoy, "revenue_period": _revenue_period(row.get("資料年月")),
+            })
+
+        candidates = []
+        for item in pre_filtered:
+            valuation = valuation_fn(item["code"], data_dir=data_dir,
+                                     cache=valuation_cache, include_pbr=False)
+            per = valuation.get("per")
+            # PEG 計算規則跟 _scan_market 一致：yoy<=0 或缺資料時算不出來，
+            # 維持 None，不可以除以零或用負成長率算出負PEG。
+            peg = None
+            if per is not None and item["revenue_yoy"] is not None and item["revenue_yoy"] > 0:
+                peg = per / (item["revenue_yoy"] * 100)
+            if peg_max is not None and (peg is None or peg >= peg_max):
+                continue
+            candidates.append({
+                "code": item["code"],
+                "name": item["name"] or valuation.get("name"),
+                "market": "興櫃",
+                "industry": item["industry"],
+                "per": per,
+                "revenue_yoy": item["revenue_yoy"],
+                "revenue_period": item["revenue_period"],
+                "peg": peg,
+                "pbr": None,  # include_pbr=False，刻意不查（見函式docstring）
+                "dividend_yield": None,
+            })
+        return {"market": "興櫃", "error": None, "candidates": candidates,
+                "total_scanned": total_scanned}
+    except Exception as exc:  # 興櫃路徑非預期錯誤不可讓上市/上櫃也篩不出來
+        return {"market": "興櫃", "error": "非預期錯誤：%s" % exc,
+                "candidates": [], "total_scanned": 0}
+
+
+def scan_candidates(framework, cache=None, data_dir=None, valuation_cache=None,
+                    include_emerging=True):
+    """對框架鎖定的產業別做全市場（上市+上櫃+興櫃）批次初篩。
 
     framework 是 frameworks.FRAMEWORKS 裡的一筆 dict（需含 industries／
-    peg_max／revenue_yoy_min）。TWSE／TPEx 各自獨立呼叫 `_scan_market`，
-    互不影響——回傳的 market_errors 分別記錄兩邊狀況，任一邊失敗仍會
-    回傳另一邊篩出的候選，不會整批槓龜。
+    peg_max／revenue_yoy_min）。TWSE／TPEx／興櫃三條路徑各自獨立呼叫，
+    互不影響——回傳的 market_errors 分別記錄三邊狀況，任一邊失敗仍會
+    回傳其他邊篩出的候選，不會整批槓龜。
 
     cache：可選 dict，透傳給 _fetch_json，供 run_scans() 多框架共用同一份
     批次端點回應（見該函式docstring）。
 
-    興櫃不在範圍內（見模組 docstring）。
+    data_dir／valuation_cache：只有興櫃路徑用得到（見 `_scan_emerging`
+    docstring）；不給興櫃仍會跑，但每次呼叫都會逐檔重打 TPEx 批次端點。
+
+    include_emerging：預設 True。設 False 可跳過興櫃路徑（例如舊呼叫端
+    暫時不想承擔額外流量），此時興櫃候選數為 0、market_errors["興櫃"]
+    為 None，其餘行為與只做上市/上櫃時一致。
     """
     industries = framework["industries"]
     peg_max = framework["peg_max"]
@@ -206,14 +305,21 @@ def scan_candidates(framework, cache=None):
                          "SecuritiesCompanyCode", "PriceEarningRatio",
                          industries, peg_max, revenue_yoy_min,
                          per_extra_fields=TPEX_PER_EXTRA_FIELDS, batch_cache=cache)
+    if include_emerging:
+        emerging = _scan_emerging(industries, peg_max, revenue_yoy_min,
+                                  data_dir=data_dir, batch_cache=cache,
+                                  valuation_cache=valuation_cache)
+    else:
+        emerging = {"market": "興櫃", "error": None, "candidates": [], "total_scanned": 0}
 
-    candidates = twse["candidates"] + tpex["candidates"]
+    candidates = twse["candidates"] + tpex["candidates"] + emerging["candidates"]
     candidates.sort(key=lambda c: (c["peg"] is None, c["peg"] if c["peg"] is not None else 0))
     return {
         "candidates": candidates,
         "codes": [c["code"] for c in candidates],
-        "market_errors": {"TWSE": twse["error"], "TPEx": tpex["error"]},
-        "total_scanned": twse["total_scanned"] + tpex["total_scanned"],
+        "market_errors": {"TWSE": twse["error"], "TPEx": tpex["error"],
+                          "興櫃": emerging["error"]},
+        "total_scanned": twse["total_scanned"] + tpex["total_scanned"] + emerging["total_scanned"],
     }
 
 
@@ -243,7 +349,8 @@ def run_scan(framework_id, data_dir=None, token=None, trigger_source="manual",
         return {"error": "未知框架：%s" % framework_id}
 
     if shared is None:
-        shared = {"batch": {}, "drawdown": {}, "benchmark": None, "price_cache": {}}
+        shared = {"batch": {}, "drawdown": {}, "benchmark": None, "price_cache": {},
+                  "emerging_valuation": {}}
     price_cache = shared.setdefault("price_cache", {})
 
     if shared.get("benchmark") is None:
@@ -252,7 +359,8 @@ def run_scan(framework_id, data_dir=None, token=None, trigger_source="manual",
             price_cache=price_cache)
     bench = shared["benchmark"]
 
-    stage_a = scan_candidates(framework, cache=shared.get("batch"))
+    stage_a = scan_candidates(framework, cache=shared.get("batch"), data_dir=data_dir,
+                              valuation_cache=shared.get("emerging_valuation"))
     rows = []
     for cand in stage_a["candidates"]:
         row = dict(cand)
@@ -313,7 +421,8 @@ def run_scans(framework_ids, data_dir=None, token=None, trigger_source="manual")
     回傳 list，順序跟 framework_ids 一致；個別框架失敗（例如未知框架代號）
     只會讓該筆結果是 {"error": ...}，不影響其他框架繼續跑完。
     """
-    shared = {"batch": {}, "drawdown": {}, "benchmark": None, "price_cache": {}}
+    shared = {"batch": {}, "drawdown": {}, "benchmark": None, "price_cache": {},
+                  "emerging_valuation": {}}
     return [run_scan(fid, data_dir=data_dir, token=token,
                      trigger_source=trigger_source, shared=shared)
             for fid in framework_ids]
@@ -363,10 +472,11 @@ def main(argv=None):
                 benchmark={"window_drawdown_pct": result.get("benchmark_drawdown_pct"),
                           "error": result.get("benchmark_error")})
             print("market_scan完成：framework=%s trigger=%s total_scanned=%d candidate_count=%d "
-                  "meets_count=%d run_id=%d run_at=%s TWSE_error=%s TPEx_error=%s"
+                  "meets_count=%d run_id=%d run_at=%s TWSE_error=%s TPEx_error=%s 興櫃_error=%s"
                   % (framework_id, args.trigger, result["total_scanned"], result["candidate_count"],
                      result["meets_count"], saved["run_id"], saved["run_at"],
-                     result["market_errors"]["TWSE"], result["market_errors"]["TPEx"]))
+                     result["market_errors"]["TWSE"], result["market_errors"]["TPEx"],
+                     result["market_errors"]["興櫃"]))
     finally:
         store.close()
 
