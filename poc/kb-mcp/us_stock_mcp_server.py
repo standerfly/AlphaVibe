@@ -330,8 +330,8 @@ class Server:
 
 def main():
     server = Server()
-    sys.stderr.write("alphavibe-us-stock 啟動（骨架，尚無工具），資料目錄：%s\n"
-                      % server.data_dir)
+    sys.stderr.write("alphavibe-us-stock 啟動（%d 個工具），資料目錄：%s\n"
+                      % (len(TOOLS), server.data_dir))
     sys.stderr.flush()
     for line in sys.stdin:
         line = line.strip()
