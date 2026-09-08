@@ -6,16 +6,25 @@
 （HTTP client 選用 `urllib` 標準庫、失敗回傳 `{"error": ...}` 不拋例外、
 token 讀取優先序，見 `research.md` §5），程式碼本身不共用一行。
 
-**⚠️ 未經真實 API 呼叫驗證**：以下端點路徑與回應欄位名稱
-（`price`／`changesPercentage`／`revenue`／`grossProfit`）是依 FMP 公開
-API 文件的一般 schema 寫的，這次任務範圍沒有可用的 FMP API key 做實際
-呼叫驗證——下一輪真正整測時，**務必**先用真實 key 打一次確認欄位名稱
-與本檔案假設一致，不一致要照實際回應調整，不要假設這裡寫的就是對的。
+**2026-09-08 已用真實 API key 驗證過（PO申請key後第一次實測）**：原本
+寫的 `/api/v3/quote/{ticker}` 路徑式端點在真實呼叫時回傳 HTTP 403
+「Legacy Endpoint」——FMP 已於 2025-08-31 停用舊版 `/api/v3/` 端點，
+改用 `/stable/` 前綴＋query string 帶 `symbol` 參數。已修正為實測
+成功的正確格式：`https://financialmodelingprep.com/stable/quote?
+symbol={ticker}&apikey=...`；`change_pct` 欄位名稱也修正
+（`changePercentage`，原本寫的 `changesPercentage` 多了一個 s，實際
+回應沒有這個欄位）。`income-statement` 端點的 `revenue`／`grossProfit`
+欄位名稱原本的假設是對的，只有路徑格式要一併改成 query string。
 
-備援來源（2026-09-08 定案：yfinance，見 `get_quote_fallback()` docstring）
-——不裝 `yfinance` 套件本身，直接打它底層用的 Yahoo Finance 公開端點，
-維持零第三方依賴；`us_stock_scan.py` 的 `_scan_one_ticker()` 已接上：
-FMP 失敗時自動嘗試這個備援，備援也失敗才真的視為這輪跳過。
+備援來源：`yfinance` 套件（2026-09-08 真實 key 整測後定案，見
+`get_quote_fallback()` docstring——原本手刻直接打 Yahoo 端點以維持零
+依賴，但被 HTTP 429 擋下，改裝真正的套件）；`us_stock_scan.py` 的
+`_scan_one_ticker()` 已接上：FMP 失敗時自動嘗試這個備援，備援也失敗
+才真的視為這輪跳過。**另外發現**：FMP 免費層除了額度限制，還有股票
+代碼白名單限制（大型股如 AAPL/MSFT/TSLA 可查，NET/GOOG/CRWD 這類回傳
+HTTP 402「訂閱方案不含此股票」）——這代表 yfinance 備援在本系統的
+實際使用情境下，觸發頻率會比原本設計時預期的「純額度備援」高得多，
+不是次要角色。
 
 token 來源優先序：參數 > 環境變數 `FMP_API_KEY` > `data_dir/fmp_token.txt`
 （比照 `finmind_client.py::_read_token` 的既有慣例，見 quickstart.md
@@ -27,7 +36,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-API_BASE_URL = "https://financialmodelingprep.com/api/v3"
+API_BASE_URL = "https://financialmodelingprep.com/stable"
 TIMEOUT = 15
 USER_AGENT = "alphavibe-us-stock-poc"
 
@@ -65,7 +74,9 @@ def _fetch(path, params, token):
 
 
 def get_quote(ticker, data_dir=None, token=None):
-    """取得單一股票即時報價（收盤價／漲跌幅），FMP `/quote/{ticker}` 端點。
+    """取得單一股票即時報價（收盤價／漲跌幅），FMP `/stable/quote`
+    端點（`symbol` 帶在 query string，2026-09-08 用真實 key 實測確認
+    格式，見本檔案開頭）。
 
     回傳 `{"ticker":.., "close_price":.., "change_pct":.., "source": "fmp"}`
     或 `{"error": ...}`——失敗時不拋例外，比照既有 `finmind_client.py`
@@ -74,7 +85,7 @@ def get_quote(ticker, data_dir=None, token=None):
     token = token or _read_token(data_dir)
     if not token:
         return {"error": "FMP_API_KEY 未設定（環境變數或 data_dir/fmp_token.txt）"}
-    result = _fetch("/quote/%s" % urllib.parse.quote(ticker), {}, token)
+    result = _fetch("/quote", {"symbol": ticker}, token)
     if "error" in result:
         return result
     data = result["data"]
@@ -84,7 +95,7 @@ def get_quote(ticker, data_dir=None, token=None):
     return {
         "ticker": ticker,
         "close_price": row.get("price"),
-        "change_pct": row.get("changesPercentage"),
+        "change_pct": row.get("changePercentage"),
         "source": "fmp",
     }
 
@@ -93,8 +104,9 @@ def get_fundamentals(ticker, data_dir=None, token=None):
     """取得基本面快照（毛利率／營收年增率），供 `us_stock_scan.py` 寫入
     `us_price_snapshots` 的 `gaap_gross_margin`／`revenue_yoy` 欄位。
 
-    用 FMP `/income-statement/{ticker}?period=quarter&limit=5` 取最近
-    5 季損益表，`revenue`／`grossProfit` 算毛利率，最新季 vs 剛好一年前
+    用 FMP `/stable/income-statement?symbol={ticker}&period=quarter&
+    limit=5` 取最近 5 季損益表，`revenue`／`grossProfit` 算毛利率，
+    最新季 vs 剛好一年前
     的同一季算年增率。資料不足 5 季時只算得出毛利率、年增率留 None——
     這不算錯誤，只是這次算不出來（沿用既有「查不到就是 None」的降級
     精神，不拋例外）。金鑰未設定或 HTTP 失敗一律回傳 `{"error": ...}`。
@@ -107,8 +119,9 @@ def get_fundamentals(ticker, data_dir=None, token=None):
         return {"error": "FMP_API_KEY 未設定（環境變數或 data_dir/fmp_token.txt）"}
 
     result = _fetch(
-        "/income-statement/%s" % urllib.parse.quote(ticker),
-        {"period": "quarter", "limit": _FUNDAMENTALS_QUARTERS_NEEDED}, token)
+        "/income-statement",
+        {"symbol": ticker, "period": "quarter",
+         "limit": _FUNDAMENTALS_QUARTERS_NEEDED}, token)
     if "error" in result:
         return result
     rows = result["data"]
@@ -136,56 +149,43 @@ def get_fundamentals(ticker, data_dir=None, token=None):
     }
 
 
-_YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/%s"
-# Yahoo 這個非官方端點對沒有瀏覽器特徵的 User-Agent 容易直接拒絕連線
-# （跟 FMP 官方 API 不同，FMP 用簡單識別用途的 UA 就接受）；這裡用常見
-# 瀏覽器 UA 字串換取穩定回應，不是要偽裝身分。
-_YAHOO_USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-)
-
-
 def get_quote_fallback(ticker, data_dir=None):
-    """備援報價來源（2026-09-08 定案：yfinance，見 `research.md` §1）。
+    """備援報價來源：`yfinance` 套件（2026-09-08 真實 key 整測時定案）。
 
-    **不安裝 `yfinance` PyPI 套件本身**——該套件會額外拉進
-    `pandas`／`numpy` 等重量級依賴，跟本檔案（及 FMP client／Telegram
-    推播）刻意維持「零第三方依賴、只用 `urllib` 標準庫」的既有風格不
-    一致。這裡直接呼叫 `yfinance` 套件底層實際使用的同一個 Yahoo
-    Finance 公開圖表端點（`/v8/finance/chart/{ticker}`），效果一致但
-    不多背一份依賴——`data_dir` 參數保留但目前用不到（Yahoo 這個端點
-    不需要 API key），維持與 `get_quote()` 一致的呼叫介面。
+    **2026-09-08 改版**：這裡原本手刻直接呼叫 Yahoo Finance 公開圖表
+    端點（不裝套件、避免拉進 `pandas`／`numpy` 依賴）。真實整測時發現
+    手刻版本被 Yahoo 以 HTTP 429 擋下——即使延遲重試也一樣，因為 Yahoo
+    現在要求正確的 session／crumb／TLS 指紋處理才放行程式化存取，
+    `yfinance` 套件底層用 `curl_cffi` 處理這些細節。手刻重現這段的
+    技術風險與維護成本比多裝一個依賴更高（見
+    `poc/kb-mcp/requirements.txt` 的完整理由），PO 確認後改裝真正的
+    `yfinance` 套件。`data_dir` 參數保留但用不到（yfinance 不需要
+    API key），維持與 `get_quote()` 一致的呼叫介面。
 
-    **非官方端點，Yahoo 隨時可能改格式或封鎖**——這是 `research.md` §1
-    已經記錄過的已知風險（ToS 灰色地帶、無穩定性保證），不是這裡新引入
-    的風險，只是提醒：這裡的欄位解析（`regularMarketPrice`／
-    `previousClose`）沒有官方文件保證，未來若 Yahoo 改格式，這裡會
-    開始回傳 `{"error": ...}`（不會靜默回傳錯誤數字），需要重新調整。
+    用 `Ticker.fast_info`（比完整 `.info` 輕量，只抓報價相關欄位，
+    請求數少、速度快）。同樣是**非官方資料源**——`research.md` §1
+    已經記錄過的已知風險（Yahoo 未提供正式 API 保證、ToS 灰色地帶），
+    不是這裡新引入的風險。
 
     回傳格式與 `get_quote()` 一致：成功
     `{"ticker":.., "close_price":.., "change_pct":.., "source": "yfinance"}`，
-    失敗 `{"error": ...}`。不提供基本面資料（毛利率/營收年增率）——這個
-    端點只有報價，`us_stock_scan.py` 呼叫端已經把基本面查詢獨立處理，
-    這裡失敗不影響那邊。
+    失敗 `{"error": ...}`（無效代號、網路失敗、`yfinance` 內部拋出的
+    任何例外都在這裡被攔下轉成 error，不往外拋）。不提供基本面資料
+    （毛利率/營收年增率）——`us_stock_scan.py` 呼叫端已經把基本面查詢
+    獨立處理，這裡失敗不影響那邊。
     """
-    url = _YAHOO_CHART_URL % urllib.parse.quote(ticker)
-    req = urllib.request.Request(url, headers={"User-Agent": _YAHOO_USER_AGENT})
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        return {"error": "yfinance(Yahoo) HTTP %s：%s" % (exc.code, ticker)}
-    except Exception as exc:  # 網路不通、逾時、JSON 壞掉——不拋例外
-        return {"error": "yfinance(Yahoo) 呼叫失敗（%s）：%s" % (ticker, exc)}
+        import yfinance as yf
+        info = yf.Ticker(ticker).fast_info
+        close_price = info.get("lastPrice")
+        prev_close = info.get("previousClose")
+    except Exception as exc:  # yfinance 對無效代號/網路問題的例外型別
+        # 不固定（曾見過 KeyError／requests例外等），一律攔下不往外拋，
+        # 比照本檔案一貫的降級精神。
+        return {"error": "yfinance 呼叫失敗（%s）：%s" % (ticker, exc)}
 
-    try:
-        result = payload["chart"]["result"][0]
-        meta = result["meta"]
-        close_price = meta["regularMarketPrice"]
-        prev_close = meta.get("previousClose") or meta.get("chartPreviousClose")
-    except (KeyError, IndexError, TypeError):
-        return {"error": "yfinance(Yahoo) 回應格式不符預期：%s" % ticker}
+    if close_price is None:
+        return {"error": "yfinance 無此股票資料：%s" % ticker}
 
     change_pct = None
     if prev_close:
