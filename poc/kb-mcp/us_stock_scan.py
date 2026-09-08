@@ -226,7 +226,19 @@ def _scan_one_ticker(ticker, data_dir, token=None):
         quote = us_stock_price_client.get_quote(
             ticker, data_dir=data_dir, token=token)
         if "error" in quote:
-            return {"ticker": ticker, "error": quote["error"], "saved": False}
+            # 主要來源（FMP）失敗：自動嘗試備援來源（yfinance，2026-09-08
+            # 接上，見 get_quote_fallback docstring）。備援也失敗才真的
+            # 視為這輪跳過（research.md §1／§4 的降級模式）。
+            fallback_quote = us_stock_price_client.get_quote_fallback(
+                ticker, data_dir=data_dir)
+            if "error" in fallback_quote:
+                return {
+                    "ticker": ticker,
+                    "error": "%s；備援也失敗：%s" % (
+                        quote["error"], fallback_quote["error"]),
+                    "saved": False,
+                }
+            quote = fallback_quote
 
         fundamentals = us_stock_price_client.get_fundamentals(
             ticker, data_dir=data_dir, token=token)
