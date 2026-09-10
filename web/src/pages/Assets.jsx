@@ -89,6 +89,11 @@ export default function Assets() {
   const [netWorth, setNetWorth] = useState(null)
   const [netWorthError, setNetWorthError] = useState(null)
 
+  // 情境試算推演卡的視角：'year'＝長期（現在→退休→提領期結束，逐年）、
+  // 'month'＝近期（只有最近24個月，逐月）。資料來自 simResult.curve／
+  // simResult.monthly_curve，兩者都是同一次試算回應裡的既有欄位。
+  const [projectionGranularity, setProjectionGranularity] = useState('year')
+
   const [manualOpen, setManualOpen] = useState(false)
   const [manualForm, setManualForm] = useState({ date: '', total: '', contributed: '' })
   const [manualBusy, setManualBusy] = useState(false)
@@ -418,6 +423,7 @@ export default function Assets() {
     ? Math.min(100, Math.max(0, (latestNetWorth.total_amount / goalTotal) * 100))
     : null
   const nowYear = new Date().getFullYear()
+  const nowMonth = new Date().getMonth() + 1
 
   return (
     <div>
@@ -970,18 +976,39 @@ export default function Assets() {
       </div>
 
       <div className="card">
-        <div className="card__head"><h2>資產走勢（情境試算推演）</h2></div>
+        <div className="card__head">
+          <h2>資產走勢（情境試算推演）</h2>
+          {simResult && simResult.curve && (
+            <div className="granularity-toggle">
+              <button
+                type="button"
+                className={projectionGranularity === 'month' ? 'btn btn-sm' : 'btn-muted btn-sm'}
+                onClick={() => setProjectionGranularity('month')}
+              >近期（月）</button>
+              <button
+                type="button"
+                className={projectionGranularity === 'year' ? 'btn btn-sm' : 'btn-muted btn-sm'}
+                onClick={() => setProjectionGranularity('year')}
+              >長期（年）</button>
+            </div>
+          )}
+        </div>
         <div className="card__body">
           <p className="meta">
             沿用上面「情境試算」表單目前的假設（累積期報酬率、提領期報酬率、年數…），
             起始本金已改用你目前的實際資產總額——不是新公式，是同一份情境試算的視覺化延伸。
+            {projectionGranularity === 'month' && '「近期」視角只看最近24個月，長期趨勢請切回「長期」。'}
           </p>
           {simResult && simResult.curve ? (
             <>
               <NetWorthProjectionChart
                 curve={simResult.curve}
+                monthlyCurve={simResult.monthly_curve}
                 retireYearOffset={simResult.retire_year_offset}
+                retireMonthOffset={simResult.retire_month_offset}
+                granularity={projectionGranularity}
                 nowYear={nowYear}
+                nowMonth={nowMonth}
               />
               <div className="legend-row">
                 <span><span className="dot" style={{ background: 'var(--accent)' }} />累積期（持續投入＋成長）</span>

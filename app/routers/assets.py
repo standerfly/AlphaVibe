@@ -324,6 +324,30 @@ def _withdrawal_balance_at_month(
     return max(0.0, value)
 
 
+def _build_curve_points(
+    payload: SimulateRequest, fv_total: float, monthly_withdrawal: float,
+    r_w: float, n: int, total_months: int, step_months: int,
+) -> list:
+    """輔助：從 month=0 取樣到 `total_months`（含端點），每 `step_months`
+    個月取一點（12＝逐年、1＝逐月），回傳 `[{"offset": k, "amount": ...,
+    "phase": ...}, ...]`——`offset` 是「第幾個 step」（逐年時＝第幾年、
+    逐月時＝第幾個月），呼叫端自行決定怎麼轉成日曆年/月標籤，這裡不管
+    標籤怎麼顯示。`n`＝累積期總月數（`phase` 用它判斷落在累積期還是
+    提領期，跟 `_simulate_asset_scenario()` 算 `curve` 用同一個切點）。"""
+    points = []
+    steps = total_months // step_months
+    for k in range(steps + 1):
+        month = min(k * step_months, total_months)
+        if month <= n:
+            amount = _accumulation_balance_at_month(payload, month)
+            phase = "accumulation"
+        else:
+            amount = _withdrawal_balance_at_month(fv_total, monthly_withdrawal, r_w, month - n)
+            phase = "withdrawal"
+        points.append({"offset": k, "amount": round(amount, 2), "phase": phase})
+    return points
+
+
 def _simulate_asset_scenario(payload: SimulateRequest) -> Dict[str, Any]:
     """情境試算核心公式，純運算不碰資料庫。公式假設、來源與「待驗證」
     標註見本檔開頭 docstring「情境試算」一節——不要在這裡自行調整假設。
@@ -334,14 +358,21 @@ def _simulate_asset_scenario(payload: SimulateRequest) -> Dict[str, Any]:
     月數後四捨五入為 0）在呼叫前就應該被擋下，這裡用 assert 當最後一道
     防線，不應該被觸發到。
 
-    `curve`（2026-09-10 新增，資產走勢卡「情境試算推演」用）：從現在
-    (year_offset=0) 到累積期結束(退休)再到提領期結束，逐年（不是逐月，
-    避免前端畫圖點數過多）取一個資產餘額點，`phase` 標記該點落在累積期
-    還是提領期——前端用這個欄位切線段顏色/樣式，不要自己用索引猜切點。
-    這是既有 `fv_total`／`monthly_withdrawal` 計算的視覺化延伸，不是
-    另一套公式，數值上 `curve` 最後落在累積期的那個點應該等於 `fv_total`
-    （允許因為改用逐月而非精確年數帶來的極小浮點差異，見
-    `_accumulation_balance_at_month` 用 `month/12` 而非
+    `curve`／`monthly_curve`（2026-09-10 新增，資產走勢卡「情境試算
+    推演」用；2026-09-10 稍晚追加 `monthly_curve`——PO 反映這張圖沒有
+    月/年視角切換）：都是既有 `fv_total`／`monthly_withdrawal` 計算的
+    視覺化延伸，不是另一套公式。
+    - `curve`：從現在到累積期結束(退休)再到提領期結束，**逐年**取一個
+      資產餘額點（「長期」視角，40年攤開來逐月點太密集看不清楚）。
+    - `monthly_curve`：只取**最近 24 個月**（或不到24個月就到
+      `years_to_retirement+withdrawal_years` 換算的總月數為止），
+      **逐月**取一個資產餘額點（「近期」視角，方便看剛開始那一兩年的
+      建倉節奏跟複利怎麼慢慢累積）——超過這個範圍的年份不會出現在
+      `monthly_curve` 裡，要看長期趨勢請用 `curve`。
+    兩者 `phase` 都標記該點落在累積期還是提領期，前端用這個欄位切線段
+    顏色/樣式，不要自己用索引猜切點。`curve` 最後落在累積期的那個點
+    數值上應該等於 `fv_total`（允許因為改用逐月而非精確年數帶來的極小
+    浮點差異，見 `_accumulation_balance_at_month` 用 `month/12` 而非
     `payload.years_to_retirement` 當指數，年數為整數時兩者完全相等）。
     """
     n = round(payload.years_to_retirement * 12)
@@ -356,17 +387,18 @@ def _simulate_asset_scenario(payload: SimulateRequest) -> Dict[str, Any]:
         monthly_withdrawal = fv_total * r_w / (1 - (1 + r_w) ** (-m))
 
     retire_year_offset = round(payload.years_to_retirement)
-    total_years = round(payload.years_to_retirement + payload.withdrawal_years)
-    curve = []
-    for year_offset in range(total_years + 1):
-        month = year_offset * 12
-        if month <= n:
-            amount = _accumulation_balance_at_month(payload, month)
-            phase = "accumulation"
-        else:
-            amount = _withdrawal_balance_at_month(fv_total, monthly_withdrawal, r_w, month - n)
-            phase = "withdrawal"
-        curve.append({"year_offset": year_offset, "amount": round(amount, 2), "phase": phase})
+    total_months = n + m
+
+    yearly_points = _build_curve_points(
+        payload, fv_total, monthly_withdrawal, r_w, n, total_months, step_months=12)
+    curve = [{"year_offset": p["offset"], "amount": p["amount"], "phase": p["phase"]}
+             for p in yearly_points]
+
+    near_term_months = min(24, total_months)
+    monthly_points = _build_curve_points(
+        payload, fv_total, monthly_withdrawal, r_w, n, near_term_months, step_months=1)
+    monthly_curve = [{"month_offset": p["offset"], "amount": p["amount"], "phase": p["phase"]}
+                      for p in monthly_points]
 
     return {
         "fv_total": round(fv_total, 2),
@@ -375,6 +407,8 @@ def _simulate_asset_scenario(payload: SimulateRequest) -> Dict[str, Any]:
         "disclaimer": _SIMULATE_DISCLAIMER,
         "curve": curve,
         "retire_year_offset": retire_year_offset,
+        "monthly_curve": monthly_curve,
+        "retire_month_offset": n,
     }
 
 
