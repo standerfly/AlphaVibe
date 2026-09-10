@@ -6,6 +6,15 @@
    公開網路且設定 token 後才可能出現，屆時瀏覽器會自己跳原生 Basic Auth
    對話框（不需要前端額外處理，見任務規格第6點）。 */
 
+/* 2026-09-10 新增：對外網址是 ngrok 免費版 tunnel，瀏覽器 UA 的請求會被
+   ngrok 攔截成它自己的「瀏覽器警告頁」（HTTP 200、Content-Type
+   text/html，內容是 ngrok 的 HTML 而非我們的 API 回應）——不影響 curl
+   等非瀏覽器 UA，只影響真實使用者。這個 header 是 ngrok 官方提供的
+   繞過機制，值本身不檢查內容、只檢查存在與否；加在每個 fetch 上就能讓
+   請求直接穿透到後端，不影響同源部署（非 ngrok 環境時後端會忽略這個
+   header，無副作用）。實測見 clarification-log 對應教訓紀錄。 */
+const NGROK_SKIP_HEADER = { 'ngrok-skip-browser-warning': 'true' }
+
 export class ApiError extends Error {
   constructor(message, status, path) {
     super(message)
@@ -15,7 +24,7 @@ export class ApiError extends Error {
 }
 
 export async function apiGet(path) {
-  const res = await fetch(path)
+  const res = await fetch(path, { headers: NGROK_SKIP_HEADER })
   if (!res.ok) {
     throw new ApiError(`${path} 回傳 ${res.status}`, res.status, path)
   }
@@ -30,7 +39,9 @@ export async function apiGet(path) {
 export async function apiPost(path, body) {
   const res = await fetch(path, {
     method: 'POST',
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    headers: body !== undefined
+      ? { ...NGROK_SKIP_HEADER, 'Content-Type': 'application/json' }
+      : NGROK_SKIP_HEADER,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) {
@@ -55,7 +66,7 @@ export async function apiPost(path, body) {
    語意，這裡補一個對稱於 apiPost 的極簡 helper，不強行套用 archive
    那套慣例。*/
 export async function apiDelete(path) {
-  const res = await fetch(path, { method: 'DELETE' })
+  const res = await fetch(path, { method: 'DELETE', headers: NGROK_SKIP_HEADER })
   if (!res.ok) {
     let detail = ''
     try {
