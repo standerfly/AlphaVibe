@@ -259,3 +259,24 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
   ｜動作：`rm -f ~/Library/Caches/com.apple.python/<專案路徑>/<模組>*.pyc`
   後重新 import 即恢復；驗證時若要完全排除此因素，用
   `git archive <commit> | tar -x -C <暫存目錄>` 匯出乾淨副本跑
+
+- 2026-09-10｜情境：使用者回報 STND 首頁「今日重點載入失敗：The string
+  did not match the expected pattern.」；用 curl 直打本機 8080 與對外
+  ngrok 網址的 `/api/dashboard` 都正常回 200+JSON，一度誤判是暫時性
+  網路問題。改用瀏覽器 UA（`curl -A "Mozilla/5.0 ... Safari"`）打同一個
+  ngrok 網址才重現：回應仍是 HTTP 200，但 `Content-Type: text/html`，
+  內容是 **ngrok 免費版自己的瀏覽器警告頁**，不是我們的 API 回應——curl
+  預設 UA 不會觸發這個警告頁，只有瀏覽器類 UA 才會
+  ｜教訓：(1) 排查「使用者說壞掉、我測都正常」時，**curl 的預設行為
+  不等於瀏覽器的真實行為**，尤其走 ngrok/tunnel 這類中介層時，要用
+  `-A "<真實瀏覽器UA>"` 模擬才測得到中介層基於 UA 判斷的行為。
+  (2) `res.json()` 對非 JSON 內容（如 HTML）解析失敗時，Safari 丟出的
+  錯誤訊息是「The string did not match the expected pattern.」——這個
+  訊息本身完全看不出跟 JSON 或 ngrok 有關，看到這個訊息不要當成一般的
+  fetch/網路錯誤處理，先懷疑「拿到的 body 根本不是預期格式」。
+  ｜動作：[web/src/api/client.js](web/src/api/client.js) 的
+  `apiGet`／`apiPost`／`apiDelete` 都加上 ngrok 官方繞過 header
+  `ngrok-skip-browser-warning: true`（見該檔案內註解）；已 rebuild
+  `web/dist/`，正式服務不用重啟即生效（直接讀磁碟）；已 commit+push
+  （`2fc2bc5`）。日後若再遷移對外服務方式（例如換回 devtunnel 或改用
+  自訂網域），這個 header 對非 ngrok 環境無副作用，不用移除
