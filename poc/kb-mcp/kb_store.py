@@ -272,6 +272,23 @@ CREATE TABLE IF NOT EXISTS asset_buildup_entries (
     note TEXT,
     UNIQUE(plan_id, month_number)
 );
+CREATE TABLE IF NOT EXISTS asset_net_worth_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_date TEXT NOT NULL UNIQUE,
+    total_amount REAL NOT NULL,
+    source TEXT NOT NULL DEFAULT 'auto',
+    note TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS asset_contribution_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pocket_id INTEGER NOT NULL REFERENCES asset_pockets(id),
+    account_id INTEGER NOT NULL REFERENCES asset_accounts(id),
+    amount REAL NOT NULL,
+    event_date TEXT NOT NULL,
+    note TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
 """
 
 # FR-057 模組D檢視結果表：trigger_type 只允許這三個值（對應通用檢視層／
@@ -318,6 +335,15 @@ _MIGRATIONS = {
         # 文字硬猜（脆弱）。存下來才能把 Checks 依實際檢查項目分組呈現。
         # 舊資料為 NULL，讀取端退回顯示 trigger_type，不用回填。
         ("trigger_label", "TEXT"),
+    ],
+    "asset_net_worth_snapshots": [
+        # cumulative_contributed（2026-09-10新增，PO要求資產走勢圖要能
+        # 同時看「資產總額」與「累積投入金額」）：跟 total_amount 一起
+        # 由 _record_asset_net_worth_snapshot() 每次寫入，數值來源是
+        # asset_contribution_events 全部事件的加總（見該表與
+        # record_asset_contribution()）。舊快照列（本欄位新增前就存在的）
+        # 讀出來是 NULL，前端顯示「—」，不回填假數字。
+        ("cumulative_contributed", "REAL"),
     ],
 }
 
@@ -1673,6 +1699,7 @@ class KBStore:
             " amount=excluded.amount, note=excluded.note, updated_at=excluded.updated_at",
             (pocket_id, account_id, amount, note, now),
         )
+        self._record_asset_net_worth_snapshot()
         self.conn.commit()
         row = self.conn.execute(
             "SELECT h.id, h.pocket_id, p.name AS pocket_name, h.account_id,"
@@ -1765,6 +1792,7 @@ class KBStore:
             (actual_amount, now, entry["id"]),
         )
         self._apply_asset_holding_delta(plan["pocket_id"], plan["account_id"], delta)
+        self._record_asset_net_worth_snapshot()
         self.conn.commit()
         updated_entry = self.conn.execute(
             "SELECT * FROM asset_buildup_entries WHERE id=?", (entry["id"],)
@@ -1811,6 +1839,7 @@ class KBStore:
         )
         self._apply_asset_holding_delta(
             plan["pocket_id"], plan["account_id"], -previous_applied)
+        self._record_asset_net_worth_snapshot()
         self.conn.commit()
         updated_entry = self.conn.execute(
             "SELECT * FROM asset_buildup_entries WHERE id=?", (entry["id"],)
@@ -1821,3 +1850,272 @@ class KBStore:
         ).fetchone()
         return {"entry": dict(updated_entry),
                 "holding": dict(holding) if holding else None, "undone": True}
+
+    # ---------- 資產走勢（淨值快照） ----------
+    # 2026-09-10 新增（PO要求：資產分頁補一張折線圖，讓每年/每月的狀況
+    # 看得出來）。設計取捨：asset_holdings 本身只存「目前餘額」，改了就
+    # 覆蓋、不留歷史，因此走勢圖需要另一張表獨立存「某一天的資產總額」。
+    # 兩種寫入來源共用同一張表，用 source 欄位區分：
+    #   'auto'   —— 每次真的有異動 asset_holdings 的操作（設定餘額、
+    #                建倉打勾/取消）順帶記一筆「今天」的快照，累加式，
+    #                不需要使用者手動維護，缺點是系統上線前的歷史是空的。
+    #   'manual' —— 使用者自己回填的過去某天大概數字（不影響
+    #                asset_holdings 本身），用來讓走勢圖在自動快照還沒
+    #                累積出足夠資料前，先有一段回顧性的趨勢可看。
+    # 兩種來源用同一個 UNIQUE(snapshot_date)，同一天只留一筆最新寫入的
+    # 值——如果使用者手動回填了「今天」又剛好做了異動操作，auto 寫入會
+    # 覆蓋掉 manual 那筆；這是刻意簡化，個人單使用者場景下這個邊界案例
+    # 不值得為它加額外的「保護手動值不被覆蓋」邏輯。
+
+    def _record_asset_net_worth_snapshot(self):
+        """內部用：把目前 asset_holdings 總和記一筆「今天」的快照
+        （total_amount）。呼叫端（upsert_asset_holding／
+        complete_asset_buildup_month／undo_asset_buildup_month／
+        record_asset_contribution／delete_asset_contribution）負責
+        commit，這裡不自行 commit，讓「改餘額」與「記快照」落在同一個
+        transaction，避免半套。快照粒度是「天」不是「每次操作」：同一天
+        內多次異動會覆蓋成最新總額，不會一天堆出好幾筆。
+
+        **不在這裡計算／存入 cumulative_contributed**（2026-09-10 第二版
+        設計，取代第一版「全部事件加總」的做法）——這一欄只有
+        `add_asset_net_worth_manual_entry()` 會直接寫入使用者自己斷言的
+        數字；auto 這邊的「累積投入」改成讀取時（`list_asset_net_worth_
+        snapshots()`）動態衍生，理由見該方法 docstring 開頭的「已知
+        bug」說明。ON CONFLICT 這裡刻意不觸碰 cumulative_contributed 欄，
+        保留原本存的值（不論是 NULL 還是先前手動填的）。"""
+        total = self.conn.execute(
+            "SELECT COALESCE(SUM(amount), 0) AS total FROM asset_holdings"
+        ).fetchone()["total"]
+        self.conn.execute(
+            "INSERT INTO asset_net_worth_snapshots (snapshot_date, total_amount, source)"
+            " VALUES (?, ?, 'auto')"
+            " ON CONFLICT(snapshot_date) DO UPDATE SET"
+            " total_amount=excluded.total_amount, source='auto'",
+            (_today(), total),
+        )
+
+    def add_asset_net_worth_manual_entry(
+        self, snapshot_date, total_amount, cumulative_contributed=None, note=None
+    ):
+        """手動回填一筆歷史快照（見本節開頭說明）。刻意**不會**去動
+        asset_holdings／asset_contribution_events 本身——回填年份的口袋/
+        帳戶怎麼分、逐筆投入紀錄長什麼樣通常回想不起來，也沒必要知道，
+        只需要兩個總額數字（`cumulative_contributed` 選填，不填就是只
+        回填資產總額，走勢圖那條「累積投入」線在這個日期會是空的）。
+
+        `snapshot_date` 已存在快照（不論原本是 auto 或 manual）會被
+        覆蓋——語意對稱 upsert_asset_holding「設定為 X」，不是累加。"""
+        try:
+            datetime.date.fromisoformat(snapshot_date)
+        except (TypeError, ValueError):
+            raise ValueError(
+                "snapshot_date 必須是 YYYY-MM-DD 格式字串：%r" % (snapshot_date,))
+        try:
+            total_amount = float(total_amount)
+        except (TypeError, ValueError):
+            raise ValueError("total_amount 必須是數字：%r" % (total_amount,))
+        if cumulative_contributed is not None:
+            try:
+                cumulative_contributed = float(cumulative_contributed)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    "cumulative_contributed 必須是數字或不填：%r" % (cumulative_contributed,))
+        self.conn.execute(
+            "INSERT INTO asset_net_worth_snapshots"
+            " (snapshot_date, total_amount, cumulative_contributed, source, note)"
+            " VALUES (?, ?, ?, 'manual', ?)"
+            " ON CONFLICT(snapshot_date) DO UPDATE SET"
+            " total_amount=excluded.total_amount,"
+            " cumulative_contributed=excluded.cumulative_contributed,"
+            " source='manual', note=excluded.note",
+            (snapshot_date, total_amount, cumulative_contributed, note),
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT * FROM asset_net_worth_snapshots WHERE snapshot_date=?",
+            (snapshot_date,),
+        ).fetchone()
+        return dict(row)
+
+    def delete_asset_net_worth_snapshot(self, snapshot_date):
+        """刪除一筆快照（通常用在手動回填打錯資料要清掉重打）。查無此日期
+        視為 no-op（回傳 False），不當錯誤——理由同
+        undo_asset_buildup_month：呼叫端狀態可能過期（例如連點兩次刪除），
+        沒必要當例外處理。"""
+        cur = self.conn.execute(
+            "DELETE FROM asset_net_worth_snapshots WHERE snapshot_date=?",
+            (snapshot_date,),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def list_asset_net_worth_snapshots(self, granularity="day"):
+        """資產走勢圖的資料來源。granularity:
+        - 'day'：原始快照，每個有記錄的日期一筆。
+        - 'month'／'year'：每個月/每年**最後一筆**快照（期末值語意，跟
+          股價月K/年K同慣例——不是平均值也不是加總）。
+
+        **已知bug與修法（2026-09-10，人工截圖驗收時實測抓到）**：第一版
+        auto 快照的 cumulative_contributed 天真地用「asset_contribution_
+        events 全部事件加總」，如果使用者用 manual 回填過一個較早的
+        累積投入基準（例如回填「2025-01累積投入160萬」，但160萬是用
+        回想的，從沒真的記過一筆一筆的投入事件），auto 那一側從0開始算
+        會遠低於這個基準，兩者接在同一條線上會出現「累積投入」倒退嚕，
+        毫無意義。
+
+        修法：這裡回傳的 cumulative_contributed 是**讀取時衍生**的，不是
+        直接照抄快照表存的原始欄位值：
+        - `source='manual'` 且有填 cumulative_contributed 的列：直接採用
+          使用者當初填的值，並成為之後所有列的新基準（往後推算的起點）。
+        - `source='manual'` 但沒填 cumulative_contributed 的列：不當基準，
+          該列本身回傳 None（沒填就是不知道），不影響前後其他列的基準。
+        - `source='auto'` 的列：目前基準值 ＋ 基準日期之後、這天為止的
+          `asset_contribution_events` 加總；還沒出現過任何 manual 基準時
+          視同基準=0，從最早的事件開始累加（等同修法前的行為，這種情況
+          下修法前後結果一致，只有「manual 基準晚於部分 auto 事件」這個
+          組合才會出現行為差異）。"""
+        rows = [dict(r) for r in self.conn.execute(
+            "SELECT snapshot_date, total_amount, cumulative_contributed, source"
+            " FROM asset_net_worth_snapshots ORDER BY snapshot_date"
+        ).fetchall()]
+        events = [dict(r) for r in self.conn.execute(
+            "SELECT event_date, amount FROM asset_contribution_events ORDER BY event_date"
+        ).fetchall()]
+
+        baseline_value = 0.0
+        baseline_date = None  # None＝還沒有 manual 基準，從最早的事件開始算
+        for row in rows:
+            if row["source"] == "manual":
+                if row["cumulative_contributed"] is not None:
+                    baseline_value = row["cumulative_contributed"]
+                    baseline_date = row["snapshot_date"]
+                # 沒填 cumulative_contributed 的 manual 列維持 None，
+                # 不更新基準，直接進下一輪。
+                continue
+            since_baseline = sum(
+                e["amount"] for e in events
+                if (baseline_date is None or e["event_date"] > baseline_date)
+                and e["event_date"] <= row["snapshot_date"]
+            )
+            row["cumulative_contributed"] = baseline_value + since_baseline
+
+        if granularity == "day":
+            return rows
+        if granularity not in ("month", "year"):
+            raise ValueError("granularity 必須是 day/month/year：%r" % (granularity,))
+        key_len = 7 if granularity == "month" else 4  # 'YYYY-MM' 或 'YYYY'
+        grouped = {}
+        for r in rows:
+            # 依日期升冪走訪，同一組不斷覆蓋，最後留下的就是該組期末值；
+            # dict 插入順序＝各組第一次出現的順序，天然維持升冪排列。
+            grouped[r["snapshot_date"][:key_len]] = r
+        return [
+            {"period": key, "snapshot_date": r["snapshot_date"],
+             "total_amount": r["total_amount"],
+             "cumulative_contributed": r["cumulative_contributed"],
+             "source": r["source"]}
+            for key, r in grouped.items()
+        ]
+
+    # ---------- 資產走勢：投入事件（累積投入金額的資料來源） ----------
+    # 2026-09-10 新增（PO要求：資產走勢圖要能區分「資產總額」與「累積
+    # 投入金額」，兩者差距＝損益）。設計取捨：upsert_asset_holding() 是
+    # 「把餘額設成 X」，系統分不出這次改動是「我放錢進去」還是「市值
+    # 漲跌」；建倉打勾（complete_asset_buildup_month）雖然本質上就是一種
+    # 投入事件，但只綁定唯一一個 buildup_plans 記錄（核心0050累積這一個
+    # 口袋×帳戶），沒有推廣到其他口袋。這裡新增的是**通用**版本：任何
+    # 口袋×帳戶都能記一筆「我投入了多少」，不需要先建一個建倉計畫。
+    #
+    # 跟 upsert_asset_holding 的分工：日常「市值變動、我要更新一下目前
+    # 餘額對不對」用 upsert_asset_holding（覆蓋）；「我剛把錢存進去/
+    # 轉進去」用這裡的 record_asset_contribution（累加＋留下投入紀錄）。
+    # 兩者都會影響 asset_holdings，差別只在「累積投入金額」這條線會不會
+    # 跟著動——這條線的意義只有在使用者確實用 record_asset_contribution
+    # 記錄真正的投入時才準確；如果嫌麻煩、圖方便一律用 upsert_asset_holding
+    # 改餘額，「累積投入金額」就會低估（因為投入沒被記到），這是這個
+    # 簡化設計對使用者的要求，不是系統可以自動判斷的事。
+    #
+    # 已知限制：只支援正數（投入），不支援「提領/贖回」的對稱動作
+    # （減少投入金額）——目前規格沒有這個情境，之後真的需要再加。
+    # 也不支援「補記一筆更早日期的投入事件後，回頭修正中間日期的
+    # cumulative_contributed 快照」——每次寫入只更新「今天」那筆快照，
+    # 早於今天的快照維持寫入當時的值不變（見 _record_asset_net_worth_
+    # snapshot docstring）；日常「當下記錄當下的投入」不會踩到這個限制，
+    # 只有事後補登很久以前的投入時，中間那段時間的走勢線會暫時失真，
+    # 之後需要的話可以加一支「重算所有快照」的維護方法，目前沒有這個
+    # 需求先不做。
+
+    def record_asset_contribution(self, pocket_id, account_id, amount, event_date=None, note=None):
+        """記一筆投入事件：金額累加進對應 asset_holdings 餘額，同時留下
+        一筆可追溯的投入紀錄（`asset_contribution_events`），兩者在同一個
+        transaction 內完成。`amount` 必須 >0（見本節開頭「已知限制」）；
+        `event_date` 預設今天，格式須為 YYYY-MM-DD。"""
+        try:
+            amount = float(amount)
+        except (TypeError, ValueError):
+            raise ValueError("amount 必須是數字：%r" % (amount,))
+        if amount <= 0:
+            raise ValueError("amount 必須是正數（投入金額不能是 0 或負數）：%r" % (amount,))
+        event_date = event_date or _today()
+        try:
+            datetime.date.fromisoformat(event_date)
+        except (TypeError, ValueError):
+            raise ValueError("event_date 必須是 YYYY-MM-DD 格式字串：%r" % (event_date,))
+        if not self.conn.execute(
+            "SELECT id FROM asset_pockets WHERE id=?", (pocket_id,)
+        ).fetchone():
+            raise ValueError("找不到口袋 id=%s" % pocket_id)
+        if not self.conn.execute(
+            "SELECT id FROM asset_accounts WHERE id=?", (account_id,)
+        ).fetchone():
+            raise ValueError("找不到帳戶 id=%s" % account_id)
+
+        cur = self.conn.execute(
+            "INSERT INTO asset_contribution_events"
+            " (pocket_id, account_id, amount, event_date, note)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (pocket_id, account_id, amount, event_date, note),
+        )
+        event_id = cur.lastrowid
+        self._apply_asset_holding_delta(pocket_id, account_id, amount)
+        self._record_asset_net_worth_snapshot()
+        self.conn.commit()
+        event = self.conn.execute(
+            "SELECT * FROM asset_contribution_events WHERE id=?", (event_id,)
+        ).fetchone()
+        holding = self.conn.execute(
+            "SELECT * FROM asset_holdings WHERE pocket_id=? AND account_id=?",
+            (pocket_id, account_id),
+        ).fetchone()
+        return {"event": dict(event), "holding": dict(holding) if holding else None}
+
+    def delete_asset_contribution(self, event_id):
+        """刪除一筆投入事件——視為「這筆投入從沒發生過」，精確把當初累加
+        的金額從 asset_holdings 扣回去（跟 undo_asset_buildup_month 同一種
+        復原設計），不是只刪紀錄不動餘額。查無此 id 視為 no-op（回傳
+        False），不當錯誤。"""
+        event = self.conn.execute(
+            "SELECT * FROM asset_contribution_events WHERE id=?", (event_id,)
+        ).fetchone()
+        if not event:
+            return False
+        self.conn.execute(
+            "DELETE FROM asset_contribution_events WHERE id=?", (event_id,))
+        self._apply_asset_holding_delta(
+            event["pocket_id"], event["account_id"], -event["amount"])
+        self._record_asset_net_worth_snapshot()
+        self.conn.commit()
+        return True
+
+    def list_asset_contributions(self):
+        """列出所有投入事件，附口袋／帳戶名稱，依日期新到舊排序（給前端
+        當一份「投入紀錄」清單顯示，最新的通常最想先看到）。"""
+        rows = self.conn.execute(
+            "SELECT c.id, c.pocket_id, p.name AS pocket_name, c.account_id,"
+            " a.name AS account_name, c.amount, c.event_date, c.note, c.created_at"
+            " FROM asset_contribution_events c"
+            " JOIN asset_pockets p ON p.id = c.pocket_id"
+            " JOIN asset_accounts a ON a.id = c.account_id"
+            " ORDER BY c.event_date DESC, c.id DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
