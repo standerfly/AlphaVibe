@@ -246,6 +246,39 @@ details.collapse summary::marker { color: var(--accent); }
 .disclaimer-box__label { font-weight: 700; color: var(--amber); margin-right: .3rem; }
 .simulate-result-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: .6rem; margin-top: .9rem; }
 
+/* 資產走勢卡（2026-09-10 新增，見 web/src/components/NetWorthChart.jsx／
+   NetWorthProjectionChart.jsx）：兩張圖共用 .networth-chart／
+   .chart-label-* 系列；.val-item／.progress-track／.progress-fill／
+   .form-grid／.disclaimer-box 沿用既有定義，這裡不重複。 */
+.networth-chart { width: 100%; height: auto; background: var(--paper-sunken); border-radius: 8px; }
+.chart-label-total { fill: var(--accent); font-weight: 700; }
+.chart-label-contrib { fill: var(--ink-dim); font-weight: 600; }
+.chart-label-goal { fill: var(--amber); font-weight: 600; }
+.chart-label-peak { fill: var(--accent); font-weight: 700; }
+.chart-label-end { fill: var(--ink-dim); }
+
+.legend-row { display: flex; gap: 1rem; flex-wrap: wrap; font-size: .78rem; color: var(--ink-dim);
+  margin-top: .5rem; }
+.legend-row .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: .3rem; }
+.legend-row .dash { display: inline-block; width: 14px; height: 0; border-top: 2px dashed currentColor;
+  margin-right: .3rem; vertical-align: middle; }
+
+.networth-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: .55rem; margin-top: .9rem; }
+@media (max-width: 560px) { .networth-summary { grid-template-columns: repeat(2, 1fr); } }
+.networth-summary .sub-value { font-size: .68rem; color: var(--ink-dim); margin-top: .3rem; }
+/* 紅漲綠跌，跟 .stock-row__delta.is-up/is-down（tokens.css）同一套語意。 */
+.networth-summary .value.is-up { color: var(--red); }
+.networth-summary .value.is-down { color: var(--green); }
+
+.manual-entry-toggle { font-size: .78rem; color: var(--accent); background: none; border: none;
+  cursor: pointer; font-family: inherit; padding: 0; text-decoration: underline;
+  text-underline-offset: 2px; margin-top: .7rem; }
+.manual-entry-box { border-top: 1px dashed var(--rule); margin-top: .7rem; padding-top: .8rem; }
+.manual-entry-hint { font-size: .78rem; color: var(--ink-dim); margin: 0 0 .5rem; }
+
+.contribution-list { display: flex; flex-direction: column; gap: 0; margin-top: .5rem;
+  max-height: 220px; overflow-y: auto; }
+
 /* 快速輸入面板（2026-08-24 新增，Q-046 待辦第1項，見
    web/src/components/QuickInputPanel.jsx）：沿用 .card 的卡片外觀，
    用原生 <details> 做展開/收合（比照 StockDetail.jsx 既有的
