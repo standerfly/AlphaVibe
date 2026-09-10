@@ -37,6 +37,20 @@ const SIM_FIELDS = [
   { key: 'withdrawal_years', label: '提領期年數', step: '0.5', min: '0' },
 ]
 
+// 六個欄位一開始全空、也沒有結果的話，這區塊看起來就是空的——2026-09-10
+// 使用者回報後改為：開頭就帶一組範例數值並自動跑一次試算，讓使用者一打開
+// 就看得到「長什麼樣子」，欄位仍可自由改成自己的數字重新送出。這組數字純
+// 屬示範（非讀取使用者實際資產），跟建倉進度預設帶入的 4 萬一致只是巧合
+// 沿用同一個好記數字，不代表兩者有資料關聯。
+const SIM_DEFAULTS = {
+  principal: '500000',
+  monthly_contribution: '40000',
+  years_to_retirement: '15',
+  accumulation_rate: '0.08',
+  withdrawal_rate: '0.04',
+  withdrawal_years: '25',
+}
+
 export default function Assets() {
   const [pockets, setPockets] = useState(null)
   const [accounts, setAccounts] = useState(null)
@@ -62,10 +76,7 @@ export default function Assets() {
   const [buildupInput, setBuildupInput] = useState('')
   const [buildupBusy, setBuildupBusy] = useState(false)
 
-  const [simForm, setSimForm] = useState({
-    principal: '', monthly_contribution: '', years_to_retirement: '',
-    accumulation_rate: '', withdrawal_rate: '', withdrawal_years: '',
-  })
+  const [simForm, setSimForm] = useState(SIM_DEFAULTS)
   const [simResult, setSimResult] = useState(null)
   const [simError, setSimError] = useState(null)
   const [simBusy, setSimBusy] = useState(false)
@@ -90,10 +101,30 @@ export default function Assets() {
       .catch((err) => setBuildupError(err.message))
   }, [])
 
+  const runSimulation = useCallback((formValues) => {
+    setSimError(null)
+    setSimResult(null)
+    const payload = {}
+    for (const { key } of SIM_FIELDS) {
+      const raw = formValues[key]
+      if (raw === '') { setSimError('請填寫所有欄位再送出試算'); return undefined }
+      const num = Number(raw)
+      if (Number.isNaN(num)) { setSimError(`${key} 不是有效數字`); return undefined }
+      payload[key] = num
+    }
+    setSimBusy(true)
+    return apiPost('/api/assets/simulate', payload)
+      .then((res) => setSimResult(res))
+      .catch((err) => setSimError(err.message))
+      .finally(() => setSimBusy(false))
+  }, [])
+
   useEffect(() => {
     refreshCore()
     refreshBuildup()
-  }, [refreshCore, refreshBuildup])
+    // 開頭用範例數值自動跑一次，見 SIM_DEFAULTS 上方註解。
+    runSimulation(SIM_DEFAULTS)
+  }, [refreshCore, refreshBuildup, runSimulation])
 
   async function handleSubmitPocket(e) {
     e.preventDefault()
@@ -240,27 +271,9 @@ export default function Assets() {
     }
   }
 
-  async function handleSimulate(e) {
+  function handleSimulate(e) {
     e.preventDefault()
-    setSimError(null)
-    setSimResult(null)
-    const payload = {}
-    for (const { key } of SIM_FIELDS) {
-      const raw = simForm[key]
-      if (raw === '') { setSimError('請填寫所有欄位再送出試算'); return }
-      const num = Number(raw)
-      if (Number.isNaN(num)) { setSimError(`${key} 不是有效數字`); return }
-      payload[key] = num
-    }
-    setSimBusy(true)
-    try {
-      const res = await apiPost('/api/assets/simulate', payload)
-      setSimResult(res)
-    } catch (err) {
-      setSimError(err.message)
-    } finally {
-      setSimBusy(false)
-    }
+    runSimulation(simForm)
   }
 
   const cumulativeInvested = buildup
@@ -570,6 +583,8 @@ export default function Assets() {
             <span className="disclaimer-box__label">注意：</span>
             這是粗略估算工具，公式尚未跟原始素材完整核對過（已知用範例反推有誤差），
             送出試算後下方會顯示伺服器回傳的完整揭露文字，請務必看過再參考結果。
+            下方欄位已預填一組範例數值方便你直接看到試算結果長怎樣——<strong>不是
+            你的實際資產金額</strong>，請改成自己的數字後重新按「試算」。
           </div>
           <form onSubmit={handleSimulate}>
             <div className="form-grid">
