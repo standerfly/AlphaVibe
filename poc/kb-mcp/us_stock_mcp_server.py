@@ -312,6 +312,18 @@ class Server:
                     "isError": False,
                 })
             except Exception as exc:
+                # 失敗時撤回未 commit 的寫入（2026-09-17 架構體檢 A2）。
+                # 這個 stdio 服務整個 session 共用同一條 SQLite 連線，
+                # 工具中途失敗留下的未決交易不會自己消失，會被下一次任何
+                # 無關的成功寫入順帶 commit 進正式庫。個別寫入方法自己也
+                # 該保證原子性（見 kb_store.save_holdings），這裡是涵蓋
+                # 所有工具、包含日後新增的那些的防禦網。
+                # rollback 自己失敗（連線已關閉等）不能蓋掉原本的錯誤訊息，
+                # 所以吞掉它——使用者要看到的是工具為什麼失敗。
+                try:
+                    self.store.conn.rollback()
+                except Exception:
+                    pass
                 return self._result(msg_id, {
                     "content": [{"type": "text", "text": "工具執行失敗：%s" % exc}],
                     "isError": True,

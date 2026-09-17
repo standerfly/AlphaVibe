@@ -114,7 +114,18 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 - PoC 驗證：`python3 -m unittest discover -s poc/kb-mcp/tests`
   （2026-07-08 實測 10/10 綠）；用法見 `poc/kb-mcp/README.md`
 - **STND（app/）驗證**：`ALPHAVIBE_DATA_DIR=<獨立測試庫路徑>
-  .venv/bin/python3 -m app.tests.test_smoke`——**一定要**明確指定
+  .venv/bin/python3 -m app.tests.test_smoke`——這支測試**對測試庫不是冪等的**，
+  而且要求「乾淨」的資產表，從正式庫複製過來會直接 FAIL 兩次。完整重建步驟
+  （2026-09-17 實測，少任何一步都會失敗）：
+  ```bash
+  rm -rf poc/data-test && cp -R poc/data poc/data-test
+  # 清空 asset_* 全部 7 張表，否則 FAIL「unexpected auto-seed」
+  # 連 sqlite_sequence 也要清，否則 FAIL「buildup plan id mismatch」
+  #   （AUTOINCREMENT 序號沒重置，新建的 plan id 不會從 1 開始）
+  ```
+  遇到 FAIL 先照上面重建一次再懷疑程式碼——更可靠的做法是跑 baseline 比對
+  （`git stash` 掉你的改動、用同樣條件跑一次），才分得出是你改壞的還是既有問題。
+  **一定要**明確指定
   `ALPHAVIBE_DATA_DIR` 指向獨立複製出來的測試庫（例如 `poc/data-test/`，
   已 gitignore），絕對不要指向 `poc/data/`（正式庫），見下方 2026-08-22
   教訓紀錄。真正要對正式庫寫入資產種子資料，用

@@ -387,3 +387,20 @@ details.collapse summary::marker { color: var(--accent); }
   .simulate-result-grid { grid-template-columns: 1fr; }
   .stance-bands { grid-template-columns: repeat(3, 1fr); }
 }
+
+/* 錯誤邊界（2026-09-17 架構體檢 B3）。用既有 token，深淺主題自動跟著走。 */
+.error-boundary {
+  max-width: 34rem; margin: 2.5rem auto; padding: 1.5rem;
+  background: var(--red-soft); border: 1px solid var(--rule);
+  border-radius: 8px;
+}
+.error-boundary__title { margin: 0 0 .5rem; font-size: 1.1rem; color: var(--red-ink); }
+.error-boundary__hint { margin: 0 0 1.1rem; color: var(--ink-dim); line-height: 1.6; font-size: .9rem; }
+.error-boundary__actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-bottom: 1.1rem; }
+.error-boundary__details { font-size: .82rem; color: var(--ink-dim); }
+.error-boundary__details summary { cursor: pointer; padding: .2rem 0; }
+.error-boundary__details pre {
+  margin: .6rem 0 0; padding: .7rem; overflow-x: auto;
+  background: var(--paper-sunken); border-radius: 4px;
+  font-size: .75rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+}

@@ -1519,5 +1519,114 @@ class ProtocolE2ETest(unittest.TestCase):
         self.assertEqual(unknown["error"]["code"], -32601)
 
 
+class HoldingsBatchAtomicityTest(unittest.TestCase):
+    """save_holdings 整批原子性（2026-09-17 架構體檢 A2 的回歸測試）。
+
+    事故情境：迴圈跑到一半才發現某筆缺 code 而 raise，前面幾輪已經
+    execute() 的 INSERT 還留在連線的未決交易裡。stdio MCP 服務整個
+    session 共用同一條連線，這些列會被「下一次任何無關的成功寫入」
+    順帶 commit 進正式庫——使用者以為整批被拒絕，實際上部分資料進去了。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="alphavibe-atomicity-")
+        self.store = KBStore(self.tmp)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp)
+
+    def test_partial_failure_leaves_nothing_behind_after_later_commit(self):
+        with self.assertRaises(ValueError):
+            self.store.save_holdings([
+                {"code": "2330", "name": "台積電", "shares": 1000, "avg_cost": 800.0},
+                {"code": "2317", "name": "鴻海", "shares": 2000, "avg_cost": 100.0},
+                {"name": "缺code的壞資料", "shares": 999, "avg_cost": 1.0},
+            ])
+
+        # 關鍵斷言：一次完全無關的成功寫入（會 commit 整條連線的未決交易）
+        self.store.save_stance("2454", "偏多", name="聯發科")
+
+        got = self.store.get_holdings()
+        self.assertEqual(
+            got["holdings"], [],
+            "整批應該被撤回，但有列被後續無關的 commit 帶進 holdings",
+        )
+        self.assertEqual(got["count"], 0)
+
+    def test_successful_batch_still_commits_normally(self):
+        """修法不能把正常路徑弄壞：全部合法時照常寫入。"""
+        out = self.store.save_holdings([
+            {"code": "2330", "name": "台積電", "shares": 1000, "avg_cost": 800.0},
+            {"code": "2317", "name": "鴻海", "shares": 2000, "avg_cost": 100.0},
+        ])
+        self.assertEqual(out["count"], 2)
+        self.assertEqual(self.store.get_holdings()["count"], 2)
+
+    def test_failure_does_not_discard_previously_committed_batches(self):
+        """rollback 只撤回這一批，不能牽連之前已經 commit 的資料。"""
+        self.store.save_holdings(
+            [{"code": "2330", "name": "台積電", "shares": 1000, "avg_cost": 800.0}],
+            snapshot_date="2026-09-01")
+        with self.assertRaises(ValueError):
+            self.store.save_holdings([{"name": "壞資料"}], snapshot_date="2026-09-02")
+        self.store.save_stance("2454", "偏多")
+        rows = self.store.conn.execute("SELECT code FROM holdings").fetchall()
+        self.assertEqual([r["code"] for r in rows], ["2330"])
+
+
+class McpSessionRollbackE2ETest(unittest.TestCase):
+    """MCP stdio 服務層的 rollback 防禦網（2026-09-17 架構體檢 A2）。
+
+    用真實子行程跑 server.py，因為這個 bug 只有在「整個 session 共用
+    同一條連線」時才會發生——單元測試各自開關 store 是測不到的。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="alphavibe-mcp-rollback-")
+        env = dict(os.environ, ALPHAVIBE_DATA_DIR=self.tmp)
+        self.proc = subprocess.Popen(
+            [sys.executable, SERVER], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            env=env, text=True, bufsize=1,
+        )
+        self._rpc({"jsonrpc": "2.0", "id": 0, "method": "initialize",
+                   "params": {"protocolVersion": "2024-11-05"}})
+
+    def tearDown(self):
+        self.proc.terminate()
+        self.proc.wait(timeout=5)
+        shutil.rmtree(self.tmp)
+
+    def _rpc(self, payload):
+        self.proc.stdin.write(json.dumps(payload) + "\n")
+        self.proc.stdin.flush()
+        line = self.proc.stdout.readline()
+        self.assertTrue(line, "server 沒有回應")
+        return json.loads(line)
+
+    def _call(self, msg_id, tool, args):
+        return self._rpc({"jsonrpc": "2.0", "id": msg_id, "method": "tools/call",
+                          "params": {"name": tool, "arguments": args}})
+
+    def test_failed_write_is_not_committed_by_a_later_unrelated_write(self):
+        failed = self._call(1, "save_holdings", {"rows": [
+            {"code": "2330", "name": "台積電", "shares": 1000, "avg_cost": 800.0},
+            {"name": "缺code的壞資料", "shares": 999},
+        ]})
+        self.assertTrue(failed["result"]["isError"], "這批應該要失敗")
+
+        # 同一個 session 裡做一次完全無關的成功寫入
+        ok = self._call(2, "save_stance", {"code": "2454", "stance": "偏多"})
+        self.assertFalse(ok["result"]["isError"])
+
+        got = self._call(3, "get_holdings", {})
+        payload = json.loads(got["result"]["content"][0]["text"])
+        self.assertEqual(
+            payload["holdings"], [],
+            "失敗批次的資料被後續無關的成功寫入帶進正式庫了",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
