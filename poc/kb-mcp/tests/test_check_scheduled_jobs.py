@@ -174,6 +174,80 @@ class ExitCodeTest(unittest.TestCase):
             shutil.rmtree(tmp)
 
 
+class WebServiceCheckTest(unittest.TestCase):
+    """web 服務存活檢查（架構體檢 B4 追加）。
+
+    存在的理由：A5 的 fail-closed 引入了新故障模式——token 從 plist
+    消失時服務拒絕啟動，launchd 的 KeepAlive 讓它每 10 秒 crash-loop，
+    對外變成「連不上」。首頁橫幅在這種故障下幫不上忙（連首頁都打不開），
+    只有這支獨立排程的巡檢叫得出來。
+    """
+
+    def test_unreachable_service_is_critical(self):
+        # 保留埠 9（discard），本機不會有東西在聽
+        findings = checker.check_web_service(
+            "http://127.0.0.1:9/api/healthz", attempts=2, gap_seconds=0)
+        self.assertEqual(findings[0][0], "critical")
+        self.assertIn("連不上", findings[0][2])
+
+    def test_unreachable_message_points_at_the_likely_cause(self):
+        """訊息要直接指向最可能的原因，半夜看手機的人沒空翻文件。"""
+        findings = checker.check_web_service(
+            "http://127.0.0.1:9/api/healthz", attempts=1, gap_seconds=0)
+        detail = findings[0][2]
+        self.assertIn("ALPHAVIBE_DASHBOARD_TOKEN", detail)
+        self.assertIn("拒絕啟動", detail)
+
+    def test_retries_before_giving_up(self):
+        """巡檢可能剛好撞上服務重啟的空檔，單次失敗就告警會製造假警報，
+        而假警報會訓練人忽略真警報。"""
+        calls = []
+
+        class _Resp:
+            status = 200
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        def fake_urlopen(url, timeout=None):
+            calls.append(url)
+            if len(calls) < 2:
+                raise OSError("connection refused")
+            return _Resp()
+
+        with unittest.mock.patch("urllib.request.urlopen", fake_urlopen):
+            findings = checker.check_web_service(
+                "http://x/api/healthz", attempts=3, gap_seconds=0)
+        self.assertEqual(findings[0][0], "ok", "第二次成功就該回報正常")
+        self.assertEqual(len(calls), 2, "成功後不該繼續重試")
+
+    def test_http_error_does_not_retry(self):
+        """4xx/5xx 代表服務活著但不對勁，重試沒有意義。"""
+        import urllib.error
+        calls = []
+
+        def fake_urlopen(url, timeout=None):
+            calls.append(url)
+            raise urllib.error.HTTPError(url, 500, "boom", {}, None)
+
+        with unittest.mock.patch("urllib.request.urlopen", fake_urlopen):
+            findings = checker.check_web_service(
+                "http://x/api/healthz", attempts=3, gap_seconds=0)
+        self.assertEqual(findings[0][0], "critical")
+        self.assertIn("HTTP 500", findings[0][2])
+        self.assertEqual(len(calls), 1, "HTTP 錯誤不該重試")
+
+    def test_healthy_service_is_ok(self):
+        class _Resp:
+            status = 200
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        with unittest.mock.patch("urllib.request.urlopen",
+                                 lambda url, timeout=None: _Resp()):
+            findings = checker.check_web_service("http://x/api/healthz")
+        self.assertEqual(findings[0][0], "ok")
+
+
 class NotifyDecisionTest(unittest.TestCase):
     """只在狀態變化時通知——每天固定發一則「還是壞的」會讓人麻痺，
     麻痺的告警等於沒有告警。"""

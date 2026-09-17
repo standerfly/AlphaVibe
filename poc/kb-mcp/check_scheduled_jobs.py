@@ -35,6 +35,8 @@ import notify  # noqa: E402
 DEFAULT_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
 DEFAULT_STATE_FILE = os.path.expanduser("~/Library/Logs/alphavibe-health.json")
 DEFAULT_BACKUP_DIR = os.path.expanduser("~/AlphaVibe-backups/daily")
+# 不需認證的探測端點（app/deps.py 的 _AUTH_EXEMPT_PATHS）
+DEFAULT_SERVICE_URL = "http://localhost:8080/api/healthz"
 
 # market_scan 每天 02:00 跑，超過 30 小時沒有新紀錄就是沒跑成功
 SCAN_STALE_HOURS = 30
@@ -146,9 +148,54 @@ def check_backups(backup_dir=DEFAULT_BACKUP_DIR):
              "正常（%.0f 小時前，%.1f MB，共 %d 份）" % (hours, size_mb, len(files)))]
 
 
+def check_web_service(url=DEFAULT_SERVICE_URL, attempts=3, gap_seconds=5):
+    """STND 網頁服務本身還活著嗎（2026-09-17 架構體檢 B4 追加）。
+
+    為什麼巡檢有資格檢查這個：這支腳本是獨立的 launchd 排程，不經過
+    web 服務，所以 web 服務掛掉時它照樣會跑、照樣發得出 Telegram。
+    首頁橫幅在這種故障下幫不上忙——連首頁都打不開。
+
+    為什麼需要這個檢查：A5 把認證改成 fail-closed 之後多了一種新的
+    故障模式——token 若從 plist 消失，服務會拒絕啟動，而 plist 的
+    KeepAlive 會讓 launchd 每隔約 10 秒重試一次，變成無限 crash-loop。
+    那是刻意的取捨（連不上遠比無認證裸奔安全），但「連不上」這件事
+    本身必須有人通知，否則就只是換一種無聲的失敗。
+
+    打 /api/healthz：它在 _AUTH_EXEMPT_PATHS 裡，不需要認證，正是設計
+    給探測用的。重試 3 次是因為巡檢可能剛好撞上服務重啟的空檔，單次
+    失敗就告警會製造假警報——而假警報會訓練人忽略真警報。
+    """
+    import time
+    import urllib.error
+    import urllib.request
+
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(url, timeout=10) as resp:
+                if resp.status == 200:
+                    return [("ok", "web_service", "正常（%s 回應 200）" % url)]
+                last_error = "HTTP %s" % resp.status
+        except urllib.error.HTTPError as exc:
+            # 4xx/5xx 都代表服務活著但不對勁，不必重試
+            return [("critical", "web_service",
+                     "STND 網頁服務回應異常：HTTP %s（%s）" % (exc.code, url))]
+        except Exception as exc:
+            last_error = str(exc)
+        if attempt < attempts - 1:
+            time.sleep(gap_seconds)
+
+    return [("critical", "web_service",
+             "STND 網頁服務連不上（試了 %d 次）：%s。"
+             "若剛改過 launchd plist，先查 ALPHAVIBE_DASHBOARD_TOKEN／"
+             "ALPHAVIBE_MCP_TOKEN 是否還在——認證設定缺失會讓服務拒絕啟動"
+             % (attempts, last_error))]
+
+
 CHECKS = (
     ("market_scan", check_market_scan, True),   # True = 需要 data_dir
     ("backup", check_backups, False),
+    ("web_service", check_web_service, False),
 )
 
 
