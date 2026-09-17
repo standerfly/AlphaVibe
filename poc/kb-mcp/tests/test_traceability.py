@@ -993,8 +993,10 @@ class EntryExitSignalsTraceabilityTest(unittest.TestCase):
         "FR-013": ("不寫入 stances", "review_engine.run_module_d_review"),
         "FR-014": ("頁面接上 FIFO",
                    "app/routers/stock_detail.py::fifo_result"),
+        # FR-015 講的是「兩種口徑並存」，指向 pnl_pct_estimate 比 avg_cost_label
+        # 貼切——那個欄位的存在本身就是「FIFO 之外還保留估算值」的證據。
         "FR-015": ("兩種口徑並存並標明",
-                   "app/routers/stock_detail.py::avg_cost_label"),
+                   "app/routers/stock_detail.py::pnl_pct_estimate"),
     }
 
     def _assert_source_contains(self, fr, desc, symbol):
