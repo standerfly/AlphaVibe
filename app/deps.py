@@ -139,6 +139,77 @@ def _configured_dashboard_token() -> str | None:
     return os.environ.get("ALPHAVIBE_DASHBOARD_TOKEN") or None
 
 
+_ALLOW_NO_AUTH_ENV = "ALPHAVIBE_ALLOW_NO_AUTH"
+
+
+def _no_auth_explicitly_allowed() -> bool:
+    """是否明確授權「不做應用層認證」（2026-09-17 架構體檢 A5）。
+
+    原本的設計是 fail-open：讀不到 token 就放行。問題不在於當下有沒有
+    設 token，而在於**失效模式是靜默全開**——plist 一次編輯失誤，公開
+    ngrok 網址上的儀表板與 47 個 MCP 工具（含全部寫入工具）就全部無
+    認證，而且沒有任何跡象，服務照樣回 200。
+
+    改成：沒 token 就拒絕，除非有人明確在環境變數裡說「我知道我在做
+    什麼」。本機開發要跑沒認證的服務仍然很方便（設這個旗標），但那變成
+    一個需要主動表態的動作，不再是預設值。
+
+    這個「危險操作要第二個旗標明確授權」的形狀，跟 _resolve_data_dir()
+    對正式資料目錄要求 ALPHAVIBE_ALLOW_PRODUCTION_WRITE 是同一套慣例。
+    """
+    return os.environ.get(_ALLOW_NO_AUTH_ENV) == "1"
+
+
+def mcp_auth_ok() -> bool:
+    """MCP 端點是否有有效的認證設定（2026-09-17 架構體檢 A5）。
+
+    /mcp 與 /mcp/<token> 被 DashboardAuthMiddleware 豁免（見
+    _is_mcp_path 的說明：手機 Claude App 連接器處理不了 Basic Auth
+    彈窗），所以它們的安全完全靠 ALPHAVIBE_MCP_TOKEN 這一道。這道沒
+    設定時 mcp_http_gateway._auth_ok() 會放行——那等於把 47 個 MCP
+    工具（含全部寫入工具）無認證掛在公開網址上。
+
+    這裡不改 mcp_http_gateway 自己的邏輯（那支模組還被已退役的
+    report_server.py 與其 1,139 行測試共用，改它要連帶改一批測死碼的
+    測試），改在 app 這層——正式流量的實際入口——把關。
+    """
+    return bool(os.environ.get("ALPHAVIBE_MCP_TOKEN")) or _no_auth_explicitly_allowed()
+
+
+def assert_auth_configured() -> None:
+    """啟動時檢查認證設定，不合格就拒絕啟動（app/main.py 匯入時呼叫）。
+
+    刻意擋在啟動而不是等第一個請求進來：服務起不來你會立刻發現，
+    靜默全開你永遠不會發現。「起不來」是這兩者裡安全得多的失敗模式。
+
+    兩個 token 都檢查：儀表板與 MCP 各有一道獨立的認證，plist 少了
+    任何一個都算設定不完整。
+    """
+    missing = []
+    if not _configured_dashboard_token():
+        missing.append("ALPHAVIBE_DASHBOARD_TOKEN（儀表板 Basic Auth）")
+    if not os.environ.get("ALPHAVIBE_MCP_TOKEN"):
+        missing.append("ALPHAVIBE_MCP_TOKEN（MCP 連接器，/mcp 不受儀表板認證保護）")
+
+    if not missing:
+        return
+    if _no_auth_explicitly_allowed():
+        sys.stderr.write(
+            "⚠️  %s=1：以下認證未啟用，安全性完全依賴外層網路存取控制\n"
+            % _ALLOW_NO_AUTH_ENV)
+        for item in missing:
+            sys.stderr.write("      - %s\n" % item)
+        sys.stderr.flush()
+        return
+    raise RuntimeError(
+        "拒絕啟動：以下認證設定缺失\n"
+        + "".join("  - %s\n" % item for item in missing)
+        + "  正式部署 → 在 launchd plist 的 EnvironmentVariables 設定它們\n"
+        + "  本機開發不需要認證 → 明確設定 %s=1\n" % _ALLOW_NO_AUTH_ENV
+        + "（2026-09-17 架構體檢 A5：舊版在這個情況下會靜默放行全部請求）"
+    )
+
+
 def _sign_dashboard_cookie(expiry_ts) -> str:
     """對 session cookie 的到期時間戳算 HMAC 簽章。密鑰沿用
     ALPHAVIBE_DASHBOARD_TOKEN（不新增環境變數，單一真相來源）。呼叫前
@@ -199,13 +270,16 @@ def _dashboard_auth_ok(headers) -> bool:
     """Dashboard 驗證檢查：Basic Auth 密碼正確、或帶有效的長效 session
     cookie，任一成立即通過。
 
-    未設定 ALPHAVIBE_DASHBOARD_TOKEN 時刻意 fail-open（不擋）——這是
-    report_server.py 的既有行為，本機開發/測試環境不需要這層保護，
-    只有部署到公開網路時才設定這個環境變數啟用它，這裡照抄不改邏輯。
+    未設定 ALPHAVIBE_DASHBOARD_TOKEN 時**拒絕**（2026-09-17 架構體檢 A5
+    改為 fail-closed），除非明確設定 ALPHAVIBE_ALLOW_NO_AUTH=1。舊版在
+    這裡是 fail-open 照抄自 report_server.py，失效模式是靜默全開——見
+    _no_auth_explicitly_allowed() 的說明。實務上啟動斷言
+    （assert_auth_configured）已經先擋掉這個情況，這裡是第二道防線，
+    防的是執行期環境變數被清掉之類的意外。
     """
     token = _configured_dashboard_token()
     if not token:
-        return True  # 未設定 token＝fail-open，不驗證
+        return _no_auth_explicitly_allowed()
     if _dashboard_cookie_valid(headers.get("Cookie")):
         return True
     return _dashboard_password_ok(headers)
@@ -233,7 +307,14 @@ class DashboardAuthMiddleware(BaseHTTPMiddleware):
 
         token = _configured_dashboard_token()
         if not token:
-            return await call_next(request)
+            # fail-closed（見 _no_auth_explicitly_allowed）：沒 token 時
+            # 只有明確授權才放行，否則往下走到 401。
+            if _no_auth_explicitly_allowed():
+                return await call_next(request)
+            return PlainTextResponse(
+                "伺服器未設定認證（ALPHAVIBE_DASHBOARD_TOKEN）",
+                status_code=503,
+            )
 
         if _dashboard_cookie_valid(request.headers.get("Cookie")):
             return await call_next(request)
