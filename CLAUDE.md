@@ -55,8 +55,9 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 決策依據：`docs/adr/0027-prespec-workflow.md`。
 
 <!-- SPECKIT START -->
-目前進行中的 Spec Kit 技術規劃：`specs/003-us-stocks/plan.md`
-（美股獨立投資系統，分支 `003-us-stocks`）。
+目前進行中的 Spec Kit 技術規劃：`specs/004-photos-albums-search/plan.md`
+（相簿分頁：匯入/整理/全域搜尋＋標籤評分中繼資料同步，分支
+`004-photos-albums-search`）。`specs/003-us-stocks` 已完成規劃階段。
 <!-- SPECKIT END -->
 
 ## 分支規則
