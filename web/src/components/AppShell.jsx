@@ -1,6 +1,7 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { HomeIcon, DashboardIcon, UsStocksIcon, AssetsIcon, PhotosIcon } from './icons.jsx'
 import ThemeToggle from './ThemeToggle.jsx'
+import ErrorBoundary from './ErrorBoundary.jsx'
 
 const TABS = [
   { to: '/', label: '首頁', icon: HomeIcon, end: true },
@@ -18,6 +19,9 @@ const TABS = [
    （NavLink 預設行為）。「美股」與既有台股「投資」分頁在資料/查詢管道
    完全獨立（FR-015/016），只是導覽列上相鄰擺放，方便使用。 */
 export default function AppShell() {
+  // key={pathname}：讓 error boundary 在切換分頁時重置，否則一次渲染失敗就會
+  // 卡在錯誤畫面切不出去（見 ErrorBoundary.jsx 的說明）。
+  const { pathname } = useLocation()
   return (
     <div className="app-shell">
       <header className="topnav">
@@ -38,7 +42,9 @@ export default function AppShell() {
         <ThemeToggle />
       </header>
       <main className="app-main">
-        <Outlet />
+        <ErrorBoundary key={pathname}>
+          <Outlet />
+        </ErrorBoundary>
       </main>
     </div>
   )
