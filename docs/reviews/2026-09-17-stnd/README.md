@@ -18,7 +18,7 @@
 | 批次 | 狀態 |
 |---|---|
 | **第一批：止血**（A2 ＋ A3 ＋ B3） | ✅ **2026-09-17 完成，獨立驗收 9/9 PASS** |
-| 第二批：安全網（A5 ＋ B4） | 未開始 |
+| **第二批：安全網**（A5 ＋ B4） | ✅ **2026-09-17 完成** |
 | 第三批：對帳（A1） | 未開始，需 PO 提供試算素材 |
 | 第四批：減重（B1 ＋ B2） | 未開始 |
 | 隨時可做（A4 ＋ B5） | 未開始，需 PO 決定 |
@@ -108,6 +108,20 @@
   或把正式服務移到獨立的 git worktree（推薦，一勞永逸）
 - 工作量：**半天**（兩項合計）
 
+> **✅ 2026-09-17 已完成**（worktree 未做，見下）。
+> **認證**：`app/deps.py` 新增 `assert_auth_configured()`，兩個 token 分開
+> 檢查，缺任一個就**拒絕啟動**，除非明確設 `ALPHAVIBE_ALLOW_NO_AUTH=1`
+> （沿用 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE` 的雙旗標慣例）。請求層另有
+> 第二道 fail-closed。刻意不動 `mcp_http_gateway.py`——它與已退役的
+> `report_server.py` 共用，改它要連帶改 1,139 行測死碼的測試；改在
+> `app/routers/mcp.py`，正式流量的實際入口。
+> **版本端點**：新增 `/api/version`，回 commit／分支／啟動時間／`dirty`
+> 旗標（啟動時工作區有未 commit 改動）。
+> 新增 `app/tests/test_auth.py` 13 個測試——本專案 `app/tests/` 底下
+> **第一支真正的 unittest**（B2 的第一步）。
+> **未做**：獨立 prod worktree。`/api/version` 已能回答「跑的是哪份 code」
+> 這個問題，worktree 是更徹底但會改變部署結構的做法，留待 PO 決定。
+
 ---
 
 ## B. 高投資報酬（投入小、痛感大）
@@ -153,6 +167,22 @@
 - 實例：log 裡找到 2026-09-14 TPEx + 興櫃 SSL 失敗，沒有任何通知。
 - 加上 6 個 launchd 的 log 都沒有輪替機制（目前最大 592KB，會無上限累積）。
 - 工作量：小～中
+
+> **✅ 2026-09-17 已完成**。
+> **巡檢**：`poc/kb-mcp/check_scheduled_jobs.py`，每天 04:00
+> （`com.alphavibe.healthcheck`）。偵測資料源失敗、掃描覆蓋率驟降、排程
+> 沒跑、備份缺失或異常小。**用 9/13–9/14 的真實歷史資料驗證過**：當天
+> 會報 3 個 CRITICAL（TPEx 與興櫃 SSL 失敗、覆蓋率只有 54%）。
+> **通知**：Telegram（`poc/kb-mcp/notify.py`，直接打 Bot API，不 import
+> 閘道專案的程式碼，通知因此不依賴閘道服務是否在跑）＋ STND 首頁橫幅
+> （`/api/jobs/health` → `web/src/components/JobHealthBanner.jsx`）。
+> 只在**狀態變化**時發通知——每天固定發一則「還是壞的」會讓人麻痺，
+> 麻痺的告警等於沒有告警。橫幅同理，只在 critical／warning 時出現。
+> **log 輪替**：`poc/kb-mcp/rotate_logs.py`，每天 03:45
+> （`com.alphavibe.logrotate`），單檔超過 5MB 才輪替，保留 5 份。
+> 用 copy-truncate 而非 mv——實測確認 launchd 用 append 模式，輪替後
+> 服務繼續寫同一個 file handle（mv 會讓 log 靜默消失）。
+> 測試：`test_check_scheduled_jobs.py` 22 個。
 
 ### B5. 分支債
 
