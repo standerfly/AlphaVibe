@@ -404,3 +404,25 @@ details.collapse summary::marker { color: var(--accent); }
   background: var(--paper-sunken); border-radius: 4px;
   font-size: .75rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
 }
+
+/* 排程健康橫幅（2026-09-17 架構體檢 B4）。只在出問題時出現，
+   所以刻意做得醒目——常駐的綠色「正常」橫幅會讓人學會忽略這個位置。 */
+.job-banner {
+  margin: 0 0 1rem; padding: .85rem 1rem; border-radius: 6px;
+  border: 1px solid var(--rule); border-left-width: 4px;
+}
+.job-banner--critical { background: var(--red-soft); border-left-color: var(--red); }
+.job-banner--warning { background: var(--amber-soft); border-left-color: var(--amber); }
+.job-banner__head {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: .6rem;
+  font-weight: 600; margin-bottom: .45rem;
+}
+.job-banner--critical .job-banner__head { color: var(--red-ink); }
+.job-banner--warning .job-banner__head { color: var(--amber); }
+.job-banner__time { font-weight: 400; font-size: .78rem; color: var(--ink-dim); }
+.job-banner__list { margin: 0; padding-left: 1.1rem; }
+.job-banner__list li {
+  font-size: .86rem; line-height: 1.55; color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
+.job-banner__list li b { color: var(--ink); font-weight: 600; }
