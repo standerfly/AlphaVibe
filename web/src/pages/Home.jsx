@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiGet } from '../api/client.js'
+import JobHealthBanner from '../components/JobHealthBanner.jsx'
 
 /* 首頁：GET /api/dashboard（今日重點／今日新候選／策略設定）＋
    GET /api/holdings?filter=holdings（追蹤中檔數／需留意數量）。
@@ -59,6 +60,7 @@ export default function Home() {
   const [dashboardError, setDashboardError] = useState(null)
   const [holdings, setHoldings] = useState(null)
   const [holdingsError, setHoldingsError] = useState(null)
+  const [jobHealth, setJobHealth] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -68,6 +70,11 @@ export default function Home() {
     apiGet('/api/holdings?filter=holdings')
       .then((data) => { if (!cancelled) setHoldings(data) })
       .catch((err) => { if (!cancelled) setHoldingsError(err.message) })
+    // 巡檢狀態失敗就當作沒有橫幅：它是附加資訊，不該讓首頁其他區塊
+    // 跟著顯示錯誤（比照上面兩支各自獨立 fetch 的既有作法）。
+    apiGet('/api/jobs/health')
+      .then((data) => { if (!cancelled) setJobHealth(data) })
+      .catch(() => { if (!cancelled) setJobHealth(null) })
     return () => { cancelled = true }
   }, [])
 
@@ -81,6 +88,8 @@ export default function Home() {
         <h1>首頁</h1>
         {dashboard && <span className="meta">資料更新於 {dashboard.generated_at}</span>}
       </div>
+
+      <JobHealthBanner health={jobHealth} />
 
       <div className="stat-row">
         <div className="stat-tile">

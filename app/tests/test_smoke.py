@@ -117,6 +117,12 @@ def main() -> int:
 
     env = dict(os.environ)
     env["ALPHAVIBE_DATA_DIR"] = data_dir
+    # 2026-09-17 架構體檢 A5：app/main.py 啟動時會斷言認證有設定，沒設
+    # token 又沒明確授權就拒絕啟動。這支黑箱測試本來就跑在無認證模式下
+    # （測的是業務端點的輸出正確性，不是認證行為），所以明確表態——
+    # 這正是這個旗標存在的用途：讓「無認證」變成需要主動宣告的選擇，
+    # 而不是讀不到 token 時的靜默預設。
+    env["ALPHAVIBE_ALLOW_NO_AUTH"] = "1"
     python = os.path.join(_APP_ROOT, ".venv", "bin", "python3")
     # 2026-08-22 教訓：原本用 stdout=subprocess.PIPE 但從未讀取，這份
     # 測試本身後面會送 30 個併發請求，uvicorn 每個請求都印一行 log，

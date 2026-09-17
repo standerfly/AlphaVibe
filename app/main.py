@@ -73,17 +73,25 @@ from fastapi import Depends, FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.deps import DashboardAuthMiddleware, KBStore, get_kb_store
+from app.deps import (DashboardAuthMiddleware, KBStore, get_kb_store,
+                      assert_auth_configured)
+from app import version as app_version
 from app.routers import actions as actions_router
 from app.routers import assets as assets_router
 from app.routers import dashboard as dashboard_router
 from app.routers import holdings as holdings_router
 from app.routers import holdings_import as holdings_import_router
+from app.routers import jobs as jobs_router
 from app.routers import market_scan as market_scan_router
 from app.routers import mcp as mcp_router
 from app.routers import screen as screen_router
 from app.routers import stock_detail as stock_detail_router
 from app.routers import us_stocks as us_stocks_router
+
+# 認證設定檢查（2026-09-17 架構體檢 A5）：沒設 token 又沒明確授權
+# 無認證模式，就在這裡拒絕啟動。擋在啟動而不是等請求進來——服務起不來
+# 會立刻被發現，靜默全開則永遠不會。
+assert_auth_configured()
 
 app = FastAPI(title="AlphaVibe App (skeleton)")
 app.add_middleware(DashboardAuthMiddleware)
@@ -96,6 +104,8 @@ app.include_router(actions_router.router)
 app.include_router(holdings_import_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(assets_router.router)
+# 排程健康狀態（2026-09-17 架構體檢 B4）：首頁橫幅的資料來源
+app.include_router(jobs_router.router)
 # 美股獨立投資系統（specs/003-us-stocks）：這一步只有骨架端點
 # （/api/us-stocks/healthz），完整業務端點見該 router 檔頭 docstring。
 # 完全獨立於上面幾個既有台股 router，不共用任何程式碼或資料（FR-015/016）。
@@ -108,6 +118,19 @@ def healthz() -> dict:
     不需要認證，給 uptime/monitoring 探測用（見 deps._AUTH_EXEMPT_PATHS）。
     """
     return {"status": "ok"}
+
+
+@app.get("/api/version")
+def version() -> dict:
+    """服務啟動時載入的程式碼版本（2026-09-17 架構體檢 A5）。
+
+    受一般儀表板認證保護（不在 _AUTH_EXEMPT_PATHS 裡），因為 commit
+    hash 與分支名算內部資訊，沒必要對公開網址裸露。
+
+    `dirty: true` 是要注意的訊號：服務啟動時工作區有未 commit 的改動，
+    表示正在跑的東西不完全在版控裡，下次重啟可能就不一樣了。
+    """
+    return dict(app_version.INFO)
 
 
 @app.get("/api/whoami")
