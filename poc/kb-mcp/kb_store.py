@@ -724,25 +724,37 @@ class KBStore:
         snapshot_date = snapshot_date or _today()
         duplicates_skipped = []
         saved_count = 0
-        for r in rows:
-            if not r.get("code"):
-                raise ValueError("每筆持股都必須有 code：%r" % r)
-            existing = self.conn.execute(
-                "SELECT shares, avg_cost FROM holdings"
-                " WHERE code=? AND snapshot_date=? LIMIT 1",
-                (r["code"], snapshot_date),
-            ).fetchone()
-            if existing is not None and existing["shares"] == r.get("shares") \
-                    and existing["avg_cost"] == r.get("avg_cost"):
-                duplicates_skipped.append({"code": r["code"], "name": r.get("name")})
-                continue
-            self.conn.execute(
-                "INSERT INTO holdings (code, name, shares, avg_cost,"
-                " snapshot_date, source_ref, created_at) VALUES (?,?,?,?,?,?,?)",
-                (r["code"], r.get("name"), r.get("shares"), r.get("avg_cost"),
-                 snapshot_date, source_ref, _now()),
-            )
-            saved_count += 1
+        try:
+            for r in rows:
+                if not r.get("code"):
+                    raise ValueError("每筆持股都必須有 code：%r" % r)
+                existing = self.conn.execute(
+                    "SELECT shares, avg_cost FROM holdings"
+                    " WHERE code=? AND snapshot_date=? LIMIT 1",
+                    (r["code"], snapshot_date),
+                ).fetchone()
+                if existing is not None and existing["shares"] == r.get("shares") \
+                        and existing["avg_cost"] == r.get("avg_cost"):
+                    duplicates_skipped.append({"code": r["code"], "name": r.get("name")})
+                    continue
+                self.conn.execute(
+                    "INSERT INTO holdings (code, name, shares, avg_cost,"
+                    " snapshot_date, source_ref, created_at) VALUES (?,?,?,?,?,?,?)",
+                    (r["code"], r.get("name"), r.get("shares"), r.get("avg_cost"),
+                     snapshot_date, source_ref, _now()),
+                )
+                saved_count += 1
+        except Exception:
+            # 整批原子性（2026-09-17 架構體檢 A2）：任何一筆失敗就撤回整批。
+            # 迴圈前面幾輪可能已經 execute() 但還沒 commit，這些列會留在
+            # 連線的未決交易裡；stdio MCP 服務整個 session 共用同一條連線
+            # （server.py:889 的 self.store），不 rollback 的話它們會被
+            # 「下一次任何無關的成功寫入」順帶 commit 進正式庫——使用者以為
+            # 這批被拒絕了，實際上部分資料已經進去，FIFO 損益跟著錯。
+            # 對外行為不變：例外照原樣往上拋，呼叫端（holdings_import.py:207
+            # 轉 400、server.py call_tool 轉 isError）完全不用改。
+            self.conn.rollback()
+            raise
         self.conn.commit()
         return {"saved": True, "count": saved_count,
                 "snapshot_date": snapshot_date,
