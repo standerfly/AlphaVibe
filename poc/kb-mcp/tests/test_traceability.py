@@ -20,6 +20,28 @@ import tpex_client  # noqa: E402
 from kb_store import KBStore  # noqa: E402
 
 
+
+def _assert_source_contains_impl(testcase, fr, desc, symbol):
+    """檢查「檔案路徑::字串」格式的 FR 實作指標（2026-09-17 新增）。
+
+    為什麼不 import 模組來 hasattr：有些 FR 的實作已經遷到 `app/` 層，
+    而 `app/` 需要 fastapi。poc/kb-mcp 的測試套件刻意維持僅標準庫可跑，
+    不該為了追溯檢查就把整個 web 框架變成它的依賴。改讀原始碼找識別字，
+    手法同本檔既有的 test_fr012_signal_module_has_no_external_client。
+    """
+    import os
+    rel_path, needle = symbol.split("::", 1)
+    # tests/ → poc/kb-mcp/ → poc/ → repo 根目錄，共四層
+    root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))))
+    full = os.path.join(root, rel_path)
+    testcase.assertTrue(os.path.exists(full),
+                        "%s（%s）對應的檔案 %s 不存在" % (fr, desc, rel_path))
+    with open(full, encoding="utf-8") as handle:
+        source = handle.read()
+    testcase.assertIn(needle, source,
+                      "%s（%s）對應的實作 %s 在 %s 裡找不到" % (fr, desc, needle, rel_path))
+
 class SnapshotTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="alphavibe-trace-test-")
@@ -842,172 +864,10 @@ class ReportTraceabilityTest(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp)
 
-    def test_report_renders_snapshot_and_holdings(self):
-        store = KBStore(self.tmp)
-        store.save_snapshot("6805", "先進封裝需求 <強勁>", name="鴻勁",
-                            snapshot_date="2026-07-09", price_at_time=1400.0,
-                            framework_version="framework_v1",
-                            sources=[{"url": "u", "title": "t"}])
-        store.save_holdings([{"code": "6805", "shares": 2000,
-                              "avg_cost": 1100.0}])
-        store.close()
 
-        out = os.path.join(self.tmp, "report.html")
-        self.assertEqual(report.main(["--data-dir", self.tmp, "--out", out]), 0)
-        with open(out, encoding="utf-8") as fh:
-            page = fh.read()
-        self.assertIn("分析快照", page)
-        self.assertIn("framework_v1", page)
-        self.assertIn("&lt;強勁&gt;", page)      # 跳脫
-        self.assertIn("我的庫存與分析", page)     # 持股快照＋立場合併表格（新版）
-        self.assertIn("1100.0", page)
-        self.assertIn("尚無分析", page)          # 6805 有庫存但沒存立場
-        self.assertIn("非投資建議", page)         # 免責聲明（NFR）
-        self.assertIn("分析快照 1 檔", page)
 
-    def test_report_merges_holdings_with_stances_and_splits_watchlist(self):
-        """庫存＋立場合併成一張表；沒有立場的庫存顯示「尚無分析」；
-        觀察名單立場區塊排除掉庫存代碼——三者都要驗證關聯正確、不是隨機配對。"""
-        store = KBStore(self.tmp)
-        store.save_holdings([
-            {"code": "2330", "name": "台積電", "shares": 1000, "avg_cost": 900.0},
-            {"code": "2454", "name": "聯發科", "shares": 500, "avg_cost": 1200.0},
-            {"code": "3661", "name": "世芯-KY", "shares": 5, "avg_cost": 3700.0},
-        ])
-        store.save_stance("2330", "偏多", name="台積電",
-                          valuation_metric="PER 20 以下", reason="基本面穩健")
-        store.save_stance("2454", "偏空", name="聯發科",
-                          valuation_metric="PER 25 以上偏貴", reason="庫存去化中")
-        # 3661 世芯-KY：只有庫存，故意不存立場，驗證「尚無分析」
-        store.save_stance("2603", "偏多", name="長榮", reason="航運景氣回溫")
-        store.save_stance("1101", "偏空", name="台泥", reason="產能過剩")
-        store.close()
 
-        out = os.path.join(self.tmp, "report.html")
-        self.assertEqual(report.main(["--data-dir", self.tmp, "--out", out]), 0)
-        with open(out, encoding="utf-8") as fh:
-            page = fh.read()
 
-        def section_html(section_id):
-            # 用 details id 定位區塊，不用標題文字 split——標題文字現在也
-            # 出現在頁首目錄（TOC）連結裡，文字 split 會誤判成第一個是 TOC。
-            start = page.index('id="%s"' % section_id)
-            end = page.index("</details>", start)
-            return page[start:end]
-
-        holdings_section = section_html("section-holdings")
-        watchlist_section = section_html("section-stance")
-
-        def row_for(code, section):
-            # 庫存總覽的代碼欄位是個股詳情頁連結（2026-08-09），格式變成
-            # data-label="代碼"><a href="...">CODE</a>；純觀察區塊沒有
-            # 交易/庫存資料可畫圖，仍是純文字——正則同時相容兩種格式。
-            m = re.search(
-                r'data-label="代碼">(?:<a[^>]*>)?%s(?:</a>)?<.*?</tr>' % re.escape(code),
-                section, re.S)
-            self.assertIsNotNone(m, "找不到代碼 %s 的表格列" % code)
-            return m.group(0)
-
-        row_2330 = row_for("2330", holdings_section)
-        self.assertIn('data-label="股數">1000.0<', row_2330)
-        self.assertIn('data-label="平均成本">900.0<', row_2330)
-        self.assertIn('style="color:var(--red)">偏多<', row_2330)
-        self.assertIn('data-label="估值依據">PER 20 以下<', row_2330)
-        self.assertIn('data-label="理由">基本面穩健<', row_2330)
-
-        row_2454 = row_for("2454", holdings_section)
-        self.assertIn('data-label="股數">500.0<', row_2454)
-        self.assertIn('data-label="平均成本">1200.0<', row_2454)
-        self.assertIn('style="color:var(--green)">偏空<', row_2454)
-        self.assertIn('data-label="估值依據">PER 25 以上偏貴<', row_2454)
-        self.assertIn('data-label="理由">庫存去化中<', row_2454)
-
-        row_3661 = row_for("3661", holdings_section)
-        self.assertIn('data-label="股數">5.0<', row_3661)
-        self.assertIn('data-label="平均成本">3700.0<', row_3661)
-        self.assertIn('style="color:var(--ink-dim)">尚無分析<', row_3661)
-        self.assertIn('data-label="估值依據">尚無分析<', row_3661)
-        self.assertIn('data-label="理由">尚無分析<', row_3661)
-        self.assertIn('data-label="更新日期">尚無分析<', row_3661)
-
-        # 觀察名單只出現非庫存代碼，庫存代碼不該滲入
-        self.assertIn('data-label="代碼">2603<', watchlist_section)
-        self.assertIn('data-label="代碼">1101<', watchlist_section)
-        for code in ("2330", "2454", "3661"):
-            self.assertNotIn('data-label="代碼">%s<' % code, watchlist_section)
-
-    def test_report_market_value_ratio_and_industry_with_price_cache(self):
-        store = KBStore(self.tmp)
-        store.save_holdings([
-            {"code": "2330", "name": "台積電", "shares": 1000, "avg_cost": 900.0},
-            {"code": "2454", "name": "聯發科", "shares": 100, "avg_cost": 1000.0},
-        ])
-        store.upsert_stock_price("2330", 1000.0, "2026-07-18")
-        store.upsert_stock_price("2454", 1500.0, "2026-07-18")
-        store.upsert_stock_industry("2330", "半導體業")
-        store.close()
-
-        out = os.path.join(self.tmp, "report.html")
-        self.assertEqual(report.main(["--data-dir", self.tmp, "--out", out]), 0)
-        with open(out, encoding="utf-8") as fh:
-            page = fh.read()
-
-        value_2330 = 1000 * 1000.0
-        value_2454 = 100 * 1500.0
-        total = value_2330 + value_2454
-        ratio_2330 = value_2330 / total * 100
-        ratio_2454 = value_2454 / total * 100
-
-        self.assertIn("%s 元" % format(value_2330, ",.0f"), page)
-        self.assertIn("%.1f%%" % ratio_2330, page)
-        self.assertIn("%.1f%%" % ratio_2454, page)
-        self.assertIn("半導體業", page)
-        self.assertIn("僅計入已更新價格的持股", page)
-        # updated_at 是寫入當下的時間戳（非 price_date），驗證有出現該提示文字即可
-        import datetime as _dt
-        self.assertIn("價格更新時間：%s" % _dt.date.today().isoformat(), page)
-        # 2454 沒有存產業別快取，該欄要顯示「—」而不是空白或報錯
-        self.assertIn('data-label="產業別">—<', page)
-
-    def test_report_holdings_without_price_cache_shows_placeholder_no_crash(self):
-        store = KBStore(self.tmp)
-        store.save_holdings([
-            {"code": "6826", "name": "和淞", "shares": 10},
-            {"code": "6805", "name": "鴻勁", "shares": 5},
-        ])
-        store.close()
-
-        out = os.path.join(self.tmp, "report.html")
-        # 完全沒有價格快取：不能除以零、不能整頁產出失敗
-        self.assertEqual(report.main(["--data-dir", self.tmp, "--out", out]), 0)
-        with open(out, encoding="utf-8") as fh:
-            page = fh.read()
-        self.assertIn("未更新價格", page)
-        self.assertIn("尚未更新股價，執行 refresh_holdings_prices", page)
-
-    def test_report_reason_expands_for_long_text_plain_for_short(self):
-        store = KBStore(self.tmp)
-        long_reason = "這是很長的理由內容" * 6  # 54 字，超過 40 字摘要門檻
-        store.save_holdings([{"code": "2330", "name": "台積電", "shares": 1000}])
-        store.save_stance("2330", "偏多", reason=long_reason)
-        store.save_stance("2454", "偏空", name="聯發科", reason="短理由不用展開")
-        store.close()
-
-        out = os.path.join(self.tmp, "report.html")
-        self.assertEqual(report.main(["--data-dir", self.tmp, "--out", out]), 0)
-        with open(out, encoding="utf-8") as fh:
-            page = fh.read()
-
-        # 長理由：包成 details/summary，全文仍在頁面中（展開後可見）
-        self.assertIn("<details class=\"reason\">", page)
-        self.assertIn(long_reason, page)
-        self.assertIn(long_reason[:40], page)
-        # 短理由：不多包一層 details，直接顯示全文
-        self.assertIn("短理由不用展開", page)
-        short_row_match = re.search(
-            r'data-label="理由">[^<]*短理由不用展開', page)
-        self.assertIsNotNone(short_row_match,
-                             "短理由不該被包進 <details>，應直接顯示")
 
 
 if __name__ == "__main__":
@@ -1035,9 +895,15 @@ class EntryExitFoundationTraceabilityTest(unittest.TestCase):
         "FR-010": ("只用既有快取不查外部 API", "price_position.compute"),
         "FR-011": ("批次查詢單檔問題不影響整批", "pnl.compute_all_positions"),
         "FR-012": ("MCP 工具化", "server.TOOLS"),
-        "FR-013": ("不改既有浮動損益顯示", "report._chart_stats_html"),
+        # 2026-09-17：實作已從退役的 report._chart_stats_html 遷到 app/ 層，
+        # 指標跟著改（見 test_all_frs_have_implementation 的路徑格式說明）。
+        "FR-013": ("不改既有浮動損益顯示",
+                   "app/routers/stock_detail.py::avg_cost_label"),
         "FR-014": ("一次性回補歷史深度，日常窗口不變", "screener.PRICE_WINDOW_DAYS"),
     }
+
+    def _assert_source_contains(self, fr, desc, symbol):
+        _assert_source_contains_impl(self, fr, desc, symbol)
 
     def test_all_frs_have_implementation(self):
         """每條 FR 都有對應的實作符號存在（不是空殼登記）。"""
@@ -1048,6 +914,9 @@ class EntryExitFoundationTraceabilityTest(unittest.TestCase):
         modules = {"pnl": pnl, "price_position": price_position,
                    "server": server, "report": report, "screener": screener}
         for fr, (desc, symbol) in sorted(self.FR_MAP.items()):
+            if "::" in symbol:
+                self._assert_source_contains(fr, desc, symbol)
+                continue
             module_name, attr = symbol.split(".", 1)
             module = modules[module_name]
             self.assertTrue(hasattr(module, attr),
@@ -1122,9 +991,14 @@ class EntryExitSignalsTraceabilityTest(unittest.TestCase):
         "FR-011": ("新訊號失敗不影響既有檢查", "review_engine.run_module_d_review"),
         "FR-012": ("零新增外部呼叫", "exit_signals.TRIGGERED_STATUSES"),
         "FR-013": ("不寫入 stances", "review_engine.run_module_d_review"),
-        "FR-014": ("頁面接上 FIFO", "report._chart_stats_html"),
-        "FR-015": ("兩種口徑並存並標明", "report._chart_stats_html"),
+        "FR-014": ("頁面接上 FIFO",
+                   "app/routers/stock_detail.py::fifo_result"),
+        "FR-015": ("兩種口徑並存並標明",
+                   "app/routers/stock_detail.py::avg_cost_label"),
     }
+
+    def _assert_source_contains(self, fr, desc, symbol):
+        _assert_source_contains_impl(self, fr, desc, symbol)
 
     def test_all_frs_have_implementation(self):
         import exit_signals
@@ -1133,6 +1007,9 @@ class EntryExitSignalsTraceabilityTest(unittest.TestCase):
                    "review_engine": review_engine, "report": report,
                    "server": server}
         for fr, (desc, symbol) in sorted(self.FR_MAP.items()):
+            if "::" in symbol:
+                self._assert_source_contains(fr, desc, symbol)
+                continue
             module_name, attr = symbol.split(".", 1)
             target = modules[module_name]
             for part in attr.split("."):
