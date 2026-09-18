@@ -292,6 +292,64 @@ class SearchPhotosTest(unittest.TestCase):
         self.assertEqual(self.store.list_lenses(), ["24-70mm F2.8", "45mm F2.8"])
 
 
+class MetadataSyncStatusTest(unittest.TestCase):
+    """User Story 3：中繼資料同步狀態轉換方法。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="photo-store-test-")
+        self.store = PhotoStore(self.tmp)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp)
+
+    def test_default_status_is_pending(self):
+        photo = self.store.add_photo(
+            file_hash="h", storage_path="/tmp/a.jpg",
+            storage_location="internal", thumbnail_path="/tmp/t.jpg")
+        self.assertEqual(photo["metadata_sync_status"], "pending")
+        self.assertIsNone(photo["metadata_synced_at"])
+        self.assertIsNone(photo["metadata_sync_error"])
+
+    def test_mark_synced_records_timestamp_and_clears_error(self):
+        photo = self.store.add_photo(
+            file_hash="h", storage_path="/tmp/a.jpg",
+            storage_location="internal", thumbnail_path="/tmp/t.jpg")
+        self.store.update_metadata_sync_status(photo["id"], "failed", error="boom")
+        updated = self.store.update_metadata_sync_status(photo["id"], "synced")
+        self.assertEqual(updated["metadata_sync_status"], "synced")
+        self.assertIsNotNone(updated["metadata_synced_at"])
+        self.assertIsNone(updated["metadata_sync_error"])
+
+    def test_mark_failed_records_error_reason(self):
+        photo = self.store.add_photo(
+            file_hash="h", storage_path="/tmp/a.jpg",
+            storage_location="internal", thumbnail_path="/tmp/t.jpg")
+        updated = self.store.update_metadata_sync_status(
+            photo["id"], "failed", error="檔案損壞")
+        self.assertEqual(updated["metadata_sync_status"], "failed")
+        self.assertEqual(updated["metadata_sync_error"], "檔案損壞")
+
+    def test_invalid_status_rejected(self):
+        photo = self.store.add_photo(
+            file_hash="h", storage_path="/tmp/a.jpg",
+            storage_location="internal", thumbnail_path="/tmp/t.jpg")
+        with self.assertRaises(ValueError):
+            self.store.update_metadata_sync_status(photo["id"], "syncing")
+
+    def test_missing_photo_returns_none(self):
+        self.assertIsNone(
+            self.store.update_metadata_sync_status(999999, "synced"))
+
+    def test_mark_metadata_pending_resets_from_any_status(self):
+        photo = self.store.add_photo(
+            file_hash="h", storage_path="/tmp/a.jpg",
+            storage_location="internal", thumbnail_path="/tmp/t.jpg")
+        self.store.update_metadata_sync_status(photo["id"], "synced")
+        reset = self.store.mark_metadata_pending(photo["id"])
+        self.assertEqual(reset["metadata_sync_status"], "pending")
+
+
 class MetadataSyncFreezeTest(unittest.TestCase):
     """`research.md` §4 核心保證的回歸測試：中繼資料相關操作（標籤/
     評分變更）不得改變已存在照片的 `file_hash`。這是 User Story 3 的

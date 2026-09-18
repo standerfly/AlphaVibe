@@ -18,6 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
 from photo_importer import scan_folder, commit_import, _compute_md5  # noqa: E402
+from photo_metadata_sync import write_metadata  # noqa: E402
 from photo_store import PhotoStore  # noqa: E402
 
 # 8x8 純色 JPEG，632 bytes，無 EXIF（用於驗證「沒有 EXIF 時正確回傳
@@ -172,6 +173,36 @@ class CommitImportTest(unittest.TestCase):
         self.assertEqual(result["imported_count"], 1)
         self.assertEqual(len(result["failed"]), 1)
         self.assertEqual(result["failed"][0]["filename"], "bad.jpg")
+
+    def test_file_hash_frozen_even_after_real_metadata_write_changes_bytes(self):
+        """`research.md` §4 的完整端到端驗證（跨 photo_importer +
+        photo_metadata_sync）：對已匯入照片的**複製檔案**真的呼叫
+        `write_metadata()`（會真的改變該檔案的位元組——exiftool 不是
+        no-op），之後重新掃描**原始來源資料夾**（完全沒被 STND 動過的
+        那份），仍然必須被正確判定為重複，證明 hash 凍結機制在「檔案
+        位元組真的被中繼資料寫回動過」這個最貼近實際使用的情境下依然
+        成立，不只是理論上的資料庫欄位不變。"""
+        _write_tiny_jpeg(os.path.join(self.source_dir, "a.jpg"))
+        first_scan = scan_folder(self.source_dir, self.store)
+        commit_import(
+            first_scan["new_files"], "internal", self.dest_dir,
+            self.thumb_dir, self.store)
+
+        imported = self.store.find_by_hash(first_scan["new_files"][0]["file_hash"])
+        before_bytes = open(imported["storage_path"], "rb").read()
+
+        write_metadata(imported["storage_path"], ["夕陽", "京都"], 4)
+
+        after_bytes = open(imported["storage_path"], "rb").read()
+        self.assertNotEqual(
+            before_bytes, after_bytes,
+            "測試前提不成立：exiftool 寫入後檔案位元組應該要真的改變")
+
+        second_scan = scan_folder(self.source_dir, self.store)
+        self.assertEqual(second_scan["duplicate_count"], 1)
+        self.assertEqual(second_scan["new_files"], [])
+        reloaded = self.store.find_by_hash(first_scan["new_files"][0]["file_hash"])
+        self.assertEqual(reloaded["file_hash"], imported["file_hash"])
 
     def test_storage_path_named_by_hash_not_original_filename(self):
         _write_tiny_jpeg(os.path.join(self.source_dir, "原始檔名.jpg"))

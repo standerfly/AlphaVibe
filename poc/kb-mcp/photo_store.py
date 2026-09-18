@@ -269,6 +269,40 @@ class PhotoStore:
         self.conn.commit()
         return self.get_photo(photo_id)
 
+    # ---------- User Story 3：標籤/評分中繼資料同步狀態 ----------
+
+    def update_metadata_sync_status(self, photo_id, status, error=None):
+        """更新照片的中繼資料寫回狀態（`synced`／`pending`／`failed`），
+        由 `app/routers/photos.py` 的背景任務在呼叫
+        `photo_metadata_sync.write_metadata()` 之後呼叫。`status='synced'`
+        時記錄 `metadata_synced_at`（現在時間）並清空
+        `metadata_sync_error`；其餘狀態保留/更新 `metadata_sync_error`。
+        **這個方法完全不碰 `file_hash` 欄位**（見本檔案開頭 docstring
+        的核心保證）。"""
+        if status not in VALID_SYNC_STATUSES:
+            raise ValueError(
+                "status 必須是 %s，收到：%s" % (VALID_SYNC_STATUSES, status))
+        if self.get_photo(photo_id) is None:
+            return None
+        if status == "synced":
+            self.conn.execute(
+                "UPDATE photos SET metadata_sync_status=?,"
+                " metadata_synced_at=?, metadata_sync_error=NULL WHERE id=?",
+                (status, _now(), photo_id))
+        else:
+            self.conn.execute(
+                "UPDATE photos SET metadata_sync_status=?,"
+                " metadata_sync_error=? WHERE id=?",
+                (status, error, photo_id))
+        self.conn.commit()
+        return self.get_photo(photo_id)
+
+    def mark_metadata_pending(self, photo_id):
+        """標籤/評分被編輯後呼叫：不論之前是什麼狀態，一律先設回
+        `pending`（見 `data-model.md` 狀態轉換圖），代表資料庫端已經是
+        最新、檔案端還沒跟上，等背景任務寫回。"""
+        return self.update_metadata_sync_status(photo_id, "pending")
+
     # ---------- tags ----------
 
     def get_or_create_tag(self, name):

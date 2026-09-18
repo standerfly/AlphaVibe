@@ -6,7 +6,7 @@ import { ChevronLeftIcon, PhotosIcon } from '../icons.jsx'
    標籤／設評分。MVP 沒有單張照片詳情頁（那是 User Story 3 才加，見
    tasks.md T041），標記操作都透過這裡的批次工具列完成，對應
    contracts/photos-api.md 的 POST /api/photos/photos/batch。 */
-export default function AlbumDetail({ albumId, onBack }) {
+export default function AlbumDetail({ albumId, onBack, onOpenPhoto }) {
   const [photos, setPhotos] = useState(null)
   const [error, setError] = useState(null)
   const [selected, setSelected] = useState(new Set())
@@ -88,6 +88,8 @@ export default function AlbumDetail({ albumId, onBack }) {
               key={photo.id}
               className={`thumb${selected.has(photo.id) ? ' is-selected' : ''}`}
               onClick={() => toggleSelect(photo.id)}
+              onDoubleClick={() => onOpenPhoto(photo.id)}
+              title="點一下多選；點兩下看詳情"
             >
               <img src={`/api/photos/thumbnail/${photo.id}`} alt=""
                 onError={(e) => { e.target.style.display = 'none' }} />
@@ -95,6 +97,15 @@ export default function AlbumDetail({ albumId, onBack }) {
                 style={{ position: 'absolute', top: '50%', left: '50%',
                   transform: 'translate(-50%,-50%)', opacity: .35 }} />
               {photo.rating > 0 && <span className="thumb__rating">★{photo.rating}</span>}
+              <span
+                role="button"
+                onClick={(e) => { e.stopPropagation(); onOpenPhoto(photo.id) }}
+                style={{ position: 'absolute', top: '.25rem', right: '.3rem',
+                  fontSize: '.64rem', fontWeight: 700, background: 'rgba(0,0,0,.55)',
+                  color: '#fff', padding: '.02rem .35rem', borderRadius: 5 }}
+              >
+                詳情
+              </span>
             </button>
           ))}
         </div>

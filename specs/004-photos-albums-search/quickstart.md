@@ -84,9 +84,16 @@ gitignore），**絕對不要**指向 `poc/data/`（正式庫）——這是本 
 
 ## 已知的技術待辦／風險
 
-- `sips` 讀 EXIF 的欄位名稱／輸出格式需要在實作時針對真實 JPG 檔案
-  逐一確認（research.md §1 只是方向性決策，具體 parsing 邏輯待實作
-  驗證）
+- **（2026-09-18 更新）`sips` EXIF 讀取只驗證過「沒有 EXIF 時正確回
+  `None`」這條路徑**——本機測試用的合成 JPG 都沒有相機 EXIF；
+  `Model`／`LensModel`／`ISOSpeedRatings` 等鍵名是否精確對應真實相機
+  輸出的 `sips -g allxml` 結構，仍待有真實照片時驗證，讀取失敗不會
+  中斷匯入（已有防呆設計）
+- **（2026-09-18 已解決）exiftool 中文標籤寫入的 charset 陷阱**：
+  IPTC 欄位預設會把中文寫成亂碼，且只加 `-charset iptc=UTF8` 還不夠
+  跨工具相容，必須另外明確寫入 `-IPTC:CodedCharacterSet=UTF8` 標記，
+  完整細節見 `poc/kb-mcp/photo_metadata_sync.py` 檔頭 docstring 與
+  `tasks.md`「Implementation Notes（US3 補充）」
 - 大量照片（例如一次匯入超過 1000 張）在 `BackgroundTasks` 下的實際
   耗時與 uvicorn worker 資源占用，MVP 階段未實測，若使用情境超出
   「偶發批次匯入」的預期規模，屆時再重新評估要不要換成獨立 worker

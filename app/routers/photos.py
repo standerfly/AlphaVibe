@@ -50,6 +50,8 @@ if str(_PHOTO_KB_MCP_DIR) not in sys.path:
     sys.path.insert(0, str(_PHOTO_KB_MCP_DIR))
 
 from photo_importer import scan_folder, commit_import  # noqa: E402
+from photo_metadata_sync import (  # noqa: E402
+    MetadataSyncUnavailable, write_metadata)
 
 router = APIRouter()
 
@@ -152,6 +154,33 @@ def _run_import_job(job_id: str, data_dir: str, new_files: List[Dict[str, Any]],
         })
     except Exception as exc:  # noqa: BLE001 — 背景任務失敗要記錄，不能讓例外無聲消失
         _IMPORT_JOBS[job_id].update({"status": "failed", "error": str(exc)})
+    finally:
+        store.close()
+
+
+def _run_metadata_sync(photo_id: int, data_dir: str) -> None:
+    """背景任務本體：把一張照片目前的標籤/評分寫回檔案本身的 XMP/IPTC
+    中繼資料（User Story 3）。**不使用** request-scoped 的
+    `PhotoStore`——自行開一條獨立連線，理由同 `_run_import_job()`。
+
+    區分兩種失敗：`MetadataSyncUnavailable`（原始檔暫時無法存取，例如
+    外接硬碟未掛載）標記為 `pending`（維持待處理，不是失敗，之後補寫
+    即可）；其餘例外（exiftool 真的執行失敗）標記為 `failed` 並記錄
+    原因。"""
+    store = PhotoStore(data_dir)
+    try:
+        photo = store.get_photo(photo_id)
+        if photo is None:
+            return
+        tags = [t["name"] for t in store.get_photo_tags(photo_id)]
+        try:
+            write_metadata(photo["storage_path"], tags, photo["rating"])
+        except MetadataSyncUnavailable:
+            store.update_metadata_sync_status(photo_id, "pending")
+        except Exception as exc:  # noqa: BLE001 — 背景任務失敗要記錄，不能無聲消失
+            store.update_metadata_sync_status(photo_id, "failed", error=str(exc))
+        else:
+            store.update_metadata_sync_status(photo_id, "synced")
     finally:
         store.close()
 
@@ -295,11 +324,12 @@ class PhotoPatch(BaseModel):
 
 @router.patch("/api/photos/photos/{photo_id}")
 def patch_photo(
-    photo_id: int, body: PhotoPatch,
+    photo_id: int, body: PhotoPatch, background_tasks: BackgroundTasks,
     store: PhotoStore = Depends(get_photo_store),
 ) -> Dict[str, Any]:
-    """評分/標籤編輯（User Story 1 範圍：只更新 db，**不**觸發中繼資料
-    寫回——那是 User Story 3 才加上的行為，見 `tasks.md` T037）。"""
+    """評分/標籤編輯。db 立即更新（畫面與全域搜尋馬上反映），接著把
+    `metadata_sync_status` 設回 `pending` 並透過背景任務把最新的標籤/
+    評分寫回照片檔案本身（User Story 3，spec.md FR-012/013）。"""
     if store.get_photo(photo_id) is None:
         raise HTTPException(status_code=404, detail="photo not found")
     try:
@@ -309,7 +339,24 @@ def patch_photo(
             store.set_photo_tags(photo_id, body.tags)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    if body.rating is not None or body.tags is not None:
+        store.mark_metadata_pending(photo_id)
+        background_tasks.add_task(_run_metadata_sync, photo_id, store.data_dir)
     return get_photo(photo_id, store)
+
+
+@router.post("/api/photos/photos/{photo_id}/resync")
+def resync_photo(
+    photo_id: int, background_tasks: BackgroundTasks,
+    store: PhotoStore = Depends(get_photo_store),
+) -> Dict[str, Any]:
+    """手動重新觸發中繼資料寫回（spec.md User Story 3 Acceptance
+    Scenario 3：使用者把外接硬碟接回去後手動補寫）。"""
+    if store.get_photo(photo_id) is None:
+        raise HTTPException(status_code=404, detail="photo not found")
+    store.mark_metadata_pending(photo_id)
+    background_tasks.add_task(_run_metadata_sync, photo_id, store.data_dir)
+    return {"status": "pending"}
 
 
 class PhotoBatchRequest(BaseModel):
@@ -321,13 +368,17 @@ class PhotoBatchRequest(BaseModel):
 
 @router.post("/api/photos/photos/batch")
 def batch_update_photos(
-    body: PhotoBatchRequest, store: PhotoStore = Depends(get_photo_store),
+    body: PhotoBatchRequest, background_tasks: BackgroundTasks,
+    store: PhotoStore = Depends(get_photo_store),
 ) -> Dict[str, Any]:
     """批次操作：`add_album_id`／`add_tags` 是**疊加**語意（不清空既有
     標籤/相簿），跟單張 `PATCH` 的取代語意不同，見 `photo_store.py`
-    `add_tags_to_photo()` 的說明。"""
+    `add_tags_to_photo()` 的說明。`add_tags`／`set_rating` 會觸發中繼
+    資料背景寫回（User Story 3），`add_album_id` 不會——相簿歸屬是
+    STND 專屬概念，無對應的 XMP/IPTC 標準欄位。"""
     updated = []
     errors = []
+    touches_metadata = bool(body.add_tags) or body.set_rating is not None
     for photo_id in body.photo_ids:
         if store.get_photo(photo_id) is None:
             errors.append({"photo_id": photo_id, "error": "photo not found"})
@@ -342,6 +393,9 @@ def batch_update_photos(
         except ValueError as exc:
             errors.append({"photo_id": photo_id, "error": str(exc)})
             continue
+        if touches_metadata:
+            store.mark_metadata_pending(photo_id)
+            background_tasks.add_task(_run_metadata_sync, photo_id, store.data_dir)
         updated.append(photo_id)
     return {"updated": updated, "errors": errors}
 

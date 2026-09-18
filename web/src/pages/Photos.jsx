@@ -5,6 +5,7 @@ import AlbumGrid from '../components/photos/AlbumGrid.jsx'
 import AlbumDetail from '../components/photos/AlbumDetail.jsx'
 import ImportWizard from '../components/photos/ImportWizard.jsx'
 import SearchPanel from '../components/photos/SearchPanel.jsx'
+import PhotoDetail from '../components/photos/PhotoDetail.jsx'
 
 /* 相簿分頁（specs/004-photos-albums-search）：相簿列表／相簿詳情／
    匯入／全域搜尋四個子畫面的切換殼，取代原本 MVP 空白佔位頁（見
@@ -12,10 +13,18 @@ import SearchPanel from '../components/photos/SearchPanel.jsx'
    （匯入/整理/瀏覽）與 User Story 2（全域搜尋）已完成；照片詳情的
    中繼資料同步狀態卡（User Story 3）留待該 Story 完成後再接上。 */
 export default function Photos() {
-  const [view, setView] = useState('grid') // 'grid' | 'album' | 'import' | 'search'
+  const [view, setView] = useState('grid') // 'grid' | 'album' | 'import' | 'search' | 'detail'
   const [albums, setAlbums] = useState(null)
   const [activeAlbumId, setActiveAlbumId] = useState(null)
+  const [activePhotoId, setActivePhotoId] = useState(null)
+  const [detailReturnView, setDetailReturnView] = useState('grid')
   const [error, setError] = useState(null)
+
+  function openPhotoDetail(photoId, fromView) {
+    setActivePhotoId(photoId)
+    setDetailReturnView(fromView)
+    setView('detail')
+  }
 
   const loadAlbums = useCallback(async () => {
     try {
@@ -48,11 +57,26 @@ export default function Photos() {
   }
 
   if (view === 'search') {
-    return <SearchPanel onBack={() => setView('grid')} />
+    return (
+      <SearchPanel
+        onBack={() => setView('grid')}
+        onOpenPhoto={(id) => openPhotoDetail(id, 'search')}
+      />
+    )
+  }
+
+  if (view === 'detail' && activePhotoId) {
+    return <PhotoDetail photoId={activePhotoId} onBack={() => setView(detailReturnView)} />
   }
 
   if (view === 'album' && activeAlbumId) {
-    return <AlbumDetail albumId={activeAlbumId} onBack={() => setView('grid')} />
+    return (
+      <AlbumDetail
+        albumId={activeAlbumId}
+        onBack={() => setView('grid')}
+        onOpenPhoto={(id) => openPhotoDetail(id, 'album')}
+      />
+    )
   }
 
   return (

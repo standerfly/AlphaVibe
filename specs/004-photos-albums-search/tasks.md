@@ -182,34 +182,34 @@ XMP/IPTC 中繼資料，並可追蹤同步狀態、手動重試
 
 ### Tests for User Story 3
 
-- [ ] T034 [P] [US3] 在 `poc/kb-mcp/tests/test_photo_metadata_sync.py`
+- [X] T034 [P] [US3] 在 `poc/kb-mcp/tests/test_photo_metadata_sync.py`
   撰寫單元測試：mock `subprocess` 驗證 exiftool 呼叫成功/失敗兩種
   情境的回傳格式
-- [ ] T035 [P] [US3] 在 `poc/kb-mcp/tests/test_photo_store.py` 撰寫
+- [X] T035 [P] [US3] 在 `poc/kb-mcp/tests/test_photo_store.py` 撰寫
   回歸測試：驗證中繼資料寫回前後 `file_hash` 不變（`research.md` §4
   核心保證，防止未來被誤「修正」成即時重算而破壞去重機制）
 
 ### Implementation for User Story 3
 
-- [ ] T036 [US3] 在 `poc/kb-mcp/photo_metadata_sync.py` 實作
+- [X] T036 [US3] 在 `poc/kb-mcp/photo_metadata_sync.py` 實作
   `write_metadata(photo)`：呼叫
   `exiftool -overwrite_original -XMP:Rating=... -IPTC:Keywords=... -XMP:Subject=...`，
   回傳成功或失敗原因（見 `research.md` §2 命令格式）
-- [ ] T037 [US3] 在 `app/routers/photos.py` 的
+- [X] T037 [US3] 在 `app/routers/photos.py` 的
   `PATCH /api/photos/photos/{id}` 加上：評分/標籤變更後立即把
   `metadata_sync_status` 設回 `pending`，並透過 `BackgroundTasks`
   觸發 `write_metadata()`
-- [ ] T038 [P] [US3] 在 `app/routers/photos.py` 實作
+- [X] T038 [P] [US3] 在 `app/routers/photos.py` 實作
   `POST /api/photos/photos/{id}/resync`（手動重試）
-- [ ] T039 [US3] 在 `poc/kb-mcp/photo_metadata_sync.py` 區分「硬碟離線
+- [X] T039 [US3] 在 `poc/kb-mcp/photo_metadata_sync.py` 區分「硬碟離線
   （暫時性，標記 `pending`）」與「exiftool 真的寫入失敗（標記
   `failed` 並記錄 `metadata_sync_error`）」兩種情況
-- [ ] T040 [P] [US3] 在 `web/src/components/photos/SyncStatusCard.jsx`
+- [X] T040 [P] [US3] 在 `web/src/components/photos/SyncStatusCard.jsx`
   實作已同步/待同步/失敗徽章＋重新同步按鈕，互動細節比照已驗證的
   流程圖與畫面 Demo
-- [ ] T041 [US3] 在 `web/src/components/photos/PhotoDetail.jsx` 整合
+- [X] T041 [US3] 在 `web/src/components/photos/PhotoDetail.jsx` 整合
   `SyncStatusCard.jsx` 與 EXIF 資訊顯示
-- [ ] T042 [US3] 在 `app/tests/test_photos_smoke.py` 補充：標籤/評分
+- [X] T042 [US3] 在 `app/tests/test_photos_smoke.py` 補充：標籤/評分
   編輯觸發同步狀態變化、`file_hash` 不因中繼資料寫回而改變的端到端
   回歸測試
 
@@ -379,3 +379,44 @@ US2/US3 或回頭查證時參考：
 **驗證證據**：`poc/kb-mcp/tests/test_photo_store.py`
 `SearchPhotosTest`（7 tests）全過；`app/tests/test_smoke.py` 新增 3
 項搜尋深度驗證全過；瀏覽器實測搜尋畫面截圖確認正確渲染。
+
+## Implementation Notes（2026-09-18，US3 補充）
+
+- **exiftool 已安裝**（`brew install exiftool`，13.55），`research.md`
+  §2 的命令格式只是方向性設計，實作時實測發現兩個關鍵細節（完整記錄
+  在 `photo_metadata_sync.py` 檔頭 docstring）：
+  1. IPTC 中文字元預設會被當成 Latin 編碼寫壞（`夕陽`→`??`），要加
+     `-charset iptc=UTF8`
+  2. 只加上面那個還不夠跨工具相容——要另外明確寫入
+     `-IPTC:CodedCharacterSet=UTF8` 這個 envelope 標記，其他工具
+     （Lightroom、Finder 等）才會正確辨識並解碼；沒有這個標記，別的
+     工具讀到的仍然是亂碼，等於沒有真正達成「跟著相片走」的目的
+  這兩點都用單元測試（`test_writes_rating_and_chinese_tags_correctly`）
+  對著真實檔案驗證過，不是只信任 exiftool 文件的說法。
+- **`PATCH`／批次端點的 db→檔案觸發時機**：`add_album_id`（相簿歸屬）
+  不觸發中繼資料同步——沒有對應的 XMP/IPTC 標準欄位；只有
+  `rating`／`tags` 變更才觸發。
+- **前端輪詢是必要的，PATCH 的即時回應不夠**：用 Playwright 實測時
+  發現，PATCH／resync 的 HTTP 回應本來就只是「當下那一刻」的快照
+  （狀態多半還是 `pending`，因為背景任務才剛被排入），畫面如果不主動
+  輪詢會永遠停在「待同步」，不會自己變成「已同步」。`PhotoDetail.jsx`
+  補上：只要 `metadata_sync_status === 'pending'` 就每 1 秒重新查詢
+  一次，變成 `synced`/`failed` 才停止。這是純資料層/API 測試完全測不
+  出來的問題，只有真的點過畫面才會發現。
+- **`pending` 狀態不分「剛編輯完還在處理」跟「硬碟離線」兩種語意**：
+  UI 文案統一顯示「待同步」，不強行區分——兩者對使用者來說都是「還沒
+  寫進檔案」，真正的失敗原因只在 `failed` 狀態才顯示（見
+  `SyncStatusCard.jsx`）。
+
+**驗證證據**：`poc/kb-mcp/tests/test_photo_metadata_sync.py`（8
+tests，含對真實檔案的中文字元往返驗證）、
+`test_photo_store.py::MetadataSyncStatusTest`（6 tests）、
+`test_photo_importer.py` 新增跨模組回歸測試（驗證中繼資料真的寫回、
+`file_hash` 依然凍結）全過；`app/tests/test_smoke.py` 新增 3 項深度
+驗證全過（含直接用 `exiftool` 讀檔案確認標籤/評分真的寫進去，不只是
+db 端的宣稱）；用 Playwright 實際點過照片詳情頁，第一輪測試就抓到
+「畫面不會自己從待同步變已同步」這個真實 bug 並修正，重測確認正確。
+
+至此三個 User Story 全部完成：相簿分頁是完整可用的照片管理工具——
+匯入去重、相簿/標籤/評分整理、跨相簿全域搜尋、標籤與評分跟著照片走
+出 STND。

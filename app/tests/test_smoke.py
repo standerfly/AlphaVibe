@@ -754,6 +754,46 @@ def main() -> int:
                     print("FAIL 批次指派失敗：%s %r" % (batch_status, batch_body))
                     failures.append("photos batch update mismatch")
 
+                # User Story 3：標籤/評分中繼資料同步（背景任務把 db
+                # 端的標籤/評分寫回照片檔案本身的 XMP/IPTC，見
+                # photo_metadata_sync.py）。batch 呼叫已經觸發背景寫回，
+                # 這裡輪詢確認狀態真的轉為 synced，並用 exiftool 直接
+                # 讀檔案確認「真的寫進去了」，不只是信任 API 回應。
+                sync_deadline = time.time() + 10
+                synced_photo = {}
+                while time.time() < sync_deadline:
+                    _, synced_photo = _get("/api/photos/photos/%d" % imported_ids[0])
+                    if synced_photo.get("metadata_sync_status") in ("synced", "failed"):
+                        break
+                    time.sleep(0.3)
+                if synced_photo.get("metadata_sync_status") == "synced":
+                    print("PASS 標籤/評分背景寫回完成，狀態轉為 synced")
+                else:
+                    print("FAIL 中繼資料同步狀態未如預期轉為 synced：%r" % synced_photo)
+                    failures.append("photos metadata sync status mismatch")
+
+                exif_check = subprocess.run(
+                    ["exiftool", "-j", "-Rating", "-Keywords", "-Subject",
+                     synced_photo.get("storage_path", "")],
+                    capture_output=True, timeout=15)
+                exif_json = json.loads(exif_check.stdout.decode("utf-8") or "[{}]")[0]
+                if (exif_json.get("Rating") == 4
+                        and set(exif_json.get("Keywords", []) or []) == {"夕陽", "京都"}):
+                    print("PASS exiftool 直接讀檔案確認標籤/評分真的寫進去了"
+                          "（不只是 db 端的宣稱）")
+                else:
+                    print("FAIL 檔案本身的中繼資料跟預期不符：%r" % exif_json)
+                    failures.append("photos file metadata content mismatch")
+
+                resync_status, resync_raw = _post(
+                    "/api/photos/photos/%d/resync" % imported_ids[0], b"")
+                resync_body = json.loads(resync_raw.decode("utf-8")) if resync_raw else {}
+                if resync_status == 200 and resync_body.get("status") == "pending":
+                    print("PASS 手動重新同步端點回應正確")
+                else:
+                    print("FAIL 手動重新同步端點回應不符：%s %r" % (resync_status, resync_body))
+                    failures.append("photos resync endpoint mismatch")
+
                 album_photos_status, album_photos_body = _get(
                     "/api/photos/albums/%d/photos" % album_id)
                 album_photo_ids = {p["id"] for p in album_photos_body.get("photos", [])} \

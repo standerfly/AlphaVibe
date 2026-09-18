@@ -467,3 +467,24 @@ details.collapse summary::marker { color: var(--accent); }
 .wizard-progress-track { height: .6rem; background: var(--paper-sunken); border-radius: 999px;
   overflow: hidden; margin: 1rem 0 .6rem; }
 .wizard-progress-fill { height: 100%; background: var(--accent); border-radius: 999px; }
+
+/* ---------- 相簿：單張照片詳情（User Story 3，T041） ---------- */
+.photo-detail { display: grid; grid-template-columns: 1.3fr 1fr; gap: 1.5rem; }
+@media (max-width: 720px) { .photo-detail { grid-template-columns: 1fr; } }
+.photo-detail__hero { border-radius: 12px; overflow: hidden; border: 1px solid var(--rule);
+  background: var(--paper-sunken); display: flex; align-items: center; justify-content: center; }
+.photo-detail__hero img { width: 100%; height: auto; display: block; }
+.info-card + .info-card { margin-top: .9rem; }
+.info-card__head { padding: .55rem 0 .4rem; font-size: .8rem; font-weight: 700; color: var(--ink-dim); }
+.exif-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem .8rem; font-size: .8rem; margin: 0; }
+.exif-grid dt { color: var(--ink-dim); font-size: .7rem; }
+.exif-grid dd { margin: 0; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem; }
+.rating-stars { display: flex; gap: .15rem; }
+.rating-stars button { background: none; border: none; cursor: pointer; padding: .1rem; color: var(--rule-strong); font-size: 1.1rem; }
+.rating-stars button.is-on { color: var(--amber); }
+.tag-pill { display: inline-flex; align-items: center; gap: .25rem; background: var(--accent-soft);
+  color: var(--accent); border-radius: 999px; padding: .15rem .6rem; font-size: .74rem;
+  font-weight: 600; margin: 0 .3rem .3rem 0; }
+.album-pill { display: inline-flex; align-items: center; gap: .25rem; background: var(--paper-sunken);
+  color: var(--ink); border-radius: 999px; padding: .15rem .6rem; font-size: .74rem;
+  font-weight: 600; margin: 0 .3rem .3rem 0; border: 1px solid var(--rule); }

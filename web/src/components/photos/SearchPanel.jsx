@@ -6,7 +6,7 @@ import { ChevronLeftIcon, PhotosIcon } from '../icons.jsx'
    ＋標籤多選組合查詢，互動比照已驗證的流程圖/畫面 Demo。搜尋一律讀
    資料庫（GET /api/photos/search），不受外接硬碟是否掛載影響（見
    photo_store.py::search_photos() 的設計說明）。 */
-export default function SearchPanel({ onBack }) {
+export default function SearchPanel({ onBack, onOpenPhoto }) {
   const [facets, setFacets] = useState({ camera_models: [], lenses: [] })
   const [allTags, setAllTags] = useState([])
   const [camera, setCamera] = useState('')
@@ -93,14 +93,14 @@ export default function SearchPanel({ onBack }) {
       {results && results.length > 0 && (
         <div className="thumb-grid">
           {results.map((photo) => (
-            <div key={photo.id} className="thumb">
+            <button key={photo.id} className="thumb" onClick={() => onOpenPhoto(photo.id)}>
               <img src={`/api/photos/thumbnail/${photo.id}`} alt=""
                 onError={(e) => { e.target.style.display = 'none' }} />
               <PhotosIcon width={22} height={22}
                 style={{ position: 'absolute', top: '50%', left: '50%',
                   transform: 'translate(-50%,-50%)', opacity: .35 }} />
               {photo.rating > 0 && <span className="thumb__rating">★{photo.rating}</span>}
-            </div>
+            </button>
           ))}
         </div>
       )}
