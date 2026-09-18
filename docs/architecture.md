@@ -21,7 +21,7 @@
 | 投資（原「儀表板」，2026-08-24 更名） | `Dashboard.jsx`／`StockDetail.jsx` | `holdings.py`／`screen.py`／`market_scan.py`／`stock_detail.py`／`actions.py`／`holdings_import.py` | `poc/kb-mcp/`（未重寫既有邏輯） | 已上線 |
 | 資產 | `Assets.jsx` | `assets.py` | `kb_store.py` 新增的 5 張表 | 已上線 |
 | 美股（2026-09-08 新增） | `UsStocks.jsx`／`UsStockDetail.jsx`／`UsStockImport.jsx` | `app/routers/us_stocks.py` | `poc/kb-mcp/us_stock_store.py`（獨立 `USStockStore` 類別＋獨立 db 檔 `us_stocks.db`，**不共用** `KBStore`／`alphavibe.db`，見 `specs/003-us-stocks/research.md` §1） | 已上線（3個User Story全部完成；Telegram推播為stub，待`function/stnd-gateway-web`分支合併後才會真的送出通知） |
-| 相簿 | `Photos.jsx` | 尚無 | 未定 | 僅 MVP 空殼入口 |
+| 相簿（2026-09-18 三個User Story全部實作完成） | `Photos.jsx`／`PhotoDetail.jsx`／`SearchPanel.jsx`／`ImportWizard.jsx`／`AlbumGrid.jsx`／`AlbumDetail.jsx`／`SyncStatusCard.jsx` | `app/routers/photos.py` | `poc/kb-mcp/photo_store.py`（獨立 `PhotoStore`＋獨立 db `photos.db`）／`photo_importer.py`／`photo_metadata_sync.py`（呼叫 `exiftool`，新增系統層依賴） | **尚未上線**——分支 `004-photos-albums-search` 已通過單元測試/smoke test/Playwright瀏覽器驗證，但尚未合併進 `function/alphavibe`、正式服務也還沒重啟套用，規格見 `specs/004-photos-albums-search/` |
 | 旅遊 | 尚未建立 | 尚未建立 | 內容來自**另一個獨立專案** `/Users/stander/My_project/mytravel/`，但程式碼仍會建在本 repo | 未開始，整合深度待 PO 決定，不要預設 |
 
 > `holdings_import.py` 是獨立 router（`app/main.py:81,95` 另外 import／include_router），

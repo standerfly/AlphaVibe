@@ -81,3 +81,28 @@ export async function apiDelete(path) {
   }
   return res.json()
 }
+
+/* PATCH helper（相簿分頁第一個用到，`app/routers/photos.py` 的
+   album/photo 局部更新端點）。跟 apiPost 幾乎一樣，只是方法不同——
+   PATCH 語意上是「局部更新」，跟 POST 的「建立/動作」分開，對應後端
+   用 @router.patch 而非 @router.post 的端點。*/
+export async function apiPatch(path, body) {
+  const res = await fetch(path, {
+    method: 'PATCH',
+    headers: { ...NGROK_SKIP_HEADER, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const data = await res.json()
+      if (data && data.detail) {
+        detail = `：${typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)}`
+      }
+    } catch (_err) {
+      // 忽略非 JSON 回應。
+    }
+    throw new ApiError(`${path} 回傳 ${res.status}${detail}`, res.status, path)
+  }
+  return res.json()
+}

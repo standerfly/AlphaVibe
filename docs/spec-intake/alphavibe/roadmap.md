@@ -372,6 +372,24 @@ PO 實際使用「投資」分頁（原「儀表板」，2026-08-24 更名，見
     `https://claude.ai/code/artifact/d98f29ae-2eb5-448d-a397-d10976e86dfd`；
     repo 內備份摘要：
     `supporting-artifacts/2026-08-21-personal-console-expansion.md`。
+- **2026-09-16 更正＋定案（Q-047／Q-049）：上面「相簿分頁」一段對
+  AutoGallery 的轉述已查證為錯誤，且旅遊分頁整合深度已定案**——PO與
+  Claude Code 對話討論並派 agent 實際 `git clone
+  https://github.com/standerfly/AutoGallery.git` 查證，結果**該原型
+  完全沒有相簿(album)資料模型、完全沒有Sigma X3F/RAW轉檔實作**，只有
+  `photos`+`tags`兩表且僅1個commit已停滯；上面 2026-08-21 段落轉述的
+  「參考AutoGallery資料模型」「Sigma dp X3F混合模式」都只是記憶轉述，
+  非查證結果，本段記錄保留不刪、但**不要**依上面段落的描述動工。真正
+  定案的相簿分頁MVP範圍（JPG上傳/瀏覽/相簿分類/標籤/基本EXIF，RAW轉檔
+  Deferred）與全新資料模型（albums/photos/photo_albums/tags/
+  photo_tags/trip_albums），以及旅遊分頁（唯讀渲染`mytravel/trips/`
+  既有markdown，不整合為結構化資料庫）的完整規格，見
+  `supporting-artifacts/2026-09-16-travel-photos-design.md`與
+  product-spec.md FR-062（修訂）／FR-063（新增）、
+  clarification-log.md Q-047／Q-049。**開發順序建議**：相簿基礎版先做
+  （旅遊分頁的照片顯示依賴它），再做旅遊唯讀viewer；兩者皆**規格已
+  定案但尚未開發**，接續本節「治理」慣例，不另跑正式`/prespec`（本次
+  討論已視同pre-spec並補登正式文件）。
 
 ## 給接手 session 的原則（Sonnet 級模型也適用）
 

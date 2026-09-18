@@ -84,6 +84,7 @@ from app.routers import holdings_import as holdings_import_router
 from app.routers import jobs as jobs_router
 from app.routers import market_scan as market_scan_router
 from app.routers import mcp as mcp_router
+from app.routers import photos as photos_router
 from app.routers import screen as screen_router
 from app.routers import stock_detail as stock_detail_router
 from app.routers import us_stocks as us_stocks_router
@@ -110,6 +111,9 @@ app.include_router(jobs_router.router)
 # （/api/us-stocks/healthz），完整業務端點見該 router 檔頭 docstring。
 # 完全獨立於上面幾個既有台股 router，不共用任何程式碼或資料（FR-015/016）。
 app.include_router(us_stocks_router.router)
+# 相簿分頁（specs/004-photos-albums-search）：User Story 1（匯入/整理/
+# 瀏覽）範圍，完全獨立於既有台股/美股 router（見 app/photo_deps.py）。
+app.include_router(photos_router.router)
 
 
 @app.get("/api/healthz")
