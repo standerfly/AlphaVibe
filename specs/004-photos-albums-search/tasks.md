@@ -21,13 +21,13 @@ Story 可獨立完成、獨立驗證。
 
 **Purpose**: 建立本功能的檔案骨架，不含實際邏輯
 
-- [ ] T001 建立 `poc/kb-mcp/photo_store.py`、`poc/kb-mcp/photo_importer.py`、
+- [X] T001 建立 `poc/kb-mcp/photo_store.py`、`poc/kb-mcp/photo_importer.py`、
   `poc/kb-mcp/photo_metadata_sync.py` 三個空模組檔案，各自加上模組
   docstring 說明用途與獨立性（比照 `us_stock_store.py` 檔頭慣例）
-- [ ] T002 [P] 核對 `specs/004-photos-albums-search/quickstart.md` 的
+- [X] T002 [P] 核對 `specs/004-photos-albums-search/quickstart.md` 的
   `exiftool` 安裝步驟（`brew install exiftool`）已完整記錄，若本機尚未
   安裝先手動安裝並確認 `exiftool -ver` 可執行
-- [ ] T003 [P] 建立 `poc/kb-mcp/tests/test_photo_store.py`、
+- [X] T003 [P] 建立 `poc/kb-mcp/tests/test_photo_store.py`、
   `poc/kb-mcp/tests/test_photo_importer.py`、
   `poc/kb-mcp/tests/test_photo_metadata_sync.py` 三個測試檔骨架
 
@@ -40,31 +40,31 @@ router 掛載點、前端頁面殼
 
 **⚠️ CRITICAL**: 本階段完成前不得開始任何 User Story 的實作任務
 
-- [ ] T004 在 `poc/kb-mcp/photo_store.py` 實作 `SCHEMA` 常數（5 張表：
+- [X] T004 在 `poc/kb-mcp/photo_store.py` 實作 `SCHEMA` 常數（5 張表：
   `albums`／`photos`／`photo_albums`／`tags`／`photo_tags`，完整欄位
   比照 `data-model.md`，含 `photos.metadata_sync_status` 等欄位）與
   `PhotoStore.__init__`（只執行 `CREATE TABLE IF NOT EXISTS`，**不**
   寫入任何列，比照 `us_stock_store.py`「完全獨立、無副作用種子寫入」
   慣例——2026-08-22 資產表事故的教訓）
-- [ ] T005 [P] 在 `poc/kb-mcp/photo_store.py` 實作相簿 CRUD：
+- [X] T005 [P] 在 `poc/kb-mcp/photo_store.py` 實作相簿 CRUD：
   `create_album`／`list_albums`／`update_album`／`delete_album`
-- [ ] T006 [P] 在 `poc/kb-mcp/photo_store.py` 實作照片基礎方法：
+- [X] T006 [P] 在 `poc/kb-mcp/photo_store.py` 實作照片基礎方法：
   `get_photo`／`delete_photo`（僅刪除 `photos`／`photo_albums`／
   `photo_tags` 對應紀錄，不動磁碟上的實際檔案）
-- [ ] T007 [P] 在 `poc/kb-mcp/photo_store.py` 實作標籤方法：
+- [X] T007 [P] 在 `poc/kb-mcp/photo_store.py` 實作標籤方法：
   `get_or_create_tag`／`list_tags`／`suggest_tags`（依名稱前綴/包含
   比對，供標籤輸入自動完成用）
-- [ ] T008 在 `app/routers/photos.py` 建立 router 骨架並在 `app/main.py`
+- [X] T008 在 `app/routers/photos.py` 建立 router 骨架並在 `app/main.py`
   註冊掛載點（先不含實際邏輯，僅確認掛載成功、路由前綴 `/api/photos`
   可達）
-- [ ] T009 [P] 在 `poc/kb-mcp/photo_store.py` 決定 `photos.db` 檔案位置
+- [X] T009 [P] 在 `poc/kb-mcp/photo_store.py` 決定 `photos.db` 檔案位置
   解析方式，比照 `us_stock_store.py` 從既有資料目錄設定取得路徑的慣例
   （不寫死絕對路徑，供測試時可指向獨立測試庫）
-- [ ] T010 在 `web/src/pages/Photos.jsx` 移除 MVP 佔位內容，建立分頁
+- [X] T010 在 `web/src/pages/Photos.jsx` 移除 MVP 佔位內容，建立分頁
   基本殼（相簿列表／搜尋兩個子畫面的切換架構），接上 API client
-- [ ] T011 [P] 在 `web/src/api/client.js` 新增對應
+- [X] T011 [P] 在 `web/src/api/client.js` 新增對應
   `contracts/photos-api.md` 全部端點的呼叫函式骨架
-- [ ] T012 [P] 在 `poc/kb-mcp/tests/test_photo_store.py` 撰寫測試驗證
+- [X] T012 [P] 在 `poc/kb-mcp/tests/test_photo_store.py` 撰寫測試驗證
   `PhotoStore.__init__` 只建 schema、不寫入任何列（比照 2026-08-22
   資產表事故後建立的既有回歸測試模式）
 
@@ -84,49 +84,49 @@ router 掛載點、前端頁面殼
 
 ### Tests for User Story 1
 
-- [ ] T013 [P] [US1] 在 `poc/kb-mcp/tests/test_photo_importer.py` 撰寫
+- [X] T013 [P] [US1] 在 `poc/kb-mcp/tests/test_photo_importer.py` 撰寫
   整合測試：同一批來源照片匯入兩次，第二次應全部被判定為重複並跳過，
   不產生重複的 `photos` 列
-- [ ] T014 [P] [US1] 在 `app/tests/test_photos_smoke.py` 撰寫契約測試：
+- [X] T014 [P] [US1] 在 `app/tests/test_photos_smoke.py` 撰寫契約測試：
   驗證 `POST /api/photos/import/scan`、`POST /api/photos/import/commit`
   回應格式符合 `contracts/photos-api.md`
 
 ### Implementation for User Story 1
 
-- [ ] T015 [US1] 在 `poc/kb-mcp/photo_importer.py` 實作 `scan_folder()`：
+- [X] T015 [US1] 在 `poc/kb-mcp/photo_importer.py` 實作 `scan_folder()`：
   掃描來源資料夾、對每個檔案計算 MD5、比對 `PhotoStore` 既有
   `file_hash`、回傳新增/重複清單與無法讀取的檔案清單（**`research.md`
   §4：這是 `file_hash` 凍結計算的唯一時機點，之後任何背景任務都不得
   重新計算**）
-- [ ] T016 [US1] 在 `poc/kb-mcp/photo_importer.py` 實作
+- [X] T016 [US1] 在 `poc/kb-mcp/photo_importer.py` 實作
   `commit_import()`：複製檔案到指定 `storage_location`（內接/外接）、
   呼叫 `sips` 產生縮圖並讀取基礎 EXIF（camera_model／lens／iso／
   shutter_speed／aperture／photo_date），寫入 `PhotoStore`
-- [ ] T017 [US1] 在 `poc/kb-mcp/photo_store.py` 實作 `add_photo()`／
+- [X] T017 [US1] 在 `poc/kb-mcp/photo_store.py` 實作 `add_photo()`／
   `find_by_hash()`（依賴 T015／T016 的呼叫規格）
-- [ ] T018 [US1] 在 `app/routers/photos.py` 實作匯入相關端點：透過
+- [X] T018 [US1] 在 `app/routers/photos.py` 實作匯入相關端點：透過
   FastAPI `BackgroundTasks` 執行 `commit_import()`，進度寫回可輪詢的
   狀態記錄（`GET /api/photos/import/jobs/{job_id}`）
-- [ ] T019 [P] [US1] 在 `app/routers/photos.py` 實作
+- [X] T019 [P] [US1] 在 `app/routers/photos.py` 實作
   `GET /api/photos/browse-folders`、`POST /api/photos/import/scan`
-- [ ] T020 [P] [US1] 在 `app/routers/photos.py` 實作相簿端點：
+- [X] T020 [P] [US1] 在 `app/routers/photos.py` 實作相簿端點：
   `GET/POST/PATCH/DELETE /api/photos/albums`、
   `GET /api/photos/albums/{id}/photos`
-- [ ] T021 [P] [US1] 在 `app/routers/photos.py` 實作照片整理端點：
+- [X] T021 [P] [US1] 在 `app/routers/photos.py` 實作照片整理端點：
   `PATCH /api/photos/photos/{id}`（評分/標籤，本階段暫不觸發中繼資料
   同步，留給 US3）、`POST /api/photos/photos/batch`、
   `DELETE /api/photos/photos/{id}`
-- [ ] T022 [US1] 在 `web/src/components/photos/ImportWizard.jsx` 實作
+- [X] T022 [US1] 在 `web/src/components/photos/ImportWizard.jsx` 實作
   匯入流程 UI（選資料夾路徑→去重預覽→背景匯入進度），互動細節比照
   已驗證的[流程圖與畫面 Demo](https://claude.ai/code/artifact/57660844-0f08-419e-84e7-cec1aba4d1ef)
-- [ ] T023 [US1] 在 `web/src/components/photos/AlbumGrid.jsx`、
+- [X] T023 [US1] 在 `web/src/components/photos/AlbumGrid.jsx`、
   `web/src/components/photos/AlbumDetail.jsx` 實作相簿列表與縮圖牆
   （含批次選取指派相簿/標籤/評分）
-- [ ] T024 [US1] 在 `web/src/pages/Photos.jsx` 整合上述元件，套用
+- [X] T024 [US1] 在 `web/src/pages/Photos.jsx` 整合上述元件，套用
   `web/src/styles/tokens.css` 既有色彩/元件樣式，不另開新視覺系統
-- [ ] T025 [US1] 在 `poc/kb-mcp/photo_importer.py` 處理無法讀取/毀損
+- [X] T025 [US1] 在 `poc/kb-mcp/photo_importer.py` 處理無法讀取/毀損
   檔案：跳過並列入結果，不中斷其餘照片匯入（spec.md Edge Cases）
-- [ ] T026 [US1] 在 `app/tests/test_photos_smoke.py` 補充端到端驗證：
+- [X] T026 [US1] 在 `app/tests/test_photos_smoke.py` 補充端到端驗證：
   匯入去重、相簿/標籤/評分批次指派、刪除僅動 db 不動磁碟（比照既有
   `test_smoke.py` 深度比對慣例，不只驗證 HTTP 200）
 
@@ -314,3 +314,49 @@ Task: "T020 相簿端點 CRUD in app/routers/photos.py"
 - 建議每完成一個任務或一組邏輯相關的任務就 commit 一次
 - 避免：模糊的任務描述、同一檔案被多個 `[P]` 任務同時修改、跨 Story
   的隱性依賴（會破壞「每個 Story 可獨立測試」的設計）
+
+---
+
+## Implementation Notes（2026-09-18，US1 實作完成後補充）
+
+實作過程中發現幾處跟原文件描述不完全一致的地方，記錄於此，供之後接續
+US2/US3 或回頭查證時參考：
+
+1. **T014／T026 的測試檔案位置**：實際寫進既有共用黑箱測試檔
+   `app/tests/test_smoke.py`，**不是**另開一個 `test_photos_smoke.py`
+   ——這個檔案本來就承載 dashboard／assets／us-stocks 各功能的深度
+   測試（一支腳本、一次啟動真正的 uvicorn，比照既有慣例），相簿分頁
+   延續同一個檔案更符合這裡「單一黑箱測試涵蓋全部業務端點」的既有
+   設計，原文件寫的檔名是筆誤。
+2. **`scan_folder()` 補上同批次內部去重**：原設計只用
+   `photo_store.find_by_hash()` 查資料庫既有紀錄，沒擋「這次掃描的
+   資料夾裡本來就有兩份內容相同的檔案」這種情況——那樣的話第二份會
+   在 `commit_import()` 因 `UNIQUE` 約束衝突被誤記成「失敗」而不是
+   「重複跳過」。已修正（`seen_hashes_this_batch` 集合）並補上回歸
+   測試（`test_two_identical_files_in_same_batch_dedupe_against_each_other`）。
+3. **新增 `GET /api/photos/thumbnail/{photo_id}`**：`contracts/
+   photos-api.md` 原本只讓 `photos` 表存 `thumbnail_path`（檔案系統
+   路徑），沒有對應的 HTTP 端點把縮圖位元組回給瀏覽器——前端縮圖牆
+   實際上完全顯示不出照片。已補上端點與契約文件，`app/tests/
+   test_smoke.py` 也補了對應驗證（真的收到非空的圖片位元組）。
+4. **`GET /api/photos/tags` 的 Story 歸屬修正**：`tasks.md` 原本把它
+   標在 T030（User Story 2，搜尋），但這個端點其實是 spec.md FR-006
+   「加標籤時提示既有標籤」的自動完成需求，屬於 User Story 1 範圍，
+   已提前在這輪實作（`app/routers/photos.py::suggest_tags`）。等做到
+   User Story 2 時這個端點已經存在，直接沿用即可。
+5. **`commit_import()` 回傳值新增 `imported_photo_ids`**：原設計只回
+   `imported_count`／`failed`，前端/測試都需要知道「剛剛匯入的是哪幾
+   張」才能接著做批次整理，已加上這個欄位（`app/routers/photos.py`
+   的匯入 job 狀態一併回傳）。
+6. **sips EXIF 欄位對應仍未拿真實相機 JPG 驗證**（承接 `quickstart.md`
+   已知風險）：目前只驗證過「沒有 EXIF 時正確回傳 `None`」這條路徑；
+   `Model`／`LensModel`／`ISOSpeedRatings` 等鍵名是否精確對應真實相機
+   輸出的 `sips -g allxml` 結構，留待有真實照片時再驗證，讀取失敗不會
+   中斷匯入（已有的防呆設計）。
+
+**驗證證據**：`poc/kb-mcp/tests/test_photo_store.py`（22 tests）、
+`poc/kb-mcp/tests/test_photo_importer.py`（10 tests）全數通過；
+`ALPHAVIBE_DATA_DIR=poc/data-test .venv/bin/python3 -m app.tests.test_smoke`
+全數通過（含 8 項相簿分頁深度驗證：匯入去重、背景任務完成、縮圖端點、
+原始檔落地、批次整理、相簿內容、標籤自動完成、刪除保留原檔）；
+`npm run build`（`web/`）成功產出 `dist/`，無編譯錯誤。

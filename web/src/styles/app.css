@@ -426,3 +426,44 @@ details.collapse summary::marker { color: var(--accent); }
   overflow-wrap: anywhere;
 }
 .job-banner__list li b { color: var(--ink); font-weight: 600; }
+
+/* ---------- 相簿分頁（specs/004-photos-albums-search，User Story 1） ----------
+   縮圖/相簿卡沿用既有 --paper-sunken/--accent-soft 色調，跟 2026-09-16
+   發布的流程圖/畫面 Demo（https://claude.ai/code/artifact/57660844-...）
+   互動細節一致，這裡是正式實作版本。 */
+.album-grid, .thumb-grid { display: grid; gap: 1rem; }
+.album-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+.thumb-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: .7rem; }
+.album-card { border: 1px solid var(--rule); border-radius: 12px; overflow: hidden;
+  background: var(--paper); cursor: pointer; text-align: left; font: inherit;
+  box-shadow: var(--shadow); padding: 0; }
+.album-card:hover { border-color: var(--accent); }
+.album-card__cover { height: 100px; display: flex; align-items: center; justify-content: center;
+  background: var(--paper-sunken); color: var(--ink-dim); font-size: .78rem; }
+.album-card__body { padding: .65rem .8rem .75rem; }
+.album-card__title { font-size: .9rem; font-weight: 700; margin-bottom: .15rem; }
+.album-card__meta { font-size: .72rem; color: var(--ink-dim); }
+.add-album-card { border: 1.5px dashed var(--rule-strong); border-radius: 12px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: .4rem; color: var(--ink-dim); min-height: 148px; background: none; cursor: pointer;
+  font: inherit; font-size: .84rem; font-weight: 600; }
+.add-album-card:hover { border-color: var(--accent); color: var(--accent); }
+.thumb { aspect-ratio: 1; border-radius: 9px; border: 1px solid var(--rule);
+  cursor: pointer; position: relative; overflow: hidden; padding: 0;
+  background: var(--paper-sunken); }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb.is-selected { outline: 3px solid var(--accent); outline-offset: -3px; }
+.thumb__rating { position: absolute; bottom: .25rem; left: .3rem; font-size: .64rem;
+  font-weight: 700; background: rgba(0,0,0,.55); color: #fff; padding: .02rem .35rem;
+  border-radius: 5px; }
+.photo-toolbar { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+  background: var(--paper-raised); border: 1px solid var(--rule); border-radius: 10px;
+  padding: .6rem .8rem; margin-bottom: .9rem; }
+.photo-toolbar input[type=text] { font: inherit; font-size: .82rem; padding: .3rem .55rem;
+  border-radius: 6px; border: 1px solid var(--rule); background: var(--paper); color: var(--ink); }
+.wizard-panel { border: 1px solid var(--rule); border-radius: 12px; padding: 1.1rem;
+  background: var(--paper-raised); min-height: 160px; }
+.wizard-actions { display: flex; justify-content: space-between; margin-top: 1rem; }
+.wizard-progress-track { height: .6rem; background: var(--paper-sunken); border-radius: 999px;
+  overflow: hidden; margin: 1rem 0 .6rem; }
+.wizard-progress-fill { height: 100%; background: var(--accent); border-radius: 999px; }

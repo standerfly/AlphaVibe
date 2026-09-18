@@ -30,9 +30,12 @@ poc/data/，避免重蹈覆轍；沒設定或設定成正式路徑會直接拒�
 """
 from __future__ import annotations
 
+import base64
 import concurrent.futures
 import json
 import os
+import shutil
+import tempfile
 import subprocess
 import sys
 import time
@@ -158,6 +161,9 @@ def main() -> int:
             ("GET /api/us-stocks/healthz", "/api/us-stocks/healthz", 200),
             ("GET /api/us-stocks/watchlist", "/api/us-stocks/watchlist", 200),
             ("GET /api/us-stocks/trades/recent", "/api/us-stocks/trades/recent", 200),
+            ("GET /api/photos/albums", "/api/photos/albums", 200),
+            ("GET /api/photos/tags", "/api/photos/tags", 200),
+            ("GET /api/photos/browse-folders", "/api/photos/browse-folders", 200),
         ]
         for label, path, expect_status in checks:
             status, body = _get(path)
@@ -610,6 +616,181 @@ def main() -> int:
         else:
             print("FAIL DELETE 不存在的監控條件應回 404，實際：%s" % delete_missing_status)
             failures.append("us-stocks watch-conditions delete-missing mismatch")
+
+        # 相簿分頁（specs/004-photos-albums-search，User Story 1）深度
+        # 驗證：匯入去重、相簿/標籤/評分整理、刪除只動 db 不動磁碟——
+        # 不只驗證 HTTP 200，比對底層檔案系統與資料庫的實際狀態（比照
+        # 本檔案一貫的深度比對慣例，而非淺層檢查）。
+        _TINY_JPEG_A = base64.b64decode(
+            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDABALDA4MChAODQ4SERATGCgaGBYW"
+            "GDEjJR0oOjM9PDkzODdASFxOQERXRTc4UG1RV19iZ2hnPk1xeXBkeFxlZ2P/"
+            "2wBDARESEhgVGC8aGi9jQjhCY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2Nj"
+            "Y2NjY2NjY2NjY2NjY2NjY2NjY2NjY2P/wAARCAAIAAgDASIAAhEBAxEB/8QA"
+            "HwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUF"
+            "BAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkK"
+            "FhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1"
+            "dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXG"
+            "x8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEB"
+            "AQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAEC"
+            "AxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRom"
+            "JygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOE"
+            "hYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU"
+            "1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDEooorjO8/"
+            "/9k="
+        )
+        _TINY_JPEG_B = base64.b64decode(
+            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDABALDA4MChAODQ4SERATGCgaGBYW"
+            "GDEjJR0oOjM9PDkzODdASFxOQERXRTc4UG1RV19iZ2hnPk1xeXBkeFxlZ2P/"
+            "2wBDARESEhgVGC8aGi9jQjhCY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2Nj"
+            "Y2NjY2NjY2NjY2NjY2NjY2NjY2NjY2P/wAARCAAIAAgDASIAAhEBAxEB/8QA"
+            "HwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUF"
+            "BAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkK"
+            "FhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1"
+            "dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXG"
+            "x8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEB"
+            "AQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAEC"
+            "AxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRom"
+            "JygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOE"
+            "hYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU"
+            "1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwB1FFFch8uf"
+            "/9k="
+        )
+        photo_src_dir = tempfile.mkdtemp(prefix="alphavibe-smoke-photos-src-")
+        try:
+            with open(os.path.join(photo_src_dir, "a.jpg"), "wb") as fh:
+                fh.write(_TINY_JPEG_A)
+            with open(os.path.join(photo_src_dir, "b.jpg"), "wb") as fh:
+                fh.write(_TINY_JPEG_B)
+
+            scan_status, scan_raw = _post(
+                "/api/photos/import/scan",
+                json.dumps({"source_path": photo_src_dir,
+                            "storage_location": "internal"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"})
+            scan_body = json.loads(scan_raw.decode("utf-8")) if scan_raw else {}
+            if scan_status == 200 and scan_body.get("new_count") == 2 \
+                    and scan_body.get("duplicate_count") == 0:
+                print("PASS photos/import/scan 找到 2 張新照片、0 張重複")
+            else:
+                print("FAIL photos/import/scan -> %s %r" % (scan_status, scan_body))
+                failures.append("photos import scan mismatch")
+
+            commit_status, commit_raw = _post(
+                "/api/photos/import/commit",
+                json.dumps({"scan_token": scan_body.get("scan_token")}).encode("utf-8"),
+                headers={"Content-Type": "application/json"})
+            commit_body = json.loads(commit_raw.decode("utf-8")) if commit_raw else {}
+            job_id = commit_body.get("job_id") if commit_status == 200 else None
+            if commit_status == 200 and job_id:
+                print("PASS photos/import/commit 已啟動背景任務")
+            else:
+                print("FAIL photos/import/commit -> %s %r" % (commit_status, commit_body))
+                failures.append("photos import commit failed")
+
+            imported_ids = []
+            if job_id:
+                deadline = time.time() + 10
+                job_body = {}
+                while time.time() < deadline:
+                    job_status, job_body = _get("/api/photos/import/jobs/%s" % job_id)
+                    if job_body.get("status") in ("completed", "failed"):
+                        break
+                    time.sleep(0.2)
+                if job_body.get("status") == "completed" \
+                        and job_body.get("imported_count") == 2 \
+                        and job_body.get("failed") == []:
+                    print("PASS 背景匯入任務完成，2 張全部成功、0 張失敗")
+                    imported_ids = job_body.get("imported_photo_ids", [])
+                else:
+                    print("FAIL 背景匯入任務未如預期完成：%r" % job_body)
+                    failures.append("photos import job did not complete as expected")
+
+            if len(imported_ids) == 2:
+                thumb_req = urllib.request.Request(
+                    _BASE + "/api/photos/thumbnail/%d" % imported_ids[0])
+                try:
+                    with urllib.request.urlopen(thumb_req, timeout=5) as resp:
+                        thumb_status = resp.status
+                        thumb_bytes = resp.read()
+                except urllib.error.HTTPError as exc:
+                    thumb_status, thumb_bytes = exc.code, b""
+                if thumb_status == 200 and len(thumb_bytes) > 0:
+                    print("PASS GET /api/photos/thumbnail/{id} 回傳真正的縮圖位元組（%d bytes）"
+                          % len(thumb_bytes))
+                else:
+                    print("FAIL GET /api/photos/thumbnail/{id} -> %s（%d bytes）"
+                          % (thumb_status, len(thumb_bytes)))
+                    failures.append("photos thumbnail endpoint mismatch")
+
+                photo1_status, photo1_body = _get("/api/photos/photos/%d" % imported_ids[0])
+                if (photo1_status == 200
+                        and os.path.exists(photo1_body.get("storage_path", ""))
+                        and os.path.exists(photo1_body.get("thumbnail_path", ""))
+                        and photo1_body.get("metadata_sync_status") == "pending"):
+                    print("PASS 匯入照片的原始檔＋縮圖真的落在磁碟上，"
+                          "metadata_sync_status 預設 pending")
+                else:
+                    print("FAIL 照片詳情或磁碟檔案不符預期：%r" % photo1_body)
+                    failures.append("photos detail/disk file mismatch")
+
+                album_status, album_raw = _post(
+                    "/api/photos/albums",
+                    json.dumps({"title": "smoke-test-album"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"})
+                album_body = json.loads(album_raw.decode("utf-8")) if album_raw else {}
+                album_id = album_body.get("id") if album_status == 200 else None
+
+                batch_status, batch_raw = _post(
+                    "/api/photos/photos/batch",
+                    json.dumps({
+                        "photo_ids": imported_ids, "add_album_id": album_id,
+                        "add_tags": ["夕陽", "京都"], "set_rating": 4,
+                    }).encode("utf-8"),
+                    headers={"Content-Type": "application/json"})
+                batch_body = json.loads(batch_raw.decode("utf-8")) if batch_raw else {}
+                if batch_status == 200 and batch_body.get("updated") == imported_ids:
+                    print("PASS 批次指派相簿/標籤/評分成功")
+                else:
+                    print("FAIL 批次指派失敗：%s %r" % (batch_status, batch_body))
+                    failures.append("photos batch update mismatch")
+
+                album_photos_status, album_photos_body = _get(
+                    "/api/photos/albums/%d/photos" % album_id)
+                album_photo_ids = {p["id"] for p in album_photos_body.get("photos", [])} \
+                    if album_photos_status == 200 else set()
+                if album_photo_ids == set(imported_ids):
+                    print("PASS 相簿內縮圖牆正確顯示這 2 張照片")
+                else:
+                    print("FAIL 相簿內容不符：%r" % album_photos_body)
+                    failures.append("photos album contents mismatch")
+
+                tags_status, tags_body = _get("/api/photos/tags?q=%E5%A4%95")  # 「夕」
+                if tags_status == 200 and "夕陽" in tags_body.get("tags", []):
+                    print("PASS 標籤自動完成能查到剛加的「夕陽」")
+                else:
+                    print("FAIL 標籤自動完成沒查到預期標籤：%r" % tags_body)
+                    failures.append("photos tag suggest mismatch")
+
+                first_photo_path = imported_ids[0]
+                first_storage_path = photo1_body.get("storage_path")
+                delete_status, delete_body = _delete(
+                    "/api/photos/photos/%d" % first_photo_path)
+                still_in_album_status, still_in_album_body = _get(
+                    "/api/photos/albums/%d/photos" % album_id)
+                remaining_ids = {p["id"] for p in still_in_album_body.get("photos", [])}
+                if (delete_status == 200
+                        and first_photo_path not in remaining_ids
+                        and first_storage_path and os.path.exists(first_storage_path)):
+                    print("PASS 刪除照片：從相簿消失，但磁碟原始檔仍存在"
+                          "（FR-011：僅刪 db 不刪檔案）")
+                else:
+                    print("FAIL 刪除照片行為不符 FR-011：status=%s remaining=%r "
+                          "file_exists=%s" % (
+                              delete_status, remaining_ids,
+                              os.path.exists(first_storage_path or "")))
+                    failures.append("photos delete-keeps-file mismatch")
+        finally:
+            shutil.rmtree(photo_src_dir, ignore_errors=True)
 
         # 2026-08-22 教訓：get_kb_store() 是 sync generator dependency，
         # Starlette 用 anyio thread pool 執行，「建立」跟「關閉」不保證

@@ -44,6 +44,12 @@ api/client.js` 會呼叫這些端點；`app/routers/photos.py` 內部直接
 
 刪除相簿（不影響照片本身，只移除 `photo_albums` 關聯與相簿記錄）。
 
+### `GET /api/photos/thumbnail/{photo_id}`
+
+**2026-09-18 實作時補上**：回傳縮圖檔案本身的位元組（`<img src=...>`
+直接指這個端點），原始文件只讓 `photos.thumbnail_path` 存路徑，漏了
+對應的檔案回傳端點。找不到照片或縮圖檔案不在磁碟上時回 404。
+
 ### `GET /api/photos/albums/{album_id}/photos`
 
 列出該相簿內的照片（縮圖牆用）。支援 `?sort=date|rating`、
