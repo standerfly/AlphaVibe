@@ -39,6 +39,7 @@ export default function Photos() {
   if (view === 'import') {
     return (
       <ImportWizard
+        albums={albums}
         onCancel={() => setView('grid')}
         onDone={() => { setView('grid'); loadAlbums() }}
       />

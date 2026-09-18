@@ -8,7 +8,7 @@ import { UploadIcon } from '../icons.jsx'
    對應後端 app/routers/photos.py 的 /api/photos/import/* 三個端點。
    輪詢間隔固定 800ms，MVP 不做退避/取消，匯入批次小（個人相片庫規模）
    實測下很快就會完成（見 poc/kb-mcp/tests/test_photo_importer.py）。 */
-export default function ImportWizard({ onDone, onCancel }) {
+export default function ImportWizard({ albums, onDone, onCancel }) {
   const [step, setStep] = useState(1)
   const [sourcePath, setSourcePath] = useState('')
   const [storageLocation, setStorageLocation] = useState('internal')
@@ -17,6 +17,10 @@ export default function ImportWizard({ onDone, onCancel }) {
   const [job, setJob] = useState(null)
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [assignChoice, setAssignChoice] = useState('new')
+  const [existingAlbumId, setExistingAlbumId] = useState(albums?.[0]?.id ?? '')
+  const [newAlbumTitle, setNewAlbumTitle] = useState('')
+  const [assignDone, setAssignDone] = useState(false)
 
   async function handleScan() {
     if (!sourcePath.trim()) {
@@ -71,6 +75,31 @@ export default function ImportWizard({ onDone, onCancel }) {
     }
     setBusy(true)
     tick()
+  }
+
+  async function handleAssign() {
+    setBusy(true)
+    setError(null)
+    try {
+      let albumId = existingAlbumId
+      if (assignChoice === 'new') {
+        if (!newAlbumTitle.trim()) {
+          setError('請輸入新相簿名稱')
+          setBusy(false)
+          return
+        }
+        const created = await apiPost('/api/photos/albums', { title: newAlbumTitle.trim() })
+        albumId = created.id
+      }
+      await apiPost('/api/photos/photos/batch', {
+        photo_ids: job.imported_photo_ids, add_album_id: albumId,
+      })
+      setAssignDone(true)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -141,6 +170,45 @@ export default function ImportWizard({ onDone, onCancel }) {
               </div>
             )}
             {job?.status === 'failed' && <div className="offline-note">{job.error}</div>}
+
+            {job?.status === 'completed' && job.imported_count > 0 && !assignDone && (
+              <div style={{ marginTop: '1rem', borderTop: '1px solid var(--rule)', paddingTop: '.9rem' }}>
+                <div className="meta" style={{ marginBottom: '.5rem' }}>加入哪個相簿？</div>
+                <div style={{ display: 'flex', gap: '.6rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <label>
+                    <input type="radio" checked={assignChoice === 'new'}
+                      onChange={() => setAssignChoice('new')} /> 新相簿
+                  </label>
+                  {newAlbumTitle !== null && assignChoice === 'new' && (
+                    <input type="text" value={newAlbumTitle}
+                      onChange={(e) => setNewAlbumTitle(e.target.value)}
+                      placeholder="新相簿名稱" />
+                  )}
+                  {albums?.length > 0 && (
+                    <>
+                      <label>
+                        <input type="radio" checked={assignChoice === 'existing'}
+                          onChange={() => setAssignChoice('existing')} /> 既有相簿
+                      </label>
+                      {assignChoice === 'existing' && (
+                        <select value={existingAlbumId}
+                          onChange={(e) => setExistingAlbumId(Number(e.target.value))}>
+                          {albums.map((a) => (
+                            <option key={a.id} value={a.id}>{a.title}</option>
+                          ))}
+                        </select>
+                      )}
+                    </>
+                  )}
+                  <button type="button" className="btn" disabled={busy} onClick={handleAssign}>
+                    加入相簿
+                  </button>
+                </div>
+              </div>
+            )}
+            {assignDone && (
+              <div className="toast" style={{ marginTop: '.8rem' }}>已加入相簿</div>
+            )}
           </div>
         )}
       </div>
