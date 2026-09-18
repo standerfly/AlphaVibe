@@ -145,25 +145,25 @@ router 掛載點、前端頁面殼
 
 ### Tests for User Story 2
 
-- [ ] T027 [P] [US2] 在 `poc/kb-mcp/tests/test_photo_store.py` 撰寫整合
+- [X] T027 [P] [US2] 在 `poc/kb-mcp/tests/test_photo_store.py` 撰寫整合
   測試：多個相簿各放帶有相同標籤的照片，搜尋該標籤應回傳跨相簿的
   合併結果
-- [ ] T028 [P] [US2] 在 `app/tests/test_photos_smoke.py` 撰寫契約測試：
+- [X] T028 [P] [US2] 在 `app/tests/test_photos_smoke.py` 撰寫契約測試：
   `GET /api/photos/search` 各種條件組合（單一條件／組合條件的交集
   邏輯）
 
 ### Implementation for User Story 2
 
-- [ ] T029 [US2] 在 `poc/kb-mcp/photo_store.py` 實作
+- [X] T029 [US2] 在 `poc/kb-mcp/photo_store.py` 實作
   `search_photos(camera_model, lens, tags)`：多個標籤取交集，**不**
   join `photo_albums`（搜尋本身跨相簿、不限定範圍）
-- [ ] T030 [P] [US2] 在 `app/routers/photos.py` 實作
+- [X] T030 [P] [US2] 在 `app/routers/photos.py` 實作
   `GET /api/photos/search`、`GET /api/photos/tags`
-- [ ] T031 [P] [US2] 在 `web/src/components/photos/SearchPanel.jsx`
+- [X] T031 [P] [US2] 在 `web/src/components/photos/SearchPanel.jsx`
   實作全域搜尋 UI（相機/鏡頭下拉＋標籤多選 chip＋結果縮圖牆）
-- [ ] T032 [US2] 在 `web/src/pages/Photos.jsx` 整合搜尋入口按鈕與畫面
+- [X] T032 [US2] 在 `web/src/pages/Photos.jsx` 整合搜尋入口按鈕與畫面
   切換
-- [ ] T033 [US2] 在 `poc/kb-mcp/photo_store.py` 確認
+- [X] T033 [US2] 在 `poc/kb-mcp/photo_store.py` 確認
   `search_photos()` 只讀資料庫欄位，不檢查 `storage_path` 指向的
   實際檔案是否存在（確保外接硬碟離線不影響搜尋結果，spec.md FR-010）
 
@@ -360,3 +360,22 @@ US2/US3 或回頭查證時參考：
 全數通過（含 8 項相簿分頁深度驗證：匯入去重、背景任務完成、縮圖端點、
 原始檔落地、批次整理、相簿內容、標籤自動完成、刪除保留原檔）；
 `npm run build`（`web/`）成功產出 `dist/`，無編譯錯誤。
+
+## Implementation Notes（2026-09-18，US2 補充）
+
+- `search_photos()` 用 `HAVING COUNT(DISTINCT t.name) = ?` 實作多標籤
+  交集比對，不 join `photo_albums`，確保搜尋跨相簿、且不受
+  `storage_path` 對應檔案是否存在影響（已用單元測試明確驗證這兩點，
+  `test_search_does_not_require_storage_path_to_exist`）
+- 新增 `GET /api/photos/search/facets`（原契約文件沒有這支）：回傳
+  資料庫裡實際出現過的 camera_model／lens 清單，供搜尋畫面下拉選單
+  動態產生選項，不是前端寫死清單
+- 分頁（`limit`/`offset`）在 Python 層對已排序結果做切片，沒有用
+  SQL LIMIT/OFFSET——個人相片庫規模不需要那層複雜度，未來真的有效能
+  問題再優化
+- 用 Playwright 實際點過搜尋畫面（相機/鏡頭下拉、標籤 chip 篩選），
+  確認縮圖正確顯示、篩選後結果數與畫面一致，console 無錯誤
+
+**驗證證據**：`poc/kb-mcp/tests/test_photo_store.py`
+`SearchPhotosTest`（7 tests）全過；`app/tests/test_smoke.py` 新增 3
+項搜尋深度驗證全過；瀏覽器實測搜尋畫面截圖確認正確渲染。

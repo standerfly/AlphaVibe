@@ -365,6 +365,34 @@ def delete_photo(
 # 需求（見 spec.md FR-006），這裡跟著 User Story 1 一起實作，tasks.md
 # 的分組標籤留待下次更新時修正，不影響功能正確性。
 
+@router.get("/api/photos/search/facets")
+def search_facets(store: PhotoStore = Depends(get_photo_store)) -> Dict[str, Any]:
+    """全域搜尋畫面的相機/鏡頭下拉選單選項——只回傳資料庫裡實際出現過
+    的值，不是寫死清單。"""
+    return {
+        "camera_models": store.list_camera_models(),
+        "lenses": store.list_lenses(),
+    }
+
+
+@router.get("/api/photos/search")
+def search_photos_endpoint(
+    camera_model: Optional[str] = Query(None),
+    lens: Optional[str] = Query(None),
+    tags: List[str] = Query([]),
+    limit: int = Query(200, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
+    store: PhotoStore = Depends(get_photo_store),
+) -> Dict[str, Any]:
+    """跨相簿全域搜尋（User Story 2，spec.md FR-009）。`tags` 可重複
+    帶多個 query 參數（`?tags=夕陽&tags=京都`），取交集。分頁在 Python
+    層做（個人相片庫規模，不需要 SQL 層 LIMIT/OFFSET 的複雜度）。"""
+    all_photos = store.search_photos(
+        camera_model=camera_model or None, lens=lens or None,
+        tags=tags or None)
+    return {"total": len(all_photos), "photos": all_photos[offset:offset + limit]}
+
+
 @router.get("/api/photos/tags")
 def suggest_tags(
     q: str = Query("", description="標籤名稱關鍵字，空字串＝回傳全部既有標籤"),

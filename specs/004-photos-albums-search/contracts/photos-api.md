@@ -143,6 +143,14 @@ Scenario 3）。**回應**：`{"status": "pending"}`（背景任務會再嘗試�
 
 ## 搜尋與標籤
 
+### `GET /api/photos/search/facets`
+
+**2026-09-18 實作時補上**：回傳資料庫裡實際出現過的
+`camera_model`／`lens` 清單，供搜尋畫面下拉選單動態產生選項（原契約
+文件沒有這支，前端若寫死選項會跟實際資料脫節）。
+
+**回應**：`{"camera_models": ["Sigma fp L", "iPhone 17 Pro"], "lenses": ["24-70mm F2.8"]}`
+
 ### `GET /api/photos/search`
 
 跨所有相簿的全域搜尋（見 spec.md User Story 2）。

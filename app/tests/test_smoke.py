@@ -771,6 +771,34 @@ def main() -> int:
                     print("FAIL 標籤自動完成沒查到預期標籤：%r" % tags_body)
                     failures.append("photos tag suggest mismatch")
 
+                # User Story 2：跨相簿全域搜尋（不含 storage_path 存在性
+                # 檢查——search_photos() 只讀資料庫欄位，見 FR-010）。
+                search_status, search_body = _get(
+                    "/api/photos/search?tags=%E5%A4%95%E9%99%BD")  # tags=夕陽
+                search_ids = {p["id"] for p in search_body.get("photos", [])} \
+                    if search_status == 200 else set()
+                if search_status == 200 and search_ids == set(imported_ids):
+                    print("PASS 全域搜尋依標籤「夕陽」找到剛匯入的 2 張照片")
+                else:
+                    print("FAIL 全域搜尋標籤結果不符：status=%s %r" % (search_status, search_body))
+                    failures.append("photos search by tag mismatch")
+
+                no_match_status, no_match_body = _get(
+                    "/api/photos/search?tags=%E4%B8%8D%E5%AD%98%E5%9C%A8")  # tags=不存在
+                if no_match_status == 200 and no_match_body.get("photos") == []:
+                    print("PASS 全域搜尋不存在的標籤正確回傳空結果")
+                else:
+                    print("FAIL 搜尋不存在的標籤應回空結果：%r" % no_match_body)
+                    failures.append("photos search empty-result mismatch")
+
+                facets_status, facets_body = _get("/api/photos/search/facets")
+                if facets_status == 200 and "camera_models" in facets_body \
+                        and "lenses" in facets_body:
+                    print("PASS 搜尋 facets 端點回傳正確結構")
+                else:
+                    print("FAIL 搜尋 facets 端點結構不符：%r" % facets_body)
+                    failures.append("photos search facets mismatch")
+
                 first_photo_path = imported_ids[0]
                 first_storage_path = photo1_body.get("storage_path")
                 delete_status, delete_body = _delete(

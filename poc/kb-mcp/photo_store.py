@@ -339,6 +339,55 @@ class PhotoStore:
             (photo_id,)).fetchall()
         return [dict(r) for r in rows]
 
+    # ---------- User Story 2：跨相簿全域搜尋 ----------
+
+    def search_photos(self, camera_model=None, lens=None, tags=None):
+        """跨相簿全域搜尋（spec.md User Story 2）：camera_model／lens
+        精確比對，`tags` 多個時取交集（同時符合全部標籤才算符合，見
+        `data-model.md`「查詢模式」）。**只讀 `photos`／`tags`／
+        `photo_tags` 資料庫欄位，不檢查 `storage_path` 對應的實際檔案
+        是否存在於磁碟**——外接硬碟離線不影響搜尋結果（spec.md
+        FR-010，`research.md` §1 全域搜尋設計）。不 join
+        `photo_albums`：搜尋本身跨相簿、不限定任何相簿範圍。"""
+        query = "SELECT p.* FROM photos p WHERE 1=1"
+        params = []
+        if camera_model:
+            query += " AND p.camera_model = ?"
+            params.append(camera_model)
+        if lens:
+            query += " AND p.lens = ?"
+            params.append(lens)
+        if tags:
+            placeholders = ",".join("?" for _ in tags)
+            query += (
+                " AND p.id IN ("
+                "  SELECT pt.photo_id FROM photo_tags pt"
+                "  JOIN tags t ON t.id = pt.tag_id"
+                "  WHERE t.name IN (%s)"
+                "  GROUP BY pt.photo_id"
+                "  HAVING COUNT(DISTINCT t.name) = ?"
+                ")" % placeholders
+            )
+            params.extend(tags)
+            params.append(len(tags))
+        query += " ORDER BY p.photo_date DESC"
+        rows = self.conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_camera_models(self):
+        """搜尋畫面相機型號下拉選單的選項來源（僅回傳資料庫裡實際出現
+        過的值，不是寫死的清單）。"""
+        rows = self.conn.execute(
+            "SELECT DISTINCT camera_model FROM photos"
+            " WHERE camera_model IS NOT NULL ORDER BY camera_model").fetchall()
+        return [r["camera_model"] for r in rows]
+
+    def list_lenses(self):
+        rows = self.conn.execute(
+            "SELECT DISTINCT lens FROM photos"
+            " WHERE lens IS NOT NULL ORDER BY lens").fetchall()
+        return [r["lens"] for r in rows]
+
     def get_photo_albums(self, photo_id):
         rows = self.conn.execute(
             "SELECT a.* FROM albums a"

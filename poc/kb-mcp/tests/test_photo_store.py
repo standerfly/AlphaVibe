@@ -218,6 +218,80 @@ class TagTest(unittest.TestCase):
         self.assertEqual(results, ["夕陽"])
 
 
+class SearchPhotosTest(unittest.TestCase):
+    """User Story 2：跨相簿全域搜尋。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="photo-store-test-")
+        self.store = PhotoStore(self.tmp)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp)
+
+    def _photo(self, hash_, camera=None, lens=None, tags=None, date=None):
+        photo = self.store.add_photo(
+            file_hash=hash_, storage_path="/tmp/%s.jpg" % hash_,
+            storage_location="internal", thumbnail_path="/tmp/%s-t.jpg" % hash_,
+            camera_model=camera, lens=lens, photo_date=date)
+        if tags:
+            self.store.set_photo_tags(photo["id"], tags)
+        return photo
+
+    def test_search_by_tag_spans_multiple_albums(self):
+        album1 = self.store.create_album("相簿1")
+        album2 = self.store.create_album("相簿2")
+        p1 = self._photo("h1", tags=["夕陽"])
+        p2 = self._photo("h2", tags=["夕陽"])
+        p3 = self._photo("h3", tags=["夜景"])
+        self.store.add_photo_to_album(p1["id"], album1["id"])
+        self.store.add_photo_to_album(p2["id"], album2["id"])
+        self.store.add_photo_to_album(p3["id"], album1["id"])
+
+        results = self.store.search_photos(tags=["夕陽"])
+        self.assertEqual({r["id"] for r in results}, {p1["id"], p2["id"]})
+
+    def test_search_by_camera_model(self):
+        self._photo("h1", camera="Sigma fp L")
+        self._photo("h2", camera="iPhone 17 Pro")
+        results = self.store.search_photos(camera_model="Sigma fp L")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["camera_model"], "Sigma fp L")
+
+    def test_search_combines_camera_and_tags_as_intersection(self):
+        self._photo("h1", camera="Sigma fp L", tags=["夕陽"])
+        self._photo("h2", camera="Sigma fp L", tags=["夜景"])
+        self._photo("h3", camera="iPhone 17 Pro", tags=["夕陽"])
+        results = self.store.search_photos(camera_model="Sigma fp L", tags=["夕陽"])
+        self.assertEqual([r["file_hash"] for r in results], ["h1"])
+
+    def test_search_multiple_tags_requires_all_present(self):
+        self._photo("h1", tags=["夕陽", "京都"])
+        self._photo("h2", tags=["夕陽"])
+        results = self.store.search_photos(tags=["夕陽", "京都"])
+        self.assertEqual([r["file_hash"] for r in results], ["h1"])
+
+    def test_search_with_no_filters_returns_all(self):
+        self._photo("h1")
+        self._photo("h2")
+        self.assertEqual(len(self.store.search_photos()), 2)
+
+    def test_search_does_not_require_storage_path_to_exist(self):
+        """spec.md FR-010：外接硬碟離線不影響搜尋結果——`storage_path`
+        故意指向一個不存在的路徑，搜尋仍要正常回傳這張照片。"""
+        self._photo("h1", camera="Sigma fp L")
+        results = self.store.search_photos(camera_model="Sigma fp L")
+        self.assertEqual(len(results), 1)
+        self.assertFalse(os.path.exists(results[0]["storage_path"]))
+
+    def test_list_camera_models_and_lenses_are_distinct(self):
+        self._photo("h1", camera="Sigma fp L", lens="45mm F2.8")
+        self._photo("h2", camera="Sigma fp L", lens="24-70mm F2.8")
+        self._photo("h3", camera="iPhone 17 Pro")
+        self.assertEqual(self.store.list_camera_models(), ["Sigma fp L", "iPhone 17 Pro"])
+        self.assertEqual(self.store.list_lenses(), ["24-70mm F2.8", "45mm F2.8"])
+
+
 class MetadataSyncFreezeTest(unittest.TestCase):
     """`research.md` §4 核心保證的回歸測試：中繼資料相關操作（標籤/
     評分變更）不得改變已存在照片的 `file_hash`。這是 User Story 3 的
