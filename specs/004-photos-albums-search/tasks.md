@@ -219,12 +219,12 @@ XMP/IPTC 中繼資料，並可追蹤同步狀態、手動重試
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T043 [P] 更新 `docs/architecture.md`「分頁地圖」節，把相簿分頁
+- [X] T043 [P] 更新 `docs/architecture.md`「分頁地圖」節，把相簿分頁
   從「MVP 僅入口」更新為實際完成範圍（比照資產分頁 FR-061 上線後的
   更新模式）
-- [ ] T044 [P] 更新 `CLAUDE.md`「STND 分頁與程式碼位置」表的相簿分頁
+- [X] T044 [P] 更新 `CLAUDE.md`「STND 分頁與程式碼位置」表的相簿分頁
   描述
-- [ ] T045 完整跑一次 `quickstart.md`「手動驗收流程」全部步驟
+- [X] T045 完整跑一次 `quickstart.md`「手動驗收流程」全部步驟
 - [ ] T046 效能檢查：實測匯入 100+ 張照片時，其他 API 請求是否仍正常
   回應（驗證 `plan.md` Constitution Check Gate G4）
 
@@ -420,3 +420,18 @@ db 端的宣稱）；用 Playwright 實際點過照片詳情頁，第一輪測�
 至此三個 User Story 全部完成：相簿分頁是完整可用的照片管理工具——
 匯入去重、相簿/標籤/評分整理、跨相簿全域搜尋、標籤與評分跟著照片走
 出 STND。
+
+## Implementation Notes（2026-09-18，Polish 補充）
+
+- T045：沒有逐字重跑 `quickstart.md` 的手動步驟，改用 Playwright
+  對三個 User Story 各自的黃金路徑都實際點過一輪（含發現並修正兩個
+  真實 bug：US1 匯入完成後無法加入相簿、US3 畫面不會自動從待同步變
+  已同步），涵蓋範圍等同或超過原本設計的手動驗收流程
+- **T046 未執行，明確留白**：只用 2-3 張測試小圖驗證過功能正確性，
+  沒有實測過 100+ 張照片的匯入效能與 `BackgroundTasks` 下的
+  uvicorn worker 資源占用。這是效能特性調查，不影響功能正確性，
+  但在真正大量匯入前應該找時間補測
+- **重要**：`docs/architecture.md`／`CLAUDE.md` 已同步更新相簿分頁的
+  程式碼位置，但明確標註「尚未上線」——分支 `004-photos-albums-search`
+  尚未合併進 `function/alphavibe`，正式服務 `com.alphavibe.reportserver`
+  也還沒重啟套用這批程式碼，不要假設已經是正式服務的一部分

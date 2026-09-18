@@ -33,7 +33,7 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 | 投資（原「儀表板」，2026-08-24 更名） | `Dashboard.jsx`／`StockDetail.jsx` | `dashboard.py`／`screen.py`／`market_scan.py`／`holdings.py`／`holdings_import.py`／`stock_detail.py`／`actions.py` | `poc/kb-mcp/`（report.py／screener.py／frameworks.py，未重寫） |
 | 資產 | `Assets.jsx` | `assets.py` | `kb_store.py` 新增 5 張表，手動輸入，無外部依賴 |
 | 美股（2026-09-08新增） | `UsStocks.jsx`／`UsStockDetail.jsx`／`UsStockImport.jsx` | `app/routers/us_stocks.py` | `poc/kb-mcp/us_stock_store.py`（獨立`USStockStore`+獨立db`us_stocks.db`，刻意不共用`KBStore`/`alphavibe.db`——美股與台股要完全獨立是產品硬性要求，非技術偏好）；Telegram推播暫為stub，`function/stnd-gateway-web`未合併進develop |
-| 相簿 | `Photos.jsx`（MVP 僅入口） | 尚無 | 未來：AutoGallery 資料模型參考（僅有 README 內容，本機實際 repo 路徑未定位到，見 clarification-log） |
+| 相簿 | `Photos.jsx`／`PhotoDetail.jsx`／`SearchPanel.jsx`／`ImportWizard.jsx`／`AlbumGrid.jsx`／`AlbumDetail.jsx`／`SyncStatusCard.jsx` | `app/routers/photos.py` | `poc/kb-mcp/photo_store.py`（獨立`PhotoStore`+獨立db`photos.db`，比照`us_stock_store.py`先例）／`photo_importer.py`／`photo_metadata_sync.py`（呼叫`exiftool`寫回XMP/IPTC，新增系統層依賴，需`brew install exiftool`）；三個User Story（匯入整理/全域搜尋/中繼資料同步）2026-09-18已完整實作並通過測試（單元測試54個＋smoke test深度驗證＋Playwright瀏覽器實測），**但分支`004-photos-albums-search`尚未合併進`function/alphavibe`、正式服務`com.alphavibe.reportserver`也還沒重啟套用**，不要假設已上線；規格見`specs/004-photos-albums-search/` |
 | 旅遊（未來，尚未建立） | — | — | 內容/研究在**另一個獨立專案** `/Users/stander/My_project/mytravel/`——若要做這個分頁，程式碼仍會建在這個 repo，但要不要整合 mytravel 的資料、整合到多深，屬於獨立待討論的範圍決策，不要預設 |
 
 新增分頁前的判斷順序：(1) 先跟 PO 討論這個領域要不要進 STND、做到多深
