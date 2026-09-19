@@ -62,6 +62,13 @@ docs/spec-intake/alphavibe/supporting-artifacts/2026-08-21-personal-console-expa
 `/{full_path:path}` 若先註冊會攔截所有請求；順序正確時，`/api/*`／`/mcp*`
 這些明確路徑一定先被上面的路由比對命中，catch-all 只接住剩下的路徑。
 
+**「管家」分頁（2026-08-31 新增）**：STND Telegram 管家閘道的網頁監控＋
+聊天介面，見 `app/routers/gateway_monitor.py`——讀寫
+`AI/telegram_gateway/state/` 底下的共用狀態檔（不是這個 app 自己的
+KBStore/SQLite 資料），跟 Telegram 那條獨立常駐行程共用同一段對話記憶
+（domain-keyed session_id）。方案文件：
+`~/.claude/plans/hazy-petting-wreath.md`。
+
 啟動方式（在 AlphaVibe/.venv 內）：
     uvicorn app.main:app --port 8090
 """
@@ -79,6 +86,7 @@ from app import version as app_version
 from app.routers import actions as actions_router
 from app.routers import assets as assets_router
 from app.routers import dashboard as dashboard_router
+from app.routers import gateway_monitor as gateway_monitor_router
 from app.routers import holdings as holdings_router
 from app.routers import holdings_import as holdings_import_router
 from app.routers import jobs as jobs_router
@@ -114,6 +122,9 @@ app.include_router(us_stocks_router.router)
 # 相簿分頁（specs/004-photos-albums-search）：User Story 1（匯入/整理/
 # 瀏覽）範圍，完全獨立於既有台股/美股 router（見 app/photo_deps.py）。
 app.include_router(photos_router.router)
+# 「管家」分頁（2026-08-31 新增）：STND Telegram 管家閘道的網頁監控＋
+# 聊天介面，見上方 docstring 說明。
+app.include_router(gateway_monitor_router.router)
 
 
 @app.get("/api/healthz")
