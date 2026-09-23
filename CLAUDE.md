@@ -56,7 +56,10 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 決策依據：`docs/adr/0027-prespec-workflow.md`。
 
 <!-- SPECKIT START -->
-目前進行中的 Spec Kit 技術規劃：`specs/005-flight-scan-page/plan.md`
+目前進行中的 Spec Kit 技術規劃：`specs/006-flight-price-tracking/plan.md`
+（機票價格追蹤：定期自動重掃、達標 Telegram 通知、資料過期防護，分支
+`006-flight-price-tracking`，建在 005 之上）。前一階段
+`specs/005-flight-scan-page/plan.md`
 （機票掃描分頁：外站四段票日期抽樣掃描、兩端間隔策略、速率守衛與結果
 顯示，分支 `005-flight-scan-page`）。接手實作前先讀
 `specs/005-flight-scan-page/quickstart.md`——它列出「已完成不要重寫」的
