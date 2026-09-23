@@ -3,7 +3,7 @@
 **Feature Slug:** flight-search
 **Product Spec:** product-spec.md
 **Spec Kit Inputs Index:** spec-kit-inputs/index.md
-**Status:** Draft
+**Status:** Ready
 
 ## Product Baseline
 
@@ -28,36 +28,34 @@
 
 - [x] `spec-kit-inputs/index.md` lists every generated input package
 - [x] Each input package has exactly one Spec Kit feature boundary
-- [ ] Each accepted `speckit-input.md` has `Status: Accepted`
+- [x] Each accepted `speckit-input.md` has `Status: Accepted`
 - [x] Each accepted `speckit-input.md` links back to source decisions
 - [x] Handoff order is recorded for accepted input packages
 
 ## Handoff Approval
 
-- [ ] TPM confirms accepted input packages are ready for `speckit-specify`
-- [ ] PO confirms the split from product spec to Spec Kit inputs is acceptable
-- [ ] No accepted input contains unresolved contradictions or meeting-note noise
+- [x] TPM confirms accepted input packages are ready for `speckit-specify`
+- [x] PO confirms the split from product spec to Spec Kit inputs is acceptable
+- [x] No accepted input contains unresolved contradictions or meeting-note noise
 
 ## Notes
 
-### 目前唯一的阻擋項：交接核准
+### 交接就緒（2026-09-23）
 
-`product-spec.md` 已於 2026-09-23 取得 PO 接受（接受證據見該文件表頭）。
-PO 審閱時提出兩項指正，均已修正並反映到需求與程式：
+`product-spec.md` 已取得 PO 接受，PO 並於同日明確回覆「核准拆包」，
+兩個輸入包因此標記 `Accepted`，本檢核表轉為 `Ready`。
 
-1. 「避開夏季」改為 **1–12 月自由複選的排除月份**——南半球目的地旺季與
-   北半球相反，寫死季節會讓南半球航線判斷錯誤（FR-06、CON-12）
-2. **貨幣統一 NTD**；對外查價服務仍須送 ISO 4217 代碼 `TWD`
-   （`NTD` 不被接受），兩者為同一貨幣的不同寫法（CON-13）
+需求基線歷經三次修訂，全部追溯到 PO 原話：
+1. 三個 Blocking 取捨（Q-015 間隔為偏好／Q-016 達標用四段票價／Q-017 每週重掃）
+2. 排除月份改為 1–12 自由複選（南北半球旺季相反）＋貨幣統一 NTD
+3. 新增第4段延後策略（FR-19~FR-21），與第1段對稱
 
-兩個 `speckit-input.md` 仍為 `Draft`，因為依 ADR-0027 與 prespec skill
-的硬邊界，輸入包標記 `Accepted` 需要**明確記錄的 PO/TPM 交接核准**。
-PO 的「其他OK」是對 product-spec 內容的接受，是否同時涵蓋「拆成
-flight-scan-page ＋ flight-price-tracking 兩個包」的核准並不明確，
-故保守維持 Draft，不代 PO 認定。
+最終規模：21 條功能需求、12 個驗收情境、6 個成功標準、14 項約束、
+8 列錯誤處理矩陣。
 
-取得交接核准後本檢核表即可轉為 `Ready`，以 `speckit-specify` 接手
-handoff order 1（flight-scan-page）。
+交接順序：
+1. `flight-scan-page` — 分頁、查詢條件 CRUD、掃描、兩端間隔策略、速率守衛
+2. `flight-price-tracking` — 排程重掃、達標通知、資料過期標示
 
 ### 非阻斷的已知待辦
 

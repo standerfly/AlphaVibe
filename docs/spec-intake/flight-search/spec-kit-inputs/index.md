@@ -5,8 +5,8 @@
 
 | Package Slug | Status | Scope Summary | Dependencies | Handoff Order |
 |--------------|--------|---------------|--------------|---------------|
-| flight-scan-page | Draft | 分頁骨架、查詢條件 CRUD、四段票掃描與結果顯示、手動觸發、速率守衛與跨時段分批、外部連結、票規提示、原生追蹤說明 | 既有 `poc/kb-mcp/flight_search.py` 與 `scraper/`（已完成，97 測試） | 1 |
-| flight-price-tracking | Draft | 定期自動重掃排程、達標判定（以四段票價）、Telegram 通知、資料過期標示與狀態呈現 | flight-scan-page；既有 Telegram 推播基礎設施 | 2 |
+| flight-scan-page | Accepted | 分頁骨架、查詢條件 CRUD、四段票掃描與結果顯示、手動觸發、速率守衛與跨時段分批、外部連結、票規提示、原生追蹤說明 | 既有 `poc/kb-mcp/flight_search.py` 與 `scraper/`（已完成，97 測試） | 1 |
+| flight-price-tracking | Accepted | 定期自動重掃排程、達標判定（以四段票價）、Telegram 通知、資料過期標示與狀態呈現 | flight-scan-page；既有 Telegram 推播基礎設施 | 2 |
 
 ## Source Decisions
 
@@ -18,6 +18,6 @@
 
 ## Notes
 
-兩個包目前皆為 `Draft`。依 ADR-0027，只有在 `product-spec.md` 取得 PO/TPM
-接受證據、且 PO/TPM 明確核准交接後，才可標記為 `Accepted` 並交給
-`speckit-specify`。
+兩個包已於 2026-09-23 標記 `Accepted`：`product-spec.md` 已取得 PO 接受
+（接受證據見該文件表頭），且 PO 於同日對話中明確回覆「核准拆包」。
+可交由 `speckit-specify` 依 handoff order 接手。
