@@ -1225,8 +1225,55 @@ class SampleDatesTest(unittest.TestCase):
         floor = datetime.date.today() + datetime.timedelta(days=21)
         self.assertGreaterEqual(pairs[0][0], floor.isoformat())
 
-    def test_summer_constant_is_northern_hemisphere(self):
+    def test_hemisphere_constants(self):
+        """兩個半球的旺季相反——把「夏季」寫死成 6-8 月會讓南半球航線判斷錯誤
+        （2026-09-23 PO 審閱需求時指正）。"""
         self.assertEqual(flight_search.NORTHERN_SUMMER_MONTHS, [6, 7, 8])
+        self.assertEqual(flight_search.SOUTHERN_SUMMER_MONTHS, [12, 1, 2])
+
+
+class ParseMonthsTest(unittest.TestCase):
+    """排除月份必須是 1-12 自由複選，季節快捷須標明半球。"""
+
+    def test_hemisphere_shortcuts(self):
+        self.assertEqual(flight_search._parse_months("north-summer"), [6, 7, 8])
+        self.assertEqual(flight_search._parse_months("south-summer"), [12, 1, 2])
+
+    def test_bare_summer_is_northern_alias(self):
+        """保留無字首的 summer 僅為相容既有用法，等同 north-summer。"""
+        self.assertEqual(flight_search._parse_months("summer"),
+                         flight_search._parse_months("north-summer"))
+
+    def test_arbitrary_multiselect_including_non_contiguous(self):
+        """任意複選，不限連續月份。"""
+        self.assertEqual(flight_search._parse_months("2,7,12"), [2, 7, 12])
+
+    def test_deduplicates_and_preserves_order(self):
+        self.assertEqual(flight_search._parse_months("6,7,6,8"), [6, 7, 8])
+
+    def test_rejects_out_of_range(self):
+        for bad in ("0", "13", "6,13"):
+            with self.assertRaises(ValueError):
+                flight_search._parse_months(bad)
+
+    def test_empty_means_no_exclusion(self):
+        self.assertEqual(flight_search._parse_months(""), [])
+        self.assertEqual(flight_search._parse_months(None), [])
+
+    def test_southern_hemisphere_scan_excludes_correct_months(self):
+        """南半球情境：排除 12,1,2 後，抽樣日期不得落在那三個月。"""
+        pairs = flight_search.sample_dates(
+            months_ahead=9, per_month=2, start_date="2027-01-01",
+            exclude_months=flight_search.SOUTHERN_SUMMER_MONTHS)
+        for ob, _rt in pairs:
+            self.assertNotIn(int(ob[5:7]), [12, 1, 2],
+                             "%s 落在南半球旺季" % ob)
+        self.assertEqual(len(set(p[0][:7] for p in pairs)), 9)
+
+    def test_currency_constants(self):
+        """對外 API 用 ISO 代碼 TWD，顯示用 NTD——同一貨幣的不同寫法。"""
+        self.assertEqual(flight_search.DEFAULT_CURRENCY, "TWD")
+        self.assertEqual(flight_search.DISPLAY_CURRENCY, "NTD")
 
     def test_return_date_follows_trip_days(self):
         pairs = flight_search.sample_dates(months_ahead=1, per_month=1,

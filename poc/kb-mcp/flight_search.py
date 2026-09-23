@@ -1149,8 +1149,44 @@ def scrape_itineraries(itineraries, data_dir=None, currency="TWD", gl="tw",
             "soft_blocked": soft_blocked, "stats": stats}
 
 
-# 北半球暑假旺季——歐洲線票價最高的區間，PO 指定預設排除。
-NORTHERN_SUMMER_MONTHS = [6, 7, 8]
+# 旺季月份的便利常數。**只是便利值，不是預設**——排除月份必須由使用者
+# 自由複選 1–12 月。2026-09-23 PO 審閱需求時指正：南半球目的地的旺季
+# 與北半球相反，把「夏季」寫死成 6–8 月會讓南半球航線判斷錯誤。
+# 任何季節快捷都必須標明所屬半球。
+NORTHERN_SUMMER_MONTHS = [6, 7, 8]    # 歐洲、日本、北美等北半球目的地
+SOUTHERN_SUMMER_MONTHS = [12, 1, 2]   # 澳紐、南美、南非等南半球目的地
+
+# 貨幣：對外查價服務要求 ISO 4217 代碼，`NTD` 不被接受。UI 與文件一律
+# 顯示「NTD」，此常數是送給 API 的值。兩者是同一貨幣的不同寫法。
+DEFAULT_CURRENCY = "TWD"
+DISPLAY_CURRENCY = "NTD"
+
+
+def _parse_months(value):
+    """解析排除月份設定：逗號清單或半球快捷。
+
+    快捷刻意標明半球——「summer」本身是有歧義的，南半球目的地的旺季是
+    12–2 月（2026-09-23 PO 指正）。保留無字首的 summer 作為 north-summer
+    的別名，僅為相容既有用法。
+    """
+    raw = (value or "").strip().lower()
+    if not raw:
+        return []
+    if raw in ("north-summer", "summer"):
+        return list(NORTHERN_SUMMER_MONTHS)
+    if raw == "south-summer":
+        return list(SOUTHERN_SUMMER_MONTHS)
+    months = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        m = int(part)
+        if not 1 <= m <= 12:
+            raise ValueError("排除月份必須介於 1-12，收到：%d" % m)
+        if m not in months:
+            months.append(m)
+    return months
 
 
 def sample_dates(months_ahead=6, per_month=4, trip_days=12, start_date=None,
@@ -1164,10 +1200,12 @@ def sample_dates(months_ahead=6, per_month=4, trip_days=12, start_date=None,
     `min_lead_days`：跳過太近的日期（預設 21 天內不掃）。近期票價本來
     就高，掃了是浪費時間。
 
-    `exclude_months`：要跳過的月份（1–12）。被排除的月份不計入
-    `months_ahead`，所以指定排除 6–8 月時，`months_ahead=9` 會掃到
-    隔年 1–5 月與 9–12 月共 9 個**實際可用**的月份，而不是掃到 9 月就停。
-    `NORTHERN_SUMMER_MONTHS` 是北半球暑假旺季的現成清單。
+    `exclude_months`：要跳過的月份（1–12），**任意複選、可不連續**。
+    被排除的月份不計入 `months_ahead`，所以指定排除 6–8 月時，
+    `months_ahead=9` 會掃到隔年 1–5 月與 9–12 月共 9 個**實際可用**的
+    月份，而不是掃到 9 月就停。
+    `NORTHERN_SUMMER_MONTHS` 與 `SOUTHERN_SUMMER_MONTHS` 是兩個半球的
+    便利常數，**不是預設值**——南半球目的地的旺季與北半球相反。
     """
     exclude = set(exclude_months or [])
     # 緩衝的用意是「別掃太近的日期」，基準是今天。使用者明確指定未來的
@@ -1209,10 +1247,11 @@ def sample_dates(months_ahead=6, per_month=4, trip_days=12, start_date=None,
 def pick_lead(outbound_date, lead_candidates, exclude_months=None):
     """為一個主行程出發日挑出第一個「讓第1段避開指定月份」的提前天數。
 
-    PO 2026-09-23 的需求：主行程要避開北半球暑假，但**第1段也不想落在
-    夏季**（那趟外站旅行同樣會撞旺季）。單一 lead 值做不到——例如主行程
-    在 2027-12，lead 120 天會把第1段推到 8 月、lead 150 推到 7 月，兩者
-    都在夏季；得改用 lead 90（第1段落在 9 月）才行。
+    PO 2026-09-23 的需求：主行程要避開旺季月份，但**第1段也不想落在
+    那些月份**（那趟外站旅行同樣會撞旺季）。單一 lead 值做不到——以排除
+    6–8 月為例，主行程在 2027-12 時 lead 120 天會把第1段推到 8 月、
+    lead 150 推到 7 月，兩者都被排除；得改用 lead 90（第1段落在 9 月）。
+    排除月份由呼叫端給定，本函式不假設任何季節定義。
 
     所以每個主行程日期需要各自挑 lead。回傳第一個合格的候選值，
     全部不合格時回傳 None（該日期應整組跳過）。
@@ -1482,12 +1521,16 @@ def main(argv=None):
     parser.add_argument("--start-date",
                         help="掃描起始日 YYYY-MM-DD（預設今天）")
     parser.add_argument("--exclude-lead-months", default="",
-                        help="第1段不可落在的月份，逗號分隔；寫 summer 等同 "
-                             "6,7,8。啟用時會從 --lead-days 為每個主行程"
+                        help="第1段不可落在的月份，1-12 任意複選逗號分隔"
+                             "（例如 2,7,12）。快捷：north-summer=6,7,8、"
+                             "south-summer=12,1,2（summer 為 north-summer 的"
+                             "別名）。啟用時會從 --lead-days 為每個主行程"
                              "日期各自挑一個合格的提前天數")
     parser.add_argument("--exclude-months", default="",
-                        help="排除的月份，逗號分隔（例如 6,7,8 排除北半球暑假）；"
-                             "寫 summer 等同 6,7,8")
+                        help="排除的月份，1-12 任意複選逗號分隔。快捷："
+                             "north-summer=6,7,8、south-summer=12,1,2"
+                             "（summer 為 north-summer 的別名）。"
+                             "南半球目的地旺季與北半球相反，勿混用")
     parser.add_argument("--per-month", type=int, default=4,
                         help="--scan-dates 每月抽樣幾個出發日（預設 4）")
     parser.add_argument("--session-limit", type=int, default=SCRAPE_SESSION_LIMIT,
@@ -1555,17 +1598,9 @@ def main(argv=None):
 
     lead_days = ints(args.lead_days)
     trail_days = ints(args.trail_days)
-    if args.exclude_months.strip().lower() == "summer":
-        excl = list(NORTHERN_SUMMER_MONTHS)
-    else:
-        excl = [int(x) for x in args.exclude_months.split(",") if x.strip()]
+    excl = _parse_months(args.exclude_months)
 
-    lead_excl = []
-    if args.exclude_lead_months.strip().lower() == "summer":
-        lead_excl = list(NORTHERN_SUMMER_MONTHS)
-    elif args.exclude_lead_months.strip():
-        lead_excl = [int(x) for x in args.exclude_lead_months.split(",")
-                     if x.strip()]
+    lead_excl = _parse_months(args.exclude_lead_months)
 
     if args.scan_dates and fixed_mode:
         # 主行程固定、掃 --lead-days／--trail-days：用來測「第1段拉遠多久」
@@ -1748,7 +1783,7 @@ def main(argv=None):
             return 1
         if fixed_mode:
             print("%-6s %-12s %-5s %-9s %s"
-                  % ("提前", "第1段日期", "外站", "四段票", "航空"))
+                  % ("提前", "第1段日期", "外站", "四段票(NTD)", "航空"))
             for row in rows[:args.top]:
                 print("%-6s %-12s %-5s %-9s %s"
                       % ("%d天" % row["lead"], row["legs"][0]["date"],
@@ -1756,7 +1791,7 @@ def main(argv=None):
                          (row.get("airlines") or [""])[0]))
         else:
             print("%-12s %-12s %-5s %-9s %s"
-                  % ("出發", "回程", "外站", "四段票", "航空"))
+                  % ("出發", "回程", "外站", "四段票(NTD)", "航空"))
             for row in rows[:args.top]:
                 print("%-12s %-12s %-5s %-9s %s"
                       % (row["legs"][1]["date"], row["legs"][2]["date"],

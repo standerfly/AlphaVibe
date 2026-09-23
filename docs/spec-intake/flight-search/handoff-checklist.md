@@ -8,8 +8,8 @@
 ## Product Baseline
 
 - [x] `docs/spec-intake/index.md` lists this feature workspace
-- [ ] `product-spec.md` status is `Accepted`
-- [ ] PO and TPM approval are recorded in `product-spec.md`
+- [x] `product-spec.md` status is `Accepted`
+- [x] PO and TPM approval are recorded in `product-spec.md`
 - [x] All raw source material for this feature is listed in `intake-index.md`
 - [x] Blocking questions in `clarification-log.md` are resolved
 - [x] In-scope and out-of-scope decisions are recorded in `scope-decision.md`
@@ -40,25 +40,24 @@
 
 ## Notes
 
-### 目前唯一的阻擋項：PO/TPM 接受
+### 目前唯一的阻擋項：交接核准
 
-`product-spec.md` 內容已完整（18 條功能需求、10 個驗收情境、6 個成功標準、
-11 項約束、8 列錯誤處理矩陣），三個 Blocking 問題已由 PO 決定並記錄於
-`clarification-log.md`（Q-015／Q-016／Q-017，2026-09-23），
-`prespec_validate.py` 回報 mechanically valid。
+`product-spec.md` 已於 2026-09-23 取得 PO 接受（接受證據見該文件表頭）。
+PO 審閱時提出兩項指正，均已修正並反映到需求與程式：
 
-依 ADR-0027 與 prespec skill 的硬邊界，**不得在沒有 PO/TPM 明確接受證據
-的情況下把 `product-spec.md` 標為 `Accepted`**，兩個 `speckit-input.md`
-也因此維持 `Draft`。
+1. 「避開夏季」改為 **1–12 月自由複選的排除月份**——南半球目的地旺季與
+   北半球相反，寫死季節會讓南半球航線判斷錯誤（FR-06、CON-12）
+2. **貨幣統一 NTD**；對外查價服務仍須送 ISO 4217 代碼 `TWD`
+   （`NTD` 不被接受），兩者為同一貨幣的不同寫法（CON-13）
 
-需要 PO/TPM 提供：
-1. 對 `product-spec.md` 的接受確認（將填入 `Accepted At` 與
-   `Acceptance Evidence` 欄位）
-2. 對「拆成 flight-scan-page ＋ flight-price-tracking 兩個 Spec Kit
-   輸入包」的核准
+兩個 `speckit-input.md` 仍為 `Draft`，因為依 ADR-0027 與 prespec skill
+的硬邊界，輸入包標記 `Accepted` 需要**明確記錄的 PO/TPM 交接核准**。
+PO 的「其他OK」是對 product-spec 內容的接受，是否同時涵蓋「拆成
+flight-scan-page ＋ flight-price-tracking 兩個包」的核准並不明確，
+故保守維持 Draft，不代 PO 認定。
 
-取得上述兩項後，本檢核表可轉為 `Ready`，並以
-`speckit-specify` 接手 handoff order 1（flight-scan-page）。
+取得交接核准後本檢核表即可轉為 `Ready`，以 `speckit-specify` 接手
+handoff order 1（flight-scan-page）。
 
 ### 非阻斷的已知待辦
 
