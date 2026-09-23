@@ -27,9 +27,9 @@
 
 **Purpose**: 確認既有能力可用，不重複建置
 
-- [ ] T001 確認 scraper 依賴已安裝：在 `poc/kb-mcp/scraper/` 執行 `npm install`，並以 `node --check flight_scraper.js` 驗證
-- [ ] T002 [P] 以 `--dry-run` 驗證既有查價模組可用：執行 `poc/kb-mcp/flight_search.py --scan-dates --destination PRG --outstations NRT --start-date 2027-04-01 --months-ahead 1 --per-month 1 --trip-days 12 --data-dir poc/data --dry-run`，確認輸出組合數與月份正確（不發任何請求、不耗配額）
-- [ ] T003 [P] 建立隔離測試資料庫：`rm -rf poc/data-test && cp -R poc/data poc/data-test`，確認 `poc/data-test/` 已在 `.gitignore` 內
+- [X] T001 確認 scraper 依賴已安裝：在 `poc/kb-mcp/scraper/` 執行 `npm install`，並以 `node --check flight_scraper.js` 驗證
+- [X] T002 [P] 以 `--dry-run` 驗證既有查價模組可用：執行 `poc/kb-mcp/flight_search.py --scan-dates --destination PRG --outstations NRT --start-date 2027-04-01 --months-ahead 1 --per-month 1 --trip-days 12 --data-dir poc/data --dry-run`，確認輸出組合數與月份正確（不發任何請求、不耗配額）
+- [X] T003 [P] 建立隔離測試資料庫：`rm -rf poc/data-test && cp -R poc/data poc/data-test`，確認 `poc/data-test/` 已在 `.gitignore` 內
 
 ---
 
@@ -39,14 +39,14 @@
 
 **⚠️ CRITICAL**: 本階段完成前，任何 user story 都無法開始
 
-- [ ] T004 建立 `poc/kb-mcp/flight_store.py`：`FlightStore` 類別，`__init__(data_dir)` 連線至 `<data_dir>/flights.db`，建立 `flight_track` 與 `flight_scan_result` 兩張表（欄位見 data-model.md）。**`sqlite3.connect()` 必須帶 `check_same_thread=False`**（quickstart §3 坑 2），**`__init__()` 不得有任何資料寫入**（坑 3）
-- [ ] T005 在 `poc/kb-mcp/flight_store.py` 實作查詢條件 CRUD：`create_track()`／`list_tracks()`／`get_track()`／`delete_track()`。刪除時連帶移除該條件的 `flight_scan_result`，但**不刪除跨條件共用的查價快取**
-- [ ] T006 在 `poc/kb-mcp/flight_store.py` 實作結果讀寫：`upsert_result()`（以 `track_id` ＋ 四段日期 ＋ 外站為唯一鍵覆寫）、`list_results(track_id)`（依 `price` 升冪，`status != ok` 排最後）
-- [ ] T007 在 `poc/kb-mcp/flight_store.py` 實作條件欄位驗證：外站清單非空、`trip_days` 為正整數、排除月份每項介於 1–12、`window_end` 不早於 `window_start`（FR-025），驗證失敗拋出明確例外
-- [ ] T008 [P] 建立 `poc/kb-mcp/tests/test_flight_store.py`：涵蓋建表無副作用、CRUD、唯一鍵覆寫、刪除連帶行為、四項驗證規則各自的失敗案例
-- [ ] T009 建立 `app/flight_deps.py`：`get_flight_store()` 依賴注入（比照 `app/us_stock_deps.py`），以及 **`resolve_flight_data_dir_for_background()`**——背景任務不得使用 request-scoped 連線（quickstart §3 坑 1）
-- [ ] T010 建立 `app/routers/flights.py` 骨架並在 `app/main.py` 註冊路由，前綴 `/api/flights`
-- [ ] T011 [P] 建立 `web/src/pages/Flights.jsx` 骨架，並在 `web/src/components/AppShell.jsx` 新增「機票」導覽項
+- [X] T004 建立 `poc/kb-mcp/flight_store.py`：`FlightStore` 類別，`__init__(data_dir)` 連線至 `<data_dir>/flights.db`，建立 `flight_track` 與 `flight_scan_result` 兩張表（欄位見 data-model.md）。**`sqlite3.connect()` 必須帶 `check_same_thread=False`**（quickstart §3 坑 2），**`__init__()` 不得有任何資料寫入**（坑 3）
+- [X] T005 在 `poc/kb-mcp/flight_store.py` 實作查詢條件 CRUD：`create_track()`／`list_tracks()`／`get_track()`／`delete_track()`。刪除時連帶移除該條件的 `flight_scan_result`，但**不刪除跨條件共用的查價快取**
+- [X] T006 在 `poc/kb-mcp/flight_store.py` 實作結果讀寫：`upsert_result()`（以 `track_id` ＋ 四段日期 ＋ 外站為唯一鍵覆寫）、`list_results(track_id)`（依 `price` 升冪，`status != ok` 排最後）
+- [X] T007 在 `poc/kb-mcp/flight_store.py` 實作條件欄位驗證：外站清單非空、`trip_days` 為正整數、排除月份每項介於 1–12、`window_end` 不早於 `window_start`（FR-025），驗證失敗拋出明確例外
+- [X] T008 [P] 建立 `poc/kb-mcp/tests/test_flight_store.py`：涵蓋建表無副作用、CRUD、唯一鍵覆寫、刪除連帶行為、四項驗證規則各自的失敗案例
+- [X] T009 建立 `app/flight_deps.py`：`get_flight_store()` 依賴注入（比照 `app/us_stock_deps.py`），以及 **`resolve_flight_data_dir_for_background()`**——背景任務不得使用 request-scoped 連線（quickstart §3 坑 1）
+- [X] T010 建立 `app/routers/flights.py` 骨架並在 `app/main.py` 註冊路由，前綴 `/api/flights`
+- [X] T011 [P] 建立 `web/src/pages/Flights.jsx` 骨架，並在 `web/src/components/AppShell.jsx` 新增「機票」導覽項
 
 **Checkpoint**: 分頁可開啟（空白）、API 可回應、資料表已建立
 

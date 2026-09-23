@@ -86,6 +86,7 @@ from app import version as app_version
 from app.routers import actions as actions_router
 from app.routers import assets as assets_router
 from app.routers import dashboard as dashboard_router
+from app.routers import flights as flights_router
 from app.routers import gateway_monitor as gateway_monitor_router
 from app.routers import holdings as holdings_router
 from app.routers import holdings_import as holdings_import_router
@@ -110,6 +111,7 @@ app.include_router(market_scan_router.router)
 app.include_router(holdings_router.router)
 app.include_router(stock_detail_router.router)
 app.include_router(actions_router.router)
+app.include_router(flights_router.router)
 app.include_router(holdings_import_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(assets_router.router)

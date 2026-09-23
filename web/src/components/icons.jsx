@@ -127,3 +127,11 @@ export function SystemIcon(props) {
     </svg>
   )
 }
+
+export function FlightsIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M10.5 3.2a1.5 1.5 0 0 1 3 0V9l7 4.1v2.1l-7-2.1v4.2l2.4 1.7v1.6L12 19.8l-3.9.8v-1.6l2.4-1.7v-4.2l-7 2.1v-2.1l7-4.1z" />
+    </svg>
+  )
+}

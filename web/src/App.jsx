@@ -8,6 +8,7 @@ import Photos from './pages/Photos.jsx'
 import UsStocks from './pages/UsStocks.jsx'
 import UsStockImport from './pages/UsStockImport.jsx'
 import UsStockDetail from './pages/UsStockDetail.jsx'
+import Flights from './pages/Flights.jsx'
 import Gateway from './pages/Gateway.jsx'
 
 export default function App() {
@@ -26,6 +27,7 @@ export default function App() {
         <Route path="/us-stocks/:ticker" element={<UsStockDetail />} />
         <Route path="/assets" element={<Assets />} />
         <Route path="/photos" element={<Photos />} />
+        <Route path="/flights" element={<Flights />} />
         <Route path="/gateway" element={<Gateway />} />
         <Route path="*" element={<Home />} />
       </Route>

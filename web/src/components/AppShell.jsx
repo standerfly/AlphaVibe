@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
-import { HomeIcon, DashboardIcon, UsStocksIcon, AssetsIcon, PhotosIcon, GatewayIcon } from './icons.jsx'
+import { HomeIcon, DashboardIcon, UsStocksIcon, AssetsIcon, PhotosIcon, FlightsIcon, GatewayIcon } from './icons.jsx'
 import ThemeToggle from './ThemeToggle.jsx'
 import ErrorBoundary from './ErrorBoundary.jsx'
 
@@ -9,10 +9,12 @@ const TABS = [
   { to: '/us-stocks', label: '美股', icon: UsStocksIcon, end: false },
   { to: '/assets', label: '資產', icon: AssetsIcon, end: false },
   { to: '/photos', label: '相簿', icon: PhotosIcon, end: false },
+  { to: '/flights', label: '機票', icon: FlightsIcon, end: false },
   { to: '/gateway', label: '管家', icon: GatewayIcon, end: false },
 ]
 
-/* 共用 App Shell：頂部導覽列＋六個 tab（2026-08-31 新增「管家」、
+/* 共用 App Shell：頂部導覽列＋七個 tab（2026-08-31 新增「管家」、
+   2026-09-23 新增「機票」，見 specs/005-flight-scan-page；
    2026-09-07 新增「美股」，見 specs/003-us-stocks），用 react-router-dom
    的 NavLink 判斷 active 狀態（isActive 由 NavLink 內建比對目前路徑，
    不用自己手刻）。/dashboard/:code、/us-stocks/:ticker 這類子路徑也要讓
