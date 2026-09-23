@@ -25,6 +25,7 @@ const STATE_PILL = {
   partial: 'pending', complete: 'ok', stale: 'alert',
 }
 const RESULT_STATUS_LABEL = { no_fare: '查無票價', failed: '查詢失敗' }
+const POLL_MS = 4000
 
 function ntd(v) {
   return v == null ? '—' : `NT$${v.toLocaleString('en-US')}`
@@ -137,6 +138,18 @@ function TrackCard({ track, onScan, onDelete, onOpen, open, detail }) {
               已達查詢速率上限，約 {Math.ceil((detail.quota?.seconds_until_free || 0) / 60)} 分鐘後接續。
             </p>
           )}
+          {detail.blocked && (
+            <p className="flight-muted">
+              {detail.blocked_kind === 'soft_timeout'
+                ? '上次掃描遇到連續逾時（外部服務的軟性阻擋），已中止並保留已完成的部分。隔一段時間再試即可。'
+                : '上次掃描被外部服務明確阻擋，已中止並保留已完成的部分。建議放慢查詢節奏後再試。'}
+            </p>
+          )}
+          {detail.state === 'scanning' && (
+            <p className="flight-muted">
+              掃描中：{detail.progress?.done}/{detail.progress?.total}（畫面會自動更新）
+            </p>
+          )}
           <ResultTable results={detail.results || []} />
           <SkippedList skipped={detail.skipped || []} />
         </>
@@ -162,14 +175,40 @@ export default function Flights() {
 
   useEffect(() => { load() }, [load])
 
+  /* 掃描進行中時輪詢結果，完成後停止。
+
+     間隔 4 秒：掃描以每筆數秒到數十秒的速度推進，秒級輪詢沒有意義，
+     只會徒增請求。沿用 Gateway.jsx 既有的 setInterval 模式，不為此
+     引入 SSE／WebSocket——專案內無既有用例，而這裡的更新頻率極低。 */
   useEffect(() => {
     if (openId == null) { setDetail(null); return }
     let alive = true
-    apiGet(`/api/flights/tracks/${openId}/results`)
-      .then((d) => { if (alive) setDetail(d) })
+    let timer = null
+
+    const fetchDetail = () => apiGet(`/api/flights/tracks/${openId}/results`)
+      .then((d) => {
+        if (!alive) return
+        setDetail(d)
+        // 只有還在跑或排隊中才需要繼續輪詢
+        const running = d.state === 'scanning' || d.state === 'queued'
+        if (!running && timer) { clearInterval(timer); timer = null }
+      })
       .catch((e) => { if (alive) setError(e.message) })
-    return () => { alive = false }
+
+    fetchDetail().then(() => {
+      if (alive && !timer) timer = setInterval(fetchDetail, POLL_MS)
+    })
+    return () => { alive = false; if (timer) clearInterval(timer) }
   }, [openId])
+
+  /* 掃描中時，卡片上的狀態與進度也要跟著更新（不只展開的結果區）。 */
+  useEffect(() => {
+    const anyRunning = (data?.tracks || []).some(
+      (t) => t.state === 'scanning' || t.state === 'queued')
+    if (!anyRunning) return
+    const timer = setInterval(load, POLL_MS)
+    return () => clearInterval(timer)
+  }, [data, load])
 
   async function scan(id) {
     try {

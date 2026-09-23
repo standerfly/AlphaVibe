@@ -67,6 +67,13 @@ class TrackCreate(BaseModel):
 # 不在這裡（research.md §2）。
 _SCANNING: set = set()
 
+# 上一輪掃描的結果摘要（是否被擋、哪一種）。
+#
+# 與 `_SCANNING` 同性質的**暫態**——服務重啟後清空是可接受的：重啟後
+# 「上一輪掃描」已無上下文，而真正重要的兩件事都還在（已完成的組合在
+# 查價快取、配額在 usage 檔）。這不是進度，不需要持久化。
+_LAST_OUTCOME: Dict[int, Dict[str, Any]] = {}
+
 
 def _quota_block(data_dir: str) -> Dict[str, Any]:
     """配額資訊。`limit_basis` 讓前端不必硬編文案即可正確標示該限制值的
@@ -144,6 +151,7 @@ def delete_track(track_id: int,
     if not store.delete_track(track_id):
         raise HTTPException(status_code=404, detail="查詢條件不存在")
     _SCANNING.discard(track_id)
+    _LAST_OUTCOME.pop(track_id, None)
 
 
 def _run_scan_background(track_id: int, data_dir: str) -> None:
@@ -154,7 +162,15 @@ def _run_scan_background(track_id: int, data_dir: str) -> None:
     `finally` 關閉（app/routers/photos.py 記錄的坑）。
     """
     try:
-        svc.run_scan(track_id, data_dir)
+        outcome = svc.run_scan(track_id, data_dir) or {}
+        _LAST_OUTCOME[track_id] = {
+            "blocked": bool(outcome.get("blocked")),
+            "blocked_kind": ("soft_timeout" if outcome.get("soft_blocked")
+                             else ("explicit" if outcome.get("blocked")
+                                   else None)),
+            "queried": outcome.get("queried", 0),
+            "written": outcome.get("written", 0),
+        }
     finally:
         _SCANNING.discard(track_id)
 
@@ -215,12 +231,17 @@ def get_results(track_id: int,
     for r in results:
         r["connector_is_estimate"] = True
 
+    last = _LAST_OUTCOME.get(track_id) or {}
     return {
         "state": svc.derive_state(track, data_dir, store=store,
                                   scanning=track_id in _SCANNING),
         "progress": {"done": len(itineraries) - len(pending),
                      "total": len(itineraries)},
         "quota": _quota_block(data_dir),
+        # 區分「連續逾時的軟阻擋」與「明確阻擋頁」——兩者對使用者的建議
+        # 不同：前者等一段時間即可，後者要放慢節流（FR-016）
+        "blocked": bool(last.get("blocked")),
+        "blocked_kind": last.get("blocked_kind"),
         "results": results,
         "skipped": skipped,
     }

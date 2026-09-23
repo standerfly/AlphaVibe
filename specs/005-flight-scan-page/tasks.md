@@ -115,15 +115,15 @@
 
 **Independent Test**: 建立超過單時段配額的條件，確認完成可執行量、顯示剩餘與預估時間、下個時段接續未完成者
 
-- [ ] T036 [US3] 在 `flight_scan_service.py` 實作配額裁切：掃描前讀取既有 `remaining_browser_quota()`，將本批裁切為可執行量，其餘留待下次（FR-012）
-- [ ] T037 [US3] 在 `flight_scan_service.py` 處理軟阻擋：`scrape_itineraries()` 回報 `blocked`／`soft_blocked` 時立即停止本批、保留已完成結果、記錄阻擋種類（FR-016）
-- [ ] T038 [US3] 在 `app/routers/flights.py` 的觸發端點回傳排隊資訊：配額不足時回 **200 而非錯誤**，附 `seconds_until_free` 與說明（contracts §4；配額不足是營運狀態不是故障）
-- [ ] T039 [US3] 在 `app/routers/flights.py` 的結果端點回傳 `blocked`／`blocked_kind`／`seconds_until_free`，並在列表端點回傳 `quota` 物件含 `limit_basis`（FR-018）
-- [ ] T040 [US3] 在 `web/src/pages/Flights.jsx` 顯示進度（已完成／總數）、排隊狀態與預估接續時間；掃描進行中以 `setInterval` 輪詢結果端點（比照 `web/src/pages/Gateway.jsx:115` 既有慣例），完成後停止輪詢
-- [ ] T041 [US3] 在 `web/src/pages/Flights.jsx` 顯示配額用量與剩餘，並依 `limit_basis` 標明該限制值是實測值或推估值（FR-018、CON-09）
-- [ ] T042 [P] [US3] 在 `poc/kb-mcp/tests/test_flight_scan_service.py` 新增續掃測試：第一批完成 N 筆後，第二批的待查清單**只含未完成者**，且不重查已完成者
-- [ ] T043 [P] [US3] 在 `poc/kb-mcp/tests/test_flight_scan_service.py` 新增軟阻擋測試：模擬連續失敗達門檻時停止本批、已完成結果仍保留、回報 `blocked_kind` 為軟阻擋
-- [ ] T044 [US3] **在 `app/tests/test_smoke.py` 新增機票路由的併發請求測試**（至少 30 個併發），驗證 `check_same_thread=False` 生效。quickstart §3 坑 2：2026-08-22 的事故正是因為當時只做依序單一請求測試而未測到
+- [X] T036 [US3] 在 `flight_scan_service.py` 實作配額裁切：掃描前讀取既有 `remaining_browser_quota()`，將本批裁切為可執行量，其餘留待下次（FR-012）
+- [X] T037 [US3] 在 `flight_scan_service.py` 處理軟阻擋：`scrape_itineraries()` 回報 `blocked`／`soft_blocked` 時立即停止本批、保留已完成結果、記錄阻擋種類（FR-016）
+- [X] T038 [US3] 在 `app/routers/flights.py` 的觸發端點回傳排隊資訊：配額不足時回 **200 而非錯誤**，附 `seconds_until_free` 與說明（contracts §4；配額不足是營運狀態不是故障）
+- [X] T039 [US3] 在 `app/routers/flights.py` 的結果端點回傳 `blocked`／`blocked_kind`／`seconds_until_free`，並在列表端點回傳 `quota` 物件含 `limit_basis`（FR-018）
+- [X] T040 [US3] 在 `web/src/pages/Flights.jsx` 顯示進度（已完成／總數）、排隊狀態與預估接續時間；掃描進行中以 `setInterval` 輪詢結果端點（比照 `web/src/pages/Gateway.jsx:115` 既有慣例），完成後停止輪詢
+- [X] T041 [US3] 在 `web/src/pages/Flights.jsx` 顯示配額用量與剩餘，並依 `limit_basis` 標明該限制值是實測值或推估值（FR-018、CON-09）
+- [X] T042 [P] [US3] 在 `poc/kb-mcp/tests/test_flight_scan_service.py` 新增續掃測試：第一批完成 N 筆後，第二批的待查清單**只含未完成者**，且不重查已完成者
+- [X] T043 [P] [US3] 在 `poc/kb-mcp/tests/test_flight_scan_service.py` 新增軟阻擋測試：模擬連續失敗達門檻時停止本批、已完成結果仍保留、回報 `blocked_kind` 為軟阻擋
+- [X] T044 [US3] **在 `app/tests/test_smoke.py` 新增機票路由的併發請求測試**（至少 30 個併發），驗證 `check_same_thread=False` 生效。quickstart §3 坑 2：2026-08-22 的事故正是因為當時只做依序單一請求測試而未測到
 
 **Checkpoint**: 大範圍掃描可靠，中斷與阻擋皆不遺失資料
 

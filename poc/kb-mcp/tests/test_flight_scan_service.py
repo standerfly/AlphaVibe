@@ -297,6 +297,55 @@ class RunScanTest(unittest.TestCase):
         results = self.store.list_results(self.track["id"])
         self.assertEqual(len(results), 2)   # 仍是 2 組，不是 4 筆
 
+    def test_soft_block_keeps_completed_results_and_reports(self):
+        """軟阻擋（連續逾時）時：已完成的結果必須保留，並如實回報。
+
+        外部服務的阻擋常以連續逾時呈現而非明確錯誤頁。若把這種情況當成
+        整批失敗而丟棄已完成的部分，使用者每次被擋都得從頭重來。
+        """
+        def scrape(itineraries, **kw):
+            rows = []
+            for idx, i in enumerate(itineraries):
+                row = dict(i)
+                if idx == 0:                      # 第一筆成功並寫快取
+                    row["price"] = 37265
+                    row["airlines"] = ["星宇航空"]
+                    key = fs._cache_key(i["legs"], 1, 1, fs.DEFAULT_CURRENCY,
+                                        "tw", "zh-TW")
+                    fs._write_cache(self.tmp, key, {"price": 37265,
+                                                    "airlines": ["星宇航空"]})
+                else:                             # 其餘逾時，判定為軟阻擋
+                    row["price"] = None
+                    row["error"] = "timeout"
+                rows.append(row)
+            return {"results": rows, "blocked": True, "soft_blocked": True,
+                    "stats": {}}
+
+        fs.scrape_itineraries = scrape
+        out = svc.run_scan(self.track["id"], self.tmp)
+        self.assertTrue(out["blocked"])
+        self.assertTrue(out["soft_blocked"])
+        results = self.store.list_results(self.track["id"])
+        self.assertEqual(len([r for r in results if r["status"] == "ok"]), 1)
+
+    def test_partial_scan_does_not_mark_success(self):
+        """部分完成不算成功一輪——否則資料過期判定會被一直往後推，
+        讓過期的價格看起來永遠是新的。"""
+        def scrape(itineraries, **kw):
+            rows = []
+            for i in itineraries:                 # 全部逾時，不寫任何快取
+                row = dict(i)
+                row["price"] = None
+                row["error"] = "timeout"
+                rows.append(row)
+            return {"results": rows, "blocked": True, "soft_blocked": True,
+                    "stats": {}}
+
+        fs.scrape_itineraries = scrape
+        svc.run_scan(self.track["id"], self.tmp)
+        self.assertIsNone(
+            self.store.get_track(self.track["id"])["last_success_at"])
+
     def test_missing_track_reports_error(self):
         out = svc.run_scan(9999, self.tmp)
         self.assertEqual(out["error"], "track_not_found")
