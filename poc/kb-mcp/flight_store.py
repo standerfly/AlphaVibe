@@ -368,6 +368,25 @@ class FlightStore:
             })
         return out
 
+    def update_connector_prices(self, track_id, prices_by_outstation):
+        """批次寫入各外站的接駁票估價。
+
+        接駁價以**外站**為單位估算（單一代表日期），不隨每個組合的日期
+        逐一查詢——那會讓查詢量倍增，而接駁票價的日期敏感度遠低於四段票
+        （data-model.md「與既有資料的關係」）。
+        """
+        n = 0
+        for outstation, price in (prices_by_outstation or {}).items():
+            if price is None:
+                continue
+            cur = self.conn.execute(
+                "UPDATE flight_scan_result SET connector_price=?"
+                " WHERE track_id=? AND outstation=?",
+                (int(price), track_id, outstation.upper()))
+            n += cur.rowcount
+        self.conn.commit()
+        return n
+
     def count_results(self, track_id):
         row = self.conn.execute(
             "SELECT COUNT(*) AS n FROM flight_scan_result WHERE track_id=?",

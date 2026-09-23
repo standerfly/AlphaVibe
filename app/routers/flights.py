@@ -230,6 +230,26 @@ def get_results(track_id: int,
     results = store.list_results(track_id)
     for r in results:
         r["connector_is_estimate"] = True
+        # 連結由後端用既有的 google_flights_url() 構造——前端若自行拼接
+        # 就會有第二份網址編碼邏輯，兩處必然分岔（tfs 是 base64 protobuf，
+        # 不是可目視檢查的格式）
+        legs = [
+            {"departure_id": r["outstation"], "arrival_id": track["hub"],
+             "date": r["leg1_date"]},
+            {"departure_id": track["hub"], "arrival_id": track["destination"],
+             "date": r["outbound_date"]},
+            {"departure_id": track["destination"], "arrival_id": track["hub"],
+             "date": r["return_date"]},
+            {"departure_id": track["hub"], "arrival_id": r["outstation"],
+             "date": r["leg4_date"]},
+        ]
+        r["links"] = {
+            "four_segment": fs.google_flights_url(legs),
+            # 接駁票：台北→外站的單程，排在第1段出發日之前
+            "connector": fs.google_flights_url([{
+                "departure_id": track["hub"], "arrival_id": r["outstation"],
+                "date": r["leg1_date"]}]),
+        }
 
     last = _LAST_OUTCOME.get(track_id) or {}
     return {
@@ -244,6 +264,56 @@ def get_results(track_id: int,
         "blocked_kind": last.get("blocked_kind"),
         "results": results,
         "skipped": skipped,
+    }
+
+
+@router.get("/api/flights/native-tracking")
+def native_tracking(store: FlightStore = Depends(get_flight_store)) -> Dict[str, Any]:
+    """外部服務原生價格追蹤的可用性與操作說明（FR-022）。
+
+    `supported_for_four_segment` 是結構化欄位而非純文案——讓前端能以
+    一致方式呈現這項限制，不必解析說明文字。
+
+    2026-09-23 實測：四段票頁面找不到任何追蹤開關，而對照組（來回票）
+    有；兩者皆在未登入狀態下測試，故非登入問題。網路文章聲稱該功能已
+    延伸至多城市，實測不成立。
+    """
+    tracks = store.list_tracks()
+    links = []
+    seen = set()
+    for t in tracks:
+        low = store.lowest_result(t["id"])
+        if not low:
+            continue
+        key = (t["hub"], t["destination"], low["outbound_date"],
+               low["return_date"])
+        if key in seen:
+            continue
+        seen.add(key)
+        links.append({
+            "label": "%s↔%s %s～%s" % (t["hub"], t["destination"],
+                                       low["outbound_date"], low["return_date"]),
+            "url": fs.google_flights_url([
+                {"departure_id": t["hub"], "arrival_id": t["destination"],
+                 "date": low["outbound_date"]},
+                {"departure_id": t["destination"], "arrival_id": t["hub"],
+                 "date": low["return_date"]},
+            ]),
+        })
+    return {
+        "supported_for_four_segment": False,
+        "reason": "外部服務的價格追蹤不支援多城市行程——四段票頁面沒有追蹤"
+                  "按鈕，而同樣未登入的來回票頁面有（2026-09-23 對照實測）。",
+        "usable_for": "主行程來回票（可作為四段票價格的代理指標：主行程"
+                      "落在旺季時整張四段票都會被拉高）",
+        "steps": [
+            "登入外部服務帳號（追蹤結果會寄到該帳號的信箱）",
+            "開啟下方的主行程來回票連結（不是四段票連結）",
+            "在頁面上開啟「追蹤價格」開關，或執行提供的 console 腳本",
+        ],
+        "main_trip_links": links,
+        "script_path": "poc/kb-mcp/scraper/track-prices-console.js",
+        "bookmarklet_path": "poc/kb-mcp/scraper/track-prices-bookmarklet.txt",
     }
 
 

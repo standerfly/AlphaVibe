@@ -135,12 +135,12 @@
 
 **Independent Test**: 從任一筆結果點開外部連結，確認行程一致；確認風險提示與接駁估價可見
 
-- [ ] T045 [US4] 在 `app/routers/flights.py` 的結果端點為每筆結果附上 `links.four_segment` 與 `links.connector`，**由後端呼叫既有 `google_flights_url()` 構造**，前端不自行拼接（避免兩處邏輯分岔）
-- [ ] T046 [P] [US4] 在 `flight_scan_service.py` 接上接駁票估價：呼叫既有 `estimate_connectors()`，結果寫入 `connector_price`，API 回傳時附 `connector_is_estimate: true`（FR-020）
-- [ ] T047 [P] [US4] 在 `web/src/pages/Flights.jsx` 每筆結果顯示接駁估價（標明「估算」）與兩個外部連結按鈕
-- [ ] T048 [P] [US4] 在 `web/src/pages/Flights.jsx` 結果頁顯示票規提示：「第1段不可缺搭，否則後三段全部失效」與「僅經濟艙適用」（FR-021）
-- [ ] T049 [US4] 在 `app/routers/flights.py` 實作 `GET /api/flights/native-tracking`：回傳結構化的原生追蹤說明（`supported_for_four_segment: false` ＋ 理由 ＋ 主行程連結 ＋ 腳本路徑），資料見 contracts §6 與 `poc/kb-mcp/scraper/README-track-prices.md`
-- [ ] T050 [P] [US4] 在 `web/src/pages/Flights.jsx` 新增原生追蹤說明區塊，呈現「不支援四段票」的限制與主行程來回票的操作步驟
+- [X] T045 [US4] 在 `app/routers/flights.py` 的結果端點為每筆結果附上 `links.four_segment` 與 `links.connector`，**由後端呼叫既有 `google_flights_url()` 構造**，前端不自行拼接（避免兩處邏輯分岔）
+- [X] T046 [P] [US4] 在 `flight_scan_service.py` 接上接駁票估價：呼叫既有 `estimate_connectors()`，結果寫入 `connector_price`，API 回傳時附 `connector_is_estimate: true`（FR-020）
+- [X] T047 [P] [US4] 在 `web/src/pages/Flights.jsx` 每筆結果顯示接駁估價（標明「估算」）與兩個外部連結按鈕
+- [X] T048 [P] [US4] 在 `web/src/pages/Flights.jsx` 結果頁顯示票規提示：「第1段不可缺搭，否則後三段全部失效」與「僅經濟艙適用」（FR-021）
+- [X] T049 [US4] 在 `app/routers/flights.py` 實作 `GET /api/flights/native-tracking`：回傳結構化的原生追蹤說明（`supported_for_four_segment: false` ＋ 理由 ＋ 主行程連結 ＋ 腳本路徑），資料見 contracts §6 與 `poc/kb-mcp/scraper/README-track-prices.md`
+- [X] T050 [P] [US4] 在 `web/src/pages/Flights.jsx` 新增原生追蹤說明區塊，呈現「不支援四段票」的限制與主行程來回票的操作步驟
 - [ ] T051 [US4] **手動驗證（無程式改動）**：以手機瀏覽器開啟 ngrok 網址的 `/flights` 分頁，確認 `web/src/pages/Flights.jsx` 的結果表可完整閱讀（頁面本體不橫向捲動）且外部連結正確開啟（FR-026、US4 情境 6）。有版面問題則回頭修改該檔案
 
 **Checkpoint**: 四個 user story 全部完成

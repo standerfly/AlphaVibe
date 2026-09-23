@@ -46,6 +46,23 @@ API_BASE_URL = "https://serpapi.com/search"
 TIMEOUT = 40
 USER_AGENT = "alphavibe-flight-search-poc"
 
+# Node scraper 位置（見 scraper/flight_scraper.js）。
+SCRAPER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scraper")
+SCRAPER_JS = os.path.join(SCRAPER_DIR, "flight_scraper.js")
+
+# 節流預設值——依 2026-09-22 封鎖風險調查與壓力測試定案
+# （研究筆記第 12 節）。固定間隔是機器人特徵，故用隨機區間。
+SCRAPE_MIN_DELAY_MS = 5000
+SCRAPE_MAX_DELAY_MS = 11000
+# 單次 session 上限。這個數字改過三次，過程值得記住：
+#   50 —— 憑「業界 100+/小時」推估的保守半值，無實測依據
+#   18 —— 2026-09-22 實測「第 21 筆起連續逾時」後下修
+#   30 —— 2026-09-23 查明那次封鎖的真正原因是用了 chrome-headless-shell
+#         （指紋明顯），換成真實 Chrome 後連跑 24 筆零封鎖、間隔僅 8–14 秒。
+#         「20 筆閾值」其實是指紋造成的假象，不是速率上限。
+# 30 是在已實測的 24 筆之上留一點邊際；再往上沒有實測根據，不要亂加。
+SCRAPE_SESSION_LIMIT = 30
+
 # 貨幣：對外查價服務要求 ISO 4217 代碼，`NTD` 不被接受（Google Flights 的
 # curr 參數實測只吃 TWD）。UI 與文件一律顯示「NTD」，此處是送給 API 的值。
 # 兩者是同一貨幣的不同寫法，不得混用其他幣別（PO 2026-09-23 要求）。
@@ -652,6 +669,42 @@ def search_oneway(departure_id, arrival_id, date, token, travel_class=1,
     return result
 
 
+def estimate_connectors_browser(outstations, date, hub=DEFAULT_HUB,
+                                data_dir=None, currency=DEFAULT_CURRENCY,
+                                gl="tw", hl="zh-TW",
+                                hourly_limit=HOURLY_BROWSER_LIMIT,
+                                min_delay_ms=SCRAPE_MIN_DELAY_MS,
+                                max_delay_ms=SCRAPE_MAX_DELAY_MS):
+    """走**瀏覽器路徑**估算各外站的接駁票價（樞紐→外站單程）。
+
+    與 `estimate_connectors()` 的差別只在資料源：那一支走 SerpApi
+    （需要 token），這一支走瀏覽器（免 token、免額度，但受速率限制）。
+    兩者的回傳形狀相同：{外站: 價格 or None}。
+
+    **2026-09-23 實測前提**：`flight_scraper.js` 原本只解析多城市頁面
+    （硬綁「整趟行程」字樣），單程頁面沒有該字樣會逾時。已改為依頁面
+    型態切換錨點。**此路徑尚未以真實單程查詢驗證過**——當日配額已用盡
+    （30/20），無法實測。首次實際使用時若接駁價全為 None，優先懷疑
+    單程頁面的解析錨點，而非配額或網路。
+    """
+    itineraries = []
+    for code in outstations:
+        itineraries.append({
+            "outstation": code,
+            "legs": [{"departure_id": hub, "arrival_id": code, "date": date}],
+        })
+    outcome = scrape_itineraries(
+        itineraries, data_dir=data_dir, currency=currency, gl=gl, hl=hl,
+        min_delay_ms=min_delay_ms, max_delay_ms=max_delay_ms,
+        hourly_limit=hourly_limit)
+    prices = {}
+    for row in outcome.get("results", []):
+        prices[row["outstation"]] = row.get("price")
+    for code in outstations:
+        prices.setdefault(code, None)
+    return prices
+
+
 def estimate_connectors(outstations, date, token, hub=DEFAULT_HUB,
                         data_dir=None, currency=DEFAULT_CURRENCY, gl="tw", hl="zh-TW",
                         quota=FREE_TIER_MONTHLY_QUOTA):
@@ -990,24 +1043,6 @@ def plan_cheap_trip(hub, destination, token, outstations=None,
                    "candidates": candidates},
         "api_calls_spent": stage1["api_calls_spent"] + spent2,
     }
-
-
-# Node scraper 位置（見 scraper/flight_scraper.js）。
-SCRAPER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scraper")
-SCRAPER_JS = os.path.join(SCRAPER_DIR, "flight_scraper.js")
-
-# 節流預設值——依 2026-09-22 封鎖風險調查與壓力測試定案
-# （研究筆記第 12 節）。固定間隔是機器人特徵，故用隨機區間。
-SCRAPE_MIN_DELAY_MS = 5000
-SCRAPE_MAX_DELAY_MS = 11000
-# 單次 session 上限。這個數字改過三次，過程值得記住：
-#   50 —— 憑「業界 100+/小時」推估的保守半值，無實測依據
-#   18 —— 2026-09-22 實測「第 21 筆起連續逾時」後下修
-#   30 —— 2026-09-23 查明那次封鎖的真正原因是用了 chrome-headless-shell
-#         （指紋明顯），換成真實 Chrome 後連跑 24 筆零封鎖、間隔僅 8–14 秒。
-#         「20 筆閾值」其實是指紋造成的假象，不是速率上限。
-# 30 是在已實測的 24 筆之上留一點邊際；再往上沒有實測根據，不要亂加。
-SCRAPE_SESSION_LIMIT = 30
 
 
 def scraper_available():

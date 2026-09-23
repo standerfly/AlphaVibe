@@ -73,10 +73,15 @@ const BLOCK_URL_RE = /\/sorry\/|\/recaptcha\/api2\/|captcha_redirect/i;
 
 async function scrapeOne(page, url, timeoutMs) {
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-  // 等「整趟行程」出現＝多城市總價已渲染。
-  // 不能等「正在載入結果」消失——那是常駐文字，會白等到逾時。
+  // 多城市頁面：等「整趟行程」出現＝四段總價已渲染。
+  // 單程／來回頁面**沒有**這個字樣（那是多城市專有的），改等任何票價
+  // 數字出現——接駁票查詢走的正是單程頁面。
+  // 兩者都不能等「正在載入結果」消失，那是常駐文字，會白等到逾時。
   await page.waitForFunction(
-    () => document.body.innerText.includes('整趟行程'),
+    () => {
+      const t = document.body.innerText;
+      return t.includes('整趟行程') || /\$[0-9][0-9,]{3,}/.test(t);
+    },
     { timeout: timeoutMs });
 
   const body = await page.innerText('body');
@@ -84,9 +89,13 @@ async function scrapeOne(page, url, timeoutMs) {
     return { status: 'blocked' };
   }
 
-  const options = await page.$$eval('li', (els) => els
+  // 解析錨點依頁面型態切換：多城市用「整趟行程」鎖定四段總價，
+  // 單程頁面沒有該字樣，改取每個結果列的票價。
+  const isMultiCity = body.includes('整趟行程');
+  const options = await page.$$eval('li', (els, multi) => els
     .map((e) => e.innerText)
-    .filter((t) => t.includes('整趟行程'))
+    .filter((t) => (multi ? t.includes('整趟行程')
+                          : /\$[0-9][0-9,]{3,}/.test(t)))
     .map((t) => {
       const m = t.match(/\$([0-9,]+)/);
       if (!m) return null;
@@ -97,7 +106,7 @@ async function scrapeOne(page, url, timeoutMs) {
         business: /商務艙/.test(t),
       };
     })
-    .filter(Boolean));
+    .filter(Boolean), isMultiCity);
 
   // 只取經濟艙——四段票的甜蜜點在經濟艙，商務艙在多城市會跳艙翻倍
   const economy = options.filter((o) => !o.business);

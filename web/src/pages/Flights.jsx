@@ -42,7 +42,7 @@ function ResultTable({ results }) {
         <thead>
           <tr>
             <th>主行程</th><th>外站</th><th>四段票(NTD)</th>
-            <th>接駁(估)</th><th>第1段</th><th>第4段</th><th>航空</th>
+            <th>接駁(估)</th><th>第1段</th><th>第4段</th><th>航空</th><th>查價</th>
           </tr>
         </thead>
         <tbody>
@@ -59,6 +59,14 @@ function ResultTable({ results }) {
               <td>{md(r.leg1_date)}<small className="flight-muted"> −{r.lead_days}天</small></td>
               <td>{md(r.leg4_date)}<small className="flight-muted"> +{r.trail_days}天</small></td>
               <td className="flight-muted">{r.airline || '—'}</td>
+              <td className="flight-links">
+                {r.links?.four_segment && (
+                  <a href={r.links.four_segment} target="_blank" rel="noreferrer">四段票</a>
+                )}
+                {r.links?.connector && (
+                  <a href={r.links.connector} target="_blank" rel="noreferrer">接駁</a>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -272,6 +280,50 @@ export default function Flights() {
         提醒：第1段（外站→台北）一定要搭，no-show 會讓後三段全部失效；
         四段票僅經濟艙適用，商務艙在多城市查詢會跳艙翻倍。
       </p>
+
+      <NativeTracking />
     </section>
+  )
+}
+
+/* 外部服務自帶的價格追蹤（FR-022）。
+
+   重點是**說清楚它不支援四段票**——使用者很容易以為可以直接追蹤這裡
+   查到的組合。可用的是主行程來回票，作為四段票價格的代理指標。 */
+function NativeTracking() {
+  const [info, setInfo] = useState(null)
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    if (!open || info) return
+    apiGet('/api/flights/native-tracking').then(setInfo).catch(() => {})
+  }, [open, info])
+
+  return (
+    <details className="flight-native" onToggle={(e) => setOpen(e.target.open)}>
+      <summary>用外部服務自己的價格追蹤功能？</summary>
+      {!info && <p className="flight-muted">載入中…</p>}
+      {info && (
+        <>
+          <p className="flight-muted">{info.reason}</p>
+          <p className="flight-muted">可用於：{info.usable_for}</p>
+          <ol className="flight-muted">
+            {info.steps.map((st, i) => <li key={i}>{st}</li>)}
+          </ol>
+          {info.main_trip_links?.length > 0 && (
+            <ul className="flight-muted">
+              {info.main_trip_links.map((l, i) => (
+                <li key={i}>
+                  <a href={l.url} target="_blank" rel="noreferrer">{l.label}</a>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="flight-muted">
+            腳本：<code>{info.script_path}</code>
+          </p>
+        </>
+      )}
+    </details>
   )
 }

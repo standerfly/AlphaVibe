@@ -415,6 +415,7 @@ def main() -> int:
             ("GET /api/us-stocks/trades/recent", "/api/us-stocks/trades/recent", 200),
             ("GET /api/flights/healthz", "/api/flights/healthz", 200),
             ("GET /api/flights/tracks", "/api/flights/tracks", 200),
+            ("GET /api/flights/native-tracking", "/api/flights/native-tracking", 200),
             ("GET /api/photos/albums", "/api/photos/albums", 200),
             ("GET /api/photos/tags", "/api/photos/tags", 200),
             ("GET /api/photos/browse-folders", "/api/photos/browse-folders", 200),
@@ -1320,6 +1321,16 @@ def main() -> int:
                     "/api/flights/tracks/%d/results" % flight_track_id)
                 if res_status == 200 and "results" in (res_body or {}):
                     print("PASS /api/flights/tracks/{id}/results 回應含 results 與 progress")
+                    # 原生追蹤說明必須明確回報「不支援四段票」——這是結構化
+                    # 欄位而非文案，前端據此呈現限制（FR-022）
+                    nt_status, nt_body = _get("/api/flights/native-tracking")
+                    if (nt_status == 200
+                            and (nt_body or {}).get("supported_for_four_segment") is False
+                            and (nt_body or {}).get("reason")):
+                        print("PASS /api/flights/native-tracking 明確回報四段票不支援且附理由")
+                    else:
+                        print("FAIL /api/flights/native-tracking：status=%s" % nt_status)
+                        failures.append("flights native tracking")
                 else:
                     print("FAIL /api/flights/tracks/{id}/results：status=%s" % res_status)
                     failures.append("flights results")

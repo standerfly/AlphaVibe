@@ -158,6 +158,19 @@ def scan_plan(track, data_dir, hourly_limit=fs.HOURLY_BROWSER_LIMIT):
     }
 
 
+def _connector_probe_date(track, store, track_id):
+    """接駁票估價要用哪一天。
+
+    取已有結果中**最早的第1段日期**——接駁票要在第1段之前飛到外站，
+    用最早那天估價最接近實際需求。沒有結果時退回區間起始月的月初。
+    """
+    results = store.list_results(track_id)
+    dates = [r["leg1_date"] for r in results if r.get("leg1_date")]
+    if dates:
+        return min(dates)
+    return track["window_start"] + "-01"
+
+
 def run_scan(track_id, data_dir, hourly_limit=fs.HOURLY_BROWSER_LIMIT,
              min_delay_ms=fs.SCRAPE_MIN_DELAY_MS,
              max_delay_ms=fs.SCRAPE_MAX_DELAY_MS,
@@ -210,6 +223,28 @@ def run_scan(track_id, data_dir, hourly_limit=fs.HOURLY_BROWSER_LIMIT,
                 airline=(row.get("airlines") or [None])[0],
             )
             written += 1
+
+        # 接駁票估價（FR-020）：以外站為單位、單一代表日期估一次。
+        #
+        # **刻意放在主查詢之後，且只在配額還有剩時執行**——接駁價是輔助
+        # 資訊（不參與達標判定，Q-016），不該排擠真正要查的四段票。
+        # 配額不足時就跳過，下一輪再估。
+        try:
+            if hourly_limit is None or fs.remaining_browser_quota(
+                    data_dir, hourly_limit) > 0:
+                missing = [r["outstation"] for r in store.list_results(track_id)
+                           if r.get("connector_price") is None]
+                if missing:
+                    # 走瀏覽器路徑（免 token、免 API 額度）。用第一段可能
+                    # 出發的日期當代表日期估一次，不逐組合查詢。
+                    probe_date = _connector_probe_date(track, store, track_id)
+                    prices = fs.estimate_connectors_browser(
+                        sorted(set(missing)), probe_date, hub=track["hub"],
+                        data_dir=data_dir, hourly_limit=hourly_limit)
+                    store.update_connector_prices(track_id, prices)
+        except Exception:
+            # 接駁估價失敗不影響主結果——它只是輔助資訊
+            pass
 
         # 只有「本輪沒有剩餘未完成組合」才算成功完成一輪——部分完成不更新
         # last_success_at，否則資料過期判定會被部分完成的掃描一直往後推。

@@ -346,6 +346,49 @@ class RunScanTest(unittest.TestCase):
         self.assertIsNone(
             self.store.get_track(self.track["id"])["last_success_at"])
 
+    def test_connector_estimate_written_when_quota_allows(self):
+        """接駁估價以外站為單位寫入，不逐組合查詢（FR-020）。"""
+        fs.scrape_itineraries = self._fake_scrape()
+        orig = fs.estimate_connectors_browser
+        fs.estimate_connectors_browser = lambda outs, date, **kw: {
+            o: 6800 for o in outs}
+        try:
+            svc.run_scan(self.track["id"], self.tmp)
+        finally:
+            fs.estimate_connectors_browser = orig
+        results = self.store.list_results(self.track["id"])
+        self.assertTrue(results)
+        self.assertTrue(all(r["connector_price"] == 6800 for r in results))
+
+    def test_connector_estimate_skipped_when_quota_exhausted(self):
+        """配額用盡時跳過接駁估價——它是輔助資訊，不該排擠四段票查詢。"""
+        fs.scrape_itineraries = self._fake_scrape()
+        called = []
+        orig = fs.estimate_connectors_browser
+        fs.estimate_connectors_browser = lambda outs, date, **kw: (
+            called.append(1) or {o: 6800 for o in outs})
+        try:
+            fs.record_browser_usage(self.tmp, fs.HOURLY_BROWSER_LIMIT)
+            svc.run_scan(self.track["id"], self.tmp)
+        finally:
+            fs.estimate_connectors_browser = orig
+        self.assertEqual(called, [])
+
+    def test_connector_failure_does_not_break_main_results(self):
+        """接駁估價失敗不影響主結果——它只是輔助資訊。"""
+        fs.scrape_itineraries = self._fake_scrape()
+        orig = fs.estimate_connectors_browser
+
+        def boom(*a, **kw):
+            raise RuntimeError("單程頁面解析失敗")
+        fs.estimate_connectors_browser = boom
+        try:
+            out = svc.run_scan(self.track["id"], self.tmp)
+        finally:
+            fs.estimate_connectors_browser = orig
+        self.assertEqual(out["written"], 2)
+        self.assertEqual(self.store.count_results(self.track["id"]), 2)
+
     def test_missing_track_reports_error(self):
         out = svc.run_scan(9999, self.tmp)
         self.assertEqual(out["error"], "track_not_found")
