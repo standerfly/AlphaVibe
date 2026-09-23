@@ -142,6 +142,19 @@ def read_browser_usage(data_dir, window_sec=_USAGE_WINDOW_SEC):
         return empty
     stamps = [float(t) for t in data.get("queries", [])
               if isinstance(t, (int, float))]
+
+    # 相容舊格式 {"date": "YYYY-MM-DD", "count": N}——那是本機制還是
+    # 「每日計數」時寫下的（2026-09-23 改為滾動小時前）。若不處理，舊檔
+    # 會被靜默忽略、配額守衛誤判為完全沒用過而放行，實際上當天已經用掉
+    # 一些額度。這裡**保守地**把舊 count 視為「都發生在此刻」——寧可
+    # 高估用量而提早停手，也不要低估而超支。舊紀錄會在一小時後自然退場。
+    if not stamps and data.get("count") and data.get("date"):
+        try:
+            if data["date"] == datetime.date.today().isoformat():
+                stamps = [now] * int(data["count"])
+        except (ValueError, TypeError):
+            pass
+
     recent = sorted(t for t in stamps if now - t < window_sec)
     return {"count": len(recent), "queries": recent,
             "oldest_age_sec": (now - recent[0]) if recent else None}

@@ -27,6 +27,10 @@ from pydantic import BaseModel, Field
 from app.flight_deps import (FlightStore, get_flight_store,
                              resolve_flight_data_dir_for_background)
 
+# 服務層與查價層：sys.path 已由 app/flight_deps.py 插入 poc/kb-mcp
+import flight_scan_service as svc  # noqa: E402
+import flight_search as fs  # noqa: E402
+
 router = APIRouter()
 
 
@@ -54,6 +58,172 @@ class TrackCreate(BaseModel):
     exclude_months: ExcludeMonths = Field(default_factory=ExcludeMonths)
     target_price: Optional[int] = None
     samples_per_month: int = 2
+
+
+# 目前有背景掃描在執行的 track id。
+#
+# 這是**暫態**而非進度：服務重啟後清空是正確的——重啟後確實沒有任何背景
+# 任務在跑。真正需要跨重啟存活的「哪些組合已完成」由查價快取持久化，
+# 不在這裡（research.md §2）。
+_SCANNING: set = set()
+
+
+def _quota_block(data_dir: str) -> Dict[str, Any]:
+    """配額資訊。`limit_basis` 讓前端不必硬編文案即可正確標示該限制值的
+    性質——FR-018／CON-09 要求顯示的限制數字必須標明是實測或推估。"""
+    used = fs.read_browser_usage(data_dir)["count"]
+    return {
+        "used": used,
+        "limit": fs.HOURLY_BROWSER_LIMIT,
+        "window": "rolling_hour",
+        "limit_basis": "estimated",
+        "seconds_until_free": fs.seconds_until_quota_frees(data_dir),
+    }
+
+
+def _track_summary(store: FlightStore, track: Dict[str, Any],
+                   data_dir: str) -> Dict[str, Any]:
+    itineraries, skipped = svc.expand_track(track)
+    pending = [i for i in itineraries
+               if not svc._is_cached(i, data_dir)]
+    state = svc.derive_state(track, data_dir, store=store,
+                             scanning=track["id"] in _SCANNING)
+    lowest = store.lowest_result(track["id"])
+    if lowest and track.get("target_price") is not None:
+        lowest = dict(lowest, target_met=lowest["price"] <= track["target_price"])
+    out = dict(track)
+    out["state"] = state
+    out["progress"] = {"done": len(itineraries) - len(pending),
+                       "total": len(itineraries)}
+    out["lowest"] = lowest
+    out["skipped_count"] = len(skipped)
+    return out
+
+
+@router.get("/api/flights/tracks")
+def list_tracks(store: FlightStore = Depends(get_flight_store)) -> Dict[str, Any]:
+    """條件清單，含推導狀態、進度、最低價摘要與配額（contracts §1）。"""
+    data_dir = store.data_dir
+    return {
+        "tracks": [_track_summary(store, t, data_dir)
+                   for t in store.list_tracks()],
+        "quota": _quota_block(data_dir),
+    }
+
+
+@router.post("/api/flights/tracks", status_code=201)
+def create_track(body: TrackCreate,
+                 store: FlightStore = Depends(get_flight_store)) -> Dict[str, Any]:
+    """建立條件。**不自動開始掃描**——讓使用者先確認條件正確（contracts §2）。
+
+    驗證失敗回 400 並說明原因（FR-025）。驗證規則定義在 FlightStore，
+    不在這裡重寫一份，避免兩處分岔。
+    """
+    try:
+        track = store.create_track(
+            destination=body.destination, outstations=body.outstations,
+            window_start=body.window_start, window_end=body.window_end,
+            trip_days=body.trip_days, hub=body.hub, name=body.name,
+            lead_strategy=body.lead_strategy,
+            trail_strategy=body.trail_strategy,
+            exclude_months_trip=body.exclude_months.trip,
+            exclude_months_lead=body.exclude_months.lead,
+            exclude_months_trail=body.exclude_months.trail,
+            target_price=body.target_price,
+            samples_per_month=body.samples_per_month,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"id": track["id"]}
+
+
+@router.delete("/api/flights/tracks/{track_id}", status_code=204)
+def delete_track(track_id: int,
+                 store: FlightStore = Depends(get_flight_store)) -> None:
+    """刪除條件與其結果。查價快取跨條件共用，不隨之刪除（contracts §3）。"""
+    if not store.delete_track(track_id):
+        raise HTTPException(status_code=404, detail="查詢條件不存在")
+    _SCANNING.discard(track_id)
+
+
+def _run_scan_background(track_id: int, data_dir: str) -> None:
+    """背景任務入口。
+
+    **自行建立與關閉連線**——不使用 request-scoped 的
+    `Depends(get_flight_store)`，那個連線在 response 送出後可能已被
+    `finally` 關閉（app/routers/photos.py 記錄的坑）。
+    """
+    try:
+        svc.run_scan(track_id, data_dir)
+    finally:
+        _SCANNING.discard(track_id)
+
+
+@router.post("/api/flights/tracks/{track_id}/scan")
+def trigger_scan(track_id: int, background_tasks: BackgroundTasks,
+                 store: FlightStore = Depends(get_flight_store)) -> Dict[str, Any]:
+    """觸發掃描（非同步）。
+
+    **配額不足不是錯誤**：回 200 並附排隊資訊，因為那是預期的營運狀態
+    而非系統故障（contracts「錯誤語意」）。重複觸發不建立第二個作業。
+    """
+    track = store.get_track(track_id)
+    if track is None:
+        raise HTTPException(status_code=404, detail="查詢條件不存在")
+
+    data_dir = store.data_dir
+    plan = svc.scan_plan(track, data_dir)
+
+    if track_id in _SCANNING:
+        return {"state": "scanning", "planned": plan["planned"],
+                "done": plan["already_cached"],
+                "message": "此條件已有掃描進行中"}
+
+    if plan["pending"] == 0:
+        return {"state": "complete", "planned": plan["planned"],
+                "already_cached": plan["already_cached"], "will_query": 0}
+
+    if plan["will_query"] == 0:
+        wait = plan["seconds_until_free"]
+        return {
+            "state": "queued", "planned": plan["planned"],
+            "already_cached": plan["already_cached"], "will_query": 0,
+            "seconds_until_free": wait,
+            "message": "最近一小時已達查詢上限，約 %d 分鐘後釋出名額"
+                       % ((wait + 59) // 60),
+        }
+
+    _SCANNING.add(track_id)
+    background_tasks.add_task(_run_scan_background, track_id, data_dir)
+    return {"state": "scanning", "planned": plan["planned"],
+            "already_cached": plan["already_cached"],
+            "will_query": plan["will_query"]}
+
+
+@router.get("/api/flights/tracks/{track_id}/results")
+def get_results(track_id: int,
+                store: FlightStore = Depends(get_flight_store)) -> Dict[str, Any]:
+    """結果與進度（contracts §5）。結果排序由資料層完成，不在此重排。"""
+    track = store.get_track(track_id)
+    if track is None:
+        raise HTTPException(status_code=404, detail="查詢條件不存在")
+
+    data_dir = store.data_dir
+    itineraries, skipped = svc.expand_track(track)
+    pending = [i for i in itineraries if not svc._is_cached(i, data_dir)]
+    results = store.list_results(track_id)
+    for r in results:
+        r["connector_is_estimate"] = True
+
+    return {
+        "state": svc.derive_state(track, data_dir, store=store,
+                                  scanning=track_id in _SCANNING),
+        "progress": {"done": len(itineraries) - len(pending),
+                     "total": len(itineraries)},
+        "quota": _quota_block(data_dir),
+        "results": results,
+        "skipped": skipped,
+    }
 
 
 @router.get("/api/flights/healthz")

@@ -60,30 +60,30 @@
 
 ### 服務層
 
-- [ ] T012 [US1] 建立 `poc/kb-mcp/flight_scan_service.py`：`expand_track(track)` 將條件展開為完整組合清單，內部呼叫既有 `sample_dates()` 與 `build_itineraries_fixed_trip()`，**不重新實作枚舉邏輯**
-- [ ] T013 [US1] 在 `flight_scan_service.py` 實作 `pending_combinations(track)`：枚舉組合減去已在查價快取中的組合（research.md §2 的核心決策，**不儲存進度**）
-- [ ] T014 [US1] 在 `flight_scan_service.py` 實作 `run_scan(track_id, data_dir)`：取得未完成組合、呼叫既有 `scrape_itineraries()`、逐筆寫入 `flight_scan_result`、更新 `last_success_at`。供背景任務呼叫，自行建立與關閉 store 連線
-- [ ] T015 [US1] 在 `flight_scan_service.py` 實作 `derive_state(track)`：依 data-model.md 的推導表回傳 `idle`／`queued`／`scanning`／`partial`／`complete`／`stale`
+- [X] T012 [US1] 建立 `poc/kb-mcp/flight_scan_service.py`：`expand_track(track)` 將條件展開為完整組合清單，內部呼叫既有 `sample_dates()` 與 `build_itineraries_fixed_trip()`，**不重新實作枚舉邏輯**
+- [X] T013 [US1] 在 `flight_scan_service.py` 實作 `pending_combinations(track)`：枚舉組合減去已在查價快取中的組合（research.md §2 的核心決策，**不儲存進度**）
+- [X] T014 [US1] 在 `flight_scan_service.py` 實作 `run_scan(track_id, data_dir)`：取得未完成組合、呼叫既有 `scrape_itineraries()`、逐筆寫入 `flight_scan_result`、更新 `last_success_at`。供背景任務呼叫，自行建立與關閉 store 連線
+- [X] T015 [US1] 在 `flight_scan_service.py` 實作 `derive_state(track)`：依 data-model.md 的推導表回傳 `idle`／`queued`／`scanning`／`partial`／`complete`／`stale`
 
 ### API 層
 
-- [ ] T016 [P] [US1] 在 `app/routers/flights.py` 實作 `GET /api/flights/tracks`：回傳條件清單、推導狀態、進度、最低價摘要與配額資訊（contracts §1）
-- [ ] T017 [P] [US1] 在 `app/routers/flights.py` 實作 `POST /api/flights/tracks`：驗證後建立，回傳 201 與 id；**建立後不自動掃描**（contracts §2）
-- [ ] T018 [P] [US1] 在 `app/routers/flights.py` 實作 `DELETE /api/flights/tracks/{id}`：回傳 204，404 於條件不存在（contracts §3）
-- [ ] T019 [US1] 在 `app/routers/flights.py` 實作 `POST /api/flights/tracks/{id}/scan`：以 `BackgroundTasks` 觸發 `run_scan`，立即回傳狀態。重複觸發不建立第二個作業（contracts §4）
-- [ ] T020 [US1] 在 `app/routers/flights.py` 實作 `GET /api/flights/tracks/{id}/results`：回傳狀態、進度、排序後結果（contracts §5）
+- [X] T016 [P] [US1] 在 `app/routers/flights.py` 實作 `GET /api/flights/tracks`：回傳條件清單、推導狀態、進度、最低價摘要與配額資訊（contracts §1）
+- [X] T017 [P] [US1] 在 `app/routers/flights.py` 實作 `POST /api/flights/tracks`：驗證後建立，回傳 201 與 id；**建立後不自動掃描**（contracts §2）
+- [X] T018 [P] [US1] 在 `app/routers/flights.py` 實作 `DELETE /api/flights/tracks/{id}`：回傳 204，404 於條件不存在（contracts §3）
+- [X] T019 [US1] 在 `app/routers/flights.py` 實作 `POST /api/flights/tracks/{id}/scan`：以 `BackgroundTasks` 觸發 `run_scan`，立即回傳狀態。重複觸發不建立第二個作業（contracts §4）
+- [X] T020 [US1] 在 `app/routers/flights.py` 實作 `GET /api/flights/tracks/{id}/results`：回傳狀態、進度、排序後結果（contracts §5）
 
 ### 前端
 
-- [ ] T021 [P] [US1] 建立 `web/src/pages/FlightTrackForm.jsx`：條件表單（目的地、外站多選、出發區間、行程天數、目標價），送出後呼叫建立端點
-- [ ] T022 [US1] 在 `web/src/pages/Flights.jsx` 實作條件卡片清單：顯示名稱、狀態、最低價、上次更新時間，提供「重新掃描」與「刪除」動作
-- [ ] T023 [US1] 在 `web/src/pages/Flights.jsx` 實作結果表：主行程起訖、外站、四段票價（NTD）、航空公司、第1段日期。分頁開啟時直接顯示既有結果，不觸發掃描
-- [ ] T024 [US1] 在 `web/src/pages/Flights.jsx` 區分「查無票價」與「查詢失敗」兩種狀態的呈現（FR-023）
+- [X] T021 [P] [US1] 建立 `web/src/pages/FlightTrackForm.jsx`：條件表單（目的地、外站多選、出發區間、行程天數、目標價），送出後呼叫建立端點
+- [X] T022 [US1] 在 `web/src/pages/Flights.jsx` 實作條件卡片清單：顯示名稱、狀態、最低價、上次更新時間，提供「重新掃描」與「刪除」動作
+- [X] T023 [US1] 在 `web/src/pages/Flights.jsx` 實作結果表：主行程起訖、外站、四段票價（NTD）、航空公司、第1段日期。分頁開啟時直接顯示既有結果，不觸發掃描
+- [X] T024 [US1] 在 `web/src/pages/Flights.jsx` 區分「查無票價」與「查詢失敗」兩種狀態的呈現（FR-023）
 
 ### 測試
 
-- [ ] T025 [P] [US1] 建立 `poc/kb-mcp/tests/test_flight_scan_service.py`：涵蓋 `expand_track` 的組合數正確、`pending_combinations` 在快取命中時正確排除、`derive_state` 六種狀態的判定
-- [ ] T026 [US1] 在 `app/tests/test_smoke.py` 新增機票路由檢查：建立→列出→觸發→查詢→刪除的完整流程，並**比對 API 回傳的組合數與底層 `expand_track()` 的輸出一致**（非僅檢查回 200）
+- [X] T025 [P] [US1] 建立 `poc/kb-mcp/tests/test_flight_scan_service.py`：涵蓋 `expand_track` 的組合數正確、`pending_combinations` 在快取命中時正確排除、`derive_state` 六種狀態的判定
+- [X] T026 [US1] 在 `app/tests/test_smoke.py` 新增機票路由檢查：建立→列出→觸發→查詢→刪除的完整流程，並**比對 API 回傳的組合數與底層 `expand_track()` 的輸出一致**（非僅檢查回 200）
 
 **Checkpoint**: US1 完成即為可用的 MVP——使用者能取得「哪時候便宜」的答案
 

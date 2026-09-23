@@ -54,6 +54,17 @@ def _post(path: str, body: bytes, headers: dict = None, timeout: float = 10.0):
         return exc.code, exc.read()
 
 
+def _json_or_none(raw):
+    """`_post`／`_delete` 回傳的是 raw bytes（不像 `_get` 會解析），
+    需要讀內容時自行解析。非 JSON（例如 204 空 body）回 None。"""
+    if not raw:
+        return None
+    try:
+        return json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
 def _delete(path: str, timeout: float = 10.0):
     """Phase 5（US3，T028）新增：`DELETE /api/us-stocks/watch-conditions/{id}`
     是這個 repo 第一個真正的 DELETE 端點，`_get`／`_post` 都不適用，補一個
@@ -402,6 +413,8 @@ def main() -> int:
             ("GET /api/us-stocks/healthz", "/api/us-stocks/healthz", 200),
             ("GET /api/us-stocks/watchlist", "/api/us-stocks/watchlist", 200),
             ("GET /api/us-stocks/trades/recent", "/api/us-stocks/trades/recent", 200),
+            ("GET /api/flights/healthz", "/api/flights/healthz", 200),
+            ("GET /api/flights/tracks", "/api/flights/tracks", 200),
             ("GET /api/photos/albums", "/api/photos/albums", 200),
             ("GET /api/photos/tags", "/api/photos/tags", 200),
             ("GET /api/photos/browse-folders", "/api/photos/browse-folders", 200),
@@ -1225,6 +1238,114 @@ def main() -> int:
             print("FAIL /api/gateway/usage 今日花費跟手動加總不一致：expected=%s actual=%s"
                   % (expected_today_cost, actual_today_cost))
             failures.append("gateway usage aggregation mismatch")
+
+        # ---- 機票分頁（specs/005-flight-scan-page，T026）----
+        # 深度檢查而非只看 200：建立→列出→觸發→查詢→刪除跑完整流程，
+        # 並**把 API 回報的組合數跟底層 expand_track() 的輸出對照**。
+        # 只檢查狀態碼的話，枚舉邏輯整個壞掉（例如回傳空清單）也會通過。
+        flight_track_id = None
+        # 先把查詢配額佔滿，讓觸發掃描必定回 queued 而不真的啟動背景查價。
+        # 否則這份測試會連上外部查價服務、消耗真實配額，且結果隨當下剩餘
+        # 額度而變——測試必須是確定性的，不能依賴外部服務狀態。
+        try:
+            sys.path.insert(0, os.path.join(_APP_ROOT, "poc", "kb-mcp"))
+            import flight_search as _fsearch
+            _fsearch.record_browser_usage(
+                os.environ["ALPHAVIBE_DATA_DIR"],
+                _fsearch.HOURLY_BROWSER_LIMIT)
+        except Exception as exc:
+            print("WARN 無法預先佔滿查詢配額（%s），掃描觸發可能連上外部服務" % exc)
+        try:
+            created_status, created = _post(
+                "/api/flights/tracks",
+                json.dumps({
+                    "destination": "PRG", "outstations": ["NRT", "OKA"],
+                    "window_start": "2027-04", "window_end": "2027-05",
+                    "trip_days": 12, "samples_per_month": 2,
+                    "lead_strategy": "m3", "trail_strategy": "m1",
+                }).encode("utf-8"),
+                {"Content-Type": "application/json"})
+            created = _json_or_none(created)
+            if created_status == 201 and created and created.get("id"):
+                flight_track_id = created["id"]
+                print("PASS /api/flights/tracks 建立條件（id=%s）" % flight_track_id)
+            else:
+                print("FAIL /api/flights/tracks 建立條件：status=%s body=%s"
+                      % (created_status, created))
+                failures.append("flights create")
+
+            if flight_track_id:
+                # 與底層枚舉比對：API 的 progress.total 必須等於
+                # flight_scan_service.expand_track() 算出的組合數
+                sys.path.insert(0, os.path.join(_APP_ROOT, "poc", "kb-mcp"))
+                import flight_scan_service as _svc
+                import flight_store as _fstore
+                _st = _fstore.FlightStore(os.environ["ALPHAVIBE_DATA_DIR"])
+                try:
+                    _track = _st.get_track(flight_track_id)
+                    _itins, _skipped = _svc.expand_track(_track)
+                    expected_total = len(_itins)
+                finally:
+                    _st.close()
+
+                status, body = _get("/api/flights/tracks")
+                api_total = None
+                for t in (body or {}).get("tracks", []):
+                    if t.get("id") == flight_track_id:
+                        api_total = (t.get("progress") or {}).get("total")
+                if status == 200 and api_total == expected_total and expected_total > 0:
+                    print("PASS /api/flights/tracks 組合數與底層 expand_track 一致（%d 組）"
+                          % expected_total)
+                else:
+                    print("FAIL /api/flights/tracks 組合數不一致：api=%s expand_track=%s"
+                          % (api_total, expected_total))
+                    failures.append("flights combination count mismatch")
+
+                # 觸發掃描：配額不足時必須回 200（排隊）而非錯誤——
+                # 那是預期的營運狀態，不是系統故障（contracts「錯誤語意」）
+                scan_status, scan_body = _post(
+                    "/api/flights/tracks/%d/scan" % flight_track_id, b"{}",
+                    {"Content-Type": "application/json"})
+                scan_body = _json_or_none(scan_body)
+                if scan_status == 200 and (scan_body or {}).get("state") == "queued":
+                    print("PASS /api/flights/tracks/{id}/scan 配額用盡時回 200 排隊"
+                          "（非錯誤），約 %d 分鐘後釋出"
+                          % (((scan_body.get("seconds_until_free") or 0) + 59) // 60))
+                else:
+                    print("FAIL /api/flights/tracks/{id}/scan：status=%s body=%s"
+                          % (scan_status, scan_body))
+                    failures.append("flights scan trigger")
+
+                res_status, res_body = _get(
+                    "/api/flights/tracks/%d/results" % flight_track_id)
+                if res_status == 200 and "results" in (res_body or {}):
+                    print("PASS /api/flights/tracks/{id}/results 回應含 results 與 progress")
+                else:
+                    print("FAIL /api/flights/tracks/{id}/results：status=%s" % res_status)
+                    failures.append("flights results")
+
+            # 驗證失敗必須回 400 並說明原因（FR-025）
+            bad_status, bad_body = _post(
+                "/api/flights/tracks",
+                json.dumps({"destination": "PRG", "outstations": [],
+                            "window_start": "2027-04", "window_end": "2027-05",
+                            "trip_days": 12}).encode("utf-8"),
+                {"Content-Type": "application/json"})
+            bad_body = _json_or_none(bad_body)
+            if bad_status == 400 and "outstations" in str((bad_body or {}).get("detail", "")):
+                print("PASS /api/flights/tracks 空外站清單被拒絕並說明原因")
+            else:
+                print("FAIL /api/flights/tracks 空外站清單未被正確拒絕：status=%s"
+                      % bad_status)
+                failures.append("flights validation")
+        finally:
+            if flight_track_id:
+                del_status, _ = _delete("/api/flights/tracks/%d" % flight_track_id)
+                if del_status == 204:
+                    print("PASS /api/flights/tracks/{id} 刪除回 204")
+                else:
+                    print("FAIL /api/flights/tracks/{id} 刪除：status=%s" % del_status)
+                    failures.append("flights delete")
 
         # 2026-08-22 教訓：get_kb_store() 是 sync generator dependency，
         # Starlette 用 anyio thread pool 執行，「建立」跟「關閉」不保證
