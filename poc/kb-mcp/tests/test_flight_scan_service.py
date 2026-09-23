@@ -389,6 +389,47 @@ class RunScanTest(unittest.TestCase):
         self.assertEqual(out["written"], 2)
         self.assertEqual(self.store.count_results(self.track["id"]), 2)
 
+    def test_new_track_hitting_existing_cache_still_gets_results(self):
+        """新條件若命中既有快取，也必須產生結果列。
+
+        2026-09-23 真實驗證踩到的 bug：查價快取跨條件共用，新條件的組合
+        若先前已被別的條件或 CLI 查過，pending 會是 0——掃描直接判定完成，
+        但結果表一筆都沒有，使用者看到「已完成」卻沒有任何結果。
+        既有單元測試抓不到，因為它們都從空快取開始。
+        """
+        # 先把這個條件的所有組合塞進快取，模擬「別處已查過」
+        itins, _ = svc.expand_track(self.track)
+        for i in itins:
+            k = fs._cache_key(i["legs"], 1, 1, fs.DEFAULT_CURRENCY, "tw", "zh-TW")
+            fs._write_cache(self.tmp, k, {"price": 41234,
+                                          "airlines": ["星宇航空"]})
+        self.assertEqual(self.store.count_results(self.track["id"]), 0)
+
+        def boom(*a, **kw):
+            raise AssertionError("組合都在快取裡，不該再發出任何查詢")
+        fs.scrape_itineraries = boom
+
+        out = svc.run_scan(self.track["id"], self.tmp)
+        self.assertEqual(out["queried"], 0)
+        self.assertEqual(out["from_cache"], len(itins))
+        results = self.store.list_results(self.track["id"])
+        self.assertEqual(len(results), len(itins))
+        self.assertTrue(all(r["price"] == 41234 for r in results))
+
+    def test_cached_sync_does_not_duplicate_existing_rows(self):
+        """重複執行不得產生重複列。"""
+        itins, _ = svc.expand_track(self.track)
+        for i in itins:
+            k = fs._cache_key(i["legs"], 1, 1, fs.DEFAULT_CURRENCY, "tw", "zh-TW")
+            fs._write_cache(self.tmp, k, {"price": 41234, "airlines": []})
+        n1 = svc.sync_cached_results(self.track["id"], self.track, self.tmp,
+                                     self.store)
+        n2 = svc.sync_cached_results(self.track["id"], self.track, self.tmp,
+                                     self.store)
+        self.assertEqual(n1, len(itins))
+        self.assertEqual(n2, 0)
+        self.assertEqual(self.store.count_results(self.track["id"]), len(itins))
+
     def test_missing_track_reports_error(self):
         out = svc.run_scan(9999, self.tmp)
         self.assertEqual(out["error"], "track_not_found")

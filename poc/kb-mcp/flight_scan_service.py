@@ -171,6 +171,84 @@ def _connector_probe_date(track, store, track_id):
     return track["window_start"] + "-01"
 
 
+def _row_from_itinerary(itin, summary):
+    """把一組行程＋價格摘要轉成 upsert_result 需要的欄位。"""
+    legs = itin["legs"]
+    price = summary.get("price") if summary else None
+    return {
+        "outstation": itin["outstation"],
+        "leg1_date": legs[0]["date"], "outbound_date": legs[1]["date"],
+        "return_date": legs[2]["date"], "leg4_date": legs[3]["date"],
+        "lead_days": itin.get("lead", 0), "trail_days": itin.get("trail", 0),
+        "status": "ok" if price else "no_fare",
+        "price": int(price) if price else None,
+        "airline": ((summary or {}).get("airlines") or [None])[0],
+    }
+
+
+def sync_cached_results(track_id, track, data_dir, store):
+    """把**已在查價快取、但資料庫還沒有**的組合補寫進結果表。
+
+    為什麼需要這一步：`pending_combinations()` 只回報「還沒查過的組合」，
+    而查價快取是跨條件共用的。新建一個條件時，如果它的組合先前已被別的
+    條件（或 CLI）查過，pending 會是 0——掃描直接判定完成，但結果表裡
+    一筆都沒有，使用者看到「已完成」卻沒有任何結果。
+
+    2026-09-23 真實驗證時踩到：建立條件→觸發→回 complete→結果空白。
+    單元測試抓不到，因為測試都從空快取開始。
+    """
+    itineraries, _skipped = expand_track(track)
+    existing = set()
+    for r in store.list_results(track_id):
+        existing.add((r["outstation"], r["leg1_date"], r["outbound_date"],
+                      r["return_date"], r["leg4_date"]))
+    written = 0
+    for itin in itineraries:
+        legs = itin["legs"]
+        key = (itin["outstation"], legs[0]["date"], legs[1]["date"],
+               legs[2]["date"], legs[3]["date"])
+        if key in existing:
+            continue
+        ck = fs._cache_key(legs, 1, 1, fs.DEFAULT_CURRENCY, "tw", "zh-TW")
+        cached = fs._read_cache(data_dir, ck)
+        if cached is None:
+            continue
+        store.upsert_result(track_id=track_id, **_row_from_itinerary(itin, cached))
+        written += 1
+    return written
+
+
+def ensure_connector_prices(track_id, track, data_dir, store,
+                            hourly_limit=fs.HOURLY_BROWSER_LIMIT):
+    """補齊尚未估價的外站接駁票（FR-020）。
+
+    **只在配額還有剩時執行**——接駁價是輔助資訊（不參與達標判定，
+    Q-016），不該排擠真正要查的四段票。配額不足就跳過，下一輪再估。
+
+    抽成獨立函式是因為有兩條路徑會需要它：一般掃描（`run_scan`），
+    以及「組合全部命中快取、不需查價」的情況——後者不會進 `run_scan`，
+    但結果同樣需要接駁價。
+
+    回傳實際更新的列數。任何失敗都吞掉並回 0：接駁價缺了只是少一欄
+    參考資訊，不該讓主結果連帶失敗。
+    """
+    try:
+        if hourly_limit is not None and fs.remaining_browser_quota(
+                data_dir, hourly_limit) <= 0:
+            return 0
+        missing = [r["outstation"] for r in store.list_results(track_id)
+                   if r.get("connector_price") is None]
+        if not missing:
+            return 0
+        probe_date = _connector_probe_date(track, store, track_id)
+        prices = fs.estimate_connectors_browser(
+            sorted(set(missing)), probe_date, hub=track["hub"],
+            data_dir=data_dir, hourly_limit=hourly_limit)
+        return store.update_connector_prices(track_id, prices)
+    except Exception:
+        return 0
+
+
 def run_scan(track_id, data_dir, hourly_limit=fs.HOURLY_BROWSER_LIMIT,
              min_delay_ms=fs.SCRAPE_MIN_DELAY_MS,
              max_delay_ms=fs.SCRAPE_MAX_DELAY_MS,
@@ -189,11 +267,15 @@ def run_scan(track_id, data_dir, hourly_limit=fs.HOURLY_BROWSER_LIMIT,
         if track is None:
             return {"error": "track_not_found", "track_id": track_id}
 
+        # 先把已在快取、但結果表還沒有的組合補進來——否則新條件若命中
+        # 既有快取，會出現「已完成但沒有任何結果」（見 sync_cached_results）
+        from_cache = sync_cached_results(track_id, track, data_dir, store)
+
         pending = pending_combinations(track, data_dir)
         if not pending:
             store.mark_success(track_id)
-            return {"queried": 0, "written": 0, "blocked": False,
-                    "note": "no_pending"}
+            return {"queried": 0, "written": from_cache, "blocked": False,
+                    "from_cache": from_cache, "note": "no_pending"}
 
         outcome = fs.scrape_itineraries(
             pending, data_dir=data_dir, min_delay_ms=min_delay_ms,
@@ -224,27 +306,7 @@ def run_scan(track_id, data_dir, hourly_limit=fs.HOURLY_BROWSER_LIMIT,
             )
             written += 1
 
-        # 接駁票估價（FR-020）：以外站為單位、單一代表日期估一次。
-        #
-        # **刻意放在主查詢之後，且只在配額還有剩時執行**——接駁價是輔助
-        # 資訊（不參與達標判定，Q-016），不該排擠真正要查的四段票。
-        # 配額不足時就跳過，下一輪再估。
-        try:
-            if hourly_limit is None or fs.remaining_browser_quota(
-                    data_dir, hourly_limit) > 0:
-                missing = [r["outstation"] for r in store.list_results(track_id)
-                           if r.get("connector_price") is None]
-                if missing:
-                    # 走瀏覽器路徑（免 token、免 API 額度）。用第一段可能
-                    # 出發的日期當代表日期估一次，不逐組合查詢。
-                    probe_date = _connector_probe_date(track, store, track_id)
-                    prices = fs.estimate_connectors_browser(
-                        sorted(set(missing)), probe_date, hub=track["hub"],
-                        data_dir=data_dir, hourly_limit=hourly_limit)
-                    store.update_connector_prices(track_id, prices)
-        except Exception:
-            # 接駁估價失敗不影響主結果——它只是輔助資訊
-            pass
+        ensure_connector_prices(track_id, track, data_dir, store, hourly_limit)
 
         # 只有「本輪沒有剩餘未完成組合」才算成功完成一輪——部分完成不更新
         # last_success_at，否則資料過期判定會被部分完成的掃描一直往後推。

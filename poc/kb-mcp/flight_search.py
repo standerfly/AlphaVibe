@@ -161,15 +161,18 @@ def read_browser_usage(data_dir, window_sec=_USAGE_WINDOW_SEC):
               if isinstance(t, (int, float))]
 
     # 相容舊格式 {"date": "YYYY-MM-DD", "count": N}——那是本機制還是
-    # 「每日計數」時寫下的（2026-09-23 改為滾動小時前）。若不處理，舊檔
-    # 會被靜默忽略、配額守衛誤判為完全沒用過而放行，實際上當天已經用掉
-    # 一些額度。這裡**保守地**把舊 count 視為「都發生在此刻」——寧可
-    # 高估用量而提早停手，也不要低估而超支。舊紀錄會在一小時後自然退場。
-    if not stamps and data.get("count") and data.get("date"):
+    # 「每日計數」時寫下的（2026-09-23 改為滾動小時前）。若完全忽略，
+    # 配額守衛會誤判為沒用過而放行。
+    #
+    # 用**檔案的最後修改時間**當那些查詢的時間戳：舊格式沒有逐筆時間，
+    # 但 mtime 是最後一次寫入的時刻，是現有資訊中最接近真實的。
+    # 第一版改用「都發生在此刻」，結果舊紀錄永遠不會退出滾動視窗——
+    # 只要還是同一天就一直卡住配額，即使那些查詢是十幾小時前的事。
+    if not stamps and data.get("count"):
         try:
-            if data["date"] == datetime.date.today().isoformat():
-                stamps = [now] * int(data["count"])
-        except (ValueError, TypeError):
+            legacy_ts = os.path.getmtime(path)
+            stamps = [legacy_ts] * int(data["count"])
+        except (OSError, ValueError, TypeError):
             pass
 
     recent = sorted(t for t in stamps if now - t < window_sec)

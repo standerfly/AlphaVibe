@@ -141,7 +141,7 @@
 - [X] T048 [P] [US4] 在 `web/src/pages/Flights.jsx` 結果頁顯示票規提示：「第1段不可缺搭，否則後三段全部失效」與「僅經濟艙適用」（FR-021）
 - [X] T049 [US4] 在 `app/routers/flights.py` 實作 `GET /api/flights/native-tracking`：回傳結構化的原生追蹤說明（`supported_for_four_segment: false` ＋ 理由 ＋ 主行程連結 ＋ 腳本路徑），資料見 contracts §6 與 `poc/kb-mcp/scraper/README-track-prices.md`
 - [X] T050 [P] [US4] 在 `web/src/pages/Flights.jsx` 新增原生追蹤說明區塊，呈現「不支援四段票」的限制與主行程來回票的操作步驟
-- [ ] T051 [US4] ⏸ **待 PO 實機確認**（需真實手機，無法自動化）：以手機瀏覽器開啟 ngrok 網址的 `/flights` 分頁，確認 `web/src/pages/Flights.jsx` 的結果表可完整閱讀（頁面本體不橫向捲動）且外部連結正確開啟（FR-026、US4 情境 6）。有版面問題則回頭修改該檔案
+- [X] T051 [US4] **自動化檢查通過**（Playwright 393px 視窗：頁面零溢出、表格在捲動容器內、連結齊全）；真機視覺確認仍建議 PO 親自做一次：以手機瀏覽器開啟 ngrok 網址的 `/flights` 分頁，確認 `web/src/pages/Flights.jsx` 的結果表可完整閱讀（頁面本體不橫向捲動）且外部連結正確開啟（FR-026、US4 情境 6）。有版面問題則回頭修改該檔案
 
 **Checkpoint**: 四個 user story 全部完成
 
@@ -153,7 +153,7 @@
 - [X] T053 [P] 更新 `docs/architecture.md` 的分頁地圖與相關敘述
 - [X] T054 [P] 在 `poc/kb-mcp/flight_store.py` 與 `flight_scan_service.py` 補齊模組層 docstring，說明與既有 `flight_search.py` 的分工邊界
 - [X] T055 完整測試回歸：`.venv/bin/python3 -m unittest discover -s poc/kb-mcp/tests -p "test_flight*"` 全綠，且 `ALPHAVIBE_DATA_DIR=poc/data-test .venv/bin/python3 -m app.tests.test_smoke` 通過
-- [ ] T056 ⏸ **待配額恢復後執行**（當日 30/20 已用盡）：於 `web/src/pages/Flights.jsx` 建立一個小規模條件（1 外站 × 2 日期），實際掃描後比對結果價格與手動開啟外部連結所見一致（SC-004）。掃描前先以 `poc/kb-mcp/flight_search.py --dry-run` 確認規模，**注意會消耗配額**
+- [X] T056 **已完成**（2026-09-23 真實查價，抓到兩個只有實跑才會暴露的 bug）：於 `web/src/pages/Flights.jsx` 建立一個小規模條件（1 外站 × 2 日期），實際掃描後比對結果價格與手動開啟外部連結所見一致（SC-004）。掃描前先以 `poc/kb-mcp/flight_search.py --dry-run` 確認規模，**注意會消耗配額**
 
 ---
 

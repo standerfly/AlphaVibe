@@ -154,6 +154,23 @@ def delete_track(track_id: int,
     _LAST_OUTCOME.pop(track_id, None)
 
 
+def _connector_background(track_id: int, data_dir: str) -> None:
+    """只補接駁估價的背景任務（四段票已全部命中快取時走這條）。
+
+    與 `_run_scan_background` 一樣自行建立與關閉連線，不用 request-scoped
+    的依賴。
+    """
+    from flight_store import FlightStore as _FS
+    store = _FS(data_dir)
+    try:
+        track = store.get_track(track_id)
+        if track:
+            svc.ensure_connector_prices(track_id, track, data_dir, store)
+    finally:
+        store.close()
+        _SCANNING.discard(track_id)
+
+
 def _run_scan_background(track_id: int, data_dir: str) -> None:
     """背景任務入口。
 
@@ -188,6 +205,16 @@ def trigger_scan(track_id: int, background_tasks: BackgroundTasks,
         raise HTTPException(status_code=404, detail="查詢條件不存在")
 
     data_dir = store.data_dir
+
+    # 先同步補上「已在查價快取、但結果表還沒有」的組合。
+    #
+    # 必須在這裡做而不是只放在 run_scan 裡：當所有組合都已在快取時
+    # （例如別的條件或 CLI 先查過），下面的 pending==0 分支會直接回
+    # complete 而不啟動背景任務，run_scan 根本不會執行。2026-09-23 真實
+    # 驗證踩到：觸發回 complete 但結果空白。這一步只讀快取寫資料庫，
+    # 不連外部服務，同步執行即可。
+    synced = svc.sync_cached_results(track_id, track, data_dir, store)
+
     plan = svc.scan_plan(track, data_dir)
 
     if track_id in _SCANNING:
@@ -196,8 +223,17 @@ def trigger_scan(track_id: int, background_tasks: BackgroundTasks,
                 "message": "此條件已有掃描進行中"}
 
     if plan["pending"] == 0:
-        return {"state": "complete", "planned": plan["planned"],
-                "already_cached": plan["already_cached"], "will_query": 0}
+        store.mark_success(track_id)
+        # 四段票都已有結果，但接駁價可能還缺——那需要實際查詢，放背景做
+        needs_connector = any(r.get("connector_price") is None
+                              for r in store.list_results(track_id))
+        if needs_connector:
+            _SCANNING.add(track_id)
+            background_tasks.add_task(_connector_background, track_id, data_dir)
+        return {"state": "scanning" if needs_connector else "complete",
+                "planned": plan["planned"],
+                "already_cached": plan["already_cached"], "will_query": 0,
+                "from_cache": synced}
 
     if plan["will_query"] == 0:
         wait = plan["seconds_until_free"]

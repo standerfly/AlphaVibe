@@ -1160,25 +1160,34 @@ class HourlyBrowserRateTest(unittest.TestCase):
                 pass
         return lambda *a, **k: FakeProc()
 
-    def test_legacy_daily_count_format_is_honoured(self):
-        """相容舊的每日計數格式。
+    def test_legacy_daily_count_uses_file_mtime(self):
+        """相容舊的每日計數格式，以檔案 mtime 當時間戳。
 
-        2026-09-23 把配額機制從「每日計數」改為「滾動小時」時，舊格式
-        {"date":..., "count": N} 會被靜默忽略——守衛因此誤判為完全沒用過
-        而放行，實際上當天已用掉額度。保守處理：視為都發生在此刻。
+        舊格式沒有逐筆時間，mtime 是現有資訊中最接近真實的。剛寫入的
+        檔案 mtime 就是現在，所以那些查詢仍在視窗內。
         """
         import datetime as _dt
-        with open(os.path.join(self.tmp, "flight_browser_usage.json"),
-                  "w") as fh:
+        p = os.path.join(self.tmp, "flight_browser_usage.json")
+        with open(p, "w") as fh:
             json.dump({"date": _dt.date.today().isoformat(), "count": 12}, fh)
         self.assertEqual(flight_search.read_browser_usage(self.tmp)["count"], 12)
         self.assertEqual(flight_search.remaining_browser_quota(self.tmp, 20), 8)
 
-    def test_legacy_format_from_other_day_is_ignored(self):
-        with open(os.path.join(self.tmp, "flight_browser_usage.json"),
-                  "w") as fh:
-            json.dump({"date": "2020-01-01", "count": 99}, fh)
+    def test_legacy_count_falls_out_of_window_by_mtime(self):
+        """舊紀錄必須能隨時間退出視窗。
+
+        第一版把舊 count 當成「都發生在此刻」，結果只要還是同一天就永遠
+        卡住配額——即使那些查詢是十幾小時前的事。改用 mtime 後，兩小時前
+        寫入的舊檔就不該再計入。
+        """
+        import time as _t
+        p = os.path.join(self.tmp, "flight_browser_usage.json")
+        with open(p, "w") as fh:
+            json.dump({"date": "2026-09-23", "count": 30}, fh)
+        old_ts = _t.time() - 7200          # 2 小時前
+        os.utime(p, (old_ts, old_ts))
         self.assertEqual(flight_search.read_browser_usage(self.tmp)["count"], 0)
+        self.assertEqual(flight_search.remaining_browser_quota(self.tmp, 20), 20)
 
     def test_old_queries_fall_out_of_window(self):
         """滾動視窗：一小時前的查詢不該再計入。"""
