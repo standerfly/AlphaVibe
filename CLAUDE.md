@@ -55,9 +55,13 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 決策依據：`docs/adr/0027-prespec-workflow.md`。
 
 <!-- SPECKIT START -->
-目前進行中的 Spec Kit 技術規劃：`specs/004-photos-albums-search/plan.md`
-（相簿分頁：匯入/整理/全域搜尋＋標籤評分中繼資料同步，分支
-`004-photos-albums-search`）。`specs/003-us-stocks` 已完成規劃階段。
+目前進行中的 Spec Kit 技術規劃：`specs/005-flight-scan-page/plan.md`
+（機票掃描分頁：外站四段票日期抽樣掃描、兩端間隔策略、速率守衛與結果
+顯示，分支 `005-flight-scan-page`）。接手實作前先讀
+`specs/005-flight-scan-page/quickstart.md`——它列出「已完成不要重寫」的
+既有能力與三個已發生過的事故坑。上游需求基線在
+`docs/spec-intake/flight-search/`（Accepted）。
+`specs/004-photos-albums-search` 已完成規劃階段。
 <!-- SPECKIT END -->
 
 ## 分支規則
