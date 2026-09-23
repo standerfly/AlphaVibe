@@ -136,6 +136,15 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
   （現在跑 `uvicorn app.main:app`，不是 `report_server.py`）；舊版 plist
   備份在 `~/Library/LaunchAgents/backup-20260822/`，回滾步驟見同一天
   教訓紀錄。
+- **機票查詢（外站四段票）**：`poc/kb-mcp/flight_search.py`（CLI，97 測試）
+  ＋ `poc/kb-mcp/scraper/`（Node/Playwright 抓 Google Flights，需先
+  `npm install`）。**接手前先讀
+  `docs/research/2026-09-22-ex-station-4segment-ticket-search.md`**——
+  裡面有外站四段票機制、票規限制（長榮第1、2段須24小時內轉機／星宇可
+  多段中停）、實測的封鎖速率上限、PO 偏好（成田優先、避開北半球暑假、
+  第1段拉遠以免密集請假）與已找到的方案。尚未做成 STND 分頁，只有 CLI。
+  查價走瀏覽器路徑（免費、無額度），**有速率限制**（預設 20 筆/小時，
+  超過會被 Google 軟封鎖成連續逾時）；SerpApi 路徑是備援、需自備 key。
 - 加碼/減碼決策原則：`poc/data/philosophy/framework_evidence_based_position_sizing.md`
   （或呼叫 `get_philosophy`）——**不會自動載入**，討論加碼/減碼前主動查
   （Layer 1「啟動時拼接進 system prompt」的 FR-014 尚未實作，見下方教訓紀錄）
