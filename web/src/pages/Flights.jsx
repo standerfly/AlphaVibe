@@ -67,6 +67,33 @@ function ResultTable({ results }) {
   )
 }
 
+/* 被跳過的日期（FR-010）。
+
+   不只給數量——使用者需要知道「哪些日期」以及「為什麼」，才能判斷要不要
+   放寬排除月份或改變間隔策略。只顯示「跳過 3 個日期」等於要他自己猜。 */
+const SKIP_REASON_LABEL = {
+  no_feasible_offset: '找不到能避開排除月份的間隔',
+}
+
+function SkippedList({ skipped }) {
+  if (!skipped.length) return null
+  return (
+    <details className="flight-skipped">
+      <summary>有 {skipped.length} 個日期被跳過</summary>
+      <ul>
+        {skipped.map((s, i) => (
+          <li key={i}>
+            {s.outbound_date}：{s.detail || SKIP_REASON_LABEL[s.reason] || s.reason}
+          </li>
+        ))}
+      </ul>
+      <small className="flight-muted">
+        放寬該航段的排除月份，或把間隔策略改為較短的選項，即可納入這些日期。
+      </small>
+    </details>
+  )
+}
+
 function TrackCard({ track, onScan, onDelete, onOpen, open, detail }) {
   const p = track.progress || { done: 0, total: 0 }
   return (
@@ -92,7 +119,8 @@ function TrackCard({ track, onScan, onDelete, onOpen, open, detail }) {
       )}
       {track.skipped_count > 0 && (
         <p className="flight-muted">
-          有 {track.skipped_count} 個日期因找不到可用的間隔而跳過。
+          有 {track.skipped_count} 個日期因找不到可用的間隔而跳過，
+          展開結果可看是哪幾天。
         </p>
       )}
       <div className="flight-card__actions">
@@ -110,6 +138,7 @@ function TrackCard({ track, onScan, onDelete, onOpen, open, detail }) {
             </p>
           )}
           <ResultTable results={detail.results || []} />
+          <SkippedList skipped={detail.skipped || []} />
         </>
       )}
     </article>

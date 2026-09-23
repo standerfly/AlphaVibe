@@ -95,15 +95,15 @@
 
 **Independent Test**: 同一組主行程，分別選「不拉遠」與「約 3 個月」，確認兩端日期隨之改變且互不影響
 
-- [ ] T027 [US2] 在 `poc/kb-mcp/flight_scan_service.py` 實作策略對應：`none`／`m1`／`m3`／`m5`／`auto` 映射到候選天數清單。**清單順序即偏好順序，拉遠的策略必須把大值排前面**（FR-008、CON-14；研究筆記記載此處曾因由小到大排列而全部挑到最小間隔）
-- [ ] T028 [US2] 在 `flight_scan_service.py` 的 `expand_track()` 接上 `auto` 模式：對每個主行程日期各自呼叫既有 `pick_lead()` 與 `pick_trail()`，兩端使用各自的排除月份
-- [ ] T029 [US2] 在 `flight_scan_service.py` 實作跳過與回報：所有候選間隔都無法避開排除月份的日期整組跳過，並記錄原因供 API 回傳 `skipped`（FR-010）
-- [ ] T030 [P] [US2] 在 `poc/kb-mcp/flight_store.py` 補上三組排除月份欄位的讀寫與驗證（`exclude_months_trip`／`_lead`／`_trail`）
-- [ ] T031 [P] [US2] 在 `web/src/pages/FlightTrackForm.jsx` 新增兩端間隔策略下拉選單與三組排除月份複選（1–12 月），**不得提供寫死的「夏季」快捷而無半球標示**（FR-009、CON-12）
-- [ ] T032 [US2] 在 `web/src/pages/Flights.jsx` 結果表新增「第1段日期／提前天數」與「第4段日期／延後天數」欄位
-- [ ] T033 [US2] 在 `app/routers/flights.py` 的結果端點回傳 `skipped` 清單，前端顯示被跳過的日期與原因
-- [ ] T034 [P] [US2] 在 `poc/kb-mcp/tests/test_flight_scan_service.py` 新增策略測試：`m3` 策略在回程後 1 天未被排除時**仍須回傳接近 90 天的值**（FR-008 的反向驗證，這是最容易寫錯的一項）
-- [ ] T035 [P] [US2] 在 `poc/kb-mcp/tests/test_flight_scan_service.py` 新增排除月份測試：北半球（6,7,8）、南半球（12,1,2）、不連續（2,7,12）三種情境下，主行程／第1段／第4段皆不落在排除月份
+- [X] T027 [US2] 在 `poc/kb-mcp/flight_scan_service.py` 實作策略對應：`none`／`m1`／`m3`／`m5`／`auto` 映射到候選天數清單。**清單順序即偏好順序，拉遠的策略必須把大值排前面**（FR-008、CON-14；研究筆記記載此處曾因由小到大排列而全部挑到最小間隔）
+- [X] T028 [US2] 在 `flight_scan_service.py` 的 `expand_track()` 接上 `auto` 模式：對每個主行程日期各自呼叫既有 `pick_lead()` 與 `pick_trail()`，兩端使用各自的排除月份
+- [X] T029 [US2] 在 `flight_scan_service.py` 實作跳過與回報：所有候選間隔都無法避開排除月份的日期整組跳過，並記錄原因供 API 回傳 `skipped`（FR-010）
+- [X] T030 [P] [US2] 在 `poc/kb-mcp/flight_store.py` 補上三組排除月份欄位的讀寫與驗證（`exclude_months_trip`／`_lead`／`_trail`）
+- [X] T031 [P] [US2] 在 `web/src/pages/FlightTrackForm.jsx` 新增兩端間隔策略下拉選單與三組排除月份複選（1–12 月），**不得提供寫死的「夏季」快捷而無半球標示**（FR-009、CON-12）
+- [X] T032 [US2] 在 `web/src/pages/Flights.jsx` 結果表新增「第1段日期／提前天數」與「第4段日期／延後天數」欄位
+- [X] T033 [US2] 在 `app/routers/flights.py` 的結果端點回傳 `skipped` 清單，前端顯示被跳過的日期與原因
+- [X] T034 [P] [US2] 在 `poc/kb-mcp/tests/test_flight_scan_service.py` 新增策略測試：`m3` 策略在回程後 1 天未被排除時**仍須回傳接近 90 天的值**（FR-008 的反向驗證，這是最容易寫錯的一項）
+- [X] T035 [P] [US2] 在 `poc/kb-mcp/tests/test_flight_scan_service.py` 新增排除月份測試：北半球（6,7,8）、南半球（12,1,2）、不連續（2,7,12）三種情境下，主行程／第1段／第4段皆不落在排除月份
 
 **Checkpoint**: US1 ＋ US2 皆可獨立運作
 

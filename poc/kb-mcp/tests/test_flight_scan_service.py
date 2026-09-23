@@ -95,6 +95,72 @@ class ExpandTrackTest(unittest.TestCase):
         self.assertGreaterEqual(itins[0]["lead"], 60)
         self.assertGreaterEqual(itins[0]["trail"], 14)
 
+    def test_auto_does_not_pick_nearest_when_it_would_qualify(self):
+        """反向驗證（FR-008）：最小候選「未被排除」時也不該被選中。
+
+        這是最容易寫錯而測試又抓不到的一項——若測試只檢查「結果有避開
+        排除月份」，把候選由小到大排列的實作會照樣通過，但每組都會挑到
+        緊接主行程的間隔，正是 PO 要避免的密集行程。所以這裡不檢查排除
+        月份，而是直接檢查「沒有挑到候選清單中的最小值」。
+        """
+        t = self._track(outstations=["NRT"], samples_per_month=1,
+                        lead_strategy="auto", trail_strategy="auto")
+        itins, _ = svc.expand_track(t)
+        self.assertTrue(itins)
+        for i in itins:
+            self.assertNotEqual(i["lead"], min(svc.AUTO_LEAD_CANDIDATES))
+            self.assertNotEqual(i["trail"], min(svc.AUTO_TRAIL_CANDIDATES))
+
+    def test_candidate_lists_are_descending(self):
+        """候選順序即偏好順序，必須由大到小（CON-14）。"""
+        for cands in (svc.AUTO_LEAD_CANDIDATES, svc.AUTO_TRAIL_CANDIDATES):
+            self.assertEqual(cands, sorted(cands, reverse=True))
+
+    def test_fixed_strategies_map_to_exact_days(self):
+        """非 auto 策略是固定值，不經挑選——m3 必定是 90 天。"""
+        for strategy, days in (("none", 1), ("m1", 30), ("m3", 90), ("m5", 150)):
+            t = self._track(outstations=["NRT"], samples_per_month=1,
+                            lead_strategy=strategy, trail_strategy=strategy)
+            itins, _ = svc.expand_track(t)
+            self.assertEqual(itins[0]["lead"], days, "lead 策略 %s" % strategy)
+            self.assertEqual(itins[0]["trail"], days, "trail 策略 %s" % strategy)
+
+    def test_northern_summer_exclusion_on_all_three_segments(self):
+        t = self._track(lead_strategy="auto", trail_strategy="auto",
+                        exclude_months_trip=[6, 7, 8],
+                        exclude_months_lead=[6, 7, 8],
+                        exclude_months_trail=[6, 7, 8])
+        self._assert_no_segment_in(t, [6, 7, 8])
+
+    def test_southern_summer_exclusion_on_all_three_segments(self):
+        """南半球旺季是 12–2 月，與北半球相反（CON-12）。"""
+        t = self._track(lead_strategy="auto", trail_strategy="auto",
+                        exclude_months_trip=[12, 1, 2],
+                        exclude_months_lead=[12, 1, 2],
+                        exclude_months_trail=[12, 1, 2])
+        self._assert_no_segment_in(t, [12, 1, 2])
+
+    def test_non_contiguous_exclusion_on_all_three_segments(self):
+        """任意複選、可不連續（FR-009）。"""
+        t = self._track(lead_strategy="auto", trail_strategy="auto",
+                        exclude_months_trip=[2, 7, 12],
+                        exclude_months_lead=[2, 7, 12],
+                        exclude_months_trail=[2, 7, 12])
+        self._assert_no_segment_in(t, [2, 7, 12])
+
+    def _assert_no_segment_in(self, track, months):
+        """主行程、第1段、第4段三者皆不得落在被排除的月份。"""
+        itins, _ = svc.expand_track(track)
+        self.assertTrue(itins, "應至少有一組可行組合")
+        for i in itins:
+            legs = i["legs"]
+            for label, iso in (("第1段", legs[0]["date"]),
+                               ("主行程去", legs[1]["date"]),
+                               ("主行程回", legs[2]["date"]),
+                               ("第4段", legs[3]["date"])):
+                self.assertNotIn(int(iso[5:7]), months,
+                                 "%s（%s）落在排除月份" % (label, iso))
+
     def test_skips_dates_with_no_feasible_offset(self):
         """所有候選間隔都無解時整組跳過並說明原因（FR-010）。"""
         t = self._track(lead_strategy="auto",

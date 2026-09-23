@@ -581,3 +581,6 @@ details.collapse summary::marker { color: var(--accent); }
 .flight-table th { color: var(--ink-dim); font-weight: 700; font-size: .75rem; }
 .flight-table td { font-variant-numeric: tabular-nums; }
 .flight-row--muted td { color: var(--ink-dim); }
+.flight-skipped { margin-top: .5rem; font-size: .8rem; color: var(--ink-dim); }
+.flight-skipped summary { cursor: pointer; }
+.flight-skipped ul { margin: .4rem 0 .3rem; padding-left: 1.1rem; line-height: 1.7; }
