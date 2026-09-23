@@ -35,6 +35,7 @@ import datetime
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -1048,6 +1049,27 @@ def plan_cheap_trip(hub, destination, token, outstations=None,
     }
 
 
+def node_binary():
+    """找出 node 可執行檔的絕對路徑。
+
+    **不能只依賴 `PATH`**：launchd 啟動的排程只有
+    `/usr/bin:/bin:/usr/sbin:/sbin`，而 Homebrew 的 node 在
+    `/opt/homebrew/bin`。少了這層解析，排程會每次都拿到「找不到 node」
+    而靜默失敗——排程沒人盯著，這種失敗最難察覺。
+
+    plist 那邊也設了 PATH，兩層都做是因為任一層日後被改動（換機器、
+    改用 nvm、plist 重建）時，另一層還能撐住。
+    """
+    found = shutil.which("node")
+    if found:
+        return found
+    for cand in ("/opt/homebrew/bin/node", "/usr/local/bin/node",
+                 "/usr/bin/node"):
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return cand
+    return None
+
+
 def scraper_available():
     """瀏覽器路徑是否可用（scraper 檔案與 node_modules 都在）。"""
     return (os.path.exists(SCRAPER_JS)
@@ -1136,9 +1158,13 @@ def scrape_itineraries(itineraries, data_dir=None, currency=DEFAULT_CURRENCY, gl
             "session_limit": session_limit,
             "timeout_ms": timeout_ms,
         }
+        node = node_binary()
+        if node is None:
+            return {"results": [], "blocked": False, "soft_blocked": False,
+                    "error": "找不到 node，無法使用瀏覽器路徑"}
         try:
             proc = subprocess.Popen(
-                ["node", SCRAPER_JS],
+                [node, SCRAPER_JS],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=None if progress else subprocess.DEVNULL)
         except OSError:

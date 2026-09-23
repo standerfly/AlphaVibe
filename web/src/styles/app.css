@@ -556,6 +556,11 @@ details.collapse summary::marker { color: var(--accent); }
 .flight-pill--pending { background: var(--paper-sunken); color: var(--ink-dim); }
 .flight-pill--alert { background: var(--amber-soft); color: var(--amber); }
 
+/* 過期提示用琥珀色而非紅色：資料過期是「該重掃了」的提醒，
+   不是系統錯誤——用紅色會讓使用者以為壞掉了（006 FR-013）。 */
+.flight-stale { color: var(--amber); background: var(--amber-soft); border: 1px solid var(--amber); border-radius: 8px; padding: .55rem .75rem; font-size: .85rem; }
+.flight-freq { margin: 0 .3rem; font-size: .82rem; padding: .1rem .25rem; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); color: var(--ink); }
+
 .flight-btn--primary { background: var(--accent); color: var(--paper); border: 1px solid var(--accent); border-radius: 7px; padding: .35rem .8rem; font-size: .84rem; cursor: pointer; }
 .flight-btn--danger { color: var(--red-ink); border-color: var(--red); }
 

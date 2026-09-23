@@ -130,6 +130,105 @@ class TrackCrudTest(unittest.TestCase):
                          "2026-09-23T10:00:00")
 
 
+class TrackingFieldsTest(unittest.TestCase):
+    """006 新增的排程與通知欄位。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="flight-tracking-test-")
+        self.store = FlightStore(self.tmp)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_frequency_defaults_to_weekly(self):
+        """預設每週一次（PO 於 Q-017 決定）。"""
+        t = _base_track(self.store)
+        self.assertEqual(t["scan_frequency_days"], 7)
+
+    def test_frequency_can_be_set(self):
+        t = _base_track(self.store, scan_frequency_days=30)
+        self.assertEqual(self.store.get_track(t["id"])["scan_frequency_days"], 30)
+
+    def test_rejects_non_positive_frequency(self):
+        for bad in (0, -7):
+            with self.assertRaises(ValueError):
+                _base_track(self.store, scan_frequency_days=bad)
+
+    def test_notify_fields_start_empty(self):
+        t = _base_track(self.store)
+        self.assertEqual(t["notify"], {"last_notified_at": None,
+                                       "last_notified_price": None,
+                                       "last_notify_failed": False})
+
+    def test_update_frequency(self):
+        t = _base_track(self.store)
+        updated = self.store.update_track_frequency(t["id"], 14)
+        self.assertEqual(updated["scan_frequency_days"], 14)
+
+    def test_update_frequency_rejects_invalid(self):
+        t = _base_track(self.store)
+        with self.assertRaises(ValueError):
+            self.store.update_track_frequency(t["id"], 0)
+
+    def test_update_frequency_missing_track_returns_none(self):
+        self.assertIsNone(self.store.update_track_frequency(9999, 14))
+
+    def test_record_notification_success(self):
+        t = _base_track(self.store)
+        self.store.record_notification(t["id"], 37265, ok=True,
+                                       when="2026-09-23T10:00:00")
+        n = self.store.get_track(t["id"])["notify"]
+        self.assertEqual(n["last_notified_price"], 37265)
+        self.assertEqual(n["last_notified_at"], "2026-09-23T10:00:00")
+        self.assertFalse(n["last_notify_failed"])
+
+    def test_record_notification_failure_still_stores_price(self):
+        """通知失敗也要記下價格。
+
+        否則下一輪因 last_notified_price 仍為空而重複嘗試，使用者在通知
+        管道恢復後會收到一串補發。
+        """
+        t = _base_track(self.store)
+        self.store.record_notification(t["id"], 37265, ok=False)
+        n = self.store.get_track(t["id"])["notify"]
+        self.assertEqual(n["last_notified_price"], 37265)
+        self.assertTrue(n["last_notify_failed"])
+
+    def test_existing_database_gets_new_columns(self):
+        """既有資料庫（005 建立、無新欄位）重新開啟後應完成升級。"""
+        import sqlite3 as _sq
+        db = os.path.join(self.tmp, "legacy")
+        os.makedirs(db, exist_ok=True)
+        conn = _sq.connect(os.path.join(db, "flights.db"))
+        conn.execute("""CREATE TABLE flight_track (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+            destination TEXT NOT NULL, hub TEXT NOT NULL,
+            outstations TEXT NOT NULL, window_start TEXT NOT NULL,
+            window_end TEXT NOT NULL, trip_days INTEGER NOT NULL,
+            lead_strategy TEXT NOT NULL, trail_strategy TEXT NOT NULL,
+            exclude_months_trip TEXT NOT NULL DEFAULT '',
+            exclude_months_lead TEXT NOT NULL DEFAULT '',
+            exclude_months_trail TEXT NOT NULL DEFAULT '',
+            target_price INTEGER, samples_per_month INTEGER NOT NULL DEFAULT 2,
+            created_at TEXT NOT NULL, last_success_at TEXT)""")
+        conn.execute(
+            "INSERT INTO flight_track (name, destination, hub, outstations,"
+            " window_start, window_end, trip_days, lead_strategy,"
+            " trail_strategy, created_at) VALUES"
+            " ('舊資料','PRG','TPE','NRT','2027-04','2027-05',12,'none','none','x')")
+        conn.commit(); conn.close()
+
+        store = FlightStore(db)
+        try:
+            t = store.list_tracks()[0]
+            self.assertEqual(t["name"], "舊資料")
+            self.assertEqual(t["scan_frequency_days"], 7)   # 預設值已套用
+            self.assertIsNone(t["notify"]["last_notified_at"])
+        finally:
+            store.close()
+
+
 class TrackValidationTest(unittest.TestCase):
     """FR-025：無效輸入必須被拒絕並說明原因。"""
 

@@ -9,7 +9,7 @@
    2. 「查無票價」與「查詢失敗」必須分開呈現（FR-023）——前者是查到了
       但沒有可用票價，後者是查詢本身失敗，對使用者的意義完全不同。 */
 import { useCallback, useEffect, useState } from 'react'
-import { apiGet, apiPost, apiDelete } from '../api/client.js'
+import { apiGet, apiPost, apiDelete, apiPatch } from '../api/client.js'
 import FlightTrackForm from './FlightTrackForm.jsx'
 
 const STATE_LABEL = {
@@ -26,6 +26,15 @@ const STATE_PILL = {
 }
 const RESULT_STATUS_LABEL = { no_fare: '查無票價', failed: '查詢失敗' }
 const POLL_MS = 4000
+
+/* 頻率選項：週期越長越省查詢配額，但價格反應越慢。
+   30 天不是「每月同一天」——排程以「距上次成功滿 N 天且今天輪到它」
+   判定，月份長度不同不影響。 */
+const FREQ_OPTIONS = [
+  { days: 7, label: '每週' },
+  { days: 14, label: '每兩週' },
+  { days: 30, label: '每月' },
+]
 
 function ntd(v) {
   return v == null ? '—' : `NT$${v.toLocaleString('en-US')}`
@@ -103,7 +112,7 @@ function SkippedList({ skipped }) {
   )
 }
 
-function TrackCard({ track, onScan, onDelete, onOpen, open, detail }) {
+function TrackCard({ track, onScan, onDelete, onOpen, onFrequency, open, detail }) {
   const p = track.progress || { done: 0, total: 0 }
   return (
     <article className="flight-card">
@@ -130,6 +139,33 @@ function TrackCard({ track, onScan, onDelete, onOpen, open, detail }) {
         <p className="flight-muted">
           有 {track.skipped_count} 個日期因找不到可用的間隔而跳過，
           展開結果可看是哪幾天。
+        </p>
+      )}
+      {track.state === 'stale' && (
+        <p className="flight-stale">
+          距上次成功掃描已超過兩個週期，畫面上的價格可能不再有效；
+          達標通知也會暫停，直到重新掃描成功為止。
+        </p>
+      )}
+      <p className="flight-muted">
+        自動重掃：
+        <select
+          className="flight-freq"
+          value={track.scan_frequency_days}
+          onChange={(e) => onFrequency(track.id, Number(e.target.value))}
+        >
+          {FREQ_OPTIONS.map((o) => (
+            <option key={o.days} value={o.days}>{o.label}</option>
+          ))}
+        </select>
+        {track.next_scan_date && <> · 下次 {md(track.next_scan_date)}</>}
+        {track.last_success_at && <> · 上次成功 {md(track.last_success_at.slice(0, 10))}</>}
+      </p>
+      {track.notify?.last_notified_at && (
+        <p className={track.notify.last_notify_failed ? 'flight-error' : 'flight-muted'}>
+          {track.notify.last_notify_failed
+            ? `上次達標通知（NT$${(track.notify.last_notified_price || 0).toLocaleString()}）送出失敗，請檢查 Telegram 設定`
+            : `已通知達標 NT$${(track.notify.last_notified_price || 0).toLocaleString()}（${md(track.notify.last_notified_at.slice(0, 10))}）`}
         </p>
       )}
       <div className="flight-card__actions">
@@ -226,6 +262,14 @@ export default function Flights() {
     } catch (e) { setError(e.message) }
   }
 
+  async function setFrequency(id, days) {
+    try {
+      await apiPatch(`/api/flights/tracks/${id}`, { scan_frequency_days: days })
+      setNotice('已更新重掃頻率')
+      load()
+    } catch (e) { setError(e.message) }
+  }
+
   async function remove(id) {
     try {
       await apiDelete(`/api/flights/tracks/${id}`)
@@ -273,6 +317,7 @@ export default function Flights() {
       )}
       {data && data.tracks.map((t) => (
         <TrackCard key={t.id} track={t} onScan={scan} onDelete={remove}
+                   onFrequency={setFrequency}
                    onOpen={setOpenId} open={openId === t.id} detail={detail} />
       ))}
 

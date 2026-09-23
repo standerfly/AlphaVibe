@@ -55,7 +55,11 @@ CREATE TABLE IF NOT EXISTS flight_track (
     target_price INTEGER,
     samples_per_month INTEGER NOT NULL DEFAULT 2,
     created_at TEXT NOT NULL,
-    last_success_at TEXT
+    last_success_at TEXT,
+    scan_frequency_days INTEGER NOT NULL DEFAULT 7,
+    last_notified_at TEXT,
+    last_notified_price INTEGER,
+    last_notify_failed INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS flight_scan_result (
@@ -153,8 +157,34 @@ class FlightStore:
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
         # 刻意不寫入任何資料列——見 docstring 的教訓 2
+
+    def _migrate(self):
+        """為既有資料庫補上後來新增的欄位。
+
+        `CREATE TABLE IF NOT EXISTS` 對已存在的表不會套用新欄位，所以
+        006 新增的四個欄位必須逐欄 ALTER。重複執行是安全的——欄位已存在
+        時 sqlite 會拋 OperationalError，直接忽略即可（這是新增欄位的
+        標準做法，不是在吞掉真正的錯誤）。
+
+        **這不違反「__init__ 不得有寫入副作用」**：那條教訓針對的是寫入
+        *資料列*（2026-08-22 種子資料污染正式庫），schema 演進本來就必須
+        在連線建立時完成，否則後續查詢會因缺欄位而整個失敗。
+        """
+        for ddl in (
+            "ALTER TABLE flight_track ADD COLUMN"
+            " scan_frequency_days INTEGER NOT NULL DEFAULT 7",
+            "ALTER TABLE flight_track ADD COLUMN last_notified_at TEXT",
+            "ALTER TABLE flight_track ADD COLUMN last_notified_price INTEGER",
+            "ALTER TABLE flight_track ADD COLUMN"
+            " last_notify_failed INTEGER NOT NULL DEFAULT 0",
+        ):
+            try:
+                self.conn.execute(ddl)
+            except sqlite3.OperationalError:
+                pass   # 欄位已存在
 
     def close(self):
         self.conn.close()
@@ -165,7 +195,8 @@ class FlightStore:
                      trip_days, hub="TPE", name=None, lead_strategy="none",
                      trail_strategy="none", exclude_months_trip=None,
                      exclude_months_lead=None, exclude_months_trail=None,
-                     target_price=None, samples_per_month=2):
+                     target_price=None, samples_per_month=2,
+                     scan_frequency_days=7):
         """建立查詢條件。驗證失敗一律拋 ValueError（spec FR-025）。
 
         `target_price` 在本 feature 僅儲存與顯示，**不觸發任何通知**——
@@ -216,6 +247,13 @@ class FlightStore:
             if target_price < 0:
                 raise ValueError("target_price 不得為負")
 
+        if scan_frequency_days is None:
+            scan_frequency_days = 7
+        scan_frequency_days = int(scan_frequency_days)
+        if scan_frequency_days <= 0:
+            raise ValueError("scan_frequency_days 必須是正整數，收到：%d"
+                             % scan_frequency_days)
+
         if not name or not str(name).strip():
             name = "%s（%s）%s~%s" % (destination, "／".join(codes),
                                       window_start, window_end)
@@ -225,13 +263,13 @@ class FlightStore:
             " (name, destination, hub, outstations, window_start, window_end,"
             "  trip_days, lead_strategy, trail_strategy, exclude_months_trip,"
             "  exclude_months_lead, exclude_months_trail, target_price,"
-            "  samples_per_month, created_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "  samples_per_month, created_at, scan_frequency_days)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (str(name).strip(), destination, hub, ",".join(codes),
              window_start, window_end, trip_days, lead_strategy,
              trail_strategy, _months_to_text(ex_trip),
              _months_to_text(ex_lead), _months_to_text(ex_trail),
-             target_price, samples_per_month, _now()),
+             target_price, samples_per_month, _now(), scan_frequency_days),
         )
         self.conn.commit()
         return self.get_track(cur.lastrowid)
@@ -259,6 +297,12 @@ class FlightStore:
             "samples_per_month": row["samples_per_month"],
             "created_at": row["created_at"],
             "last_success_at": row["last_success_at"],
+            "scan_frequency_days": row["scan_frequency_days"],
+            "notify": {
+                "last_notified_at": row["last_notified_at"],
+                "last_notified_price": row["last_notified_price"],
+                "last_notify_failed": bool(row["last_notify_failed"]),
+            },
         }
 
     def get_track(self, track_id):
@@ -297,6 +341,36 @@ class FlightStore:
         self.conn.execute(
             "UPDATE flight_track SET last_success_at=? WHERE id=?",
             (when or _now(), track_id))
+        self.conn.commit()
+
+    def update_track_frequency(self, track_id, days):
+        """更新重掃頻率（FR-018）。回傳更新後的條件，條件不存在時回 None。"""
+        days = int(days)
+        if days <= 0:
+            raise ValueError("scan_frequency_days 必須是正整數，收到：%d" % days)
+        if self.get_track(track_id) is None:
+            return None
+        self.conn.execute(
+            "UPDATE flight_track SET scan_frequency_days=? WHERE id=?",
+            (days, track_id))
+        self.conn.commit()
+        return self.get_track(track_id)
+
+    def record_notification(self, track_id, price, ok, when=None):
+        """記錄一次通知嘗試。
+
+        `price` 是**觸發這次通知的四段票價**，不是總成本——去重判定
+        （「比上次通知時更低才再通知」）要拿它跟下一輪的價格比，兩者
+        基準必須一致（FR-009、FR-012）。
+
+        `ok=False` 時仍記錄價格與時間：那代表「這個價格我們試著通知過了」，
+        否則下一輪會因為 last_notified_price 仍是空的而重複嘗試，使用者
+        在通知管道恢復後會收到一串補發。
+        """
+        self.conn.execute(
+            "UPDATE flight_track SET last_notified_at=?, last_notified_price=?,"
+            " last_notify_failed=? WHERE id=?",
+            (when or _now(), int(price), 0 if ok else 1, track_id))
         self.conn.commit()
 
     # ---------- flight_scan_result ----------

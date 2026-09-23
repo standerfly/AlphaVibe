@@ -76,6 +76,17 @@ def _delete(path: str, timeout: float = 10.0):
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read()
 
+def _patch(path: str, body: bytes, timeout: float = 10.0):
+    """006（T029）新增：調整重掃頻率是這個 repo 第一個 PATCH 端點。"""
+    req = urllib.request.Request(_BASE + path, data=body, method="PATCH",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read()
+
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _APP_ROOT = os.path.abspath(os.path.join(_HERE, "..", ".."))
 _PRODUCTION_DATA_DIR = os.path.abspath(
@@ -1334,6 +1345,74 @@ def main() -> int:
                 else:
                     print("FAIL /api/flights/tracks/{id}/results：status=%s" % res_status)
                     failures.append("flights results")
+
+            # ---- 價格追蹤（specs/006-flight-price-tracking，T029）----
+            # 同樣是深度檢查：PATCH 之後**重新查一次清單**確認真的寫進去，
+            # 並把 API 回報的下次掃描日跟底層 next_scan_date() 對照——
+            # 只看 PATCH 回 200 的話，寫入沒生效也會通過。
+            if flight_track_id:
+                pa_status, pa_body = _patch(
+                    "/api/flights/tracks/%d" % flight_track_id,
+                    json.dumps({"scan_frequency_days": 30}).encode("utf-8"))
+                pa_body = _json_or_none(pa_body)
+                re_status, re_body = _get("/api/flights/tracks")
+                persisted = None
+                for t in (re_body or {}).get("tracks", []):
+                    if t.get("id") == flight_track_id:
+                        persisted = t
+                if (pa_status == 200 and persisted
+                        and persisted.get("scan_frequency_days") == 30):
+                    print("PASS PATCH /api/flights/tracks/{id} 頻率改為每月並持久化")
+                else:
+                    print("FAIL PATCH 頻率：status=%s 重查得到 %s"
+                          % (pa_status, (persisted or {}).get("scan_frequency_days")))
+                    failures.append("flights patch frequency")
+
+                # 下次掃描日：與底層同一支函式對照，且必須落在該條件排定的
+                # 星期幾——前端只顯示這個值，算錯不會有任何其他徵兆
+                _st2 = _fstore.FlightStore(os.environ["ALPHAVIBE_DATA_DIR"])
+                try:
+                    _t2 = _st2.get_track(flight_track_id)
+                    expected_next = _svc.next_scan_date(_t2)
+                    expected_wd = _svc.scheduled_weekday(_t2)
+                finally:
+                    _st2.close()
+                api_next = (persisted or {}).get("next_scan_date")
+                # 用既有的 `from datetime import datetime`（本檔案第 44 行
+                # 已把模組名綁成 class），不另外 import 模組造成名稱衝突
+                next_wd = (datetime.fromisoformat(api_next).weekday()
+                           if api_next else None)
+                if api_next == expected_next and next_wd == expected_wd:
+                    print("PASS 下次掃描日與底層 next_scan_date 一致（%s，星期%d）"
+                          % (api_next, expected_wd + 1))
+                else:
+                    print("FAIL 下次掃描日：api=%s 底層=%s 星期 api=%s 應為 %s"
+                          % (api_next, expected_next, next_wd, expected_wd))
+                    failures.append("flights next_scan_date")
+
+                # 頻率必須是正整數——0 或負數會讓排程每天都判定「到期」
+                z_status, _z = _patch(
+                    "/api/flights/tracks/%d" % flight_track_id,
+                    json.dumps({"scan_frequency_days": 0}).encode("utf-8"))
+                if z_status == 400:
+                    print("PASS PATCH 頻率 0 被拒絕（400）")
+                else:
+                    print("FAIL PATCH 頻率 0 未被拒絕：status=%s" % z_status)
+                    failures.append("flights patch frequency validation")
+
+                # 結果端點要帶出通知狀態欄位（FR-019）——沒通知過時是
+                # 欄位齊全但值為 None，不是整個 key 不存在，否則前端
+                # 得對兩種形狀各寫一套判斷
+                nres_status, nres_body = _get(
+                    "/api/flights/tracks/%d/results" % flight_track_id)
+                nblock = (nres_body or {}).get("notify")
+                if (nres_status == 200 and isinstance(nblock, dict)
+                        and "last_notified_at" in nblock
+                        and "last_notify_failed" in nblock):
+                    print("PASS /results 帶出通知狀態欄位（未通知過時值為空）")
+                else:
+                    print("FAIL /results 通知狀態欄位：%s" % (nblock,))
+                    failures.append("flights notify block")
 
             # 驗證失敗必須回 400 並說明原因（FR-025）
             bad_status, bad_body = _post(

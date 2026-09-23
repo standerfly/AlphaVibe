@@ -328,15 +328,158 @@ def run_scan(track_id, data_dir, hourly_limit=fs.HOURLY_BROWSER_LIMIT,
         store.close()
 
 
+# 排程把條件分散到一週七天，避免同一天累積過多查詢而撞上速率上限。
+_SCHEDULE_SLOTS = 7
+
+
+def scheduled_weekday(track):
+    """這個條件排定在星期幾執行（0=週一 … 6=週日）。
+
+    用 `id % 7` 而非隨機或動態計算：需要的性質只有決定性（同一條件每次
+    都落在同一天）、分散（不同條件盡量不同天）、免維護（新增條件不必
+    重算全體）。取餘數同時滿足三者且不需額外欄位（research.md §2）。
+    """
+    return int(track["id"]) % _SCHEDULE_SLOTS
+
+
+def is_due(track, today=None):
+    """今天是否該重掃這個條件。
+
+    兩個條件都要成立：**今天輪到它**（排定的星期幾），且**週期已滿**
+    （距上次成功已達 `scan_frequency_days` 天，或從未成功過）。
+
+    只看「週期已滿」會讓所有條件在同一天一起跑；只看「今天輪到」則會
+    讓每週頻率以外的設定失效。
+    """
+    today = today or datetime.date.today()
+    if scheduled_weekday(track) != today.weekday():
+        return False
+    last = track.get("last_success_at")
+    if not last:
+        return True
+    try:
+        last_date = datetime.datetime.fromisoformat(last).date()
+    except (ValueError, TypeError):
+        return True
+    return (today - last_date).days >= int(track.get("scan_frequency_days", 7))
+
+
+def next_scan_date(track, today=None):
+    """下次預定重掃日。
+
+    從「上次成功 ＋ 一個週期」起算，往後找到第一個符合排定星期幾的日子；
+    從未成功過則從今天起算。**這個規則只在這裡定義**——API 與前端都不
+    自行推算，否則兩處必然分岔（contracts §2）。
+    """
+    today = today or datetime.date.today()
+    weekday = scheduled_weekday(track)
+    last = track.get("last_success_at")
+    if last:
+        try:
+            base = (datetime.datetime.fromisoformat(last).date()
+                    + datetime.timedelta(
+                        days=int(track.get("scan_frequency_days", 7))))
+        except (ValueError, TypeError):
+            base = today
+    else:
+        base = today
+    if base < today:
+        base = today
+    for offset in range(_SCHEDULE_SLOTS + 1):
+        candidate = base + datetime.timedelta(days=offset)
+        if candidate.weekday() == weekday:
+            return candidate.isoformat()
+    return base.isoformat()
+
+
+def due_tracks(store, today=None):
+    """今天該重掃的所有條件，依 id 排序（執行順序可預期）。"""
+    return [t for t in store.list_tracks() if is_due(t, today)]
+
+
+def should_notify(track, lowest_price, state=None):
+    """是否該為這次結果發出通知。
+
+    三個條件都要成立：
+    1. 有設定目標價（未設定就不通知，FR-010）
+    2. 最低**四段票價** ≤ 目標價——**不含接駁估價**（FR-007，PO 於 Q-016
+       決定）。接駁價是估算值且會變動，納入會讓通知時定時不定
+    3. 從未通知過，或這次的價格**比上次通知時更低**（FR-009）
+
+    第 3 點是刻意的取捨：單純「達標後不再通知」會讓使用者錯過更好的價格
+    （37,000 掉到 32,000 卻沒收到）；每輪都通知則是噪音。以「比上次更低」
+    為門檻，兩邊都避開。
+
+    `state` 為 `stale` 時一律不通知（FR-014）——拿過期價格通知，使用者
+    跑去看卻發現是舊資料，比沒收到更糟。
+    """
+    if state == "stale":
+        return False
+    target = track.get("target_price")
+    if target is None or lowest_price is None:
+        return False
+    if lowest_price > target:
+        return False
+    last = (track.get("notify") or {}).get("last_notified_price")
+    if last is None:
+        return True
+    return lowest_price < last
+
+
+def build_notification(track, lowest_row, hub=None):
+    """組出通知訊息（FR-008）。
+
+    連結用既有的 `google_flights_url()` 構造，與 API 層同一支函式——
+    那是 base64 protobuf，兩處各寫一份必然分岔（research.md §7）。
+    """
+    hub = hub or track.get("hub", "TPE")
+    legs = [
+        {"departure_id": lowest_row["outstation"], "arrival_id": hub,
+         "date": lowest_row["leg1_date"]},
+        {"departure_id": hub, "arrival_id": track["destination"],
+         "date": lowest_row["outbound_date"]},
+        {"departure_id": track["destination"], "arrival_id": hub,
+         "date": lowest_row["return_date"]},
+        {"departure_id": hub, "arrival_id": lowest_row["outstation"],
+         "date": lowest_row["leg4_date"]},
+    ]
+    lines = [
+        "✈️ 機票降到目標價以下",
+        "",
+        "%s" % track["name"],
+        "四段票 NT$%s（目標 NT$%s）" % (
+            format(int(lowest_row["price"]), ","),
+            format(int(track["target_price"]), ",")),
+        "主行程 %s ~ %s" % (lowest_row["outbound_date"],
+                            lowest_row["return_date"]),
+        "外站 %s（第1段 %s）" % (lowest_row["outstation"],
+                                 lowest_row["leg1_date"]),
+    ]
+    if lowest_row.get("airline"):
+        lines.append("航空 %s" % lowest_row["airline"])
+    if lowest_row.get("connector_price"):
+        lines.append("接駁估價 NT$%s（不計入達標判定）"
+                     % format(int(lowest_row["connector_price"]), ","))
+    lines += ["", fs.google_flights_url(legs), "",
+              "提醒：第1段不可 no-show，否則後三段全部失效。"]
+    return "\n".join(lines)
+
+
 def derive_state(track, data_dir, store=None, scanning=False,
                  hourly_limit=fs.HOURLY_BROWSER_LIMIT, stale_periods=2,
-                 period_days=7):
+                 period_days=None):
     """推導使用者看得到的狀態。
 
     七個狀態中只有「資料過期」需要儲存的資訊（`last_success_at`），
     其餘全部即時推導——推導的結果永遠與事實一致，而狀態欄位漏寫就會
     與事實不符（`research.md` §7）。
     """
+    # 過期判定的週期必須跟著**這個條件的**重掃頻率走。005 原本寫死 7 天，
+    # 那會讓「每月一次」的條件在第 15 天被誤判為過期而停止通知——而使用者
+    # 只會覺得「怎麼都沒通知」，不會意識到是誤判（quickstart 坑 1）。
+    if period_days is None:
+        period_days = int(track.get("scan_frequency_days") or 7)
+
     pending = pending_combinations(track, data_dir)
     owns_store = store is None
     if owns_store:

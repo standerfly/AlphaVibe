@@ -58,6 +58,7 @@ class TrackCreate(BaseModel):
     exclude_months: ExcludeMonths = Field(default_factory=ExcludeMonths)
     target_price: Optional[int] = None
     samples_per_month: int = 2
+    scan_frequency_days: int = 7
 
 
 # 目前有背景掃描在執行的 track id。
@@ -104,6 +105,10 @@ def _track_summary(store: FlightStore, track: Dict[str, Any],
                        "total": len(itineraries)}
     out["lowest"] = lowest
     out["skipped_count"] = len(skipped)
+    # 排程資訊（006 FR-004）：下次掃描日由服務層**單一來源**推算，
+    # 前端不自行計算——規則（id%7 決定星期幾＋週期）只定義在
+    # `svc.next_scan_date()` 一處
+    out["next_scan_date"] = svc.next_scan_date(track)
     return out
 
 
@@ -138,10 +143,33 @@ def create_track(body: TrackCreate,
             exclude_months_trail=body.exclude_months.trail,
             target_price=body.target_price,
             samples_per_month=body.samples_per_month,
+            scan_frequency_days=body.scan_frequency_days,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"id": track["id"]}
+
+
+class TrackUpdate(BaseModel):
+    """目前只開放頻率——其他欄位改動會使既有結果的對應關係失效。
+
+    例如改了 `trip_days` 或排除月份，枚舉出的組合就整組不同了，既有
+    結果會變成孤兒列。要改那些，語意上是「建新條件」而非「編輯」。
+    """
+    scan_frequency_days: int
+
+
+@router.patch("/api/flights/tracks/{track_id}")
+def update_track(track_id: int, body: TrackUpdate,
+                 store: FlightStore = Depends(get_flight_store)) -> Dict[str, Any]:
+    """調整重掃頻率（FR-005）。回傳更新後的摘要，前端不必再打一次清單。"""
+    try:
+        track = store.update_track_frequency(track_id, body.scan_frequency_days)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if track is None:
+        raise HTTPException(status_code=404, detail="查詢條件不存在")
+    return _track_summary(store, track, store.data_dir)
 
 
 @router.delete("/api/flights/tracks/{track_id}", status_code=204)
@@ -300,6 +328,11 @@ def get_results(track_id: int,
         "blocked_kind": last.get("blocked_kind"),
         "results": results,
         "skipped": skipped,
+        # 通知狀態（FR-019）：上次通知的時間與價格，以及是否送達失敗。
+        # 送達失敗要讓使用者看得到——否則他會以為「沒通知＝沒達標」，
+        # 實際上是通知管道壞了
+        "notify": track.get("notify"),
+        "next_scan_date": svc.next_scan_date(track),
     }
 
 

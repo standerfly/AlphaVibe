@@ -58,6 +58,7 @@ export default function FlightTrackForm({ onCreated, onCancel }) {
   const [exTrail, setExTrail] = useState([])
   const [targetPrice, setTargetPrice] = useState('')
   const [samples, setSamples] = useState(2)
+  const [frequency, setFrequency] = useState(7)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
@@ -81,6 +82,7 @@ export default function FlightTrackForm({ onCreated, onCancel }) {
         exclude_months: { trip: exTrip, lead: exLead, trail: exTrail },
         target_price: targetPrice === '' ? null : Number(targetPrice),
         samples_per_month: Number(samples),
+        scan_frequency_days: Number(frequency),
       })
       onCreated && onCreated(created.id)
     } catch (err) {
@@ -156,7 +158,25 @@ export default function FlightTrackForm({ onCreated, onCancel }) {
         <label className="flight-form__label" htmlFor="tp">目標價（NTD）</label>
         <input id="tp" type="number" min="0" value={targetPrice}
                placeholder="38000" onChange={(e) => setTargetPrice(e.target.value)} />
-        <small className="flight-muted">目前僅記錄與顯示，降價通知為後續功能。</small>
+        <small className="flight-muted">
+          四段票價跌破這個數字時會用 Telegram 通知。不填就只記錄不通知。
+          判定只看四段票價，不含接駁估價——接駁是估算值且會變動，
+          納入會讓通知時定時不定。
+        </small>
+      </div>
+
+      <div className="flight-form__row">
+        <label className="flight-form__label" htmlFor="fq">自動重掃頻率</label>
+        <select id="fq" value={frequency}
+                onChange={(e) => setFrequency(Number(e.target.value))}>
+          <option value={7}>每週</option>
+          <option value={14}>每兩週</option>
+          <option value={30}>每月</option>
+        </select>
+        <small className="flight-muted">
+          不提供更高頻是因為查價服務有速率上限（每小時約 20 筆），
+          查太密集會被擋下反而查不到。建立後仍可隨時調整。
+        </small>
       </div>
 
       {error && <p className="flight-error">建立失敗：{error}</p>}
