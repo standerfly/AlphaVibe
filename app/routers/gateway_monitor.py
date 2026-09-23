@@ -81,6 +81,7 @@ _LOCKDOWN_FLAG_PATH = _STATE_DIR / "LOCKDOWN"
 PROJECT_DOMAINS: Dict[str, Path] = {
     "alphavibe": Path("/Users/stander/My_project/AlphaVibe"),
     "harness": Path("/Users/stander/My_project/AI/harness"),
+    "mytravel": Path("/Users/stander/My_project/mytravel"),
 }
 DEFAULT_DOMAIN = "general"
 

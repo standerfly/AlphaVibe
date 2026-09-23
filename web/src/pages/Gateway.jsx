@@ -20,7 +20,7 @@ const POLL_INTERVAL_MS = 15000
 // 2026-08-31「擴充：任意命名主題」：只有已知專案捷徑（cwd 指到真實
 // 專案路徑）需要顯示名稱對照，其餘任意命名的主題直接顯示原始名稱
 // （domainLabel() 的既有 fallback `DOMAIN_LABELS[name] || name` 不用改）。
-const DOMAIN_LABELS = { alphavibe: 'AlphaVibe', harness: 'Harness' }
+const DOMAIN_LABELS = { alphavibe: 'AlphaVibe', harness: 'Harness', mytravel: 'MyTravel' }
 
 function domainLabel(name) {
   return DOMAIN_LABELS[name] || name
