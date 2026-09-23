@@ -1058,6 +1058,64 @@ class PickLeadTest(unittest.TestCase):
                              "%s 的第1段落在 %d 月" % (ob, d1.month))
 
 
+class PickTrailTest(unittest.TestCase):
+    """第4段（台北→外站）的延後天數挑選，與 pick_lead 對稱。
+
+    PO 2026-09-23 追加需求：第3段與第4段的間隔也要能設定，理由同樣是
+    避免密集請假——第4段緊接回程就是連續行程，拉遠後可當下一趟旅行的去程。
+    這一端的價格槓桿比第1段更大（SRC-003／SRC-004：僅第4段差 12 天，
+    票價差 21.9%）。
+    """
+
+    CANDS = [1, 14, 30, 60, 90, 120]
+    SUMMER = [6, 7, 8]
+
+    def test_picks_first_candidate_avoiding_excluded_months(self):
+        # 回程 2027-05-20：+1 天＝5 月（可）
+        self.assertEqual(
+            flight_search.pick_trail("2027-05-20", self.CANDS, self.SUMMER), 1)
+
+    def test_skips_candidates_landing_in_excluded_months(self):
+        # 回程 2027-05-25：+14＝6 月（排除）、+30＝6 月（排除）、
+        # +60＝7 月（排除）、+90＝8 月（排除）、+120＝9 月（可）
+        self.assertEqual(
+            flight_search.pick_trail("2027-05-25", [14, 30, 60, 90, 120],
+                                     self.SUMMER), 120)
+
+    def test_is_symmetric_with_pick_lead_direction(self):
+        """lead 往前推、trail 往後推——同一組候選值結果應不同。"""
+        lead = flight_search.pick_lead("2027-09-01", [60, 90], self.SUMMER)
+        trail = flight_search.pick_trail("2027-09-01", [60, 90], self.SUMMER)
+        self.assertIsNone(lead)          # 往前推 60/90 天都落在 6-7 月
+        self.assertEqual(trail, 60)      # 往後推 60 天落在 10 月
+
+    def test_candidate_order_is_preference_order(self):
+        """候選順序即偏好順序，本函式不做最佳化。
+
+        2026-09-23 實測踩到：候選寫成 [1, 14, 30] 時每組都挑到「延後 1 天」，
+        即第4段緊接回程——正是 PO 想避免的密集行程。要拉遠就把大值放前面。
+        """
+        rt = "2027-05-20"
+        self.assertEqual(flight_search.pick_trail(rt, [1, 30, 90], []), 1)
+        self.assertEqual(flight_search.pick_trail(rt, [90, 30, 1], []), 90)
+
+    def test_returns_none_when_nothing_qualifies(self):
+        self.assertIsNone(
+            flight_search.pick_trail("2027-05-25", [14, 30], self.SUMMER))
+
+    def test_no_exclusion_returns_first_candidate(self):
+        self.assertEqual(
+            flight_search.pick_trail("2027-05-20", self.CANDS, []), 1)
+
+    def test_southern_hemisphere_exclusion_works_too(self):
+        """南半球旺季（12,1,2）同樣適用，不寫死北半球。"""
+        # 回程 2027-11-20：+14＝12 月（排除）、+30＝12 月（排除）、
+        # +60＝1 月（排除）、+90＝2 月（排除）、+120＝3 月（可）
+        self.assertEqual(
+            flight_search.pick_trail("2027-11-20", [14, 30, 60, 90, 120],
+                                     flight_search.SOUTHERN_SUMMER_MONTHS), 120)
+
+
 class HourlyBrowserRateTest(unittest.TestCase):
     """瀏覽器路徑的滾動小時速率守衛。
 

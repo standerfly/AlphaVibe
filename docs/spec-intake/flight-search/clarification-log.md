@@ -26,6 +26,9 @@
 | Q-019 | 是否需要支援目的地以外的其他航線（非布拉格）？ | SRC-001 | Scope | Non-blocking | 設計上不綁死目的地（表單可填任意機場代碼），但 MVP 僅以布拉格驗證 | — | — |
 | Q-020 | 重掃失敗時是否需要通知？ | 推論自 CEB-06 | Error Handling | Non-blocking | 建議僅在連續失敗達門檻時通知，避免噪音。MVP 可只在 UI 標示資料過期 | — | — |
 
+| Q-021 | 第3段與第4段的間隔是否也需要能設定？ | SRC-001 追加 | Scope | Answered | 需要，與第1段對稱。理由同為避免密集請假——第4段緊接回程即連續行程，拉遠後可當下一趟旅行的去程。已新增 FR-19~FR-21 | Stander | 2026-09-23 |
+| Q-022 | 「拉遠」是硬性目標或僅為約束？ | 實作實測發現 | Workflow | Answered | 是目標。實測發現「挑第一個避開排除月份的候選」會選到延後 1 天（緊接回程），違反原意。已明訂 FR-21 與 CON-14 | Claude（發現）／Stander（原意） | 2026-09-23 |
+
 ## Notes
 
 - Status values: Open, Blocking, Answered, Non-blocking, Deferred, Out of Scope.

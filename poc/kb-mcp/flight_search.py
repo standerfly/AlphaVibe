@@ -46,6 +46,12 @@ API_BASE_URL = "https://serpapi.com/search"
 TIMEOUT = 40
 USER_AGENT = "alphavibe-flight-search-poc"
 
+# 貨幣：對外查價服務要求 ISO 4217 代碼，`NTD` 不被接受（Google Flights 的
+# curr 參數實測只吃 TWD）。UI 與文件一律顯示「NTD」，此處是送給 API 的值。
+# 兩者是同一貨幣的不同寫法，不得混用其他幣別（PO 2026-09-23 要求）。
+DEFAULT_CURRENCY = "TWD"
+DISPLAY_CURRENCY = "NTD"
+
 # 樞紐固定台北——外站四段票的整個前提就是「頭尾外站、中間經台北轉機」。
 DEFAULT_HUB = "TPE"
 
@@ -394,7 +400,7 @@ def _pb_int(field, value):
     return _pb_key(field, 0) + _pb_varint(value)
 
 
-def google_flights_url(legs, hl="zh-TW", gl="tw", currency="TWD",
+def google_flights_url(legs, hl="zh-TW", gl="tw", currency=DEFAULT_CURRENCY,
                        travel_class=1, adults=1):
     """把行程編成 Google Flights 的 `tfs` 參數，回傳可直接點開的網址。
 
@@ -549,7 +555,7 @@ def _summarize(payload):
     }
 
 
-def search_itinerary(legs, token, travel_class=1, adults=1, currency="TWD",
+def search_itinerary(legs, token, travel_class=1, adults=1, currency=DEFAULT_CURRENCY,
                      data_dir=None, use_cache=True, gl="tw", hl="zh-TW"):
     """查單一組四段票報價。回傳 {"price":…, "airlines":[…]} 或 {"error":…}。
 
@@ -590,7 +596,7 @@ def search_itinerary(legs, token, travel_class=1, adults=1, currency="TWD",
 
 
 def search_oneway(departure_id, arrival_id, date, token, travel_class=1,
-                  adults=1, currency="TWD", data_dir=None, use_cache=True,
+                  adults=1, currency=DEFAULT_CURRENCY, data_dir=None, use_cache=True,
                   gl="tw", hl="zh-TW"):
     """查單程票價（type=2），用於估算「台北→外站」的自費接駁成本。
 
@@ -634,7 +640,7 @@ def search_oneway(departure_id, arrival_id, date, token, travel_class=1,
 
 
 def estimate_connectors(outstations, date, token, hub=DEFAULT_HUB,
-                        data_dir=None, currency="TWD", gl="tw", hl="zh-TW",
+                        data_dir=None, currency=DEFAULT_CURRENCY, gl="tw", hl="zh-TW",
                         quota=FREE_TIER_MONTHLY_QUOTA):
     """估算各外站的接駁票價（台北→外站單程），每個外站只查一次。
 
@@ -663,7 +669,7 @@ def estimate_connectors(outstations, date, token, hub=DEFAULT_HUB,
     return prices
 
 
-def compare_pos(legs, token, pos_list=None, data_dir=None, currency="TWD",
+def compare_pos(legs, token, pos_list=None, data_dir=None, currency=DEFAULT_CURRENCY,
                 travel_class=1, adults=1):
     """同一組航段、不同訂票地(POS)比價，驗證 gl/hl 是否真的影響價格。
 
@@ -692,7 +698,7 @@ def compare_pos(legs, token, pos_list=None, data_dir=None, currency="TWD",
 def scan(destination, month, token=None, outstations=None, hub=DEFAULT_HUB,
          trip_days=None, out_stays=None, ret_stays=None, data_dir=None,
          limit=None, rate_per_hour=DEFAULT_RATE_PER_HOUR, travel_class=1,
-         adults=1, currency="TWD", progress=None, connector_prices=None,
+         adults=1, currency=DEFAULT_CURRENCY, progress=None, connector_prices=None,
          gl="tw", hl="zh-TW", interleave=True,
          quota=FREE_TIER_MONTHLY_QUOTA):
     """批次掃描並回傳按價格排序的結果。
@@ -775,7 +781,7 @@ def scan(destination, month, token=None, outstations=None, hub=DEFAULT_HUB,
 
 
 def search_deals(hub, destination, window_start, window_end, token,
-                 trip_length=None, data_dir=None, currency="TWD", gl="tw",
+                 trip_length=None, data_dir=None, currency=DEFAULT_CURRENCY, gl="tw",
                  hl="zh-TW", stops=0, max_price=None, use_cache=True):
     """階段 1：一次查詢涵蓋整個時間窗，找出主行程便宜的日期。
 
@@ -861,7 +867,7 @@ MIN_FIRST_WINDOW_DAYS = 14
 
 
 def find_cheap_dates(hub, destination, token, months_ahead=6,
-                     trip_length="10,14", data_dir=None, currency="TWD",
+                     trip_length="10,14", data_dir=None, currency=DEFAULT_CURRENCY,
                      gl="tw", hl="zh-TW", rate_per_hour=DEFAULT_RATE_PER_HOUR,
                      quota=FREE_TIER_MONTHLY_QUOTA, start_date=None,
                      progress=None):
@@ -915,7 +921,7 @@ def find_cheap_dates(hub, destination, token, months_ahead=6,
 
 def plan_cheap_trip(hub, destination, token, outstations=None,
                     months_ahead=6, trip_length="10,14", top_dates=5,
-                    lead=1, trail=1, data_dir=None, currency="TWD",
+                    lead=1, trail=1, data_dir=None, currency=DEFAULT_CURRENCY,
                     gl="tw", hl="zh-TW", rate_per_hour=DEFAULT_RATE_PER_HOUR,
                     quota=FREE_TIER_MONTHLY_QUOTA, connector_prices=None,
                     start_date=None, progress=None):
@@ -1011,7 +1017,7 @@ def _browser_summary(res):
     }
 
 
-def scrape_itineraries(itineraries, data_dir=None, currency="TWD", gl="tw",
+def scrape_itineraries(itineraries, data_dir=None, currency=DEFAULT_CURRENCY, gl="tw",
                        hl="zh-TW", min_delay_ms=SCRAPE_MIN_DELAY_MS,
                        max_delay_ms=SCRAPE_MAX_DELAY_MS,
                        session_limit=SCRAPE_SESSION_LIMIT, timeout_ms=25000,
@@ -1156,10 +1162,6 @@ def scrape_itineraries(itineraries, data_dir=None, currency="TWD", gl="tw",
 NORTHERN_SUMMER_MONTHS = [6, 7, 8]    # 歐洲、日本、北美等北半球目的地
 SOUTHERN_SUMMER_MONTHS = [12, 1, 2]   # 澳紐、南美、南非等南半球目的地
 
-# 貨幣：對外查價服務要求 ISO 4217 代碼，`NTD` 不被接受。UI 與文件一律
-# 顯示「NTD」，此常數是送給 API 的值。兩者是同一貨幣的不同寫法。
-DEFAULT_CURRENCY = "TWD"
-DISPLAY_CURRENCY = "NTD"
 
 
 def _parse_months(value):
@@ -1244,34 +1246,63 @@ def sample_dates(months_ahead=6, per_month=4, trip_days=12, start_date=None,
     return out
 
 
-def pick_lead(outbound_date, lead_candidates, exclude_months=None):
-    """為一個主行程出發日挑出第一個「讓第1段避開指定月份」的提前天數。
+def _pick_offset(base_date, candidates, exclude_months, forward):
+    """從候選天數中挑第一個「讓偏移後的日期避開指定月份」的值。
 
-    PO 2026-09-23 的需求：主行程要避開旺季月份，但**第1段也不想落在
-    那些月份**（那趟外站旅行同樣會撞旺季）。單一 lead 值做不到——以排除
-    6–8 月為例，主行程在 2027-12 時 lead 120 天會把第1段推到 8 月、
-    lead 150 推到 7 月，兩者都被排除；得改用 lead 90（第1段落在 9 月）。
+    `forward=False` 往前推（第1段在主行程之前），`True` 往後推
+    （第4段在回程之後）。兩端邏輯相同，只有方向不同。
     排除月份由呼叫端給定，本函式不假設任何季節定義。
 
-    所以每個主行程日期需要各自挑 lead。回傳第一個合格的候選值，
-    全部不合格時回傳 None（該日期應整組跳過）。
+    **候選清單的順序就是偏好順序**——本函式回傳第一個合格值，不做最佳化。
+    這一點很容易誤用：2026-09-23 實測時把第4段候選寫成 `[1, 14, 30, …]`，
+    結果每組都挑到「延後 1 天」，也就是第4段緊接回程——那正是 PO 想避免的
+    密集行程。**避開月份是約束，拉遠是目標，兩者不同**：要拉遠就把大值
+    放前面（例如 `[90, 60, 30, 14]`），或直接只給可接受的區間。
     """
     exclude = set(exclude_months or [])
-    d2 = datetime.date.fromisoformat(outbound_date)
+    base = datetime.date.fromisoformat(base_date)
     today = datetime.date.today()
-    for lead in lead_candidates:
-        d1 = d2 - datetime.timedelta(days=lead)
-        if d1 <= today:
-            continue                      # 第1段不能在過去
-        if d1.month in exclude:
+    for days in candidates:
+        delta = datetime.timedelta(days=days)
+        target = base + delta if forward else base - delta
+        if target <= today:
+            continue                      # 航段不能排在過去
+        if target.month in exclude:
             continue
-        return lead
+        return days
     return None
+
+
+def pick_lead(outbound_date, lead_candidates, exclude_months=None):
+    """為主行程出發日挑出讓**第1段**避開指定月份的提前天數。
+
+    PO 2026-09-23 的需求：主行程要避開旺季月份，但第1段也不想落在那些
+    月份（那趟外站旅行同樣會撞旺季）。單一 lead 值做不到——以排除 6–8 月
+    為例，主行程在 2027-12 時 lead 120 天把第1段推到 8 月、lead 150 推到
+    7 月，兩者都被排除；得改用 lead 90（第1段落在 9 月）。
+
+    回傳第一個合格的候選值；全部不合格時回傳 None（該日期應整組跳過）。
+    """
+    return _pick_offset(outbound_date, lead_candidates, exclude_months, False)
+
+
+def pick_trail(return_date, trail_candidates, exclude_months=None):
+    """為主行程回程日挑出讓**第4段**避開指定月份的延後天數。
+
+    與 `pick_lead()` 對稱。PO 2026-09-23 追加的需求：第3段與第4段的間隔
+    也要能設定，理由同樣是**避免密集請假**——第4段（台北→外站）若緊接在
+    回程之後就是連續行程；拉遠後可當成下一趟旅行的去程。
+
+    這一端的價格槓桿比第1段更大：PO 提供的對照截圖（SRC-003／SRC-004）
+    顯示同樣四個班機、僅第4段由 3/12 挪到 3/24，票價從 NTD 15,225 漲到
+    18,564（＋21.9%）。
+    """
+    return _pick_offset(return_date, trail_candidates, exclude_months, True)
 
 
 def scan_dates_browser(destination, outstations=None, hub=DEFAULT_HUB,
                        months_ahead=6, per_month=4, trip_days=12, lead=3,
-                       trail=1, data_dir=None, currency="TWD", gl="tw",
+                       trail=1, data_dir=None, currency=DEFAULT_CURRENCY, gl="tw",
                        hl="zh-TW", min_delay_ms=SCRAPE_MIN_DELAY_MS,
                        max_delay_ms=SCRAPE_MAX_DELAY_MS,
                        session_limit=SCRAPE_SESSION_LIMIT, start_date=None,
@@ -1318,7 +1349,7 @@ def scan_dates_browser(destination, outstations=None, hub=DEFAULT_HUB,
     }
 
 
-def _query_batch(itineraries, token, data_dir=None, currency="TWD",
+def _query_batch(itineraries, token, data_dir=None, currency=DEFAULT_CURRENCY,
                  travel_class=1, adults=1, gl="tw", hl="zh-TW",
                  rate_per_hour=DEFAULT_RATE_PER_HOUR, connector_prices=None,
                  progress=None, budget=None, quota=FREE_TIER_MONTHLY_QUOTA):
@@ -1384,7 +1415,7 @@ def _cheapest(rows):
 def scan_layered(destination, outbound_date, return_date, token=None,
                  outstations=None, hub=DEFAULT_HUB, lead_days=None,
                  trail_days=None, base_lead=1, base_trail=1, top_k=2,
-                 data_dir=None, currency="TWD", travel_class=1, adults=1,
+                 data_dir=None, currency=DEFAULT_CURRENCY, travel_class=1, adults=1,
                  gl="tw", hl="zh-TW", rate_per_hour=DEFAULT_RATE_PER_HOUR,
                  connector_prices=None, progress=None,
                  quota=FREE_TIER_MONTHLY_QUOTA):
@@ -1483,7 +1514,9 @@ def main(argv=None):
     parser.add_argument(
         "--trail-days",
         default="%d-%d" % (DEFAULT_TRAIL_DAYS[0], DEFAULT_TRAIL_DAYS[-1]),
-        help="第4段比第3段晚幾天，範圍 a-b 或逗號清單")
+        help="第4段比第3段晚幾天，範圍 a-b 或逗號清單。"
+             "搭配 --exclude-trail-months 時**順序即偏好**，想拉遠就把大值"
+             "放前面（例如 90,60,30），否則會挑到最小值＝第4段緊接回程")
     parser.add_argument("--top-k", type=int, default=2,
                         help="分層掃描中進入第2層的外站數（預設 2）")
     parser.add_argument("--layered", action="store_true",
@@ -1520,6 +1553,11 @@ def main(argv=None):
                              "不需 API key、無額度限制、日期是輸出不是輸入")
     parser.add_argument("--start-date",
                         help="掃描起始日 YYYY-MM-DD（預設今天）")
+    parser.add_argument("--exclude-trail-months", default="",
+                        help="第4段不可落在的月份，1-12 任意複選逗號分隔。"
+                             "快捷同 --exclude-months。啟用時會從 "
+                             "--trail-days 為每個主行程回程日各自挑一個"
+                             "合格的延後天數（避免第4段緊接回程造成連續行程）")
     parser.add_argument("--exclude-lead-months", default="",
                         help="第1段不可落在的月份，1-12 任意複選逗號分隔"
                              "（例如 2,7,12）。快捷：north-summer=6,7,8、"
@@ -1601,6 +1639,7 @@ def main(argv=None):
     excl = _parse_months(args.exclude_months)
 
     lead_excl = _parse_months(args.exclude_lead_months)
+    trail_excl = _parse_months(args.exclude_trail_months)
 
     if args.scan_dates and fixed_mode:
         # 主行程固定、掃 --lead-days／--trail-days：用來測「第1段拉遠多久」
@@ -1624,13 +1663,21 @@ def main(argv=None):
                 # 每個主行程日期各自挑一個讓第1段避開排除月份的 lead
                 _lead = pick_lead(_ob, ints(args.lead_days), lead_excl)
                 if _lead is None:
-                    skipped.append(_ob)
+                    skipped.append("%s(第1段)" % _ob)
                     continue
             else:
                 _lead = args.lead
+            if trail_excl:
+                # 第4段同理，以回程日為基準往後推
+                _trail = pick_trail(_rt, ints(args.trail_days), trail_excl)
+                if _trail is None:
+                    skipped.append("%s(第4段)" % _ob)
+                    continue
+            else:
+                _trail = args.trail
             itineraries.extend(build_itineraries_fixed_trip(
                 args.destination.upper(), _ob, _rt, outstations,
-                args.hub.upper(), [_lead], [args.trail]))
+                args.hub.upper(), [_lead], [_trail]))
         if skipped:
             print("跳過 %d 個日期（找不到能讓第1段避開排除月份的提前天數）：%s"
                   % (len(skipped), " ".join(skipped)), file=sys.stderr)
@@ -1653,7 +1700,7 @@ def main(argv=None):
         for itin in shown:
             print("%s  外站 %s" % (_fmt_legs(itin["legs"]), itin["outstation"]))
             print("  %s\n" % google_flights_url(
-                itin["legs"], hl="zh-TW", gl="tw", currency="TWD"))
+                itin["legs"], hl="zh-TW", gl="tw", currency=DEFAULT_CURRENCY))
         if len(itineraries) > len(shown):
             print("（還有 %d 組未列出，用 --links-count 調整）"
                   % (len(itineraries) - len(shown)))
