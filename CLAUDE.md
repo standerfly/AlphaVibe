@@ -34,6 +34,7 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 | 資產 | `Assets.jsx` | `assets.py` | `kb_store.py` 新增 5 張表，手動輸入，無外部依賴 |
 | 美股（2026-09-08新增） | `UsStocks.jsx`／`UsStockDetail.jsx`／`UsStockImport.jsx` | `app/routers/us_stocks.py` | `poc/kb-mcp/us_stock_store.py`（獨立`USStockStore`+獨立db`us_stocks.db`，刻意不共用`KBStore`/`alphavibe.db`——美股與台股要完全獨立是產品硬性要求，非技術偏好）；Telegram推播暫為stub，`function/stnd-gateway-web`未合併進develop |
 | 相簿 | `Photos.jsx`／`PhotoDetail.jsx`／`SearchPanel.jsx`／`ImportWizard.jsx`／`AlbumGrid.jsx`／`AlbumDetail.jsx`／`SyncStatusCard.jsx` | `app/routers/photos.py` | `poc/kb-mcp/photo_store.py`（獨立`PhotoStore`+獨立db`photos.db`，比照`us_stock_store.py`先例）／`photo_importer.py`／`photo_metadata_sync.py`（呼叫`exiftool`寫回XMP/IPTC，新增系統層依賴，需`brew install exiftool`）；三個User Story（匯入整理/全域搜尋/中繼資料同步）2026-09-18已完整實作並通過測試（單元測試54個＋smoke test深度驗證＋Playwright瀏覽器實測），**但分支`004-photos-albums-search`尚未合併進`function/alphavibe`、正式服務`com.alphavibe.reportserver`也還沒重啟套用**，不要假設已上線；規格見`specs/004-photos-albums-search/` |
+| 機票（2026-09-23 新增） | `Flights.jsx`／`FlightTrackForm.jsx` | `app/routers/flights.py` | `poc/kb-mcp/flight_store.py`（獨立`FlightStore`+獨立db`flights.db`，比照`us_stock_store.py`先例）／`flight_scan_service.py`／`flight_search.py`（查價與枚舉，176測試）／`scraper/`（Node+Playwright，需`npm install`）；外站四段票掃描，**日期是輸出不是輸入**——給區間與行程天數，系統抽樣日期查價。查價走瀏覽器路徑（免費、免註冊）但**有速率上限**（預設20筆/小時，為推估值；超過會被軟封鎖成連續逾時）。005（掃描分頁）56/56＋006（價格追蹤：每日排程重掃、跌破目標價Telegram通知、過期資料不通知）33/33皆已完成，214單元測試＋smoke test 113項全綠；排程進入點`flight_tracking_job.py`＋`ops/launchd/com.alphavibe.flighttracking.plist`（每日09:30）。**尚未合併進`function/alphavibe`、正式服務也還沒重啟套用**；規格見`specs/005-flight-scan-page/`與`specs/006-flight-price-tracking/`，需求基線見`docs/spec-intake/flight-search/` |
 | 旅遊（未來，尚未建立） | — | — | 內容/研究在**另一個獨立專案** `/Users/stander/My_project/mytravel/`——若要做這個分頁，程式碼仍會建在這個 repo，但要不要整合 mytravel 的資料、整合到多深，屬於獨立待討論的範圍決策，不要預設 |
 
 新增分頁前的判斷順序：(1) 先跟 PO 討論這個領域要不要進 STND、做到多深
@@ -55,9 +56,16 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 決策依據：`docs/adr/0027-prespec-workflow.md`。
 
 <!-- SPECKIT START -->
-目前進行中的 Spec Kit 技術規劃：`specs/004-photos-albums-search/plan.md`
-（相簿分頁：匯入/整理/全域搜尋＋標籤評分中繼資料同步，分支
-`004-photos-albums-search`）。`specs/003-us-stocks` 已完成規劃階段。
+目前進行中的 Spec Kit 技術規劃：`specs/006-flight-price-tracking/plan.md`
+（機票價格追蹤：定期自動重掃、達標 Telegram 通知、資料過期防護，分支
+`006-flight-price-tracking`，建在 005 之上）。前一階段
+`specs/005-flight-scan-page/plan.md`
+（機票掃描分頁：外站四段票日期抽樣掃描、兩端間隔策略、速率守衛與結果
+顯示，分支 `005-flight-scan-page`）。接手實作前先讀
+`specs/005-flight-scan-page/quickstart.md`——它列出「已完成不要重寫」的
+既有能力與三個已發生過的事故坑。上游需求基線在
+`docs/spec-intake/flight-search/`（Accepted）。
+`specs/004-photos-albums-search` 已完成規劃階段。
 <!-- SPECKIT END -->
 
 ## 分支規則
@@ -136,6 +144,15 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
   （現在跑 `uvicorn app.main:app`，不是 `report_server.py`）；舊版 plist
   備份在 `~/Library/LaunchAgents/backup-20260822/`，回滾步驟見同一天
   教訓紀錄。
+- **機票查詢（外站四段票）**：`poc/kb-mcp/flight_search.py`（CLI，97 測試）
+  ＋ `poc/kb-mcp/scraper/`（Node/Playwright 抓 Google Flights，需先
+  `npm install`）。**接手前先讀
+  `docs/research/2026-09-22-ex-station-4segment-ticket-search.md`**——
+  裡面有外站四段票機制、票規限制（長榮第1、2段須24小時內轉機／星宇可
+  多段中停）、實測的封鎖速率上限、PO 偏好（成田優先、避開北半球暑假、
+  第1段拉遠以免密集請假）與已找到的方案。尚未做成 STND 分頁，只有 CLI。
+  查價走瀏覽器路徑（免費、無額度），**有速率限制**（預設 20 筆/小時，
+  超過會被 Google 軟封鎖成連續逾時）；SerpApi 路徑是備援、需自備 key。
 - 加碼/減碼決策原則：`poc/data/philosophy/framework_evidence_based_position_sizing.md`
   （或呼叫 `get_philosophy`）——**不會自動載入**，討論加碼/減碼前主動查
   （Layer 1「啟動時拼接進 system prompt」的 FR-014 尚未實作，見下方教訓紀錄）

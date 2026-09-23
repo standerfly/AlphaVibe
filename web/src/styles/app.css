@@ -534,3 +534,63 @@ details.collapse summary::marker { color: var(--accent); }
 @media (max-width: 640px) {
   .gateway-chat-bubble { max-width: 100%; }
 }
+
+/* ── 機票掃描分頁（specs/005-flight-scan-page）─────────────────────
+   命名沿用本檔案既有的「功能前綴 ＋ BEM」慣例（.pocket-card、
+   .album-card…），不新增通用的 .card／.pill 等全域名稱——那會跟其他
+   分頁互相干擾。配色一律走 tokens.css 的變數，不寫死色碼。 */
+
+.flight-page { display: flex; flex-direction: column; gap: 1rem; }
+.flight-page__head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.flight-page__lead { color: var(--ink-dim); font-size: .88rem; line-height: 1.7; margin: 0; }
+.flight-muted { color: var(--ink-dim); font-size: .82rem; line-height: 1.6; }
+.flight-error { color: var(--red-ink); background: var(--red-soft); border: 1px solid var(--red); border-radius: 8px; padding: .55rem .75rem; font-size: .85rem; }
+
+.flight-card { background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; box-shadow: var(--shadow); padding: .9rem 1rem; display: flex; flex-direction: column; gap: .45rem; }
+.flight-card__head { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; }
+.flight-card__head h3 { font-size: .98rem; font-weight: 700; margin: 0; }
+.flight-card__actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .3rem; }
+
+.flight-pill { display: inline-flex; align-items: center; border-radius: 999px; padding: .1rem .5rem; font-size: .72rem; font-weight: 700; white-space: nowrap; }
+.flight-pill--ok { background: var(--accent-soft); color: var(--accent); }
+.flight-pill--pending { background: var(--paper-sunken); color: var(--ink-dim); }
+.flight-pill--alert { background: var(--amber-soft); color: var(--amber); }
+
+/* 過期提示用琥珀色而非紅色：資料過期是「該重掃了」的提醒，
+   不是系統錯誤——用紅色會讓使用者以為壞掉了（006 FR-013）。 */
+.flight-stale { color: var(--amber); background: var(--amber-soft); border: 1px solid var(--amber); border-radius: 8px; padding: .55rem .75rem; font-size: .85rem; }
+.flight-freq { margin: 0 .3rem; font-size: .82rem; padding: .1rem .25rem; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); color: var(--ink); }
+
+.flight-btn--primary { background: var(--accent); color: var(--paper); border: 1px solid var(--accent); border-radius: 7px; padding: .35rem .8rem; font-size: .84rem; cursor: pointer; }
+.flight-btn--danger { color: var(--red-ink); border-color: var(--red); }
+
+.flight-form { background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; box-shadow: var(--shadow); padding: 1rem; display: flex; flex-direction: column; gap: .7rem; }
+.flight-form h2 { font-size: 1rem; margin: 0; }
+.flight-form__row { display: flex; flex-direction: column; gap: .3rem; }
+.flight-form__row--inline { flex-direction: row; align-items: center; flex-wrap: wrap; gap: .5rem; }
+.flight-form__label { font-size: .8rem; font-weight: 700; color: var(--ink-dim); }
+.flight-form__actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: .3rem; }
+.flight-form input, .flight-form select { background: var(--paper-sunken); border: 1px solid var(--rule); border-radius: 7px; padding: .35rem .5rem; font-size: .86rem; color: var(--ink); }
+.flight-form input[type="number"] { width: 6rem; }
+
+.flight-chips, .flight-months { display: flex; flex-wrap: wrap; gap: .3rem; }
+.flight-chip, .flight-month { background: var(--paper-sunken); border: 1px solid var(--rule); border-radius: 999px; padding: .2rem .6rem; font-size: .78rem; color: var(--ink-dim); cursor: pointer; }
+.flight-month { border-radius: 7px; min-width: 2.1rem; text-align: center; }
+.flight-chip--on, .flight-month--on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 700; }
+
+/* 結果表在手機上可能比畫面寬——讓表格自己橫向捲動，
+   而不是讓整個頁面本體橫向捲動（spec US4 情境 6）。 */
+.flight-table-scroll { overflow-x: auto; }
+.flight-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.flight-table th, .flight-table td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+.flight-table th { color: var(--ink-dim); font-weight: 700; font-size: .75rem; }
+.flight-table td { font-variant-numeric: tabular-nums; }
+.flight-row--muted td { color: var(--ink-dim); }
+.flight-skipped { margin-top: .5rem; font-size: .8rem; color: var(--ink-dim); }
+.flight-skipped summary { cursor: pointer; }
+.flight-skipped ul { margin: .4rem 0 .3rem; padding-left: 1.1rem; line-height: 1.7; }
+.flight-links a { margin-right: .5rem; font-size: .78rem; color: var(--accent); }
+.flight-native { margin-top: .8rem; font-size: .82rem; }
+.flight-native summary { cursor: pointer; color: var(--ink-dim); }
+.flight-native ol, .flight-native ul { padding-left: 1.2rem; line-height: 1.8; }
+.flight-native code { background: var(--paper-sunken); padding: .1rem .3rem; border-radius: 4px; font-size: .76rem; }
