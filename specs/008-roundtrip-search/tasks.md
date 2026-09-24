@@ -232,13 +232,17 @@ contracts/roundtrip-api.md、quickstart.md（皆已完成）
       `flight-roundtrip-search` pre-spec 工作區的最後一包，可視情況
       將 pre-spec 全域索引（`docs/spec-intake/index.md`）狀態更新為
       `Handoff Complete`
-- [ ] T032 **⏸ 待 PO 確認的正式環境部署**：合併程式碼到
-      `function/alphavibe` → 重啟 `com.alphavibe.reportserver`（新表
-      由 `_migrate()`／`CREATE TABLE IF NOT EXISTS` 自動建立，不需要
-      額外遷移腳本，quickstart.md「正式環境部署順序」）→ 用 `curl`
-      建立一個真實單純來回條件、觸發掃描、確認端到端運作 → 確認既有
-      四段票條件（id=9）在合併後仍正常運作（清單合併邏輯是共用程式碼，
-      需要實際驗證不影響既有行為）
+- [X] T032 **正式環境部署（2026-09-25 完成，PO 確認後執行）**：備份
+      正式資料庫（`backup_databases.py`，三個 db 皆 integrity_check
+      通過）→ fast-forward 合併 `008-roundtrip-search` 到
+      `function/alphavibe`（`b29b2cd`）並 push → `npx vite build`
+      重新產出 `web/dist/` → 重啟 `com.alphavibe.reportserver`（新表
+      由 `CREATE TABLE IF NOT EXISTS` 自動建立，未需額外遷移腳本）→
+      用 `curl` 建立真實單純來回條件（TPE↔AOJ）、觸發掃描，10/10
+      組合查完，最低價 NT$17,921，`google_flights_url()` 連結正確
+      → 確認既有四段票條件（id=9）在合併後仍正常運作（清單合併端點
+      回傳兩種 `track_type` 皆正確，id=9 資料完整未受影響）→ 刪除
+      測試用條件
 
 ---
 
@@ -293,7 +297,7 @@ Phase 6（組合數守衛）才算完整實現 speckit-input.md 的全部範圍�
 三者皆為 PO 明確要求的範圍內項目，建議同一輪做完，不分批交付
 （與 007 的策略一致）。
 
-**正式環境部署（T032）需要 PO 明確確認後才執行**，理由同 007／006
-的既有先例——即使本包不涉及破壞性資料異動，仍是對正式服務的變更，
-且清單合併端點（T014）是與既有四段票共用的程式碼路徑，需要人工
-確認不影響既有功能後才部署。
+**正式環境部署（T032）已於 2026-09-25 由 PO 確認後執行完成**，理由同
+007／006 的既有先例——即使本包不涉及破壞性資料異動，仍是對正式服務的
+變更，且清單合併端點（T014）是與既有四段票共用的程式碼路徑，已實際
+驗證不影響既有功能。

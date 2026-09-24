@@ -80,10 +80,17 @@ id=9 已在正式庫遷移至 10～14 天並重新查價（最低價 NT$46,872�
 `specs/008-roundtrip-search/tasks.md` T029 備註）＋smoke test 全項
 PASS（含新增的 preferred_transit 持久化驗證）。
 
-**T032（正式環境部署）尚未執行，待 PO 另外確認**——程式碼尚未合併進
-`function/alphavibe`、正式服務也還沒重啟套用。這是
-`flight-roundtrip-search` pre-spec 工作區兩包中的最後一包；兩包程式碼
-層級皆已完成，工作區狀態可視 T032 完成後再更新為 `Handoff Complete`。
+**T032（正式環境部署）已於 2026-09-25 由 PO 確認後執行完成**：
+fast-forward 合併 `008-roundtrip-search` 到 `function/alphavibe`
+（`b29b2cd`）並 push、正式服務已重啟套用、用真實 API 建立 TPE↔AOJ
+單純來回條件端到端驗證（10/10 組合查完，最低 NT$17,921），既有四段票
+id=9 條件確認不受影響。`flight-roundtrip-search` pre-spec 工作區兩包
+（`trip-day-range`／`roundtrip-search`）皆已完成開發並正式上線——
+兩包從 Spec Kit 交接以後的實作與部署進度不在 pre-spec 工具鏈
+（`prespec_sync_index.py`）追蹤範圍內，該腳本產出的全域索引狀態
+`Ready`（Ready for Spec Kit handoff）維持不變，仍正確反映「已完成
+交接」這件事；後續上線細節以本檔案與 `specs/007-trip-day-range/`／
+`specs/008-roundtrip-search/` 的 tasks.md 為準。
 
 ### 非阻斷的已知待辦
 

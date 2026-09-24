@@ -34,7 +34,7 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 | 資產 | `Assets.jsx` | `assets.py` | `kb_store.py` 新增 5 張表，手動輸入，無外部依賴 |
 | 美股（2026-09-08新增） | `UsStocks.jsx`／`UsStockDetail.jsx`／`UsStockImport.jsx` | `app/routers/us_stocks.py` | `poc/kb-mcp/us_stock_store.py`（獨立`USStockStore`+獨立db`us_stocks.db`，刻意不共用`KBStore`/`alphavibe.db`——美股與台股要完全獨立是產品硬性要求，非技術偏好）；Telegram推播暫為stub，`function/stnd-gateway-web`未合併進develop |
 | 相簿 | `Photos.jsx`／`PhotoDetail.jsx`／`SearchPanel.jsx`／`ImportWizard.jsx`／`AlbumGrid.jsx`／`AlbumDetail.jsx`／`SyncStatusCard.jsx` | `app/routers/photos.py` | `poc/kb-mcp/photo_store.py`（獨立`PhotoStore`+獨立db`photos.db`，比照`us_stock_store.py`先例）／`photo_importer.py`／`photo_metadata_sync.py`（呼叫`exiftool`寫回XMP/IPTC，新增系統層依賴，需`brew install exiftool`）；三個User Story（匯入整理/全域搜尋/中繼資料同步）2026-09-18已完整實作並通過測試（單元測試54個＋smoke test深度驗證＋Playwright瀏覽器實測），**但分支`004-photos-albums-search`尚未合併進`function/alphavibe`、正式服務`com.alphavibe.reportserver`也還沒重啟套用**，不要假設已上線；規格見`specs/004-photos-albums-search/` |
-| 機票（2026-09-23 新增，持續擴充中） | `Flights.jsx`／`FlightTrackForm.jsx` | `app/routers/flights.py` | `poc/kb-mcp/flight_store.py`（獨立`FlightStore`+獨立db`flights.db`，比照`us_stock_store.py`先例）／`flight_scan_service.py`／`flight_search.py`（查價與枚舉）／`scraper/`（Node+Playwright，需`npm install`）；外站四段票掃描，**日期是輸出不是輸入**——給區間與行程天數，系統抽樣日期查價。查價走瀏覽器路徑（免費、免註冊）但**有速率上限**（預設20筆/小時，為推估值；超過會被軟封鎖成連續逾時）。005（掃描分頁）＋006（價格追蹤：每日排程重掃、跌破目標價Telegram通知含現況通知、過期資料不通知）皆已上線；007（天數區間化：`trip_days`從單一固定整數改為`trip_days_min`/`trip_days_max`區間，系統展開多天數選項比價，建立時有組合數上限守衛防吃光配額）2026-09-24已完成開發並**正式上線**（264個機票測試＋smoke test 119項全綠，已合併進`function/alphavibe`、id=9已遷移至10~14天並重新查價驗證、正式服務已重啟套用）；排程進入點`flight_tracking_job.py`＋`ops/launchd/com.alphavibe.flighttracking.plist`（每日09:30）。008（單純來回搜尋：多候選目的地比價、可選偏好轉機城市、通知標示觸發目的地、組合數上限守衛，新增`roundtrip_track`／`roundtrip_scan_result`獨立表，不與四段票共用schema）2026-09-25已完成開發（Phase 1-7，298個機票測試全綠＋smoke test全項PASS），**但尚未合併進`function/alphavibe`、正式服務也還沒重啟套用**，不要假設已上線；正式環境部署（T032）待PO另外確認才執行。規格見`specs/005-flight-scan-page/`／`specs/006-flight-price-tracking/`／`specs/007-trip-day-range/`／`specs/008-roundtrip-search/`，需求基線見`docs/spec-intake/flight-search/`與`docs/spec-intake/flight-roundtrip-search/` |
+| 機票（2026-09-23 新增，持續擴充中） | `Flights.jsx`／`FlightTrackForm.jsx` | `app/routers/flights.py` | `poc/kb-mcp/flight_store.py`（獨立`FlightStore`+獨立db`flights.db`，比照`us_stock_store.py`先例）／`flight_scan_service.py`／`flight_search.py`（查價與枚舉）／`scraper/`（Node+Playwright，需`npm install`）；外站四段票掃描，**日期是輸出不是輸入**——給區間與行程天數，系統抽樣日期查價。查價走瀏覽器路徑（免費、免註冊）但**有速率上限**（預設20筆/小時，為推估值；超過會被軟封鎖成連續逾時）。005（掃描分頁）＋006（價格追蹤：每日排程重掃、跌破目標價Telegram通知含現況通知、過期資料不通知）皆已上線；007（天數區間化：`trip_days`從單一固定整數改為`trip_days_min`/`trip_days_max`區間，系統展開多天數選項比價，建立時有組合數上限守衛防吃光配額）2026-09-24已完成開發並**正式上線**（264個機票測試＋smoke test 119項全綠，已合併進`function/alphavibe`、id=9已遷移至10~14天並重新查價驗證、正式服務已重啟套用）；排程進入點`flight_tracking_job.py`＋`ops/launchd/com.alphavibe.flighttracking.plist`（每日09:30）。008（單純來回搜尋：多候選目的地比價、可選偏好轉機城市、通知標示觸發目的地、組合數上限守衛，新增`roundtrip_track`／`roundtrip_scan_result`獨立表，不與四段票共用schema）2026-09-25已完成開發並**正式上線**（298個機票測試全綠＋smoke test全項PASS，已合併進`function/alphavibe`、正式服務已重啟套用，真實查價驗證TPE↔AOJ最低NT$17,921、既有id=9四段票條件確認不受影響）。規格見`specs/005-flight-scan-page/`／`specs/006-flight-price-tracking/`／`specs/007-trip-day-range/`／`specs/008-roundtrip-search/`，需求基線見`docs/spec-intake/flight-search/`與`docs/spec-intake/flight-roundtrip-search/` |
 | 旅遊（未來，尚未建立） | — | — | 內容/研究在**另一個獨立專案** `/Users/stander/My_project/mytravel/`——若要做這個分頁，程式碼仍會建在這個 repo，但要不要整合 mytravel 的資料、整合到多深，屬於獨立待討論的範圍決策，不要預設 |
 
 新增分頁前的判斷順序：(1) 先跟 PO 討論這個領域要不要進 STND、做到多深
@@ -67,13 +67,14 @@ flight-roundtrip-search/` 拆包的第一包）**2026-09-24 已完成並正式
 可選轉機城市偏好，新增 `roundtrip_track`／`roundtrip_scan_result`
 獨立表，不與四段票共用 schema；`google_flights_url()` 不需修改——
 傳 2 段自動編碼來回、傳 4 段自動編碼多城市，研究階段的關鍵發現）
-**2026-09-25 已完成開發（Phase 1-7，T001-T031 全數完成），T032（正式
-環境部署）待 PO 確認後才執行**：298 個機票單元測試全綠（僅 1 個與本
-feature 無關、既有的日期敏感測試因時間推移而失敗，見
+**2026-09-25 已完成開發並正式上線（Phase 1-7，T001-T032 全數完成）**：
+298 個機票單元測試全綠（僅 1 個與本 feature 無關、既有的日期敏感測試
+因時間推移而失敗，見
 `test_flight_search.py::SampleDatesTest::test_covers_requested_number_of_months`）＋
 smoke test 全項 PASS（含新增的 preferred_transit 持久化、組合數上限、
-跨目的地最低價通知）。程式碼尚未合併進 `function/alphavibe`、正式
-服務也還沒重啟套用，不要假設已上線。見
+跨目的地最低價通知）。已合併進 `function/alphavibe`、正式服務已重啟
+套用；用真實 API 建立 TPE↔AOJ 單純來回條件驗證端到端（10/10 組合
+查價完成，最低 NT$17,921），既有四段票 id=9 確認合併後不受影響。見
 `specs/008-roundtrip-search/tasks.md`。接手前先讀
 `specs/008-roundtrip-search/quickstart.md`。
 
