@@ -1,6 +1,6 @@
 # Spec Kit Input: 單純來回搜尋
 
-**Status:** Draft
+**Status:** Accepted
 **Source Product Spec:** ../../product-spec.md
 **Source Scope Decision:** ../../scope-decision.md
 **Spec Feature Slug:** roundtrip-search

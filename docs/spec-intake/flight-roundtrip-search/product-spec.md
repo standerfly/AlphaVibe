@@ -1,12 +1,14 @@
 # Product Spec: 機票查詢：四段票天數區間化＋單純來回搜尋
 
-**Status:** In Review
+**Status:** Accepted
 **Feature Slug:** flight-roundtrip-search
 **Function Branch:** function/flight-roundtrip-search
 **Product Owner:** Stander
 **TPM:** Claude
-**Accepted At:** N/A
-**Acceptance Evidence:** N/A
+**Accepted At:** 2026-09-24
+**Acceptance Evidence:** PO 於 Claude Code 對話中明確回覆「好」接受本
+份 product-spec，包含「Constraints And Assumptions」中標記為
+Assumption 的兩項（id=9 遷移區間 10～14 天、組合數上限 60／條件）
 
 ## Problem And Goal
 
