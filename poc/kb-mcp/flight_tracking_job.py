@@ -5,7 +5,9 @@
 
 1. 找出今天輪到、且距上次成功已滿一個週期的追蹤條件
 2. 對每個條件執行既有的掃描（**不重新實作掃描邏輯**）
-3. 掃完後判定是否跌破目標價，達標就用 Telegram 通知
+3. 掃完後判定是否跌破目標價：達標發「降價」通知；**未達標**則發「現況」
+   通知（PO 2026-09-24 新增，告知這輪最低價與目標價的差距），兩者互斥、
+   同一輪只會發一種
 
 ## 三個刻意的設計
 
@@ -91,10 +93,7 @@ def process_track(track, data_dir, store, dry_run=False, notifier=None):
         return summary
 
     state = svc.derive_state(track, data_dir, store=store)
-    if not svc.should_notify(track, lowest["price"], state=state):
-        summary["skipped_reason"] = (
-            "stale" if state == "stale" else "not_below_target_or_duplicate")
-        return summary
+    send = notifier or notify.send_telegram
 
     # 取完整的最低價那一列（lowest_result 只回摘要，通知需要四段日期）
     rows = [r for r in store.list_results(tid)
@@ -103,16 +102,35 @@ def process_track(track, data_dir, store, dry_run=False, notifier=None):
         summary["skipped_reason"] = "row_not_found"
         return summary
 
-    message = svc.build_notification(track, rows[0])
-    send = notifier or notify.send_telegram
-    sent, errors = send(message)
-    ok = sent > 0
-    store.record_notification(tid, lowest["price"], ok=ok)
-    summary["notified"] = ok
-    summary["notify_errors"] = errors
-    _log("  [%d] 通知%s（NT$%s）%s"
-         % (tid, "已送出" if ok else "失敗", format(lowest["price"], ","),
-            "；" + "；".join(errors) if errors else ""))
+    if svc.should_notify(track, lowest["price"], state=state):
+        message = svc.build_notification(track, rows[0])
+        sent, errors = send(message)
+        ok = sent > 0
+        store.record_notification(tid, lowest["price"], ok=ok)
+        summary["notified"] = ok
+        summary["notify_errors"] = errors
+        _log("  [%d] 通知%s（NT$%s）%s"
+             % (tid, "已送出" if ok else "失敗", format(lowest["price"], ","),
+                "；" + "；".join(errors) if errors else ""))
+        return summary
+
+    # 未達標的現況通知（PO 2026-09-24 新增）：跟達標通知互斥，兩者不會
+    # 同一輪都發——刻意不寫進 `record_notification()`（那組欄位是「上次
+    # 達標通知」的語意，見 FR-019），也不做去重，每輪未達標都會送一次
+    if svc.should_notify_status(track, lowest["price"], state=state):
+        message = svc.build_status_notification(track, rows[0])
+        sent, errors = send(message)
+        summary["status_notified"] = sent > 0
+        summary["status_notify_errors"] = errors
+        _log("  [%d] 現況通知%s（最低 NT$%s，未達標）%s"
+             % (tid, "已送出" if sent > 0 else "失敗",
+                format(lowest["price"], ","),
+                "；" + "；".join(errors) if errors else ""))
+        summary["skipped_reason"] = "not_below_target_status_sent"
+        return summary
+
+    summary["skipped_reason"] = (
+        "stale" if state == "stale" else "not_below_target_or_duplicate")
     return summary
 
 

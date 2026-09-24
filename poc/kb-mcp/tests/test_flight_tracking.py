@@ -153,6 +153,67 @@ class NotifyDecisionTest(unittest.TestCase):
             svc.should_notify(self._track(), 37265, state="stale"))
 
 
+class StatusNotifyDecisionTest(unittest.TestCase):
+    """未達標的現況通知判定（PO 2026-09-24 新增：「若沒有達成，找最
+    接近的組合」）。跟 NotifyDecisionTest 用同一套 _track() 慣例。
+    """
+
+    def _track(self, target=38000, freq=7):
+        return {"id": 1, "name": "測試", "destination": "PRG", "hub": "TPE",
+                "target_price": target, "scan_frequency_days": freq,
+                "notify": {"last_notified_price": None}}
+
+    def test_notifies_status_when_above_target(self):
+        self.assertTrue(svc.should_notify_status(self._track(), 44320))
+
+    def test_no_status_notify_when_target_met(self):
+        """達標時走 should_notify() 的訊息，不該同時又發現況通知。"""
+        self.assertFalse(svc.should_notify_status(self._track(), 37265))
+
+    def test_no_status_notify_without_target_price(self):
+        self.assertFalse(
+            svc.should_notify_status(self._track(target=None), 44320))
+
+    def test_no_status_notify_when_no_priced_result(self):
+        self.assertFalse(svc.should_notify_status(self._track(), None))
+
+    def test_stale_state_blocks_status_notification(self):
+        """跟達標通知一樣，過期資料不得觸發現況通知（FR-014 同理）。"""
+        self.assertFalse(
+            svc.should_notify_status(self._track(), 44320, state="stale"))
+
+    def test_no_dedup_unlike_should_notify(self):
+        """刻意反向驗證：即使上一輪已經發過現況通知、價格完全沒變，
+        這一輪仍要再發——PO 明知會員增加通知頻率仍選擇要（跟
+        should_notify() 的「比上次更低才發」刻意不同）。
+        """
+        track = self._track()
+        track["notify"] = {"last_notified_price": 44320}   # 假裝發過
+        self.assertTrue(svc.should_notify_status(track, 44320))
+
+
+class BuildStatusNotificationTest(unittest.TestCase):
+    """現況通知的訊息內容。"""
+
+    def _row(self):
+        return {"outstation": "NRT", "leg1_date": "2027-01-16",
+                "outbound_date": "2027-04-16", "return_date": "2027-04-28",
+                "leg4_date": "2027-05-28", "price": 44320,
+                "airline": "捷星日本航空"}
+
+    def test_message_shows_gap_and_marks_unmet(self):
+        track = {"name": "布拉格（成田出發）2027春", "destination": "PRG",
+                 "hub": "TPE", "target_price": 40000}
+        msg = svc.build_status_notification(track, self._row())
+        self.assertIn("尚未達標", msg)
+        self.assertIn("44,320", msg)
+        self.assertIn("40,000", msg)
+        self.assertIn("還差 NT$4,320", msg)
+        self.assertIn("google.com/travel/flights", msg)
+        # 現況通知不是「達標」，不該出現降價通知專屬的達標措辭
+        self.assertNotIn("降到目標價以下", msg)
+
+
 class TrackingJobTest(unittest.TestCase):
     """排程腳本的端到端行為（以替身取代查價與通知）。"""
 
@@ -267,6 +328,52 @@ class TrackingJobTest(unittest.TestCase):
         fs.scrape_itineraries = lambda *a, **k: self.fail("不該掃描")
         res = job.run(self.tmp, today=day, notifier=self._notifier())
         self.assertEqual(res, [])
+
+    def test_sends_status_notification_when_above_target(self):
+        """PO 2026-09-24 新增：未達標時發「現況」通知，告知最接近的組合。
+
+        setUp 的 self.track 目標價 50,000；查到 55,000（高於目標），
+        應該送出現況通知而非達標通知。
+        """
+        fs.scrape_itineraries = self._scrape(55000)
+        res = job.run(self.tmp, today=self._its_day(),
+                      notifier=self._notifier())
+        self.assertTrue(res[0]["scanned"])
+        self.assertFalse(res[0]["notified"], "未達標不該走達標通知分支")
+        self.assertTrue(res[0].get("status_notified"),
+                        "未達標應發送現況通知")
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("尚未達標", self.sent[0])
+        self.assertIn("55,000", self.sent[0])
+        # 現況通知不寫進 last_notified_price／last_notified_at——那組
+        # 欄位是「上次達標通知」的語意（FR-019），現況通知不應污染它
+        n = self.store.get_track(self.track["id"])["notify"]
+        self.assertIsNone(n["last_notified_price"])
+        self.assertIsNone(n["last_notified_at"])
+
+    def test_status_and_target_notifications_are_mutually_exclusive(self):
+        """同一輪掃描只會發一種通知：達標時不該再多發一則現況通知。"""
+        fs.scrape_itineraries = self._scrape(37265)   # 低於目標 50,000
+        res = job.run(self.tmp, today=self._its_day(),
+                      notifier=self._notifier())
+        self.assertTrue(res[0]["notified"])
+        self.assertFalse(res[0].get("status_notified"))
+        self.assertEqual(len(self.sent), 1, "同一輪不該發兩則通知")
+
+    def test_status_notification_sent_every_round_even_if_unchanged(self):
+        """反向驗證：現況通知刻意不去重——即使兩輪價格完全相同，各發
+        一次（跟達標通知的「比上次更低才發」刻意不同，見
+        should_notify_status() 的 docstring）。
+        """
+        fs.scrape_itineraries = self._scrape(55000)
+        day = self._its_day()
+        job.run(self.tmp, today=day, notifier=self._notifier())
+        shutil.rmtree(os.path.join(self.tmp, "flight_cache"), ignore_errors=True)
+        self.store.mark_success(self.track["id"],
+                                (day - datetime.timedelta(days=8)).isoformat()
+                                + "T00:00:00")
+        job.run(self.tmp, today=day, notifier=self._notifier())
+        self.assertEqual(len(self.sent), 2, "未達標的現況通知每輪都該發")
 
 
 class StaleProtectionTest(unittest.TestCase):

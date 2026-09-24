@@ -98,7 +98,13 @@ def _track_summary(store: FlightStore, track: Dict[str, Any],
                              scanning=track["id"] in _SCANNING)
     lowest = store.lowest_result(track["id"])
     if lowest and track.get("target_price") is not None:
-        lowest = dict(lowest, target_met=lowest["price"] <= track["target_price"])
+        target_met = lowest["price"] <= track["target_price"]
+        lowest = dict(lowest, target_met=target_met)
+        if not target_met:
+            # 未達標時附上差距，前端不用自己算（PO 2026-09-24 新增：
+            # 「若沒有達成，找最接近的組合」——現有的「最低價」本身就是
+            # 最接近的組合，只是原本沒標示差多少）
+            lowest["gap_to_target"] = lowest["price"] - track["target_price"]
     out = dict(track)
     out["state"] = state
     out["progress"] = {"done": len(itineraries) - len(pending),

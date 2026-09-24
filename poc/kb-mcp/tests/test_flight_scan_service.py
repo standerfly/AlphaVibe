@@ -168,8 +168,47 @@ class ExpandTrackTest(unittest.TestCase):
         itins, skipped = svc.expand_track(t)
         self.assertEqual(itins, [])
         self.assertTrue(skipped)
-        self.assertEqual(skipped[0]["reason"], "no_feasible_offset")
+        self.assertEqual(skipped[0]["reason"], "excluded_month")  # 2026-09-24：原「no_feasible_offset」拆分為 excluded_month／past_date，本情境仍是「所有候選都撞排除月份」
         self.assertIn("第1段", skipped[0]["detail"])
+
+    def test_fixed_lead_strategy_skips_dates_pushed_into_the_past(self):
+        """2026-09-24 修正的 bug：固定策略（非 auto）原本不檢查算出來的
+        第1段日期是否已經過去。用近期主行程（1個月後）配上最大的固定
+        提前量 m5（150天）必然把第1段推到今天之前——這班機已經飛走，
+        買不到票，不該出現在結果裡，也不該真的送去查價（白佔配額）。
+        """
+        ws, we = _future_window(months_from_now=1, span=1)
+        t = self._track(window_start=ws, window_end=we,
+                        lead_strategy="m5", trail_strategy="none")
+        itins, skipped = svc.expand_track(t)
+        today = datetime.date.today()
+        for i in itins:
+            leg1 = datetime.date.fromisoformat(i["legs"][0]["date"])
+            self.assertGreater(leg1, today,
+                               "第1段 %s 不得早於或等於今天" % leg1)
+        self.assertTrue(skipped, "近期主行程配 150 天固定提前量應被跳過")
+        self.assertEqual(skipped[0]["reason"], "past_date")
+        self.assertIn("過去日期", skipped[0]["detail"])
+
+    def test_fixed_trail_strategy_skips_dates_pushed_into_the_past(self):
+        """第4段的對稱情境：固定 trail 理論上不會把日期推到過去（trail 是
+        往後延），但仍驗證正常情況下不誤判——回歸防護，避免未來改動
+        （例如支援「回填」語意）時悄悄破壞這個方向。
+        """
+        t = self._track(trail_strategy="m5")
+        itins, skipped = svc.expand_track(t)
+        self.assertTrue(itins)
+        self.assertEqual(skipped, [])
+
+    def test_auto_lead_strategy_still_skips_by_excluded_month_not_past_date(self):
+        """反向驗證：`auto` 策略的跳過原因欄位維持 `excluded_month`，
+        沒有被這次修正誤改成 `past_date`（兩條路徑各自獨立判斷）。
+        """
+        t = self._track(lead_strategy="auto",
+                        exclude_months_lead=list(range(1, 13)))
+        _, skipped = svc.expand_track(t)
+        self.assertTrue(skipped)
+        self.assertEqual(skipped[0]["reason"], "excluded_month")
 
     def test_trip_exclusion_removes_those_months(self):
         ws, we = _future_window(months_from_now=4, span=4)

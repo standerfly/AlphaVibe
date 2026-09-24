@@ -65,22 +65,46 @@ def _resolve_offsets(track, outbound_date, return_date):
     非 `auto` 策略直接取固定值；`auto` 則為**這個日期**各自挑選，
     因為單一固定值無法同時滿足所有月份（spec FR-007）。
     回傳 (lead, trail)，任一端無可行值時該端為 None，呼叫端應整組跳過。
+
+    2026-09-24 修正：固定策略（`m1`／`m3`／`m5`）原本沒有檢查算出來的
+    航段日期是否已經過去——`auto` 策略透過 `pick_lead()`/`pick_trail()`
+    內的 `_pick_offset()` 早就擋了這件事（`target <= today` 就跳過），
+    但固定策略直接套用 `STRATEGY_DAYS` 的天數，完全不檢查。近期建立的
+    主行程配上較大的固定提前量（例如主行程 2027-04、lead=90 天）會把
+    第1段推到今天之前——那是已經飛走的航班，買不到，只會白佔查詢配額。
+    修法：兩端都補上「結果日期不得早於或等於今天」的檢查，不合格時視同
+    `auto` 策略的「找不到可行值」，回傳 None 讓呼叫端整組跳過並記錄原因
+    （與既有的 `no_feasible_offset` skip 邏輯一致，不必新增分支）。
     """
     ex = track.get("exclude_months") or {}
+    today = datetime.date.today()
+    lead_reason = trail_reason = None
 
     if track.get("lead_strategy") == "auto":
         lead = fs.pick_lead(outbound_date, AUTO_LEAD_CANDIDATES,
                             ex.get("lead") or [])
+        if lead is None:
+            lead_reason = "excluded_month"
     else:
         lead = STRATEGY_DAYS.get(track.get("lead_strategy", "none"), 1)
+        leg1 = (datetime.date.fromisoformat(outbound_date)
+               - datetime.timedelta(days=lead))
+        if leg1 <= today:
+            lead, lead_reason = None, "past_date"
 
     if track.get("trail_strategy") == "auto":
         trail = fs.pick_trail(return_date, AUTO_TRAIL_CANDIDATES,
                               ex.get("trail") or [])
+        if trail is None:
+            trail_reason = "excluded_month"
     else:
         trail = STRATEGY_DAYS.get(track.get("trail_strategy", "none"), 1)
+        leg4 = (datetime.date.fromisoformat(return_date)
+               + datetime.timedelta(days=trail))
+        if leg4 <= today:
+            trail, trail_reason = None, "past_date"
 
-    return lead, trail
+    return lead, trail, lead_reason, trail_reason
 
 
 def expand_track(track):
@@ -106,12 +130,17 @@ def expand_track(track):
 
     itineraries, skipped = [], []
     for outbound_date, return_date in pairs:
-        lead, trail = _resolve_offsets(track, outbound_date, return_date)
+        lead, trail, lead_reason, trail_reason = _resolve_offsets(
+            track, outbound_date, return_date)
         if lead is None or trail is None:
             which = "第1段" if lead is None else "第4段"
+            reason = lead_reason if lead is None else trail_reason
+            detail = ("%s 已經是過去日期，買不到票" % which
+                      if reason == "past_date"
+                      else "%s 找不到能避開排除月份的間隔" % which)
             skipped.append({"outbound_date": outbound_date,
-                            "reason": "no_feasible_offset",
-                            "detail": "%s 找不到能避開排除月份的間隔" % which})
+                            "reason": reason or "no_feasible_offset",
+                            "detail": detail})
             continue
         itineraries.extend(fs.build_itineraries_fixed_trip(
             track["destination"], outbound_date, return_date,
@@ -426,14 +455,37 @@ def should_notify(track, lowest_price, state=None):
     return lowest_price < last
 
 
-def build_notification(track, lowest_row, hub=None):
-    """組出通知訊息（FR-008）。
+def should_notify_status(track, lowest_price, state=None):
+    """是否該發送「本輪未達標，目前最低價是多少」的現況通知
+    （PO 2026-09-24 新增：「若沒有達成，找最接近的組合」）。
+
+    跟 `should_notify()` 是兩種互斥的通知——`should_notify()` 只在達標
+    且比上次通知更低時觸發（刻意避免噪音）；這個函式反過來，服務「不想
+    每次都手動開分頁查」的訴求：只要有設目標價、這輪掃描有查到價格、
+    且**沒有**達標，就一定通知現況。
+
+    刻意不做去重或降頻——PO 在得知「這會讓每輪排程都收到訊息」的取捨後
+    仍選擇兩者都要，所以這裡不額外加「跟上次一樣就不發」的邏輯，那是
+    `should_notify()` 的設計、不是這個函式的。呼叫端只會在 `state` 不是
+    `stale` 時排程觸發到這裡，但仍在此再擋一次，避免未來新增呼叫點時
+    忘記檢查（跟 `should_notify()` 的防護原則一致）。
+    """
+    if state == "stale":
+        return False
+    target = track.get("target_price")
+    if target is None or lowest_price is None:
+        return False
+    return lowest_price > target
+
+
+def _notification_legs(track, lowest_row, hub=None):
+    """通知訊息共用的四段航程（達標通知／現況通知都需要同一組資料）。
 
     連結用既有的 `google_flights_url()` 構造，與 API 層同一支函式——
     那是 base64 protobuf，兩處各寫一份必然分岔（research.md §7）。
     """
     hub = hub or track.get("hub", "TPE")
-    legs = [
+    return [
         {"departure_id": lowest_row["outstation"], "arrival_id": hub,
          "date": lowest_row["leg1_date"]},
         {"departure_id": hub, "arrival_id": track["destination"],
@@ -443,13 +495,11 @@ def build_notification(track, lowest_row, hub=None):
         {"departure_id": hub, "arrival_id": lowest_row["outstation"],
          "date": lowest_row["leg4_date"]},
     ]
+
+
+def _notification_trip_lines(lowest_row):
+    """通知訊息共用的行程細節（主行程、外站、航空、接駁估價）。"""
     lines = [
-        "✈️ 機票降到目標價以下",
-        "",
-        "%s" % track["name"],
-        "四段票 NT$%s（目標 NT$%s）" % (
-            format(int(lowest_row["price"]), ","),
-            format(int(track["target_price"]), ",")),
         "主行程 %s ~ %s" % (lowest_row["outbound_date"],
                             lowest_row["return_date"]),
         "外站 %s（第1段 %s）" % (lowest_row["outstation"],
@@ -460,8 +510,47 @@ def build_notification(track, lowest_row, hub=None):
     if lowest_row.get("connector_price"):
         lines.append("接駁估價 NT$%s（不計入達標判定）"
                      % format(int(lowest_row["connector_price"]), ","))
+    return lines
+
+
+def build_notification(track, lowest_row, hub=None):
+    """組出達標通知訊息（FR-008）。"""
+    legs = _notification_legs(track, lowest_row, hub)
+    lines = [
+        "✈️ 機票降到目標價以下",
+        "",
+        "%s" % track["name"],
+        "四段票 NT$%s（目標 NT$%s）" % (
+            format(int(lowest_row["price"]), ","),
+            format(int(track["target_price"]), ",")),
+    ]
+    lines += _notification_trip_lines(lowest_row)
     lines += ["", fs.google_flights_url(legs), "",
               "提醒：第1段不可 no-show，否則後三段全部失效。"]
+    return "\n".join(lines)
+
+
+def build_status_notification(track, lowest_row, hub=None):
+    """組出未達標時的現況通知（PO 2026-09-24 新增）。
+
+    跟 `build_notification()` 的差異只在標題與「還差多少」這行——行程
+    細節（主行程／外站／航空／接駁）共用 `_notification_trip_lines()`，
+    避免兩份訊息各寫一次而分岔。呼叫端只在 `lowest_row["price"]` 高於
+    `target_price` 時才會叫到這裡，這裡不重複驗證。
+    """
+    legs = _notification_legs(track, lowest_row, hub)
+    gap = int(lowest_row["price"]) - int(track["target_price"])
+    lines = [
+        "📊 本輪掃描完成（尚未達標）",
+        "",
+        "%s" % track["name"],
+        "目前最低 NT$%s（目標 NT$%s，還差 NT$%s）" % (
+            format(int(lowest_row["price"]), ","),
+            format(int(track["target_price"]), ","),
+            format(gap, ",")),
+    ]
+    lines += _notification_trip_lines(lowest_row)
+    lines += ["", fs.google_flights_url(legs)]
     return "\n".join(lines)
 
 

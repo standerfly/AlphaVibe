@@ -90,7 +90,13 @@ function ResultTable({ results }) {
    不只給數量——使用者需要知道「哪些日期」以及「為什麼」，才能判斷要不要
    放寬排除月份或改變間隔策略。只顯示「跳過 3 個日期」等於要他自己猜。 */
 const SKIP_REASON_LABEL = {
+  // 2026-09-24：原本第1段／第4段用固定策略（m1/m3/m5）時，沒檢查算出來
+  // 的日期是否已經過去，近期主行程配大間隔會推出已飛走的航段（買不到、
+  // 白佔配額）。修正後 reason 依實際原因拆成兩種，後備文案跟著補齊；
+  // 正常情況下都有 `s.detail`，這裡只是缺失時的保底。
   no_feasible_offset: '找不到能避開排除月份的間隔',
+  excluded_month: '找不到能避開排除月份的間隔',
+  past_date: '已經是過去日期，買不到票',
 }
 
 function SkippedList({ skipped }) {
@@ -130,7 +136,11 @@ function TrackCard({ track, onScan, onDelete, onOpen, onFrequency, open, detail 
         <p>
           最低 <strong>{ntd(track.lowest.price)}</strong>
           （{track.lowest.outstation}，{md(track.lowest.outbound_date)} 出發）
-          {track.lowest.target_met && <span className="flight-pill flight-pill--ok">已達目標價</span>}
+          {track.lowest.target_met ? (
+            <span className="flight-pill flight-pill--ok">已達目標價</span>
+          ) : track.lowest.gap_to_target != null && (
+            <span className="flight-muted"> · 距目標價還差 {ntd(track.lowest.gap_to_target)}</span>
+          )}
         </p>
       ) : (
         <p className="flight-muted">尚無報價</p>
