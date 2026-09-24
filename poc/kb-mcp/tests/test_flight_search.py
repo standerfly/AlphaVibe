@@ -1448,6 +1448,18 @@ class DescribeAirlinesTest(unittest.TestCase):
         desc = flight_search.describe_airlines(["中華航空", "中華航空"])
         self.assertEqual(desc, "中華航空（天合聯盟）")
 
+    def test_subsidiary_name_containing_parent_brand_not_misclassified(self):
+        """2026-09-24 在正式資料上實測發現的真實 bug：「捷星日本航空」
+        （無聯盟的廉航子公司）因為名稱內含「日本航空」四個字，被字串
+        包含比對誤判成寰宇一家（JAL 所屬聯盟）。必須先查
+        AIRLINE_NO_ALLIANCE 才能正確判為獨立，不受品牌名稱包含關係影響。
+        """
+        self.assertEqual(flight_search.describe_airlines(["捷星日本航空"]),
+                         "捷星日本航空")
+        # 真正的日本航空本身仍要正確標示聯盟，確認修正沒有連帶改壞它
+        self.assertEqual(flight_search.describe_airlines(["日本航空"]),
+                         "日本航空（寰宇一家）")
+
     def test_order_preserved_for_mismatch_display(self):
         """跨聯盟顯示時維持輸入順序（通常對應航段順序），不要重新排序
         造成使用者以為自己看錯行程。
