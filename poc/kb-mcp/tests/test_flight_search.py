@@ -1467,6 +1467,38 @@ class DescribeAirlinesTest(unittest.TestCase):
         desc = flight_search.describe_airlines(["日本航空", "中華航空"])
         self.assertTrue(desc.startswith("日本航空／中華航空"))
 
+    def test_splits_concatenated_airlines_from_scraper_bug(self):
+        """2026-09-24 正式資料實測發現：scraper 擷取多家共同營運的航空
+        公司時沒有分隔符，整段文字被存成單一字串，例如
+        `"長榮航空全日空航空"`（實際是長榮航空＋全日空航空兩家，皆屬
+        星空聯盟）。describe_airlines() 要能用已知名單拆開，不能把它
+        當成一家看不懂的航空公司。
+        """
+        desc = flight_search.describe_airlines(["長榮航空全日空航空"])
+        self.assertEqual(desc, "星空聯盟（長榮航空／全日空航空）")
+
+    def test_does_not_force_split_when_unknown_remainder(self):
+        """拆不乾淨（含未知航空公司）時不要硬拆——寧可照原樣顯示一個
+        看起來奇怪的字串，也不要用猜的方式製造一個看起來很有把握、
+        實際上是編造出來的拆分結果。
+        """
+        desc = flight_search.describe_airlines(["喜馬拉雅航空長榮航空"])
+        self.assertEqual(desc, "喜馬拉雅航空長榮航空（星空聯盟）")
+
+    def test_split_across_alliances_still_flags_mismatch(self):
+        """黏在一起的字串若拆開後橫跨兩個聯盟，一樣要觸發跨聯盟警示，
+        不能因為它們原本黏在一起就被當成「同一單位」放行。
+        """
+        desc = flight_search.describe_airlines(["中華航空日本航空"])
+        self.assertIn("非同一聯盟", desc)
+
+    def test_split_does_not_apply_to_single_known_airline(self):
+        """完整比對到剛好等於一家已知航空公司時，不算「黏在一起」，
+        走正常單一航空公司的顯示路徑。
+        """
+        desc = flight_search.describe_airlines(["全日空航空"])
+        self.assertEqual(desc, "全日空航空（星空聯盟）")
+
 
 if __name__ == "__main__":
     unittest.main()

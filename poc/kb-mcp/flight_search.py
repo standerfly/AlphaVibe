@@ -1258,7 +1258,8 @@ SOUTHERN_SUMMER_MONTHS = [12, 1, 2]   # 澳紐、南美、南非等南半球目�
 # （皆有退出天合聯盟的報導，時間點不確定）——2026-09-24 移除。
 AIRLINE_ALLIANCES = {
     # 星空聯盟 Star Alliance
-    "長榮航空": "星空聯盟", "全日空": "星空聯盟", "聯合航空": "星空聯盟",
+    "長榮航空": "星空聯盟", "全日空": "星空聯盟", "全日空航空": "星空聯盟",
+    "聯合航空": "星空聯盟",
     "新加坡航空": "星空聯盟", "泰國航空": "星空聯盟", "紐西蘭航空": "星空聯盟",
     "漢莎航空": "星空聯盟", "土耳其航空": "星空聯盟", "印度航空": "星空聯盟",
     # 天合聯盟 SkyTeam
@@ -1302,6 +1303,42 @@ def _airline_alliance(name):
     return None
 
 
+def _split_concatenated_airlines(text):
+    """把可能黏在一起、沒有分隔符的航空公司名稱拆開。
+
+    2026-09-24 在正式資料上實測發現：scraper（`flight_scraper.js`）用
+    「抓含『航空』字樣的那一行文字」這個正則式取航空公司名稱，當 Google
+    Flights 對某航段顯示多家共同營運的航空公司時，頁面文字沒有清楚的
+    分隔符，scraper 會把整段文字當成一家公司存下來，例如
+    `"長榮航空全日空航空"`（實際是長榮航空＋全日空航空兩家）。
+
+    這裡用**已知航空公司名單**（`AIRLINE_ALLIANCES`／
+    `AIRLINE_NO_ALLIANCE` 的所有 key）從頭貪婪比對，每次取當下位置能匹配
+    的最長已知名稱；只有整段字串**完全**被拆解成 2 個以上已知名稱、沒有
+    剩餘字元時才算拆解成功。拆不開（含未知航空公司、或只匹配到 1 個
+    已知名稱）一律照原樣當成單一字串回傳——**不要用不確定的拆法製造
+    看起來很有把握但其實是猜的結果**，拆不開比拆錯安全。
+
+    這是治標不治本：真正的根因在 scraper 的擷取正則式沒有處理多營運商
+    的分隔符，改在 Python 層做事後修補是因為改 scraper 的 DOM/regex
+    需要實際開瀏覽器驗證頁面結構，風險與成本都更高；這裡的名單比對法
+    對已知的常見航空公司（本 repo 實際會查到的多是台灣出發的東亞航線）
+    已經夠用。
+    """
+    known = sorted(list(AIRLINE_ALLIANCES.keys()) + list(AIRLINE_NO_ALLIANCE),
+                  key=len, reverse=True)
+    pieces, rest = [], text
+    while rest:
+        for name in known:
+            if rest.startswith(name):
+                pieces.append(name)
+                rest = rest[len(name):]
+                break
+        else:
+            return [text]          # 卡住了，拆不下去，不要硬猜
+    return pieces if len(pieces) >= 2 else [text]
+
+
 def describe_airlines(airlines):
     """把一組航空公司名稱組成適合顯示的字串，標示聯盟資訊（PO
     2026-09-24：「航空公司不一定是同一家，應該標示航空公司聯盟名稱」）。
@@ -1319,7 +1356,12 @@ def describe_airlines(airlines):
       各航段不是同一聯盟甚至沒有 interline 協議，異動/改簽時能不能
       互相銜接更沒有保障。
     """
-    names = [n for n in dict.fromkeys(airlines or []) if n]   # 去重、保序
+    # 先拆解可能黏在一起的名稱，再去重（見 _split_concatenated_airlines）
+    expanded = []
+    for n in (airlines or []):
+        if n:
+            expanded.extend(_split_concatenated_airlines(n))
+    names = list(dict.fromkeys(expanded))                      # 去重、保序
     if not names:
         return ""
     if len(names) == 1:
