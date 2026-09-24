@@ -63,9 +63,13 @@ flight-roundtrip-search/` 拆包的第一包）**2026-09-24 已完成並正式
 `function/alphavibe`、id=9 遷移至 10～14 天並重新查價、服務重啟），
 見 `specs/007-trip-day-range/tasks.md`。
 
-目前進行中：第二包 `roundtrip-search`（單純來回搜尋：多目的地候選、
-可選轉機城市偏好，依賴本包已完成的天數區間概念與組合數守衛）可以開始
-`speckit-specify`。
+目前進行中的 Spec Kit 技術規劃：`specs/008-roundtrip-search/plan.md`
+（單純來回搜尋：多目的地候選、可選轉機城市偏好，新增
+`roundtrip_track`／`roundtrip_scan_result` 獨立表，不與四段票共用
+schema；`google_flights_url()` 不需修改——傳 2 段自動編碼來回、傳
+4 段自動編碼多城市，研究階段的關鍵發現）。已完成 spec／plan／
+research／data-model／contracts，尚未 tasks／implement。接手前先讀
+`specs/008-roundtrip-search/quickstart.md`。
 
 前置已上線功能：`specs/005-flight-scan-page/plan.md`（機票掃描分頁）、
 `specs/006-flight-price-tracking/plan.md`（價格追蹤與通知）。接手實作
