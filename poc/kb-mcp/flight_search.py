@@ -1240,6 +1240,91 @@ NORTHERN_SUMMER_MONTHS = [6, 7, 8]    # 歐洲、日本、北美等北半球目�
 SOUTHERN_SUMMER_MONTHS = [12, 1, 2]   # 澳紐、南美、南非等南半球目的地
 
 
+# 航空公司聯盟對照表（2026-09-24 新增）。PO 指出：外站四段票的四個航段
+# 不一定是同一家航空公司，應該標示聯盟名稱——同聯盟成員之間互為
+# interline 夥伴，對行程異動／改簽的處理方式通常比跨聯盟或無聯盟組合
+# 更有保障，這是判斷「這張票的組合可不可靠」的重要資訊。
+#
+# **這是盡力而為的對照表，不是航空業權威資料源**——只收錄台灣出發、
+# 常見外站航線（日本、東南亞、長程中轉）會出現的航空公司；查無資料的
+# 航空公司會照原樣顯示、不標示聯盟，不會被誤判成「無聯盟」。
+# key 用「包含比對」而非精確比對，因為 Google Flights 同一家航空公司
+# 在不同頁面可能顯示「全日空」或「全日空航空」等不同寫法的中文名稱。
+AIRLINE_ALLIANCES = {
+    # 星空聯盟 Star Alliance
+    "長榮航空": "星空聯盟", "全日空": "星空聯盟", "聯合航空": "星空聯盟",
+    "新加坡航空": "星空聯盟", "泰國航空": "星空聯盟", "紐西蘭航空": "星空聯盟",
+    "漢莎航空": "星空聯盟", "土耳其航空": "星空聯盟", "韓亞航空": "星空聯盟",
+    "深圳航空": "星空聯盟", "印度航空": "星空聯盟",
+    # 天合聯盟 SkyTeam
+    "中華航空": "天合聯盟", "大韓航空": "天合聯盟", "達美航空": "天合聯盟",
+    "法國航空": "天合聯盟", "荷蘭皇家航空": "天合聯盟", "越南航空": "天合聯盟",
+    "廈門航空": "天合聯盟", "中國東方航空": "天合聯盟", "加魯達印尼航空": "天合聯盟",
+    # 寰宇一家 Oneworld
+    "國泰航空": "寰宇一家", "日本航空": "寰宇一家", "美國航空": "寰宇一家",
+    "英國航空": "寰宇一家", "卡達航空": "寰宇一家", "馬來西亞航空": "寰宇一家",
+    "澳洲航空": "寰宇一家", "芬蘭航空": "寰宇一家", "菲律賓航空": "寰宇一家",
+}
+
+# 明確**不屬於**任何聯盟的航空公司——多是廉價航空或獨立經營。放進這個
+# 集合是為了讓「查無聯盟」跟「已知獨立」在顯示時可以區分：前者是資料
+# 缺口，後者是確定的事實（不必因為不在 AIRLINE_ALLIANCES 裡就顯示得
+# 像是資料不全）。
+AIRLINE_NO_ALLIANCE = {
+    "星宇航空", "捷星航空", "捷星日本航空", "捷星亞洲航空", "樂桃航空",
+    "酷航", "虎航", "越捷航空", "亞洲航空", "香草航空", "阿聯酋航空",
+}
+
+
+def _airline_alliance(name):
+    """查一家航空公司屬於哪個聯盟。回傳聯盟名稱、`"獨立"`（已知不屬於
+    任何聯盟）、或 `None`（未收錄，無法判斷）。用包含比對，見
+    `AIRLINE_ALLIANCES` 的說明。
+    """
+    for key, alliance in AIRLINE_ALLIANCES.items():
+        if key in name:
+            return alliance
+    for key in AIRLINE_NO_ALLIANCE:
+        if key in name:
+            return "獨立"
+    return None
+
+
+def describe_airlines(airlines):
+    """把一組航空公司名稱組成適合顯示的字串，標示聯盟資訊（PO
+    2026-09-24：「航空公司不一定是同一家，應該標示航空公司聯盟名稱」）。
+
+    `airlines`：航空公司名稱清單（可能只有 1 個，也可能因四個航段分屬
+    不同公司而有多個）。回傳空字串代表沒有資料可顯示。
+
+    三種情況：
+    - 只有 1 家：附上聯盟（查得到的話），例如「長榮航空（星空聯盟）」
+    - 多家但同一聯盟：以聯盟為主標示，例如「星空聯盟（長榮航空／全日空）」
+    - 多家但跨聯盟、或含獨立／未知聯盟成員：不能用單一聯盟概括，逐一
+      列出航空公司並明確警示，例如
+      「中華航空／捷星日本航空（跨航空公司，非同一聯盟，interline 保障不確定）」——
+      這對外站四段票特別重要：第1段缺席會讓後三段全部失效，若組合內
+      各航段不是同一聯盟甚至沒有 interline 協議，異動/改簽時能不能
+      互相銜接更沒有保障。
+    """
+    names = [n for n in dict.fromkeys(airlines or []) if n]   # 去重、保序
+    if not names:
+        return ""
+    if len(names) == 1:
+        alliance = _airline_alliance(names[0])
+        if alliance and alliance != "獨立":
+            return "%s（%s）" % (names[0], alliance)
+        return names[0]
+
+    alliances = {_airline_alliance(n) for n in names}
+    if len(alliances) == 1:
+        only = next(iter(alliances))
+        if only and only != "獨立":
+            return "%s（%s）" % (only, "／".join(names))
+
+    return "%s（跨航空公司，非同一聯盟，interline 保障不確定）" % "／".join(names)
+
+
 
 def _parse_months(value):
     """解析排除月份設定：逗號清單或半球快捷。
@@ -1909,10 +1994,12 @@ def main(argv=None):
             print("%-6s %-12s %-5s %-9s %s"
                   % ("提前", "第1段日期", "外站", "四段票(NTD)", "航空"))
             for row in rows[:args.top]:
+                # 2026-09-24：四段航程不一定同一家航空公司，改標示聯盟
+                # （PO 要求），不再只取第一段的航空公司名稱
                 print("%-6s %-12s %-5s %-9s %s"
                       % ("%d天" % row["lead"], row["legs"][0]["date"],
                          row["outstation"], format(int(row["price"]), ","),
-                         (row.get("airlines") or [""])[0]))
+                         describe_airlines(row.get("airlines") or [])))
         else:
             print("%-12s %-12s %-5s %-9s %s"
                   % ("出發", "回程", "外站", "四段票(NTD)", "航空"))
@@ -1920,7 +2007,7 @@ def main(argv=None):
                 print("%-12s %-12s %-5s %-9s %s"
                       % (row["legs"][1]["date"], row["legs"][2]["date"],
                          row["outstation"], format(int(row["price"]), ","),
-                         (row.get("airlines") or [""])[0]))
+                         describe_airlines(row.get("airlines") or [])))
         print("\n提醒：上表未含台北→外站的自費接駁票；"
               "第1段（外站→台北）一定要搭，否則後三段全部失效。")
         if args.out:

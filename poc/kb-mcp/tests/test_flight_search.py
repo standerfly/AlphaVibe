@@ -1400,5 +1400,61 @@ class TokenTest(unittest.TestCase):
         self.assertEqual(flight_search._read_token(self.tmp), "")
 
 
+class DescribeAirlinesTest(unittest.TestCase):
+    """航空公司聯盟顯示（PO 2026-09-24：「航空公司不一定是同一家，
+    應該標示航空公司聯盟名稱」）。
+    """
+
+    def test_empty_list_returns_empty_string(self):
+        self.assertEqual(flight_search.describe_airlines([]), "")
+        self.assertEqual(flight_search.describe_airlines(None), "")
+
+    def test_single_airline_with_known_alliance(self):
+        self.assertEqual(flight_search.describe_airlines(["長榮航空"]),
+                         "長榮航空（星空聯盟）")
+
+    def test_single_airline_known_independent(self):
+        """已知獨立（不屬於任何聯盟）的航空公司不附加聯盟標籤。"""
+        self.assertEqual(flight_search.describe_airlines(["星宇航空"]),
+                         "星宇航空")
+
+    def test_single_airline_unknown_shows_name_only(self):
+        """查無資料的航空公司照原樣顯示，不假裝知道聯盟、也不標成獨立。"""
+        self.assertEqual(flight_search.describe_airlines(["喜馬拉雅航空"]),
+                         "喜馬拉雅航空")
+
+    def test_multiple_airlines_same_alliance_shows_alliance_first(self):
+        desc = flight_search.describe_airlines(["中華航空", "大韓航空"])
+        self.assertEqual(desc, "天合聯盟（中華航空／大韓航空）")
+
+    def test_multiple_airlines_different_alliance_flags_mismatch(self):
+        """跨聯盟組合必須明確警示——這正是這個功能存在的原因：外站
+        四段票第1段缺席會讓後三段全部失效，跨聯盟組合的改簽保障
+        不像同聯盟那樣確定。
+        """
+        desc = flight_search.describe_airlines(["中華航空", "日本航空"])
+        self.assertIn("中華航空", desc)
+        self.assertIn("日本航空", desc)
+        self.assertIn("非同一聯盟", desc)
+
+    def test_known_alliance_plus_independent_flags_mismatch(self):
+        desc = flight_search.describe_airlines(["中華航空", "星宇航空"])
+        self.assertIn("非同一聯盟", desc)
+
+    def test_duplicate_airlines_deduplicated(self):
+        """四個航段可能同一家公司出現多次（例如只有第1段換人飛），
+        不該重複列出。
+        """
+        desc = flight_search.describe_airlines(["中華航空", "中華航空"])
+        self.assertEqual(desc, "中華航空（天合聯盟）")
+
+    def test_order_preserved_for_mismatch_display(self):
+        """跨聯盟顯示時維持輸入順序（通常對應航段順序），不要重新排序
+        造成使用者以為自己看錯行程。
+        """
+        desc = flight_search.describe_airlines(["日本航空", "中華航空"])
+        self.assertTrue(desc.startswith("日本航空／中華航空"))
+
+
 if __name__ == "__main__":
     unittest.main()

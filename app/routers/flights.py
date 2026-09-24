@@ -323,6 +323,10 @@ def get_results(track_id: int,
     results = store.list_results(track_id)
     for r in results:
         r["connector_is_estimate"] = True
+        # 2026-09-24：四段航程不一定是同一家航空公司，改用聯盟感知的
+        # 顯示字串（fs.describe_airlines()）——原始欄位是資料層存的
+        # 「／」join 字串，格式化只在這裡做一次，前端直接顯示即可
+        r["airline"] = fs.describe_airlines((r.get("airline") or "").split("／"))
         # 連結由後端用既有的 google_flights_url() 構造——前端若自行拼接
         # 就會有第二份網址編碼邏輯，兩處必然分岔（tfs 是 base64 protobuf，
         # 不是可目視檢查的格式）

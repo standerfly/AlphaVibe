@@ -211,7 +211,11 @@ def _row_from_itinerary(itin, summary):
         "lead_days": itin.get("lead", 0), "trail_days": itin.get("trail", 0),
         "status": "ok" if price else "no_fare",
         "price": int(price) if price else None,
-        "airline": ((summary or {}).get("airlines") or [None])[0],
+        # 2026-09-24 修正：原本只取 airlines[0]，四段航程分屬不同公司時
+        # 會悄悄丟掉其他航段的資料。改存全部去重後的名單（用「／」join，
+        # 跟本檔案其他多值欄位的顯示慣例一致），顯示時交給
+        # fs.describe_airlines() 判斷是否同一聯盟
+        "airline": "／".join(dict.fromkeys((summary or {}).get("airlines") or [])) or None,
     }
 
 
@@ -331,7 +335,9 @@ def run_scan(track_id, data_dir, hourly_limit=fs.HOURLY_BROWSER_LIMIT,
                 lead_days=row.get("lead", row.get("out_stay", 0)),
                 trail_days=row.get("trail", row.get("ret_stay", 0)),
                 status=status, price=price_val,
-                airline=(row.get("airlines") or [None])[0],
+                # 同上（_row_from_itinerary 的註解）：保留全部航空公司，
+                # 不只取第一家
+                airline="／".join(dict.fromkeys(row.get("airlines") or [])) or None,
             )
             written += 1
 
@@ -498,15 +504,20 @@ def _notification_legs(track, lowest_row, hub=None):
 
 
 def _notification_trip_lines(lowest_row):
-    """通知訊息共用的行程細節（主行程、外站、航空、接駁估價）。"""
+    """通知訊息共用的行程細節（主行程、外站、航空／聯盟、接駁估價）。"""
     lines = [
         "主行程 %s ~ %s" % (lowest_row["outbound_date"],
                             lowest_row["return_date"]),
         "外站 %s（第1段 %s）" % (lowest_row["outstation"],
                                  lowest_row["leg1_date"]),
     ]
-    if lowest_row.get("airline"):
-        lines.append("航空 %s" % lowest_row["airline"])
+    # 2026-09-24：四段航程不一定是同一家航空公司，標示聯盟資訊（PO
+    # 要求）。儲存格式是「／」join 的字串，這裡還原成清單交給
+    # describe_airlines() 判斷。
+    airline_desc = fs.describe_airlines(
+        (lowest_row.get("airline") or "").split("／"))
+    if airline_desc:
+        lines.append("航空 %s" % airline_desc)
     if lowest_row.get("connector_price"):
         lines.append("接駁估價 NT$%s（不計入達標判定）"
                      % format(int(lowest_row["connector_price"]), ","))

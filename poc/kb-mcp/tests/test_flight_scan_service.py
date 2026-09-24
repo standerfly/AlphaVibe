@@ -313,6 +313,32 @@ class RunScanTest(unittest.TestCase):
         self.assertIsNotNone(
             self.store.get_track(self.track["id"])["last_success_at"])
 
+    def test_preserves_all_airlines_not_just_first(self):
+        """2026-09-24 修正的 bug：四段航程分屬不同公司時，原本
+        `upsert_result()` 只存 airlines[0]，其餘悄悄丟掉——PO 指出
+        「航空公司不一定是同一家」，資料層必須保留全部才能在顯示時
+        判斷是否同一聯盟。
+        """
+        def scrape(itineraries, **kw):
+            rows = []
+            for i in itineraries:
+                row = dict(i)
+                row["price"] = 44320
+                row["airlines"] = ["中華航空", "日本航空"]
+                key = fs._cache_key(i["legs"], 1, 1, fs.DEFAULT_CURRENCY,
+                                    "tw", "zh-TW")
+                fs._write_cache(self.tmp, key,
+                                {"price": 44320,
+                                 "airlines": ["中華航空", "日本航空"]})
+                rows.append(row)
+            return {"results": rows, "blocked": False, "soft_blocked": False,
+                    "stats": {}}
+        fs.scrape_itineraries = scrape
+        svc.run_scan(self.track["id"], self.tmp)
+        r = self.store.list_results(self.track["id"])[0]
+        self.assertIn("中華航空", r["airline"])
+        self.assertIn("日本航空", r["airline"])
+
     def test_empty_result_recorded_as_no_fare_not_failure(self):
         """FR-023：查無票價與查詢失敗必須分開。"""
         fs.scrape_itineraries = self._fake_scrape(status_key="empty")
