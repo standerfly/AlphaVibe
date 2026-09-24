@@ -246,6 +246,39 @@ details.collapse summary::marker { color: var(--accent); }
 .disclaimer-box__label { font-weight: 700; color: var(--amber); margin-right: .3rem; }
 .simulate-result-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: .6rem; margin-top: .9rem; }
 
+/* 資產走勢卡（2026-09-10 新增，見 web/src/components/NetWorthChart.jsx／
+   NetWorthProjectionChart.jsx）：兩張圖共用 .networth-chart／
+   .chart-label-* 系列；.val-item／.progress-track／.progress-fill／
+   .form-grid／.disclaimer-box 沿用既有定義，這裡不重複。 */
+.networth-chart { width: 100%; height: auto; background: var(--paper-sunken); border-radius: 8px; }
+.chart-label-total { fill: var(--accent); font-weight: 700; }
+.chart-label-contrib { fill: var(--ink-dim); font-weight: 600; }
+.chart-label-goal { fill: var(--amber); font-weight: 600; }
+.chart-label-peak { fill: var(--accent); font-weight: 700; }
+.chart-label-end { fill: var(--ink-dim); }
+
+.legend-row { display: flex; gap: 1rem; flex-wrap: wrap; font-size: .78rem; color: var(--ink-dim);
+  margin-top: .5rem; }
+.legend-row .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: .3rem; }
+.legend-row .dash { display: inline-block; width: 14px; height: 0; border-top: 2px dashed currentColor;
+  margin-right: .3rem; vertical-align: middle; }
+
+.networth-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: .55rem; margin-top: .9rem; }
+@media (max-width: 560px) { .networth-summary { grid-template-columns: repeat(2, 1fr); } }
+.networth-summary .sub-value { font-size: .68rem; color: var(--ink-dim); margin-top: .3rem; }
+/* 紅漲綠跌，跟 .stock-row__delta.is-up/is-down（tokens.css）同一套語意。 */
+.networth-summary .value.is-up { color: var(--red); }
+.networth-summary .value.is-down { color: var(--green); }
+
+.manual-entry-toggle { font-size: .78rem; color: var(--accent); background: none; border: none;
+  cursor: pointer; font-family: inherit; padding: 0; text-decoration: underline;
+  text-underline-offset: 2px; margin-top: .7rem; }
+.manual-entry-box { border-top: 1px dashed var(--rule); margin-top: .7rem; padding-top: .8rem; }
+.manual-entry-hint { font-size: .78rem; color: var(--ink-dim); margin: 0 0 .5rem; }
+
+.contribution-list { display: flex; flex-direction: column; gap: 0; margin-top: .5rem;
+  max-height: 220px; overflow-y: auto; }
+
 /* 快速輸入面板（2026-08-24 新增，Q-046 待辦第1項，見
    web/src/components/QuickInputPanel.jsx）：沿用 .card 的卡片外觀，
    用原生 <details> 做展開/收合（比照 StockDetail.jsx 既有的
@@ -303,8 +336,262 @@ details.collapse summary::marker { color: var(--accent); }
    不留白造成誤會（比照既有「尚無立場」的處理原則）。 */
 .stock-row__tag-line { display: flex; gap: .35rem; margin-top: .3rem; flex-wrap: wrap; }
 
+/* 美股「投資立場」卡片（Phase 4 US2 T024，見
+   web/src/pages/UsStockDetail.jsx）：Bear/Base/Bull 三情境價格帶沿用
+   既有 .holdings-grid 三欄 val-item 視覺（同一種「三個數字並排」語意，
+   另外命名是因為語意不同——一個是持股彙總，一個是情境價格帶，避免以後
+   兩邊各自演化時互相牽動）。direction 徽章沿用 .trade-row__tag 的
+   紅買綠賣配色（bullish≈買方向=紅、bearish≈賣方向=綠），跟本頁走勢圖
+   「紅漲綠跌/紅買綠賣」是同一套視覺語言，不是另創語意。 */
+.stance-bands { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; margin: .7rem 0; }
+.stance-bands .val-item .value { font-size: .88rem; }
+.direction-badge { font-size: .74rem; font-weight: 700; padding: .15rem .6rem;
+  border-radius: 999px; display: inline-block; }
+.direction-badge.bullish { color: var(--red-ink); background: var(--red-soft); }
+.direction-badge.bearish { color: var(--green); background: var(--paper-sunken); }
+.direction-badge.neutral { color: var(--ink-dim); background: var(--paper-sunken); }
+.stance-summary { margin: .6rem 0; font-size: .88rem; overflow-wrap: break-word; }
+.stance-note-toggle { margin-top: .8rem; padding-top: .8rem; border-top: 1px solid var(--rule); }
+
+/* 美股「完整研究筆記」渲染（Phase 4 US2 T023，見
+   web/src/components/UsStockResearchNote.jsx）：full_note 是 Markdown
+   文字，這裡是自製的輕量解析＋渲染樣式（不新增 react-markdown 之類的
+   npm 依賴，見該元件檔頭取捨說明）。標題階層從 h3 開始（不是 h1/h2）
+   ——.card__head h2 已經是卡片本身的標題，筆記內部再出現 h1/h2 會跟卡片
+   標題同層級混淆，見元件內 renderBlock 的階層對映註解。 */
+.us-note { font-size: .88rem; line-height: 1.7; }
+.us-note__title { font-size: .8rem; font-weight: 700; color: var(--ink-dim); margin-bottom: .5rem; }
+.us-note__heading { font-weight: 700; margin: 1.2rem 0 .5rem; color: var(--ink); }
+.us-note__heading:first-child { margin-top: 0; }
+.us-note h3.us-note__heading { font-size: 1rem; border-bottom: 1px solid var(--rule); padding-bottom: .3rem; }
+.us-note h4.us-note__heading { font-size: .92rem; }
+.us-note h5.us-note__heading, .us-note h6.us-note__heading { font-size: .88rem; color: var(--ink-dim); }
+.us-note__p { margin: 0 0 .8rem; overflow-wrap: break-word; }
+.us-note__list { margin: 0 0 .8rem; padding-left: 1.3rem; }
+.us-note__list li { margin-bottom: .3rem; overflow-wrap: break-word; }
+.us-note__quote { margin: 0 0 .8rem; padding: .5rem .9rem; border-left: 3px solid var(--accent);
+  background: var(--accent-soft); color: var(--ink); border-radius: 0 6px 6px 0; }
+.us-note__quote p { margin: 0 0 .3rem; overflow-wrap: break-word; }
+.us-note__quote p:last-child { margin-bottom: 0; }
+.us-note__hr { border: none; border-top: 1px solid var(--rule); margin: 1rem 0; }
+.us-note__table-wrap { overflow-x: auto; margin: 0 0 .8rem; }
+.us-note__table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.us-note__table th, .us-note__table td { padding: .4rem .6rem; border-bottom: 1px solid var(--rule);
+  text-align: left; white-space: nowrap; }
+.us-note__table th { color: var(--ink-dim); font-weight: 600; background: var(--paper-sunken); }
+.us-note code { background: var(--paper-sunken); border-radius: 4px; padding: .05rem .35rem; font-size: .85em; }
+
 @media (max-width: 640px) {
   .pocket-grid { grid-template-columns: 1fr; }
   .buildup-grid { grid-template-columns: repeat(3, 1fr); }
   .simulate-result-grid { grid-template-columns: 1fr; }
+  .stance-bands { grid-template-columns: repeat(3, 1fr); }
 }
+
+/* 錯誤邊界（2026-09-17 架構體檢 B3）。用既有 token，深淺主題自動跟著走。 */
+.error-boundary {
+  max-width: 34rem; margin: 2.5rem auto; padding: 1.5rem;
+  background: var(--red-soft); border: 1px solid var(--rule);
+  border-radius: 8px;
+}
+.error-boundary__title { margin: 0 0 .5rem; font-size: 1.1rem; color: var(--red-ink); }
+.error-boundary__hint { margin: 0 0 1.1rem; color: var(--ink-dim); line-height: 1.6; font-size: .9rem; }
+.error-boundary__actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-bottom: 1.1rem; }
+.error-boundary__details { font-size: .82rem; color: var(--ink-dim); }
+.error-boundary__details summary { cursor: pointer; padding: .2rem 0; }
+.error-boundary__details pre {
+  margin: .6rem 0 0; padding: .7rem; overflow-x: auto;
+  background: var(--paper-sunken); border-radius: 4px;
+  font-size: .75rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+}
+
+/* 排程健康橫幅（2026-09-17 架構體檢 B4）。只在出問題時出現，
+   所以刻意做得醒目——常駐的綠色「正常」橫幅會讓人學會忽略這個位置。 */
+.job-banner {
+  margin: 0 0 1rem; padding: .85rem 1rem; border-radius: 6px;
+  border: 1px solid var(--rule); border-left-width: 4px;
+}
+.job-banner--critical { background: var(--red-soft); border-left-color: var(--red); }
+.job-banner--warning { background: var(--amber-soft); border-left-color: var(--amber); }
+.job-banner__head {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: .6rem;
+  font-weight: 600; margin-bottom: .45rem;
+}
+.job-banner--critical .job-banner__head { color: var(--red-ink); }
+.job-banner--warning .job-banner__head { color: var(--amber); }
+.job-banner__time { font-weight: 400; font-size: .78rem; color: var(--ink-dim); }
+.job-banner__list { margin: 0; padding-left: 1.1rem; }
+.job-banner__list li {
+  font-size: .86rem; line-height: 1.55; color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
+.job-banner__list li b { color: var(--ink); font-weight: 600; }
+
+/* ---------- 相簿分頁（specs/004-photos-albums-search，User Story 1） ----------
+   縮圖/相簿卡沿用既有 --paper-sunken/--accent-soft 色調，跟 2026-09-16
+   發布的流程圖/畫面 Demo（https://claude.ai/code/artifact/57660844-...）
+   互動細節一致，這裡是正式實作版本。 */
+.album-grid, .thumb-grid { display: grid; gap: 1rem; }
+.album-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+.thumb-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: .7rem; }
+.album-card { border: 1px solid var(--rule); border-radius: 12px; overflow: hidden;
+  background: var(--paper); cursor: pointer; text-align: left; font: inherit;
+  box-shadow: var(--shadow); padding: 0; }
+.album-card:hover { border-color: var(--accent); }
+.album-card__cover { height: 100px; display: flex; align-items: center; justify-content: center;
+  background: var(--paper-sunken); color: var(--ink-dim); font-size: .78rem; }
+.album-card__body { padding: .65rem .8rem .75rem; }
+.album-card__title { font-size: .9rem; font-weight: 700; margin-bottom: .15rem; }
+.album-card__meta { font-size: .72rem; color: var(--ink-dim); }
+.add-album-card { border: 1.5px dashed var(--rule-strong); border-radius: 12px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: .4rem; color: var(--ink-dim); min-height: 148px; background: none; cursor: pointer;
+  font: inherit; font-size: .84rem; font-weight: 600; }
+.add-album-card:hover { border-color: var(--accent); color: var(--accent); }
+.thumb { aspect-ratio: 1; border-radius: 9px; border: 1px solid var(--rule);
+  cursor: pointer; position: relative; overflow: hidden; padding: 0;
+  background: var(--paper-sunken); }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb.is-selected { outline: 3px solid var(--accent); outline-offset: -3px; }
+.thumb__rating { position: absolute; bottom: .25rem; left: .3rem; font-size: .64rem;
+  font-weight: 700; background: rgba(0,0,0,.55); color: #fff; padding: .02rem .35rem;
+  border-radius: 5px; }
+.photo-toolbar { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+  background: var(--paper-raised); border: 1px solid var(--rule); border-radius: 10px;
+  padding: .6rem .8rem; margin-bottom: .9rem; }
+.photo-toolbar input[type=text] { font: inherit; font-size: .82rem; padding: .3rem .55rem;
+  border-radius: 6px; border: 1px solid var(--rule); background: var(--paper); color: var(--ink); }
+.wizard-panel { border: 1px solid var(--rule); border-radius: 12px; padding: 1.1rem;
+  background: var(--paper-raised); min-height: 160px; }
+.wizard-actions { display: flex; justify-content: space-between; margin-top: 1rem; }
+.wizard-progress-track { height: .6rem; background: var(--paper-sunken); border-radius: 999px;
+  overflow: hidden; margin: 1rem 0 .6rem; }
+.wizard-progress-fill { height: 100%; background: var(--accent); border-radius: 999px; }
+
+/* ---------- 相簿：單張照片詳情（User Story 3，T041） ---------- */
+.photo-detail { display: grid; grid-template-columns: 1.3fr 1fr; gap: 1.5rem; }
+@media (max-width: 720px) { .photo-detail { grid-template-columns: 1fr; } }
+.photo-detail__hero { border-radius: 12px; overflow: hidden; border: 1px solid var(--rule);
+  background: var(--paper-sunken); display: flex; align-items: center; justify-content: center; }
+.photo-detail__hero img { width: 100%; height: auto; display: block; }
+.info-card + .info-card { margin-top: .9rem; }
+.info-card__head { padding: .55rem 0 .4rem; font-size: .8rem; font-weight: 700; color: var(--ink-dim); }
+.exif-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem .8rem; font-size: .8rem; margin: 0; }
+.exif-grid dt { color: var(--ink-dim); font-size: .7rem; }
+.exif-grid dd { margin: 0; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem; }
+.rating-stars { display: flex; gap: .15rem; }
+.rating-stars button { background: none; border: none; cursor: pointer; padding: .1rem; color: var(--rule-strong); font-size: 1.1rem; }
+.rating-stars button.is-on { color: var(--amber); }
+.tag-pill { display: inline-flex; align-items: center; gap: .25rem; background: var(--accent-soft);
+  color: var(--accent); border-radius: 999px; padding: .15rem .6rem; font-size: .74rem;
+  font-weight: 600; margin: 0 .3rem .3rem 0; }
+.album-pill { display: inline-flex; align-items: center; gap: .25rem; background: var(--paper-sunken);
+  color: var(--ink); border-radius: 999px; padding: .15rem .6rem; font-size: .74rem;
+  font-weight: 600; margin: 0 .3rem .3rem 0; border: 1px solid var(--rule); }
+
+/* 「管家」分頁（2026-08-31 新增，app/routers/gateway_monitor.py +
+   web/src/pages/Gateway.jsx）：鎖定橫幅、聊天泡泡、逐字稿面板。其餘
+   （卡片／表單／表格／stat-tile／badge）沿用既有 .card／.form-*／
+   .preview-table／.stat-tile／.badge-* token，不重新發明一套樣式。 */
+.gateway-lockdown-banner {
+  display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline;
+  background: var(--red-soft); border: 1px solid var(--red);
+  border-radius: 10px; padding: .8rem 1rem; margin-bottom: 1rem;
+  font-size: .86rem; color: var(--red-ink);
+}
+.gateway-lockdown-banner__title { font-weight: 700; }
+
+.gateway-chat-log {
+  display: flex; flex-direction: column; gap: .55rem;
+  margin-top: .9rem; max-height: 26rem; overflow-y: auto;
+}
+.gateway-chat-bubble {
+  border-radius: 8px; padding: .55rem .7rem; font-size: .86rem;
+  max-width: 42rem; overflow-wrap: break-word; white-space: pre-wrap;
+}
+.gateway-chat-bubble--user {
+  background: var(--accent-soft); align-self: flex-end; text-align: left;
+}
+.gateway-chat-bubble--assistant { background: var(--paper-sunken); align-self: flex-start; }
+.gateway-chat-bubble--error {
+  background: var(--red-soft); color: var(--red-ink); align-self: flex-start;
+}
+.gateway-chat-bubble__meta {
+  font-size: .68rem; color: var(--ink-dim); margin-bottom: .2rem; font-weight: 600;
+}
+.gateway-chat-bubble--error .gateway-chat-bubble__meta { color: var(--red-ink); }
+.gateway-chat-bubble__text { line-height: 1.55; }
+
+.gateway-transcript-panel {
+  border-top: 1px solid var(--rule); margin-top: .9rem; padding-top: .8rem;
+}
+
+.gateway-table th:last-child, .gateway-table td:last-child { text-align: right; }
+.gateway-table__desc { white-space: normal; max-width: 26rem; }
+
+.gateway-usage-note { font-size: .68rem; color: var(--ink-dim); font-weight: 600; }
+
+@media (max-width: 640px) {
+  .gateway-chat-bubble { max-width: 100%; }
+}
+
+/* ── 機票掃描分頁（specs/005-flight-scan-page）─────────────────────
+   命名沿用本檔案既有的「功能前綴 ＋ BEM」慣例（.pocket-card、
+   .album-card…），不新增通用的 .card／.pill 等全域名稱——那會跟其他
+   分頁互相干擾。配色一律走 tokens.css 的變數，不寫死色碼。 */
+
+.flight-page { display: flex; flex-direction: column; gap: 1rem; }
+.flight-page__head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.flight-page__lead { color: var(--ink-dim); font-size: .88rem; line-height: 1.7; margin: 0; }
+.flight-muted { color: var(--ink-dim); font-size: .82rem; line-height: 1.6; }
+.flight-error { color: var(--red-ink); background: var(--red-soft); border: 1px solid var(--red); border-radius: 8px; padding: .55rem .75rem; font-size: .85rem; }
+
+.flight-card { background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; box-shadow: var(--shadow); padding: .9rem 1rem; display: flex; flex-direction: column; gap: .45rem; }
+.flight-card__head { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; }
+.flight-card__head h3 { font-size: .98rem; font-weight: 700; margin: 0; }
+.flight-card__actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .3rem; }
+
+.flight-pill { display: inline-flex; align-items: center; border-radius: 999px; padding: .1rem .5rem; font-size: .72rem; font-weight: 700; white-space: nowrap; }
+.flight-pill--ok { background: var(--accent-soft); color: var(--accent); }
+.flight-pill--pending { background: var(--paper-sunken); color: var(--ink-dim); }
+.flight-pill--alert { background: var(--amber-soft); color: var(--amber); }
+
+/* 過期提示用琥珀色而非紅色：資料過期是「該重掃了」的提醒，
+   不是系統錯誤——用紅色會讓使用者以為壞掉了（006 FR-013）。 */
+.flight-stale { color: var(--amber); background: var(--amber-soft); border: 1px solid var(--amber); border-radius: 8px; padding: .55rem .75rem; font-size: .85rem; }
+.flight-freq { margin: 0 .3rem; font-size: .82rem; padding: .1rem .25rem; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); color: var(--ink); }
+.flight-target-input { width: 6.5rem; margin: 0 .3rem; font-size: .82rem; padding: .1rem .4rem; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); color: var(--ink); }
+
+.flight-btn--primary { background: var(--accent); color: var(--paper); border: 1px solid var(--accent); border-radius: 7px; padding: .35rem .8rem; font-size: .84rem; cursor: pointer; }
+.flight-btn--danger { color: var(--red-ink); border-color: var(--red); }
+
+.flight-form { background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; box-shadow: var(--shadow); padding: 1rem; display: flex; flex-direction: column; gap: .7rem; }
+.flight-form h2 { font-size: 1rem; margin: 0; }
+.flight-form__row { display: flex; flex-direction: column; gap: .3rem; }
+.flight-form__row--inline { flex-direction: row; align-items: center; flex-wrap: wrap; gap: .5rem; }
+.flight-form__label { font-size: .8rem; font-weight: 700; color: var(--ink-dim); }
+.flight-form__actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: .3rem; }
+.flight-form input, .flight-form select { background: var(--paper-sunken); border: 1px solid var(--rule); border-radius: 7px; padding: .35rem .5rem; font-size: .86rem; color: var(--ink); }
+.flight-form input[type="number"] { width: 6rem; }
+
+.flight-chips, .flight-months { display: flex; flex-wrap: wrap; gap: .3rem; }
+.flight-chip, .flight-month { background: var(--paper-sunken); border: 1px solid var(--rule); border-radius: 999px; padding: .2rem .6rem; font-size: .78rem; color: var(--ink-dim); cursor: pointer; }
+.flight-month { border-radius: 7px; min-width: 2.1rem; text-align: center; }
+.flight-chip--on, .flight-month--on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 700; }
+
+/* 結果表在手機上可能比畫面寬——讓表格自己橫向捲動，
+   而不是讓整個頁面本體橫向捲動（spec US4 情境 6）。 */
+.flight-table-scroll { overflow-x: auto; }
+.flight-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.flight-table th, .flight-table td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+.flight-table th { color: var(--ink-dim); font-weight: 700; font-size: .75rem; }
+.flight-table td { font-variant-numeric: tabular-nums; }
+.flight-row--muted td { color: var(--ink-dim); }
+.flight-skipped { margin-top: .5rem; font-size: .8rem; color: var(--ink-dim); }
+.flight-skipped summary { cursor: pointer; }
+.flight-skipped ul { margin: .4rem 0 .3rem; padding-left: 1.1rem; line-height: 1.7; }
+.flight-links a { margin-right: .5rem; font-size: .78rem; color: var(--accent); }
+.flight-native { margin-top: .8rem; font-size: .82rem; }
+.flight-native summary { cursor: pointer; color: var(--ink-dim); }
+.flight-native ol, .flight-native ul { padding-left: 1.2rem; line-height: 1.8; }
+.flight-native code { background: var(--paper-sunken); padding: .1rem .3rem; border-radius: 4px; font-size: .76rem; }

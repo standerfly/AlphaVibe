@@ -7,11 +7,23 @@
 **TPM:** Stander
 **Accepted At:** 2026-07-08
 **Acceptance Evidence:** PO Stander 於 2026-07-08 Claude Code session 回覆「依照你的建議」完成驗收，併同確認 Q-024（AI 對話輸入納入 v1）與 Q-027（全域投資助理列 Deferred）；證據記錄於 clarification-log.md Q-024/Q-027
-**Last Updated:** 2026-08-24（登錄 Q-046：STND 個人一站入口多分頁主控台
-擴建，`poc/kb-mcp` 全面重寫為 FastAPI＋React，新增資產／相簿分頁
-FR-060~062；補正 §1／§3／§5／§8／§10／§11，源自 `roadmap.md`「Phase 2
-正式產品」節 2026-08-21 補充與 2026-08-22 上線事實；基線接受狀態不變，
-`Accepted At` 維持 2026-07-08 不動）
+**Last Updated:** 2026-09-17（登錄 Q-050：相簿分頁核心需求定為跨相簿
+全域搜尋〔camera_model／lens 結構化篩選＋標籤組合查詢〕＋標籤/評分雙向
+「跟著相片走」——寫回照片檔案本身的 XMP/IPTC 中繼資料，非僅存 STND
+資料庫；新增系統層外部依賴 `exiftool`、`metadata_sync_status` 欄位與
+離線/失敗處理；補正 FR-062／§8／§9／§10／§11，源自
+`supporting-artifacts/2026-09-16-travel-photos-design.md`「四、
+2026-09-17 補充」節；基線接受狀態不變，`Accepted At` 維持 2026-07-08
+不動）
+
+**Last Updated（前次）:** 2026-09-16（登錄 Q-047／Q-049：旅遊分頁
+（FR-063，新增）與相簿分頁（FR-062，由「MVP 僅導覽入口」修訂為完整
+功能規格）需求基線；查證更正先前對 AutoGallery 原型的錯誤轉述）
+
+**Last Updated（前次）:** 2026-08-24（登錄 Q-046：STND 個人一站入口多
+分頁主控台擴建，`poc/kb-mcp` 全面重寫為 FastAPI＋React，新增資產／相簿
+分頁 FR-060~062；補正 §1／§3／§5／§8／§10／§11，源自 `roadmap.md`
+「Phase 2 正式產品」節 2026-08-21 補充與 2026-08-22 上線事實）
 
 > 修訂歷史：2026-07-27（依 A-G 策略引擎模組架構全面重寫，源自
 > `requirements-rescoping.md` 2026-07-25~27 討論與 fresh-context agent
@@ -482,7 +494,8 @@ Q-034／Q-045 的 local-first 判斷，對外服務層全面重寫為 FastAPI
 模組 A-G 功能（含儀表板、市場掃描、5 個表單端點、MCP 連接器）全數
 遷移到新架構，功能行為本身不變、僅遷移對外介面層——不重複列出獨立
 FR，行為規格仍以 FR-001~059 為準（`/report-classic` 舊版頁面已停用
-不遷移）。以下三條 FR 是本次擴建新增、原 FR 編號體系外的產品行為：
+不遷移）。以下四條 FR（FR-060~063）是本次擴建新增、原 FR 編號體系外的
+產品行為：
 
 - **FR-060 STND 多分頁導覽外殼**：提供跨分頁共用的導覽列（首頁／
   儀表板／資產／相簿，未來可能新增），使用者可在分頁間切換；各分頁
@@ -507,17 +520,133 @@ FR，行為規格仍以 FR-001~059 為準（`/report-classic` 舊版頁面已停
     `supporting-artifacts/2026-08-21-personal-console-expansion.md`
     「資產分頁設計」節
   **已上線**（2026-08-22）。
-- **FR-062 相簿分頁（MVP 僅導覽入口，未含實際功能）**：目前僅有導覽列
-  tab 與空白頁面（`Photos.jsx`），無對應後端 router、無資料表、無實際
-  功能。**未來規劃**（尚未開工，非本輪承諾範圍）：參考使用者既有
-  AutoGallery（本機 Tkinter＋SQLite 原型）的資料模型構想——`photos`表
-  （file_hash 去重、路徑、狀態、rating、camera_model、photo_date）＋
-  `photo_tags`表；規劃含 Sigma dp 相機 X3F 轉 JPG 的混合處理流程。
-  **待釐清**：AutoGallery 實際 repo 在本機的確切路徑未定位到，上述
-  資料模型僅為既有規劃文件轉述，尚未對照真實原型逐一查證欄位（見
-  `supporting-artifacts/2026-08-21-personal-console-expansion.md`
-  「相簿分頁設計」節）。啟動完整開發前待進一步研究，非阻塞開放項目
-  （見 §11）。
+- **FR-062 相簿分頁（2026-09-16 修訂：由「MVP 僅導覽入口」推進為完整
+  MVP 功能規格，見 Q-049；2026-09-17 再修訂：核心需求定為跨相簿全域
+  搜尋＋標籤/評分中繼資料雙向同步，見 Q-050）**：現況（`Photos.jsx`）
+  僅有導覽列 tab 與
+  空白頁面，尚未開工；本條為需求基線更新，不代表本輪已變更程式碼。
+  先更正先前規劃文件的錯誤轉述：2026-09-16 實際查證 GitHub repo
+  `https://github.com/standerfly/AutoGallery.git`（1 個 commit，已
+  停滯的原型）後發現，**該原型完全沒有相簿(album)資料模型**（僅
+  `photos`+`tags` 兩表，`tags` 無獨立標籤主檔）、**完全沒有 Sigma
+  X3F/RAW 轉檔實作**；先前 §10 所述構想僅為記憶轉述，非查證結果。可
+  沿用的僅是**設計思路**：MD5 file_hash 去重、EXIF 抽欄位存結構化
+  資料、hash 命名縮圖產生方式（原型 `lens`/`iso`/`aperture`/
+  `shutter_speed` 欄位宣告但程式從未寫入，是死欄位 bug，正式規格需
+  修正）。完整查證記錄見
+  `supporting-artifacts/2026-09-16-travel-photos-design.md`。
+
+  **MVP 功能範圍**：
+  - 相簿管理：新建/改名/刪除相簿（標題、描述、封面照）
+  - 照片匯入：網頁選本機資料夾路徑（比照原型的網頁式選資料夾 UI，因
+    STND 跑在 Mac mini 本機，不適合走 HTTP 上傳大量原始檔）→ MD5
+    hash 比對既有照片去重 → 顯示「即將匯入 N 張、跳過 M 張重複」預覽
+    → 確認後轉背景任務執行（複製檔案到指定儲存位置＋產生縮圖＋解析
+    EXIF 寫入資料庫），避免同步阻塞
+  - 照片整理：批次指派相簿、加標籤（輸入時提示既有標籤，避免同義詞
+    氾濫；提供常用標籤快速按鈕供單張/批次一鍵套用，加速「快速加入
+    資訊」的核心需求）、評分（0-5 星）
+  - **全域搜尋（2026-09-17新增，核心需求，見 Q-050）**：跨所有相簿的
+    搜尋入口（不限於單一相簿內），可組合以下維度查詢：結構化 EXIF
+    欄位（camera_model／lens 下拉選單，來源為 `photos` 表既有欄位）＋
+    標籤（多選，涵蓋場景描述如日出/夕陽/夜景/街拍、地點如京都等，
+    不特別分類，皆為一般標籤）；搜尋結果以縮圖牆呈現，可再點入單張
+    詳情。搜尋一律讀 STND 資料庫（`photos`/`tags`/`photo_tags`），
+    速度快且不受外接硬碟是否掛載影響
+  - 瀏覽：相簿列表（卡片式）、相簿內縮圖牆（可依日期/評分排序、依
+    標籤篩選）、單張照片詳情（大圖、EXIF 資訊、所屬相簿、標籤、可調
+    rating）
+  - 刪除：僅刪除資料庫紀錄（從相簿/標籤/瀏覽列表移除），**不**刪除
+    磁碟上的原始檔案（降低不可逆誤刪風險；未來若需真正清理磁碟空間，
+    另建獨立「清理未歸類照片」功能，不與一般整理操作混用）
+  - **範圍明確排除**：RAW／X3F／Sigma Photo Pro 轉檔流程（留待後期，
+    見下方 Deferred）；自動冷熱儲存分層（MVP 由使用者手動選內接/
+    外接）；瀏覽器檔案上傳管道（MVP 僅本機路徑選擇，行動裝置/遠端
+    無法匯入）
+
+  **資料模型**（全新設計，非沿用 AutoGallery 程式碼）：`albums`
+  （相簿：id/標題/描述/封面照片 id/建立時間）、`photos`（照片：id/
+  file_hash MD5 UNIQUE 去重/儲存路徑/儲存位置內接或外接/rating/
+  camera_model/lens/iso/shutter_speed/aperture/photo_date/file_size/
+  匯入時間/**`metadata_sync_status`〔synced／pending／failed，
+  2026-09-17新增，見 Q-050〕/`metadata_synced_at`/`metadata_sync_error`**）、
+  `photo_albums`（多對多 junction）、`tags`+`photo_tags`
+  （標籤主檔正規化＋多對多 junction，非 AutoGallery 自由文字窄表
+  做法）、`trip_albums`（多對多，供 FR-063 旅遊分頁引用；trip 以
+  mytravel 資料夾名稱為邏輯鍵，非外鍵約束，比照 `us_stock_store.py`
+  「以 ticker 為邏輯關聯鍵不建外鍵」慣例）。**`file_hash` 只在匯入
+  當下對原始位元組計算一次並永久保存，之後即使中繼資料寫回（見下方）
+  改變了檔案位元組也不重新計算**——這是刻意的設計決策，不是遺漏：
+  重新計算會讓同一份原始素材重複匯入時被誤判為新照片，破壞去重機制。
+
+  **儲存策略**：原始檔案由使用者於匯入當下手動選擇存放於 Mac mini
+  內接或外接硬碟（MVP 不做自動冷熱分層搬移）；縮圖與 `photos.db`
+  固定存於內接硬碟，確保縮圖瀏覽不依賴外接硬碟是否掛載；外接硬碟
+  離線時，縮圖牆與 metadata 正常瀏覽，「檢視原圖／下載」動作顯示
+  「原檔離線」並停用，不視為錯誤狀態（見 §9 錯誤處理矩陣）。
+
+  **架構**：獨立 `PhotoStore` 類別＋獨立 `poc/data/photos.db`，比照
+  `us_stock_store.py`「完全獨立、`__init__` 不掛副作用種子寫入」慣例
+  （見 AlphaVibe CLAUDE.md 2026-08-22 教訓紀錄，避免重蹈資產表被
+  污染的事故）；匯入處理以背景任務執行，不同步阻塞 HTTP request。
+
+  **中繼資料雙向「跟著相片走」設計（2026-09-17新增，見 Q-050）**：
+  PO 要求標籤/評分不只留在 STND 內部，還要能被 Lightroom、Finder 等
+  外部工具看到，因此標籤（對應 XMP/IPTC keywords）與評分（對應 XMP
+  rating）在每次於 STND 編輯後，除了立即寫入 `photos.db`（維持
+  搜尋/瀏覽即時可用），也會**單向鏡射**寫回照片檔案本身的中繼資料
+  （db → 檔案，STND **從不**反過來讀檔案中繼資料做搜尋——資料庫永遠
+  是唯一的真相來源與搜尋來源，檔案寫回純粹是為了離開 STND 之後仍
+  可攜）。相簿歸屬與旅遊分頁的 trip 關聯屬 STND 專屬的組織性概念，
+  XMP/IPTC 無對應標準欄位，**維持只存資料庫，不寫入檔案**。
+  - **新增系統層外部依賴**：`exiftool`（非 Python 套件，經 Homebrew
+    安裝於 Mac mini，用於讀寫 JPG 的 XMP/IPTC 中繼資料）
+  - **執行方式**：標籤/評分變更 → db 立即更新（畫面與搜尋馬上反映）
+    → 轉背景任務呼叫 `exiftool` 寫回檔案 → 更新 `metadata_sync_status`
+    為 `synced`；避免同步寫檔卡住畫面
+  - **失敗與離線處理**：原始檔所在外接硬碟未掛載，或 `exiftool` 寫入
+    失敗（檔案格式不支援、檔案損壞、權限問題）時，`metadata_sync_status`
+    標記為 `pending`／`failed`（並記錄 `metadata_sync_error`）；**不**
+    阻擋 db 端的標籤/評分/搜尋照常使用；MVP 提供手動「重新同步」按鈕
+    讓 PO 在外接硬碟重新掛載後補寫，不做自動偵測硬碟重新掛載事件
+  - **範圍**：MVP 僅處理 JPG（沿用 FR-062 主範圍）；RAW／X3F 檔案的
+    中繼資料寫回方式（可能需要 XMP sidecar 檔而非直接改 RAW 二進位，
+    避免破壞相機原始檔）留待 RAW pipeline 開發時一併研究，列 Deferred
+
+  **Deferred（後期規劃，非本輪 MVP 承諾範圍）**：RAW／Sigma dp X3F
+  轉 JPG 的混合處理流程（Sigma Photo Pro 官方軟體經查證無法被腳本
+  自動化，即使實作仍需人工介入監看資料夾流程，其中繼資料寫回方式亦
+  待此時一併研究）；自動冷熱儲存分層；瀏覽器檔案上傳（供行動裝置/
+  遠端補充少量照片用）；標籤/評分寫回失敗時的自動硬碟重新掛載偵測。
+
+- **FR-063 旅遊分頁（2026-09-16 新增，見 Q-047）**：定位為**唯讀展示
+  層**，呈現獨立專案 `/Users/stander/My_project/mytravel/` 既有的行程
+  手記，不搬移、不重寫原始 markdown 檔案，不改變 PO 現有「用聊天與
+  Claude 共創行程」的寫作習慣（`mytravel` 本身明文不套用本 repo 的
+  專案接入制度，是純個人筆記空間）。尚未開工，本條為需求基線新增。
+
+  **MVP 功能範圍**：
+  - Trip 列表頁：STND 後端自動掃描 `mytravel/trips/` 資料夾（每個子
+    資料夾代表一趟旅行，命名慣例 `YYYY-MM-目的地`），以卡片式列出
+    （標題、日期範圍、封面照——來源為對應相簿的第一張照片，若無連結
+    相簿則無封面），不需要 PO 手動註冊新行程，複製 template 開始寫
+    就會自動出現
+  - Trip 詳情頁：把該行程資料夾內的 `itinerary.md` 原文渲染成網頁
+    （markdown→HTML），保留原始敘事結構（多日行程表、攝影卡位指南、
+    採購地圖、預算追蹤、心得檢討等既有章節），同時嵌入該趟旅行對應
+    相簿（透過 `trip_albums` 關聯表）的照片縮圖牆
+  - Trip↔相簿關聯：多對多（見 FR-062 資料模型 `trip_albums`），可在
+    Trip 詳情頁或相簿頁任一端手動設定連結，支援 0 或多個 album 對應
+    一趟旅行，也允許相簿獨立於旅遊存在（例如橫跨多趟旅行的主題相簿）
+
+  **明確排除**：不做行程內容的結構化編輯表單（不拆解成
+  itinerary_items/expenses 等獨立資料表，理由：現有 markdown 格式的
+  敘事彈性優於固定表單）；不對 mytravel 原始檔案做任何寫入/修改
+  （純唯讀）；不做行程搜尋/跨行程比對等進階功能。
+
+  **與 FR-062 的依賴關係**：本 FR 的照片顯示功能依賴 FR-062 相簿
+  分頁已上線，開發順序建議相簿基礎版先行。完整設計見
+  `supporting-artifacts/2026-09-16-travel-photos-design.md`。
 
 ### 舊FR（FR-001~043）→ 現況總對照表（2026-07-27，確保完整追溯）
 
@@ -599,6 +728,11 @@ FR，行為規格仍以 FR-001~059 為準（`/report-classic` 舊版頁面已停
 - 依賴：SQLite 3（含 FTS5）、Claude（Claude Code／Desktop，含 Vision）、
   Cline、FinMind／Alpha Vantage API（SRC-001 §10 經 Q-032 修訂；注意
   本機實際為 Python 3.9.6）
+- **`exiftool`（2026-09-17新增，見 Q-050，FR-062）**：系統層外部工具
+  （非 Python 套件），經 Homebrew 安裝於 Mac mini，供相簿分頁將標籤/
+  評分寫回照片檔案的 XMP/IPTC 中繼資料；`app/requirements.txt` 目前
+  僅 fastapi/uvicorn 兩個 Python 套件，此依賴屬 Python 套件之外的
+  系統層安裝，需在部署文件中另外記錄安裝步驟
 - 不使用 Vector DB／embedding API（Q-015）
 - **隱私**：LINE 群主知情同意；系統內外一律匿名顯示（Q-005）；
   僅收錄群主發言，群組其他成員發言不納入（Q-008）
@@ -618,6 +752,9 @@ SRC-002/Q-021）
 | SQLite 鎖定 | 寫入暫停 | （自動處理） | 自動重試 3 次後記錄錯誤 | 系統；仍失敗記日誌 |
 | AI 對話誤判歸檔內容 | 未寫入（確認制擋下） | 提議卡可修改／略過 | 使用者修改或略過（Q-021） | 使用者 |
 | **模組D多重系統記錄衝突（2026-07-27新增）** | 記錄並存 | 畫面明確標示「這幾筆判斷互相衝突」 | 使用者自行判斷取捨 | 使用者 |
+| **相簿匯入時遇到無法讀取的照片檔案（2026-09-16新增，FR-062）** | 該檔案跳過，其餘正常匯入 | 匯入結果摘要列出「N 張跳過，原因：格式不支援/檔案毀損」 | 使用者自行確認來源檔案 | 使用者 |
+| **相簿原始檔所在外接硬碟未掛載（2026-09-16新增，FR-062）** | 縮圖/metadata 正常瀏覽，原圖不可讀取 | 介面顯示「原檔離線」，看原圖/下載按鈕停用 | 插上外接硬碟後重新整理頁面即恢復 | 使用者 |
+| **標籤/評分寫回檔案中繼資料失敗（2026-09-17新增，FR-062，Q-050）** | `photos.metadata_sync_status` 標記 `pending`（硬碟離線）或 `failed`（exiftool 寫入錯誤，記錄 `metadata_sync_error`）；db 端標籤/評分/搜尋照常可用 | 照片詳情頁顯示同步狀態徽章 | 手動點「重新同步」按鈕補寫；MVP 不做自動偵測硬碟重新掛載 | 使用者 |
 
 ## 10. Required Supporting Artifacts
 
@@ -634,8 +771,10 @@ SRC-002/Q-021）
 | 需求重新盤點討論紀錄（2026-07-27新增） | Yes | Complete | requirements-rescoping.md | 本次全面改版的完整決策過程與追溯依據 |
 | STND 架構總覽（2026-08-24新增） | Yes | Complete | `docs/architecture.md` | Q-046 服務化架構重寫觸發：新增/變更 internal API、多分頁部署架構（FR-060） |
 | 資產分頁資料模型 note（2026-08-24新增） | Yes | Complete | `docs/architecture.md`「分頁地圖」節＋`supporting-artifacts/2026-08-21-personal-console-expansion.md`「資產分頁設計」節 | 資產分頁全新5張表，手動輸入無外部依賴（FR-061） |
-| 相簿分頁資料模型 note（2026-08-24新增） | Optional | Deferred | `supporting-artifacts/2026-08-21-personal-console-expansion.md`「相簿分頁設計」節 | MVP僅導覽入口無實際功能（FR-062）；AutoGallery資料模型參考尚未對照真實原型查證，完整開發前需補正式資料模型note |
-| 旅遊分頁範圍決策（2026-08-24新增） | N/A | — | — | 尚未建立，整合深度待PO決定（Q-047），非本輪產品基線承諾範圍 |
+| 相簿分頁資料模型 note（2026-09-17修訂） | Yes | Complete | `supporting-artifacts/2026-09-16-travel-photos-design.md`（含「四、2026-09-17補充」節） | 全新資料模型（albums/photos含metadata_sync_status/photo_albums/tags/photo_tags/trip_albums），AutoGallery原型已查證更正（Q-049）；全域搜尋＋中繼資料雙向同步設計已定案（Q-050） |
+| 相簿中繼資料同步整合 note（2026-09-17新增） | Yes | Complete | 本文件 FR-062「中繼資料雙向」節、§8／§9；`supporting-artifacts/2026-09-16-travel-photos-design.md` | 新增exiftool外部依賴＋db↔檔案單向同步，屬第三方工具整合（觸發規則：整合/失敗語意） |
+| 旅遊分頁範圍決策（2026-09-16修訂） | Yes | Complete | `supporting-artifacts/2026-09-16-travel-photos-design.md`；Q-047 | 整合深度已由PO定案為唯讀展示層（FR-063），不整合為結構化資料庫 |
+| 相簿匯入批次處理 note（2026-09-16新增） | Yes | Complete | 本文件 §9（新增兩列）、`supporting-artifacts/2026-09-16-travel-photos-design.md`「匯入流程」節 | 相簿匯入為批次處理（觸發規則表：Import/匯入批次），需定義驗證規則與部分失敗行為 |
 | 權限矩陣 | N/A | — | — | v1 單人使用，多用戶管理明確 out-of-scope（SRC-001 §4b） |
 | 冪等／補償／審計 | N/A | — | — | 無金流、無不可逆對外動作；入庫有確認制與來源引用（Q-021、FR-007） |
 | 可觀測性／手動復原 note | Yes | Complete | 本文件 §9 | 排程穩定性為成功標準 S4 |
@@ -659,9 +798,10 @@ SRC-002/Q-021）
 | Q-039 部位管理 MVP 開發深度 | **Answered（2026-07-23）；部分翻案見2026-07-27** | 先做MVP；Score量化評分/風險評分仍Deferred，**但遞減式加碼比例與交易流水表2026-07-27翻案改列In-Scope**（見FR-054/056） |
 | Q-040 投資主題標籤設計 | **Answered（2026-07-23）** | 新增主題標籤欄位，MVP 由 PO 手動標註 |
 | **Q-046 引擎架構是否因 STND 個人主控台擴建規劃而推翻 Q-034／Q-045？（2026-08-24 補登）** | **Answered（2026-08-21；2026-08-24 補登入本文件）** | 推翻，改採 FastAPI＋React 服務化架構，2026-08-22 已上線；完整記錄見 clarification-log.md、`roadmap.md`「Phase 2 正式產品」節 |
-| **Q-047 旅遊分頁是否整合 `mytravel` 專案資料、整合到多深？（2026-08-24 補登）** | Deferred | 尚未建立，整合深度待 PO 決定，不預設；見 clarification-log.md、CLAUDE.md「STND 分頁與程式碼位置」節 |
+| **Q-047 旅遊分頁是否整合 `mytravel` 專案資料、整合到多深？（2026-08-24 補登；2026-09-16 已解決）** | **Answered（2026-09-16）** | 定案為唯讀展示層，不搬移/不重寫原始檔案，不做結構化重寫；見 clarification-log.md Q-047、product-spec.md FR-063 |
 | **資產分頁情境試算年金公式精確版本（2026-08-24新增）** | Open（非阻塞） | 用範例反推目前有 1~2% 誤差，尚未與 PO 核對精確公式；見 FR-061 |
-| **相簿分頁 AutoGallery 資料模型參考未查證（2026-08-24新增）** | Open（非阻塞） | 本機實際 repo 路徑未定位到，僅有既有規劃文件轉述的欄位構想，完整開發前需查證；見 FR-062 |
+| **Q-049 相簿分頁 MVP 範圍/資料模型/儲存策略定案（2026-09-16新增，已解決）** | **Answered（2026-09-16）** | AutoGallery原型已實際查證並更正先前錯誤轉述（無相簿模型、無RAW轉檔）；MVP範圍/資料模型/儲存策略/操作流程已定案；見 clarification-log.md Q-049、product-spec.md FR-062 |
+| **Q-050 相簿核心需求：跨相簿全域搜尋＋標籤/評分中繼資料雙向同步（2026-09-17新增，已解決）** | **Answered（2026-09-17）** | 搜尋定為跨相簿全域（camera_model/lens結構化＋標籤組合查詢），資料庫為唯一搜尋來源；標籤/評分寫回檔案XMP/IPTC中繼資料（新增exiftool依賴），db單向鏡射到檔案，離線/失敗以metadata_sync_status追蹤＋手動重試；file_hash匯入當下固定不隨中繼資料寫回重算，避免破壞去重；見 clarification-log.md Q-050、product-spec.md FR-062 |
 | **已知限制：Layer 1哲學庫啟動時自動拼接進system prompt未實作** | Open（非阻塞） | 2026-07-24查證確認，見roadmap.md已知限制；權宜做法：CLAUDE.md指向路徑間接觸發 |
 | **已知限制：snapshots表（FR-026-028）實測0筆使用** | Open（非阻塞，2026-07-27新增） | 追溯性快照包機制設計完成但從未被實際呼叫，是否保留此機制待1c階段依實際需要重新評估 |
 

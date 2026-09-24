@@ -78,13 +78,24 @@ FastAPI＋React服務化架構（品牌名STND），詳見下方「STND 個人�
   個人一站入口」多分頁主控台：
   - **資產分頁（FR-061）**：口袋/帳戶/建倉進度/情境試算，手動輸入無
     外部依賴，全新5張表；**已上線，完成度：全功能**
-  - **相簿分頁（FR-062）**：**已上線，完成度：MVP僅導覽入口**（僅
-    導覽列tab與空白頁面，無後端router、無資料表、無實際功能）；未來
-    完整功能規劃參考AutoGallery資料模型（僅有規劃文件轉述，本機實際
-    repo路徑未定位到，見clarification-log.md）
+  - **相簿分頁（FR-062，2026-09-16修訂；2026-09-17再修訂）**：導覽殼層
+    **已上線，完成度：MVP僅導覽入口**（僅導覽列tab與空白頁面，無後端
+    router、無資料表、無實際功能）；**完整功能規格已定案但尚未開發**
+    ——實際查證AutoGallery原型後更正先前錯誤轉述（無相簿模型、無RAW
+    轉檔實作，見Q-049），MVP範圍為JPG上傳/瀏覽/相簿分類/標籤/基本
+    EXIF，RAW/X3F/Sigma轉檔列Deferred；**2026-09-17（Q-050）核心需求
+    定為跨相簿全域搜尋（camera_model/lens結構化篩選＋標籤組合查詢）＋
+    標籤/評分寫回檔案XMP/IPTC中繼資料（單向db→檔案，新增exiftool
+    依賴，離線/失敗用metadata_sync_status追蹤＋手動重試）**；資料模型
+    見下方與product-spec.md FR-062
+  - **旅遊分頁（FR-063，2026-09-16新增）**：**規格已定案但尚未開發**
+    （見Q-047）——定位為唯讀展示層，唯讀渲染獨立專案`mytravel/trips/`
+    既有markdown行程手記，不搬移/不重寫原始檔案；透過`trip_albums`
+    多對多關聯表連結相簿分頁的album，資料模型見product-spec.md FR-063
   - **多分頁導覽外殼（FR-060）**：**已上線**
   - 完整規劃來源：`roadmap.md`「Phase 2 正式產品」節、
     `supporting-artifacts/2026-08-21-personal-console-expansion.md`、
+    `supporting-artifacts/2026-09-16-travel-photos-design.md`、
     `docs/architecture.md`
 
 ## ❌ Out-of-Scope
@@ -130,11 +141,10 @@ FastAPI＋React服務化架構（品牌名STND），詳見下方「STND 個人�
   FastAPI＋React，見上方「STND 個人主控台擴建」節；本條保留刪除線僅供
   追溯決策演變過程，Docker化本身（原SRC-010提及）截至上線時仍未實作，
   維持Deferred
-- **旅遊分頁整合深度（2026-08-21規劃提及，Q-047，2026-08-24補登）**：
-  旅遊分頁本身尚未建立（無前端、無後端）；程式碼確定會建在本repo，但
-  要不要整合獨立專案`/Users/stander/My_project/mytravel/`的資料、整合
-  到多深（純導覽連結 vs 完整資料整合），是獨立待PO決定的範圍決策，
-  明文不預設
+- ~~旅遊分頁整合深度（2026-08-21規劃提及，Q-047，2026-08-24補登）~~：
+  **2026-09-16 已定案，改列 In-Scope，見上方「STND 個人主控台擴建」節
+  FR-063**——整合深度定為唯讀展示層（唯讀渲染既有markdown，不搬移/
+  不重寫），不整合為結構化資料庫；本條保留刪除線僅供追溯決策演變過程
 - Docker 雲端部署與自建前後端產品形態（Q-032 改 local-first；多用戶
   階段再議）（SRC-001 §8 原假設）
 - 來源立場衝突的 AI 權重判定邏輯（SRC-001 §11 Q2；v1 以 FR-013 人工判斷）

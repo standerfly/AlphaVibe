@@ -1,4 +1,4 @@
-# STND 架構與使用方式（v2，2026-08-24；v2：「儀表板」分頁更名為「投資」）
+# STND 架構與使用方式（v3，2026-09-08；v3：新增「美股」分頁）
 
 > 讀者：任何要接手 STND（= 本 repo，AlphaVibe）開發或討論工作的人／session。
 > 目的：不用重新爬程式碼就能搞懂「STND 現在長什麼樣、我該去哪裡改東西」。
@@ -20,7 +20,9 @@
 | 首頁 | `web/src/pages/Home.jsx` | `dashboard.py`（彙總其他分頁 API） | 本 repo | 已上線 |
 | 投資（原「儀表板」，2026-08-24 更名） | `Dashboard.jsx`／`StockDetail.jsx` | `holdings.py`／`screen.py`／`market_scan.py`／`stock_detail.py`／`actions.py`／`holdings_import.py` | `poc/kb-mcp/`（未重寫既有邏輯） | 已上線 |
 | 資產 | `Assets.jsx` | `assets.py` | `kb_store.py` 新增的 5 張表 | 已上線 |
-| 相簿 | `Photos.jsx` | 尚無 | 未定 | 僅 MVP 空殼入口 |
+| 美股（2026-09-08 新增） | `UsStocks.jsx`／`UsStockDetail.jsx`／`UsStockImport.jsx` | `app/routers/us_stocks.py` | `poc/kb-mcp/us_stock_store.py`（獨立 `USStockStore` 類別＋獨立 db 檔 `us_stocks.db`，**不共用** `KBStore`／`alphavibe.db`，見 `specs/003-us-stocks/research.md` §1） | 已上線（3個User Story全部完成；Telegram推播為stub，待`function/stnd-gateway-web`分支合併後才會真的送出通知） |
+| 相簿（2026-09-18 三個User Story全部實作完成） | `Photos.jsx`／`PhotoDetail.jsx`／`SearchPanel.jsx`／`ImportWizard.jsx`／`AlbumGrid.jsx`／`AlbumDetail.jsx`／`SyncStatusCard.jsx` | `app/routers/photos.py` | `poc/kb-mcp/photo_store.py`（獨立 `PhotoStore`＋獨立 db `photos.db`）／`photo_importer.py`／`photo_metadata_sync.py`（呼叫 `exiftool`，新增系統層依賴） | **尚未上線**——分支 `004-photos-albums-search` 已通過單元測試/smoke test/Playwright瀏覽器驗證，但尚未合併進 `function/alphavibe`、正式服務也還沒重啟套用，規格見 `specs/004-photos-albums-search/` |
+| 機票（2026-09-23 新增） | `Flights.jsx`／`FlightTrackForm.jsx` | `app/routers/flights.py` | `poc/kb-mcp/flight_store.py`（獨立 `FlightStore`＋獨立 db `flights.db`）／`flight_scan_service.py`／`flight_search.py`／`scraper/`（Node + Playwright） | **尚未上線**——005（掃描分頁）與 006（價格追蹤）皆已完成，通過 214 個單元測試與 smoke test（含 30 併發、組合數與下次掃描日的底層比對）；價格追蹤另有排程進入點 `poc/kb-mcp/flight_tracking_job.py` 與 `ops/launchd/com.alphavibe.flighttracking.plist`（每日 09:30 自動重掃、跌破目標價發 Telegram、資料過期時停止通知）。尚未合併進 `function/alphavibe`、正式服務也還沒重啟套用；規格見 `specs/005-flight-scan-page/` 與 `specs/006-flight-price-tracking/` |
 | 旅遊 | 尚未建立 | 尚未建立 | 內容來自**另一個獨立專案** `/Users/stander/My_project/mytravel/`，但程式碼仍會建在本 repo | 未開始，整合深度待 PO 決定，不要預設 |
 
 > `holdings_import.py` 是獨立 router（`app/main.py:81,95` 另外 import／include_router），
@@ -62,7 +64,11 @@
 ## 資料層
 
 - **單一 sqlite 檔**：`poc/data/alphavibe.db`（正式庫），路徑定義在
-  `poc/kb-mcp/kb_store.py:333`。所有分頁共用同一顆資料庫，**沒有物理隔離**。
+  `poc/kb-mcp/kb_store.py:333`。首頁／投資／資產／相簿共用同一顆資料庫，
+  **沒有物理隔離**。**例外（2026-09-08）**：美股分頁刻意不遵循這個模式——
+  用獨立的 `USStockStore` 類別＋獨立 db 檔 `poc/data/us_stocks.db`，理由
+  是「美股與台股資料/邏輯要完全獨立、不能混淆」是這個分頁的產品層硬性
+  要求（非技術偏好），見 `specs/003-us-stocks/research.md` §1。
 - **防呆機制（2026-08-22 新增，回應同日的資料庫污染事件）**：`app/deps.py` 的
   `_resolve_data_dir()`——沒有明確設定環境變數 `ALPHAVIBE_DATA_DIR` 就拒絕啟動；
   即使設定了，若指向正式路徑（`poc/data/`），還需要額外加

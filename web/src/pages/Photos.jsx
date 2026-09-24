@@ -1,27 +1,110 @@
-import { PhotosIcon, UploadIcon } from '../components/icons.jsx'
+import { useCallback, useEffect, useState } from 'react'
+import { apiGet, apiPost } from '../api/client.js'
+import { SearchIcon, UploadIcon } from '../components/icons.jsx'
+import AlbumGrid from '../components/photos/AlbumGrid.jsx'
+import AlbumDetail from '../components/photos/AlbumDetail.jsx'
+import ImportWizard from '../components/photos/ImportWizard.jsx'
+import SearchPanel from '../components/photos/SearchPanel.jsx'
+import PhotoDetail from '../components/photos/PhotoDetail.jsx'
 
-/* 相簿分頁：規劃文件定案的 MVP 設計——「MVP 階段僅做導覽入口，不含任何
-   功能」，完整功能（AutoGallery 資料模型遷移、X3F 轉檔混合模式）延後到
-   架構重寫、資產分頁都完成後才開工（見 Q-046 supporting-artifacts
-   「相簿分頁設計」節）。不接任何 API，「上傳照片」按鈕維持禁用態。 */
+/* 相簿分頁（specs/004-photos-albums-search）：相簿列表／相簿詳情／
+   匯入／全域搜尋四個子畫面的切換殼，取代原本 MVP 空白佔位頁（見
+   CLAUDE.md「STND 分頁與程式碼位置」表，FR-062 已修訂）。User Story 1
+   （匯入/整理/瀏覽）與 User Story 2（全域搜尋）已完成；照片詳情的
+   中繼資料同步狀態卡（User Story 3）留待該 Story 完成後再接上。 */
 export default function Photos() {
+  const [view, setView] = useState('grid') // 'grid' | 'album' | 'import' | 'search' | 'detail'
+  const [albums, setAlbums] = useState(null)
+  const [activeAlbumId, setActiveAlbumId] = useState(null)
+  const [activePhotoId, setActivePhotoId] = useState(null)
+  const [detailReturnView, setDetailReturnView] = useState('grid')
+  const [error, setError] = useState(null)
+
+  function openPhotoDetail(photoId, fromView) {
+    setActivePhotoId(photoId)
+    setDetailReturnView(fromView)
+    setView('detail')
+  }
+
+  const loadAlbums = useCallback(async () => {
+    try {
+      const data = await apiGet('/api/photos/albums')
+      setAlbums(data.albums)
+    } catch (err) {
+      setError(err.message)
+    }
+  }, [])
+
+  useEffect(() => { loadAlbums() }, [loadAlbums])
+
+  async function handleCreateAlbum(title) {
+    try {
+      await apiPost('/api/photos/albums', { title })
+      await loadAlbums()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  if (view === 'import') {
+    return (
+      <ImportWizard
+        albums={albums}
+        onCancel={() => setView('grid')}
+        onDone={() => { setView('grid'); loadAlbums() }}
+      />
+    )
+  }
+
+  if (view === 'search') {
+    return (
+      <SearchPanel
+        onBack={() => setView('grid')}
+        onOpenPhoto={(id) => openPhotoDetail(id, 'search')}
+      />
+    )
+  }
+
+  if (view === 'detail' && activePhotoId) {
+    return <PhotoDetail photoId={activePhotoId} onBack={() => setView(detailReturnView)} />
+  }
+
+  if (view === 'album' && activeAlbumId) {
+    return (
+      <AlbumDetail
+        albumId={activeAlbumId}
+        onBack={() => setView('grid')}
+        onOpenPhoto={(id) => openPhotoDetail(id, 'album')}
+      />
+    )
+  }
+
   return (
     <div>
-      <div className="page-title"><h1>相簿</h1></div>
-      <div className="placeholder-box">
-        <div className="placeholder-box__icon"><PhotosIcon width={56} height={56} /></div>
-        <div className="placeholder-box__title">相簿功能開發中</div>
-        <div className="placeholder-box__text">
-          等資產分頁與其他工作完成後才開工。完整功能規劃包含既有 AutoGallery
-          資料模型遷移（去重、rating、拍攝日期、標籤）與 Sigma X3F 檔案轉檔流程。
-        </div>
-        <div style={{ marginTop: '1.2rem' }}>
-          <button type="button" className="btn" disabled>
+      <div className="page-title" style={{ display: 'flex', alignItems: 'center',
+        justifyContent: 'space-between' }}>
+        <h1>相簿</h1>
+        <div style={{ display: 'flex', gap: '.5rem' }}>
+          <button type="button" className="btn" onClick={() => setView('search')}>
+            <SearchIcon width={16} height={16} style={{ verticalAlign: '-3px', marginRight: '.35rem' }} />
+            搜尋照片
+          </button>
+          <button type="button" className="btn-muted" onClick={() => setView('import')}>
             <UploadIcon width={16} height={16} style={{ verticalAlign: '-3px', marginRight: '.35rem' }} />
-            上傳照片（尚未開放）
+            匯入照片
           </button>
         </div>
       </div>
+      {error && <div className="offline-note" style={{ marginBottom: '.8rem' }}>{error}</div>}
+      {albums === null ? (
+        <div className="empty">載入中…</div>
+      ) : (
+        <AlbumGrid
+          albums={albums}
+          onOpenAlbum={(id) => { setActiveAlbumId(id); setView('album') }}
+          onCreateAlbum={handleCreateAlbum}
+        />
+      )}
     </div>
   )
 }

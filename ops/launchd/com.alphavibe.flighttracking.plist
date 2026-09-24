@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.alphavibe.flighttracking</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/stander/My_project/AlphaVibe/poc/kb-mcp/flight_tracking_job.py</string>
+        <string>--data-dir</string>
+        <string>/Users/stander/My_project/AlphaVibe/poc/data</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/stander/My_project/AlphaVibe</string>
+    <!-- launchd 的預設 PATH 只有 /usr/bin:/bin:/usr/sbin:/sbin，
+         不含 Homebrew 的 /opt/homebrew/bin——查價用的 node 在那裡。
+         少了這行，排程每天都會「跑完但什麼都沒查到」。
+         flight_search.node_binary() 另有一層絕對路徑後備。 -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <!-- 09:30：避開既有排程（02:00 選股掃描、03:30 備份、03:45 日誌輪替、
+         04:00 健康檢查、06:00 美股掃描）。刻意選白天而非深夜——機器夜間
+         可能睡眠，錯過的排程要等喚醒才補跑，白天的到點率高得多。 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/stander/Library/Logs/alphavibe-flight-tracking.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/stander/Library/Logs/alphavibe-flight-tracking.err.log</string>
+</dict>
+</plist>

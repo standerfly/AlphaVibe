@@ -514,6 +514,32 @@ class KBStoreTest(unittest.TestCase):
         self.assertIn("2330", codes)
         self.assertIn("2454", codes)
 
+    def test_market_scan_run_persists_emerging_error_and_market(self):
+        """2026-09-03：興櫃候選補齊——market_errors 的興櫃鍵要能存進
+        emerging_error 欄位，候選列的 market="興櫃" 也要原樣存回。"""
+        rows = [self._market_scan_row("2255", peg=0.4, meets=True)]
+        rows[0]["market"] = "興櫃"
+        saved = self.store.save_market_scan_run(
+            "peg_deep_dip_concentration", "manual", rows, candidate_count=1,
+            market_errors={"TWSE": None, "TPEx": None, "興櫃": "興櫃 呼叫失敗：逾時"},
+            total_scanned=359)
+        self.assertTrue(saved["run_id"])
+
+        latest = self.store.get_latest_market_scan("peg_deep_dip_concentration")
+        self.assertEqual(latest["run"]["emerging_error"], "興櫃 呼叫失敗：逾時")
+        self.assertEqual(latest["results"][0]["market"], "興櫃")
+
+    def test_market_scan_run_market_errors_missing_emerging_key_defaults_none(self):
+        """呼叫端（例如舊測試 fixture）沒給興櫃鍵時，emerging_error 存 NULL，
+        不報錯——沿用既有 total_scanned／benchmark 的「省略則NULL」慣例。"""
+        saved = self.store.save_market_scan_run(
+            "peg_deep_dip_concentration", "manual",
+            [self._market_scan_row("2330")], candidate_count=1,
+            market_errors={"TWSE": None, "TPEx": None})
+        self.assertTrue(saved["run_id"])
+        latest = self.store.get_latest_market_scan("peg_deep_dip_concentration")
+        self.assertIsNone(latest["run"]["emerging_error"])
+
     def test_market_scan_run_total_scanned_defaults_to_none(self):
         """呼叫端不傳total_scanned時（例如舊呼叫端還沒更新）要能正常存，
         存成NULL，不強制要求、不報錯。"""
@@ -1025,7 +1051,7 @@ class TPExClientTest(unittest.TestCase):
         eps = self.EPS_RANK if eps is None else eps
         capitals = self.CAPITALS_RANK if capitals is None else capitals
 
-        def fake_fetch(endpoint_key):
+        def fake_fetch(endpoint_key, cache=None):
             return {"data": {
                 "latest_statistics": latest,
                 "eps_rank": eps,
@@ -1125,8 +1151,22 @@ class TPExClientTest(unittest.TestCase):
         # PER 不受影響，仍應算得出來
         self.assertIsNotNone(out["per"])
 
+    def test_zero_price_treated_as_no_trade_not_valid_price(self):
+        """2026-09-03 修正：TPEx 用價格0代表「當日無成交」（實測 7849/7885
+        皆如此），不是真的0元。改動前會把它當成有效價格繼續算出PER=0.00，
+        market_scan 依PEG升冪排序時這種垃圾資料反而排最前面，看起來像
+        完美標的。"""
+        zero_price = [{"Date": "1150717", "SecuritiesCompanyCode": "7849",
+                       "CompanyName": "測試無成交", "LatestPrice": "0"}]
+        with unittest.mock.patch.object(
+                tpex_client, "_fetch", self._mock_endpoints(latest=zero_price)):
+            out = tpex_client.get_emerging_stock_valuation("7849", include_pbr=False)
+        self.assertIsNone(out["price"])
+        self.assertIsNone(out["per"])
+        self.assertTrue(any("無成交" in e for e in out["errors"]))
+
     def test_endpoint_error_is_recorded_not_raised(self):
-        def fake_fetch_with_error(endpoint_key):
+        def fake_fetch_with_error(endpoint_key, cache=None):
             if endpoint_key == "latest_statistics":
                 return {"error": "TPEx 呼叫失敗（latest_statistics）：模擬斷網"}
             return {"data": {
@@ -1144,6 +1184,106 @@ class TPExClientTest(unittest.TestCase):
         self.assertIn("TPEx 呼叫失敗（latest_statistics）：模擬斷網", out["errors"])
         # 沒有 price，PER 仍不應計算
         self.assertIsNone(out["per"])
+
+    def test_fetch_cache_avoids_repeat_http_call(self):
+        """2026-09-03：_fetch 新增 cache 參數，供 market_scan._scan_emerging
+        逐檔呼叫時共用同一份三端點批次回應——不是每檔都重打。"""
+        call_count = {"n": 0}
+
+        def fake_urlopen(req, timeout=None):
+            call_count["n"] += 1
+            import json as _json
+            import io as _io
+
+            class _Resp:
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *a):
+                    return False
+
+                def read(self_inner):
+                    return _json.dumps(self.LATEST_STATISTICS).encode("utf-8")
+            return _Resp()
+
+        cache = {}
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            r1 = tpex_client._fetch("latest_statistics", cache=cache)
+            r2 = tpex_client._fetch("latest_statistics", cache=cache)
+        self.assertEqual(r1, r2)
+        self.assertEqual(call_count["n"], 1)  # 第二次命中cache，沒有真的再打一次
+
+    def test_fetch_without_cache_calls_every_time(self):
+        """cache=None（預設）行為與改動前完全一致，不影響既有唯一呼叫端
+        （server.py 的單檔查詢）。"""
+        call_count = {"n": 0}
+
+        def fake_urlopen(req, timeout=None):
+            call_count["n"] += 1
+            import json as _json
+
+            class _Resp:
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *a):
+                    return False
+
+                def read(self_inner):
+                    return _json.dumps(self.LATEST_STATISTICS).encode("utf-8")
+            return _Resp()
+
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            tpex_client._fetch("latest_statistics")
+            tpex_client._fetch("latest_statistics")
+        self.assertEqual(call_count["n"], 2)  # 沒給cache，兩次都真的打
+
+    def test_include_pbr_false_skips_finmind_and_pbr_fields(self):
+        """market_scan 逐檔篩選只需要 PER，include_pbr=False 時完全不呼叫
+        FinMind 淨值查詢，book_value/pbr 維持 None，且不記錄PBR相關errors
+        （那是刻意跳過，不是查詢失敗）。"""
+        with unittest.mock.patch.object(tpex_client, "_fetch", self._mock_endpoints()),              unittest.mock.patch.object(
+                 finmind_client, "get_equity_attributable_to_owners") as mock_equity:
+            out = tpex_client.get_emerging_stock_valuation("6826", include_pbr=False)
+
+        mock_equity.assert_not_called()
+        self.assertIsNone(out["book_value"])
+        self.assertIsNone(out["pbr"])
+        self.assertEqual(out["errors"], [])  # 沒有任何「查無淨值」之類的錯誤訊息
+        # PER 不受影響，仍照常算
+        self.assertAlmostEqual(out["per"], 18.51, places=2)
+
+    def test_include_pbr_true_default_unchanged_behavior(self):
+        """include_pbr 預設 True，既有單檔查詢呼叫端（server.py）不用改
+        任何呼叫方式，行為與改動前完全一致。"""
+        with unittest.mock.patch.object(tpex_client, "_fetch", self._mock_endpoints()),              unittest.mock.patch.object(
+                 finmind_client, "get_equity_attributable_to_owners",
+                 return_value={"equity": 7505428000.0, "equity_date": "2025-12-31",
+                               "errors": []}) as mock_equity:
+            out = tpex_client.get_emerging_stock_valuation("6826")
+
+        mock_equity.assert_called_once()
+        self.assertIsNotNone(out["pbr"])
+
+    def test_cache_threaded_to_all_three_endpoints(self):
+        """cache 要傳到三個端點的 _fetch 呼叫，不是只有其中一個。"""
+        seen = []
+
+        def fake_fetch(endpoint_key, cache=None):
+            seen.append((endpoint_key, cache is my_cache))
+            return {"data": {
+                "latest_statistics": self.LATEST_STATISTICS,
+                "eps_rank": self.EPS_RANK,
+                "capitals_rank": self.CAPITALS_RANK,
+            }[endpoint_key]}
+
+        my_cache = {}
+        with unittest.mock.patch.object(tpex_client, "_fetch", fake_fetch):
+            tpex_client.get_emerging_stock_valuation("6826", cache=my_cache, include_pbr=False)
+
+        self.assertEqual(len(seen), 3)
+        self.assertTrue(all(is_same for _, is_same in seen),
+                        "三個端點都要收到同一個 cache 物件")
 
 
 HOLDINGS_REPORT_SAMPLE = """\
@@ -1377,6 +1517,115 @@ class ProtocolE2ETest(unittest.TestCase):
 
         unknown = self._rpc({"jsonrpc": "2.0", "id": 5, "method": "no/such"})
         self.assertEqual(unknown["error"]["code"], -32601)
+
+
+class HoldingsBatchAtomicityTest(unittest.TestCase):
+    """save_holdings 整批原子性（2026-09-17 架構體檢 A2 的回歸測試）。
+
+    事故情境：迴圈跑到一半才發現某筆缺 code 而 raise，前面幾輪已經
+    execute() 的 INSERT 還留在連線的未決交易裡。stdio MCP 服務整個
+    session 共用同一條連線，這些列會被「下一次任何無關的成功寫入」
+    順帶 commit 進正式庫——使用者以為整批被拒絕，實際上部分資料進去了。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="alphavibe-atomicity-")
+        self.store = KBStore(self.tmp)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp)
+
+    def test_partial_failure_leaves_nothing_behind_after_later_commit(self):
+        with self.assertRaises(ValueError):
+            self.store.save_holdings([
+                {"code": "2330", "name": "台積電", "shares": 1000, "avg_cost": 800.0},
+                {"code": "2317", "name": "鴻海", "shares": 2000, "avg_cost": 100.0},
+                {"name": "缺code的壞資料", "shares": 999, "avg_cost": 1.0},
+            ])
+
+        # 關鍵斷言：一次完全無關的成功寫入（會 commit 整條連線的未決交易）
+        self.store.save_stance("2454", "偏多", name="聯發科")
+
+        got = self.store.get_holdings()
+        self.assertEqual(
+            got["holdings"], [],
+            "整批應該被撤回，但有列被後續無關的 commit 帶進 holdings",
+        )
+        self.assertEqual(got["count"], 0)
+
+    def test_successful_batch_still_commits_normally(self):
+        """修法不能把正常路徑弄壞：全部合法時照常寫入。"""
+        out = self.store.save_holdings([
+            {"code": "2330", "name": "台積電", "shares": 1000, "avg_cost": 800.0},
+            {"code": "2317", "name": "鴻海", "shares": 2000, "avg_cost": 100.0},
+        ])
+        self.assertEqual(out["count"], 2)
+        self.assertEqual(self.store.get_holdings()["count"], 2)
+
+    def test_failure_does_not_discard_previously_committed_batches(self):
+        """rollback 只撤回這一批，不能牽連之前已經 commit 的資料。"""
+        self.store.save_holdings(
+            [{"code": "2330", "name": "台積電", "shares": 1000, "avg_cost": 800.0}],
+            snapshot_date="2026-09-01")
+        with self.assertRaises(ValueError):
+            self.store.save_holdings([{"name": "壞資料"}], snapshot_date="2026-09-02")
+        self.store.save_stance("2454", "偏多")
+        rows = self.store.conn.execute("SELECT code FROM holdings").fetchall()
+        self.assertEqual([r["code"] for r in rows], ["2330"])
+
+
+class McpSessionRollbackE2ETest(unittest.TestCase):
+    """MCP stdio 服務層的 rollback 防禦網（2026-09-17 架構體檢 A2）。
+
+    用真實子行程跑 server.py，因為這個 bug 只有在「整個 session 共用
+    同一條連線」時才會發生——單元測試各自開關 store 是測不到的。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="alphavibe-mcp-rollback-")
+        env = dict(os.environ, ALPHAVIBE_DATA_DIR=self.tmp)
+        self.proc = subprocess.Popen(
+            [sys.executable, SERVER], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            env=env, text=True, bufsize=1,
+        )
+        self._rpc({"jsonrpc": "2.0", "id": 0, "method": "initialize",
+                   "params": {"protocolVersion": "2024-11-05"}})
+
+    def tearDown(self):
+        self.proc.terminate()
+        self.proc.wait(timeout=5)
+        shutil.rmtree(self.tmp)
+
+    def _rpc(self, payload):
+        self.proc.stdin.write(json.dumps(payload) + "\n")
+        self.proc.stdin.flush()
+        line = self.proc.stdout.readline()
+        self.assertTrue(line, "server 沒有回應")
+        return json.loads(line)
+
+    def _call(self, msg_id, tool, args):
+        return self._rpc({"jsonrpc": "2.0", "id": msg_id, "method": "tools/call",
+                          "params": {"name": tool, "arguments": args}})
+
+    def test_failed_write_is_not_committed_by_a_later_unrelated_write(self):
+        failed = self._call(1, "save_holdings", {"rows": [
+            {"code": "2330", "name": "台積電", "shares": 1000, "avg_cost": 800.0},
+            {"name": "缺code的壞資料", "shares": 999},
+        ]})
+        self.assertTrue(failed["result"]["isError"], "這批應該要失敗")
+
+        # 同一個 session 裡做一次完全無關的成功寫入
+        ok = self._call(2, "save_stance", {"code": "2454", "stance": "偏多"})
+        self.assertFalse(ok["result"]["isError"])
+
+        got = self._call(3, "get_holdings", {})
+        payload = json.loads(got["result"]["content"][0]["text"])
+        self.assertEqual(
+            payload["holdings"], [],
+            "失敗批次的資料被後續無關的成功寫入帶進正式庫了",
+        )
 
 
 if __name__ == "__main__":

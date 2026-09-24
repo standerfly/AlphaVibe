@@ -29,6 +29,22 @@ function fmtNum(v) {
 
 const TRIGGER_LABEL = { manual: '手動觸發', scheduled: '排程自動' }
 
+/* 興櫃候選的 PER/PEG 精確度低於正式上市/上櫃股（半年報/年報EPS，非TTM，
+   估算股數），這裡跟 report.py `_market_scan_row_html()` 同一套邏輯——
+   備註欄一律標明，不能讓使用者誤以為興櫃候選跟上市/上櫃一樣可信
+   （roadmap.md 明文要求；2026-09-03 補齊興櫃篩選缺口時一併同步兩邊
+   前端，避免只改 SSR 版）。跟既有 r.error 並存時兩者都顯示。 */
+function noteFor(r) {
+  const parts = []
+  if (r.market === '興櫃') {
+    parts.push('興櫃估值為粗估（半年報/年報EPS，非TTM），精確度低於上市/上櫃')
+  }
+  if (r.error) {
+    parts.push(r.error)
+  }
+  return parts.length > 0 ? parts.join('；') : '—'
+}
+
 /* 「加入追蹤」按鈕（可選加分項）：直接呼叫 PR#9 已做好的
    POST /api/watchlist（QuickInputPanel.jsx 的 WatchlistForm 用同一個
    端點），語意等同舊版 report.py `_market_scan_track_form_html()`／
@@ -85,7 +101,7 @@ function ResultsTable({ rows, showTrack }) {
             <th>代碼</th><th>名稱</th><th>市場</th><th>產業別</th>
             <th>PER</th><th>營收年增率</th><th>PEG</th><th>回檔幅度</th>
             <th>超額跌幅</th><th>PBR</th><th>殖利率</th><th>目前價</th>
-            <th>符合框架</th>
+            <th>符合框架</th><th>備註</th>
             {showTrack && <th>加入追蹤</th>}
           </tr>
         </thead>
@@ -109,6 +125,7 @@ function ResultsTable({ rows, showTrack }) {
                   ? <span className="badge badge-danger">符合</span>
                   : <span className="badge badge-neutral">—</span>}
               </td>
+              <td>{noteFor(r)}</td>
               {showTrack && <td><TrackButton code={r.code} name={r.name} /></td>}
             </tr>
           ))}
@@ -156,9 +173,10 @@ export default function MarketScanPanel() {
         <div className="card__head"><h2>市場掃描</h2></div>
         <div className="card__body">
           <p className="form-note">
-            用 TWSE/TPEx 官方批次資料，在框架鎖定的產業別內自動找候選，範圍僅上市＋上櫃。
-            這裡永遠顯示最近一次掃描結果——掃描本身由每天 02:00 排程自動執行，不會因為打開
-            這個頁面而現場重新計算。
+            用 TWSE/TPEx 官方批次資料，在框架鎖定的產業別內自動找候選，涵蓋上市＋上櫃＋興櫃
+            （2026-09-03起）。興櫃沒有官方批次PER資料，改用「先篩產業別＋營收年增率、再逐檔
+            查估值」補齊，精確度低於上市/上櫃，候選列的備註欄會標明。這裡永遠顯示最近一次
+            掃描結果——掃描本身由每天 02:00 排程自動執行，不會因為打開這個頁面而現場重新計算。
           </p>
           <div className="form-field" style={{ maxWidth: '24rem' }}>
             <label htmlFor="scan-framework">框架</label>
@@ -203,11 +221,12 @@ export default function MarketScanPanel() {
                 {run.benchmark_drawdown_pct != null && `｜同期大盤回檔 ${fmtPct(run.benchmark_drawdown_pct)}`}
               </p>
 
-              {(run.twse_error || run.tpex_error) && (
+              {(run.twse_error || run.tpex_error || run.emerging_error) && (
                 <div className="error-box">
                   {run.twse_error && `TWSE 資料源異常：${run.twse_error}　`}
-                  {run.tpex_error && `TPEx 資料源異常：${run.tpex_error}`}
-                  （該市場當次候選數會變少，不影響另一邊）
+                  {run.tpex_error && `TPEx 資料源異常：${run.tpex_error}　`}
+                  {run.emerging_error && `興櫃資料源異常：${run.emerging_error}`}
+                  （該市場當次候選數會變少，不影響其他市場）
                 </div>
               )}
               {run.benchmark_error && (

@@ -56,6 +56,7 @@ import datetime
 import finmind_client
 import frameworks
 import fundamentals_client
+import exit_signals
 import screener
 
 # FR-054 遞減式加碼比例表：key＝第幾次加碼，value＝這次加碼相對於「這檔
@@ -129,15 +130,24 @@ def _growth_deceleration(revenue_result):
     if len(non_null) < MIN_YOY_POINTS:
         return {"flagged": False, "detail": "資料不足，無法判斷趨勢"}
 
-    recent = non_null[-MIN_YOY_POINTS:]
-    values = [row["yoy_growth"] for row in recent]
+    # 002-entry-exit-signals FR-007：判斷準則由「最近 3 期嚴格遞減」擴大為
+    # 趨勢判斷（斜率方向＋最新值相對窗口中位數），委派給 exit_signals.
+    # revenue_trend。**輸出結構與呼叫端介面完全不變**，改的是判斷準則。
+    # 擴大期數不增加任何外部呼叫——年增率是單次 date-range 查詢一次取回
+    # 800 天（實測每檔 14 筆非 null），本來就在既有資料窗口內。
+    values = [row["yoy_growth"] for row in non_null]
+    trend = exit_signals.revenue_trend(values)
+    if trend["direction"] == "insufficient":
+        return {"flagged": False, "detail": trend["detail"]}
 
-    all_positive = all(v > 0 for v in values)
-    strictly_declining = all(values[i] > values[i + 1] for i in range(len(values) - 1))
+    window = trend["values"]
+    # 轉負是另一個問題，不在這裡處理（沿用改動前的既有語意）
+    all_positive = all(v > 0 for v in window)
 
-    if all_positive and strictly_declining:
-        detail = "年增率連續%d個月下滑：%s" % (
-            MIN_YOY_POINTS, "→".join("%.0f%%" % (v * 100) for v in values))
+    if all_positive and trend["direction"] == "falling":
+        detail = "年增率近%d期趨勢下滑：%s" % (
+            trend["periods_used"],
+            "→".join("%.0f%%" % (v * 100) for v in window))
         return {"flagged": True, "detail": detail}
 
     return {"flagged": False, "detail": "近期營收年增率未見連續下滑"}
@@ -737,11 +747,62 @@ def run_module_d_review(code, store, data_dir=None, token=None):
         laoyutou = None
         errors["laoyutou"] = "老芋頭動向比對失敗：%s" % exc
 
+    # ---- 002-entry-exit-signals：停損停利門檻（FR-002）與背離（FR-005）----
+    # 兩者都標 record_stance=False——FR-013 明文禁止新訊號寫入 stances
+    # （實測 stances 474 筆中 437 筆已是機器自動寫入，PO 手寫僅 37 筆，
+    # 再加只會讓 PO 自己的判斷更難被看見）。
+    exit_signal_items = []
+    try:
+        threshold = store.get_exit_threshold(code)
+        prices = store.get_stock_prices()
+        threshold_result = exit_signals.evaluate_threshold(code, threshold, prices)
+        suggestion, note = exit_signals.suggestion_or_note(threshold_result)
+        exit_signal_items.append({
+            "trigger_type": "通用層", "strategy_id": None,
+            "trigger_label": "通用層／停損停利",
+            "concern_flag": exit_signals.is_triggered(threshold_result),
+            "detail": threshold_result["detail"] + (("（%s）" % note) if note else ""),
+            "record_stance": False, "suggested_action": suggestion,
+        })
+    except Exception as exc:  # 新訊號失敗不得影響既有檢查（FR-011）
+        errors["exit_threshold"] = "門檻判斷失敗：%s" % exc
+
+    try:
+        # 兩邊資料都來自既有來源：年增率重用上面 general_review 的結果、
+        # 股價位置讀 stock_price_history 快取——零新增外部呼叫（FR-012）。
+        revenue_values = []
+        if general and general.get("revenue_result", {}).get("revenue_yoy"):
+            revenue_values = [row.get("yoy_growth")
+                              for row in general["revenue_result"]["revenue_yoy"]]
+        # 延遲 import：price_position 會 import 本模組的百分位門檻常數，
+        # 放在模組層會造成循環 import（review_engine → price_position →
+        # review_engine）。函式內 import 是打斷循環最小的做法，也避免
+        # 修改階段A 已驗收的 price_position.py。
+        import price_position
+        history = store.get_cached_price_history(code, limit_days=800)
+        pp = price_position.compute(code, history, store.get_stock_prices())
+        divergence = exit_signals.detect_divergence(code, revenue_values, pp)
+        suggestion, note = exit_signals.suggestion_or_note(divergence)
+        exit_signal_items.append({
+            "trigger_type": "通用層", "strategy_id": None,
+            "trigger_label": "通用層／背離",
+            "concern_flag": exit_signals.is_triggered(divergence),
+            "detail": divergence["basis"] + (("（%s）" % note) if note else ""),
+            "record_stance": False, "suggested_action": suggestion,
+        })
+    except Exception as exc:  # 同上，失敗不影響既有檢查
+        errors["divergence"] = "背離偵測失敗：%s" % exc
+
+    items.extend(exit_signal_items)
+
     # findings：從 items 篩出 concern_flag=True 的子集合（見上方docstring
     # 說明為何不能直接用 items），轉成 auto_record_findings 需要的格式。
+    # FR-013：record_stance=False 的項目（002 階段的新訊號）不得進 findings
+    # ——findings 是 auto_record_findings 寫入 stances 的來源。
     findings = [{"trigger_label": it["trigger_label"],
                 "concern_flag": it["concern_flag"], "detail": it["detail"]}
-               for it in items if it["concern_flag"]]
+               for it in items
+               if it["concern_flag"] and it.get("record_stance", True)]
 
     # ---- FR-054 部位控制建議：findings 非空（即有任一筆concern）才算 ----
     position_control = None
@@ -765,8 +826,13 @@ def run_module_d_review(code, store, data_dir=None, token=None):
     # ---- 寫入 module_d_results：items 全部（含「沒觸發」的正常結果）----
     saved_count = 0
     for it in items:
-        suggested_action = (position_control["detail"]
-                            if it["concern_flag"] and position_control else None)
+        # 新訊號（002）自帶 suggested_action；既有項目沿用部位控制建議。
+        # 只有實際觸發才有值——那是首頁「今日重點」的篩選條件，
+        # 全填會把首頁灌爆（見 specs/002-entry-exit-signals/research.md R-006）。
+        suggested_action = it.get("suggested_action")
+        if suggested_action is None:
+            suggested_action = (position_control["detail"]
+                                if it["concern_flag"] and position_control else None)
         try:
             store.save_module_d_result(
                 code=code, trigger_type=it["trigger_type"], finding=it["detail"],
@@ -831,7 +897,7 @@ def run_module_d_batch(store, data_dir=None, token=None):
 # 頁面只讀 stock_prices／stock_valuation_snapshots／module_d_results 快取，
 # 實際查詢都在這裡的背景刷新流程裡完成，由 report_server.trigger_stock_
 # refresh()（PO手動按更新／新增研究標的觸發）與 module_d_scheduler.py
-# （每日18:00排程）兩條路徑共用，確保寫入同一份資料、同一套邏輯。
+# （每日17:00排程（以 launchd plist 為準））兩條路徑共用，確保寫入同一份資料、同一套邏輯。
 # ---------------------------------------------------------------------------
 
 def refresh_price_and_valuation(code, store, data_dir=None, token=None):
@@ -910,7 +976,7 @@ def refresh_stock_snapshot(code, store, data_dir=None, token=None):
     標的」與「PO手動按更新」兩種觸發路徑都呼叫這個函式，確保寫入完全
     相同的資料／邏輯（見派工說明「背景刷新機制」）。
 
-    每日18:00排程（module_d_scheduler.py）刻意「不」呼叫這個函式：排程
+    每日17:00排程（以 launchd plist 為準）（module_d_scheduler.py）刻意「不」呼叫這個函式：排程
     走 run_module_d_batch()（已個別覆蓋 try/except／failed清單），批次跑完
     後另外對同一批代碼呼叫 refresh_price_and_valuation()，避免 run_module_d_
     review() 被重複呼叫兩次（run_module_d_batch 內部已經呼叫過一次）。

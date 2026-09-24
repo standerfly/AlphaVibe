@@ -49,10 +49,18 @@ docs/spec-intake/alphavibe/supporting-artifacts/2026-08-21-personal-console-expa
    為 0 時走線性特殊處理分支，避免除以零；`withdrawal_years` 換算月數後
    四捨五入為 0（例如填了小於半個月的極端值）也視為輸入錯誤擋下，理由
    相同——避免下一步公式除以零。
+
+**資產走勢（`GET /api/assets/net-worth-history`，2026-09-10 新增，PO 要求
+補一張折線圖看每年/每月狀況）**：資料來源與寫入時機的完整取捨說明在
+`poc/kb-mcp/kb_store.py` 「資產走勢（淨值快照）」一節開頭 docstring——
+這裡只複述端點行為：`GET` 回傳依 `granularity` 分組的期末值序列，可能
+資料很少（甚至是空陣列，系統剛上線、還沒累積出快照時）；`POST .../manual`
+讓使用者手動回填過去某天的總額（不影響 `asset_holdings` 本身）；
+`POST .../{date}/delete` 刪除一筆回填錯的快照。
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -286,6 +294,60 @@ _SIMULATE_DISCLAIMER = (
 )
 
 
+def _accumulation_balance_at_month(payload: SimulateRequest, month: int) -> float:
+    """累積期第 `month` 個月結束時的資產（month=0＝起點，只有本金）。跟
+    `_simulate_asset_scenario()` 算 `fv_total` 用的同一組公式，抽成獨立
+    函式讓下面的 `curve`（逐年推演點）可以在任意月份重複呼叫，不重寫
+    一次假設。"""
+    accumulation_rate = payload.accumulation_rate
+    r_m = (1 + accumulation_rate) ** (1 / 12) - 1
+    fv_lump = payload.principal * (1 + accumulation_rate) ** (month / 12)
+    if r_m == 0:
+        fv_annuity = payload.monthly_contribution * month
+    else:
+        fv_annuity = payload.monthly_contribution * (((1 + r_m) ** month - 1) / r_m)
+    return fv_lump + fv_annuity
+
+
+def _withdrawal_balance_at_month(
+    fv_total: float, monthly_withdrawal: float, r_w: float, month: int
+) -> float:
+    """提領期第 `month` 個月結束時的剩餘資產（month=0＝退休當下＝
+    `fv_total`）。跟反推 `monthly_withdrawal` 用的同一組年金假設，理論上
+    在 `month` 等於提領總月數時會非常接近 0（浮點誤差內）；夾在 0 以上
+    純防呆，理論上不會真的算出負數。"""
+    if r_w == 0:
+        value = fv_total - monthly_withdrawal * month
+    else:
+        value = (fv_total * (1 + r_w) ** month
+                 - monthly_withdrawal * (((1 + r_w) ** month - 1) / r_w))
+    return max(0.0, value)
+
+
+def _build_curve_points(
+    payload: SimulateRequest, fv_total: float, monthly_withdrawal: float,
+    r_w: float, n: int, total_months: int, step_months: int,
+) -> list:
+    """輔助：從 month=0 取樣到 `total_months`（含端點），每 `step_months`
+    個月取一點（12＝逐年、1＝逐月），回傳 `[{"offset": k, "amount": ...,
+    "phase": ...}, ...]`——`offset` 是「第幾個 step」（逐年時＝第幾年、
+    逐月時＝第幾個月），呼叫端自行決定怎麼轉成日曆年/月標籤，這裡不管
+    標籤怎麼顯示。`n`＝累積期總月數（`phase` 用它判斷落在累積期還是
+    提領期，跟 `_simulate_asset_scenario()` 算 `curve` 用同一個切點）。"""
+    points = []
+    steps = total_months // step_months
+    for k in range(steps + 1):
+        month = min(k * step_months, total_months)
+        if month <= n:
+            amount = _accumulation_balance_at_month(payload, month)
+            phase = "accumulation"
+        else:
+            amount = _withdrawal_balance_at_month(fv_total, monthly_withdrawal, r_w, month - n)
+            phase = "withdrawal"
+        points.append({"offset": k, "amount": round(amount, 2), "phase": phase})
+    return points
+
+
 def _simulate_asset_scenario(payload: SimulateRequest) -> Dict[str, Any]:
     """情境試算核心公式，純運算不碰資料庫。公式假設、來源與「待驗證」
     標註見本檔開頭 docstring「情境試算」一節——不要在這裡自行調整假設。
@@ -295,20 +357,28 @@ def _simulate_asset_scenario(payload: SimulateRequest) -> Dict[str, Any]:
     `r_w == 0` 時同樣走線性特殊處理。`m <= 0`（`withdrawal_years` 換算
     月數後四捨五入為 0）在呼叫前就應該被擋下，這裡用 assert 當最後一道
     防線，不應該被觸發到。
+
+    `curve`／`monthly_curve`（2026-09-10 新增，資產走勢卡「情境試算
+    推演」用；2026-09-10 稍晚追加 `monthly_curve`——PO 反映這張圖沒有
+    月/年視角切換）：都是既有 `fv_total`／`monthly_withdrawal` 計算的
+    視覺化延伸，不是另一套公式。
+    - `curve`：從現在到累積期結束(退休)再到提領期結束，**逐年**取一個
+      資產餘額點（「長期」視角，40年攤開來逐月點太密集看不清楚）。
+    - `monthly_curve`：只取**最近 24 個月**（或不到24個月就到
+      `years_to_retirement+withdrawal_years` 換算的總月數為止），
+      **逐月**取一個資產餘額點（「近期」視角，方便看剛開始那一兩年的
+      建倉節奏跟複利怎麼慢慢累積）——超過這個範圍的年份不會出現在
+      `monthly_curve` 裡，要看長期趨勢請用 `curve`。
+    兩者 `phase` 都標記該點落在累積期還是提領期，前端用這個欄位切線段
+    顏色/樣式，不要自己用索引猜切點。`curve` 最後落在累積期的那個點
+    數值上應該等於 `fv_total`（允許因為改用逐月而非精確年數帶來的極小
+    浮點差異，見 `_accumulation_balance_at_month` 用 `month/12` 而非
+    `payload.years_to_retirement` 當指數，年數為整數時兩者完全相等）。
     """
-    accumulation_rate = payload.accumulation_rate
-    withdrawal_rate = payload.withdrawal_rate
-
-    r_m = (1 + accumulation_rate) ** (1 / 12) - 1
     n = round(payload.years_to_retirement * 12)
-    fv_lump_sum = payload.principal * (1 + accumulation_rate) ** payload.years_to_retirement
-    if r_m == 0:
-        fv_annuity = payload.monthly_contribution * n
-    else:
-        fv_annuity = payload.monthly_contribution * (((1 + r_m) ** n - 1) / r_m)
-    fv_total = fv_lump_sum + fv_annuity
+    fv_total = _accumulation_balance_at_month(payload, n)
 
-    r_w = (1 + withdrawal_rate) ** (1 / 12) - 1
+    r_w = (1 + payload.withdrawal_rate) ** (1 / 12) - 1
     m = round(payload.withdrawal_years * 12)
     assert m > 0, "呼叫前應已擋下 m<=0，見 simulate_scenario() 的檢查"
     if r_w == 0:
@@ -316,11 +386,29 @@ def _simulate_asset_scenario(payload: SimulateRequest) -> Dict[str, Any]:
     else:
         monthly_withdrawal = fv_total * r_w / (1 - (1 + r_w) ** (-m))
 
+    retire_year_offset = round(payload.years_to_retirement)
+    total_months = n + m
+
+    yearly_points = _build_curve_points(
+        payload, fv_total, monthly_withdrawal, r_w, n, total_months, step_months=12)
+    curve = [{"year_offset": p["offset"], "amount": p["amount"], "phase": p["phase"]}
+             for p in yearly_points]
+
+    near_term_months = min(24, total_months)
+    monthly_points = _build_curve_points(
+        payload, fv_total, monthly_withdrawal, r_w, n, near_term_months, step_months=1)
+    monthly_curve = [{"month_offset": p["offset"], "amount": p["amount"], "phase": p["phase"]}
+                      for p in monthly_points]
+
     return {
         "fv_total": round(fv_total, 2),
         "monthly_withdrawal": round(monthly_withdrawal, 2),
         "inputs": payload.model_dump(),
         "disclaimer": _SIMULATE_DISCLAIMER,
+        "curve": curve,
+        "retire_year_offset": retire_year_offset,
+        "monthly_curve": monthly_curve,
+        "retire_month_offset": n,
     }
 
 
@@ -343,3 +431,114 @@ def simulate_scenario(payload: SimulateRequest) -> Dict[str, Any]:
             detail="withdrawal_years 換算月數後四捨五入為 0，請提高數值（至少約 0.04 年／半個月以上）",
         )
     return _simulate_asset_scenario(payload)
+
+
+# ---------- 資產走勢（淨值快照） ----------
+
+
+class NetWorthManualEntry(BaseModel):
+    """POST /api/assets/net-worth-history/manual 的 request body：手動回填
+    一筆歷史快照，語意見 `store.add_asset_net_worth_manual_entry()`
+    docstring（不影響 `asset_holdings`／`asset_contribution_events` 本身，
+    `snapshot_date` 已存在會被覆蓋）。"""
+
+    snapshot_date: str = Field(..., description="日期，格式 YYYY-MM-DD")
+    total_amount: float = Field(..., description="當時的資產總額")
+    cumulative_contributed: Optional[float] = Field(
+        None, description="當時的累積投入金額，選填")
+    note: Optional[str] = Field(None, description="備註，選填")
+
+
+@router.get("/api/assets/net-worth-history")
+def get_net_worth_history(
+    granularity: Literal["day", "month", "year"] = "month",
+    store: KBStore = Depends(get_kb_store),
+) -> Dict[str, Any]:
+    """資產走勢圖資料，預設 `granularity=month`。回傳依日期升冪排序的
+    期末值序列（見 `store.list_asset_net_worth_snapshots()` docstring）——
+    可能資料很少甚至是空陣列，前端自行處理資料不足的空狀態，這裡不假裝
+    有資料。"""
+    return {
+        "granularity": granularity,
+        "points": store.list_asset_net_worth_snapshots(granularity),
+    }
+
+
+@router.post("/api/assets/net-worth-history/manual")
+def upsert_net_worth_manual_entry(
+    payload: NetWorthManualEntry, store: KBStore = Depends(get_kb_store)
+) -> Dict[str, Any]:
+    """手動回填一筆歷史資產總額。`snapshot_date` 格式不對或
+    `total_amount` 不是數字會被 `store.add_asset_net_worth_manual_entry()`
+    擋下轉成 400。"""
+    try:
+        return store.add_asset_net_worth_manual_entry(
+            snapshot_date=payload.snapshot_date,
+            total_amount=payload.total_amount,
+            cumulative_contributed=payload.cumulative_contributed,
+            note=payload.note,
+        )
+    except ValueError as exc:
+        _raise_from_value_error(exc)
+
+
+@router.post("/api/assets/net-worth-history/{snapshot_date}/delete")
+def delete_net_worth_entry(
+    snapshot_date: str, store: KBStore = Depends(get_kb_store)
+) -> Dict[str, Any]:
+    """刪除一筆快照（通常用於回填打錯要清掉重打）。查無此日期不是
+    錯誤，回應 `deleted: False`（理由見
+    `store.delete_asset_net_worth_snapshot()` docstring）。"""
+    return {"deleted": store.delete_asset_net_worth_snapshot(snapshot_date)}
+
+
+# ---------- 資產走勢：投入事件 ----------
+# 設計脈絡見 poc/kb-mcp/kb_store.py 「資產走勢：投入事件」一節開頭
+# docstring——這裡只是薄封裝。
+
+
+class ContributionCreate(BaseModel):
+    """POST /api/assets/contributions 的 request body：記一筆投入事件。"""
+
+    pocket_id: int = Field(..., description="口袋 id，必填")
+    account_id: int = Field(..., description="帳戶 id，必填")
+    amount: float = Field(..., gt=0, description="投入金額，必須 >0")
+    event_date: Optional[str] = Field(
+        None, description="投入日期，格式 YYYY-MM-DD，不填預設今天")
+    note: Optional[str] = Field(None, description="備註，選填")
+
+
+@router.get("/api/assets/contributions")
+def list_contributions(store: KBStore = Depends(get_kb_store)) -> Dict[str, Any]:
+    """列出所有投入事件，附口袋／帳戶名稱，依日期新到舊排序。"""
+    return {"contributions": store.list_asset_contributions()}
+
+
+@router.post("/api/assets/contributions")
+def create_contribution(
+    payload: ContributionCreate, store: KBStore = Depends(get_kb_store)
+) -> Dict[str, Any]:
+    """記一筆投入事件：金額累加進對應 asset_holdings 餘額，同時留下可
+    追溯的投入紀錄（`store.record_asset_contribution()`）。`amount<=0`
+    已由 `ContributionCreate` 的 Field 驗證擋在 422；`pocket_id`／
+    `account_id` 指到不存在的資源會被轉成 404。"""
+    try:
+        return store.record_asset_contribution(
+            pocket_id=payload.pocket_id,
+            account_id=payload.account_id,
+            amount=payload.amount,
+            event_date=payload.event_date,
+            note=payload.note,
+        )
+    except ValueError as exc:
+        _raise_from_value_error(exc)
+
+
+@router.post("/api/assets/contributions/{event_id}/delete")
+def delete_contribution(
+    event_id: int, store: KBStore = Depends(get_kb_store)
+) -> Dict[str, Any]:
+    """刪除一筆投入事件——精確把當初累加的金額從 asset_holdings 扣回去
+    （見 `store.delete_asset_contribution()` docstring），不是只刪紀錄。
+    查無此 id 不是錯誤，回應 `deleted: False`。"""
+    return {"deleted": store.delete_asset_contribution(event_id)}

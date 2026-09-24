@@ -295,9 +295,26 @@ function StockDetailBody({ data }) {
                   <div className="value">{num(holdings.current_price)}</div>
                 </div>
                 <div className="val-item">
+                  {/* FR-014／SC-004：這一格就是「頁面顯示的浮動損益」，
+                      FIFO 算得出來時後端已把 pnl_pct 換成 FIFO 數字，
+                      頁面與 get_position_pnl 才會一致。pnl_source 標明
+                      目前用的是哪一種口徑。 */}
                   <div className="label">浮動損益</div>
                   <div className="value">{pct(holdings.pnl_pct)}</div>
+                  <div className="val-source">{holdings.pnl_source}</div>
                 </div>
+                {holdings.fifo && holdings.fifo.status === 'history_incomplete' && (
+                  // FR-015（PO 裁決 Q2-C）：實測約 1/3 持股屬此類（流水表
+                  // 起始日之前的部位沒有進場紀錄）。明講「無法計算」而不是
+                  // 留白，上方仍顯示標明口徑的加權平均估算值。
+                  <div className="val-item">
+                    <div className="label">FIFO 未實現損益</div>
+                    <div className="value">—</div>
+                    <div className="val-source">
+                      無法計算：歷史不完整（缺口 {holdings.fifo.shortfall_shares} 股）
+                    </div>
+                  </div>
+                )}
               </div>
               {holdings.ledger_entries.length > 0 && (
                 // 走勢與力道圖（2026-08-24 補回，見 StockComboChart.jsx）：

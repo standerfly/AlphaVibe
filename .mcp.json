@@ -3,6 +3,10 @@
     "alphavibe-kb": {
       "command": "python3",
       "args": ["poc/kb-mcp/server.py"]
+    },
+    "alphavibe-us-stock": {
+      "command": "python3",
+      "args": ["poc/kb-mcp/us_stock_mcp_server.py"]
     }
   }
 }

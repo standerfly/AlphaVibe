@@ -87,7 +87,6 @@ if str(_KB_MCP_DIR) not in sys.path:
     sys.path.insert(0, str(_KB_MCP_DIR))
 
 import frameworks  # noqa: E402  (需先插入 sys.path 才能 import)
-import report  # noqa: E402  (需先插入 sys.path 才能 import)
 
 from app.deps import KBStore, get_kb_store  # noqa: E402
 

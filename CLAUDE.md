@@ -32,7 +32,9 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 | 首頁 | `web/src/pages/Home.jsx` | 彙總其他分頁 API | 本 repo |
 | 投資（原「儀表板」，2026-08-24 更名） | `Dashboard.jsx`／`StockDetail.jsx` | `dashboard.py`／`screen.py`／`market_scan.py`／`holdings.py`／`holdings_import.py`／`stock_detail.py`／`actions.py` | `poc/kb-mcp/`（report.py／screener.py／frameworks.py，未重寫） |
 | 資產 | `Assets.jsx` | `assets.py` | `kb_store.py` 新增 5 張表，手動輸入，無外部依賴 |
-| 相簿 | `Photos.jsx`（MVP 僅入口） | 尚無 | 未來：AutoGallery 資料模型參考（僅有 README 內容，本機實際 repo 路徑未定位到，見 clarification-log） |
+| 美股（2026-09-08新增） | `UsStocks.jsx`／`UsStockDetail.jsx`／`UsStockImport.jsx` | `app/routers/us_stocks.py` | `poc/kb-mcp/us_stock_store.py`（獨立`USStockStore`+獨立db`us_stocks.db`，刻意不共用`KBStore`/`alphavibe.db`——美股與台股要完全獨立是產品硬性要求，非技術偏好）；Telegram推播暫為stub，`function/stnd-gateway-web`未合併進develop |
+| 相簿 | `Photos.jsx`／`PhotoDetail.jsx`／`SearchPanel.jsx`／`ImportWizard.jsx`／`AlbumGrid.jsx`／`AlbumDetail.jsx`／`SyncStatusCard.jsx` | `app/routers/photos.py` | `poc/kb-mcp/photo_store.py`（獨立`PhotoStore`+獨立db`photos.db`，比照`us_stock_store.py`先例）／`photo_importer.py`／`photo_metadata_sync.py`（呼叫`exiftool`寫回XMP/IPTC，新增系統層依賴，需`brew install exiftool`）；三個User Story（匯入整理/全域搜尋/中繼資料同步）2026-09-18已完整實作並通過測試（單元測試54個＋smoke test深度驗證＋Playwright瀏覽器實測），**但分支`004-photos-albums-search`尚未合併進`function/alphavibe`、正式服務`com.alphavibe.reportserver`也還沒重啟套用**，不要假設已上線；規格見`specs/004-photos-albums-search/` |
+| 機票（2026-09-23 新增） | `Flights.jsx`／`FlightTrackForm.jsx` | `app/routers/flights.py` | `poc/kb-mcp/flight_store.py`（獨立`FlightStore`+獨立db`flights.db`，比照`us_stock_store.py`先例）／`flight_scan_service.py`／`flight_search.py`（查價與枚舉，176測試）／`scraper/`（Node+Playwright，需`npm install`）；外站四段票掃描，**日期是輸出不是輸入**——給區間與行程天數，系統抽樣日期查價。查價走瀏覽器路徑（免費、免註冊）但**有速率上限**（預設20筆/小時，為推估值；超過會被軟封鎖成連續逾時）。005（掃描分頁）56/56＋006（價格追蹤：每日排程重掃、跌破目標價Telegram通知、過期資料不通知）33/33皆已完成，214單元測試＋smoke test 113項全綠；排程進入點`flight_tracking_job.py`＋`ops/launchd/com.alphavibe.flighttracking.plist`（每日09:30）。**尚未合併進`function/alphavibe`、正式服務也還沒重啟套用**；規格見`specs/005-flight-scan-page/`與`specs/006-flight-price-tracking/`，需求基線見`docs/spec-intake/flight-search/` |
 | 旅遊（未來，尚未建立） | — | — | 內容/研究在**另一個獨立專案** `/Users/stander/My_project/mytravel/`——若要做這個分頁，程式碼仍會建在這個 repo，但要不要整合 mytravel 的資料、整合到多深，屬於獨立待討論的範圍決策，不要預設 |
 
 新增分頁前的判斷順序：(1) 先跟 PO 討論這個領域要不要進 STND、做到多深
@@ -53,12 +55,30 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 完整流程說明：`docs/runbooks/pre-spec-workflow.md`；
 決策依據：`docs/adr/0027-prespec-workflow.md`。
 
+<!-- SPECKIT START -->
+目前進行中的 Spec Kit 技術規劃：`specs/006-flight-price-tracking/plan.md`
+（機票價格追蹤：定期自動重掃、達標 Telegram 通知、資料過期防護，分支
+`006-flight-price-tracking`，建在 005 之上）。前一階段
+`specs/005-flight-scan-page/plan.md`
+（機票掃描分頁：外站四段票日期抽樣掃描、兩端間隔策略、速率守衛與結果
+顯示，分支 `005-flight-scan-page`）。接手實作前先讀
+`specs/005-flight-scan-page/quickstart.md`——它列出「已完成不要重寫」的
+既有能力與三個已發生過的事故坑。上游需求基線在
+`docs/spec-intake/flight-search/`（Accepted）。
+`specs/004-photos-albums-search` 已完成規劃階段。
+<!-- SPECKIT END -->
+
 ## 分支規則
 
 - 功能分支：`function/<feature-slug>`（kebab-case），基底鎖定 `develop`（ADR-0027）。
-- **已知現況（2026-07-06）**：repo 目前**只有** `function/alphavibe` 分支，
-  `develop` 尚未建立。初始化腳本寫死以 develop 為基底，直接跑會失敗——
-  遇到新功能要初始化時，先問使用者要補建 `develop` 還是改用 `--no-branch`。
+- **更新（2026-09-06）**：`develop` 分支已建立（`origin/develop` 存在），
+  `prespec_init.py` 可正常以 develop 為基底初始化，2026-07-06 當時「develop
+  尚未建立」的已知現況已過時。Spec Kit 的功能分支（`speckit-git-feature`
+  建立，格式 `NNN-feature-name`）是獨立於 `function/<slug>` 的另一套編號，
+  務必先查 `function/alphavibe`（實際PR合併目標分支）的 `specs/` 底下已用
+  到哪些編號，避免撞號——`function/alphavibe` 已有 `001-entry-exit-foundation`／
+  `002-entry-exit-signals`，本地 `develop` 分支沒有 `specs/` 只是因為那兩份
+  規格沒回合到 develop，不能只看本地掃描結果。
 - 初始化腳本完整路徑：`.claude/skills/prespec/scripts/prespec_init.py`
   （不在 repo 根目錄）。不要手動開分支。
 
@@ -103,7 +123,18 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 - PoC 驗證：`python3 -m unittest discover -s poc/kb-mcp/tests`
   （2026-07-08 實測 10/10 綠）；用法見 `poc/kb-mcp/README.md`
 - **STND（app/）驗證**：`ALPHAVIBE_DATA_DIR=<獨立測試庫路徑>
-  .venv/bin/python3 -m app.tests.test_smoke`——**一定要**明確指定
+  .venv/bin/python3 -m app.tests.test_smoke`——這支測試**對測試庫不是冪等的**，
+  而且要求「乾淨」的資產表，從正式庫複製過來會直接 FAIL 兩次。完整重建步驟
+  （2026-09-17 實測，少任何一步都會失敗）：
+  ```bash
+  rm -rf poc/data-test && cp -R poc/data poc/data-test
+  # 清空 asset_* 全部 7 張表，否則 FAIL「unexpected auto-seed」
+  # 連 sqlite_sequence 也要清，否則 FAIL「buildup plan id mismatch」
+  #   （AUTOINCREMENT 序號沒重置，新建的 plan id 不會從 1 開始）
+  ```
+  遇到 FAIL 先照上面重建一次再懷疑程式碼——更可靠的做法是跑 baseline 比對
+  （`git stash` 掉你的改動、用同樣條件跑一次），才分得出是你改壞的還是既有問題。
+  **一定要**明確指定
   `ALPHAVIBE_DATA_DIR` 指向獨立複製出來的測試庫（例如 `poc/data-test/`，
   已 gitignore），絕對不要指向 `poc/data/`（正式庫），見下方 2026-08-22
   教訓紀錄。真正要對正式庫寫入資產種子資料，用
@@ -113,6 +144,15 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
   （現在跑 `uvicorn app.main:app`，不是 `report_server.py`）；舊版 plist
   備份在 `~/Library/LaunchAgents/backup-20260822/`，回滾步驟見同一天
   教訓紀錄。
+- **機票查詢（外站四段票）**：`poc/kb-mcp/flight_search.py`（CLI，97 測試）
+  ＋ `poc/kb-mcp/scraper/`（Node/Playwright 抓 Google Flights，需先
+  `npm install`）。**接手前先讀
+  `docs/research/2026-09-22-ex-station-4segment-ticket-search.md`**——
+  裡面有外站四段票機制、票規限制（長榮第1、2段須24小時內轉機／星宇可
+  多段中停）、實測的封鎖速率上限、PO 偏好（成田優先、避開北半球暑假、
+  第1段拉遠以免密集請假）與已找到的方案。尚未做成 STND 分頁，只有 CLI。
+  查價走瀏覽器路徑（免費、無額度），**有速率限制**（預設 20 筆/小時，
+  超過會被 Google 軟封鎖成連續逾時）；SerpApi 路徑是備援、需自備 key。
 - 加碼/減碼決策原則：`poc/data/philosophy/framework_evidence_based_position_sizing.md`
   （或呼叫 `get_philosophy`）——**不會自動載入**，討論加碼/減碼前主動查
   （Layer 1「啟動時拼接進 system prompt」的 FR-014 尚未實作，見下方教訓紀錄）
@@ -230,3 +270,42 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 - 2026-08-19｜情境：為個股詳情頁新增卡片時，連續四次寫出會誤判的測試斷言——`assertNotIn("conc-fill", page)`、`assertNotIn("完成比例", page)`、`assertIn("verdict--alert", page)`、`page.index("stock-row__delta")` 全都命中了頁面裡的 CSS 定義或說明文字，而不是實際渲染出來的元素
   ｜教訓：`report.py` 把整份 `CSS` 常數**內嵌進每一個頁面**（`<style>%s</style>` % CSS），所以任何拿 class 名稱或 CSS 片語去 grep 頁面字串的斷言，都會先命中樣式定義，位置與存在性判斷全錯。同理，說明文字裡也常包含 UI 標籤字（例：「因此算不出**完成比例**」會讓 `assertNotIn("完成比例")` 失敗）
   ｜動作：測 `report.py` 產出的頁面時，一律斷言**渲染形式**而非裸字串——用 `class="conc-fill`、`<div class="verdict `、`<span class="stock-row__delta` 這種帶 `class="` 前綴或帶標籤的比對；順序比較（assertLess）更要如此，否則比到的是 CSS 區塊的位置
+
+- 2026-09-03｜情境：改了 `poc/kb-mcp/screener.py` 的常數（400→120）並 commit
+  後，測試仍然失敗；`grep` 檔案、`git show HEAD:` 都顯示 120，`git status`
+  乾淨、repo 內 `find -name __pycache__` 找不到任何快取，但
+  `import screener` 拿到的是 **400**。獨立驗收 agent 也踩到同一個坑，
+  一度以為是自己的修改殘留，最後改用 `git archive` 匯出乾淨副本才得到
+  可信結果
+  ｜教訓：這台機器的 Python bytecode 快取**不在 repo 的 `__pycache__`**，
+  而在 macOS 系統層的
+  `~/Library/Caches/com.apple.python/<完整專案路徑>/*.pyc`
+  （用 `python3 -c "import mod; print(mod.__cached__)"` 才看得到）。
+  這份快取有時不會正確失效，導致「檔案內容是新的、import 到的是舊的」，
+  而且 repo 內完全找不到線索。**遇到「改了程式碼但行為沒變／測試結果與
+  檔案內容矛盾」時，先查 `模組.__cached__` 指向哪裡**，不要先懷疑程式碼、
+  更不要重寫一次
+  ｜動作：`rm -f ~/Library/Caches/com.apple.python/<專案路徑>/<模組>*.pyc`
+  後重新 import 即恢復；驗證時若要完全排除此因素，用
+  `git archive <commit> | tar -x -C <暫存目錄>` 匯出乾淨副本跑
+
+- 2026-09-10｜情境：使用者回報 STND 首頁「今日重點載入失敗：The string
+  did not match the expected pattern.」；用 curl 直打本機 8080 與對外
+  ngrok 網址的 `/api/dashboard` 都正常回 200+JSON，一度誤判是暫時性
+  網路問題。改用瀏覽器 UA（`curl -A "Mozilla/5.0 ... Safari"`）打同一個
+  ngrok 網址才重現：回應仍是 HTTP 200，但 `Content-Type: text/html`，
+  內容是 **ngrok 免費版自己的瀏覽器警告頁**，不是我們的 API 回應——curl
+  預設 UA 不會觸發這個警告頁，只有瀏覽器類 UA 才會
+  ｜教訓：(1) 排查「使用者說壞掉、我測都正常」時，**curl 的預設行為
+  不等於瀏覽器的真實行為**，尤其走 ngrok/tunnel 這類中介層時，要用
+  `-A "<真實瀏覽器UA>"` 模擬才測得到中介層基於 UA 判斷的行為。
+  (2) `res.json()` 對非 JSON 內容（如 HTML）解析失敗時，Safari 丟出的
+  錯誤訊息是「The string did not match the expected pattern.」——這個
+  訊息本身完全看不出跟 JSON 或 ngrok 有關，看到這個訊息不要當成一般的
+  fetch/網路錯誤處理，先懷疑「拿到的 body 根本不是預期格式」。
+  ｜動作：[web/src/api/client.js](web/src/api/client.js) 的
+  `apiGet`／`apiPost`／`apiDelete` 都加上 ngrok 官方繞過 header
+  `ngrok-skip-browser-warning: true`（見該檔案內註解）；已 rebuild
+  `web/dist/`，正式服務不用重啟即生效（直接讀磁碟）；已 commit+push
+  （`2fc2bc5`）。日後若再遷移對外服務方式（例如換回 devtunnel 或改用
+  自訂網域），這個 header 對非 ngrok 環境無副作用，不用移除

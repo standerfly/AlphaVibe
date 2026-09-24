@@ -53,6 +53,28 @@ export function PhotosIcon(props) {
   )
 }
 
+export function UsStocksIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M3.5 12h17" />
+      <path d="M12 3.5c2.8 2.3 4.3 5.3 4.3 8.5s-1.5 6.2-4.3 8.5c-2.8-2.3-4.3-5.3-4.3-8.5S9.2 5.8 12 3.5Z" />
+    </svg>
+  )
+}
+
+export function GatewayIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <rect x="4" y="7" width="16" height="12" rx="2.5" />
+      <path d="M9 3.5 12 7l3-3.5" />
+      <circle cx="9" cy="12.5" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="12.5" r="1.1" fill="currentColor" stroke="none" />
+      <path d="M9.5 16h5" />
+    </svg>
+  )
+}
+
 export function SearchIcon(props) {
   return (
     <svg {...base} {...props}>
@@ -102,6 +124,14 @@ export function SystemIcon(props) {
     <svg {...base} {...props}>
       <rect x="3" y="4.5" width="18" height="12" rx="1.5" />
       <path d="M9 20h6M12 16.5V20" />
+    </svg>
+  )
+}
+
+export function FlightsIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M10.5 3.2a1.5 1.5 0 0 1 3 0V9l7 4.1v2.1l-7-2.1v4.2l2.4 1.7v1.6L12 19.8l-3.9.8v-1.6l2.4-1.7v-4.2l-7 2.1v-2.1l7-4.1z" />
     </svg>
   )
 }

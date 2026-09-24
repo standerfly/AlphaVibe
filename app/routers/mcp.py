@@ -40,7 +40,7 @@ if str(_KB_MCP_DIR) not in sys.path:
 
 import mcp_http_gateway  # noqa: E402  (需先插入 sys.path 才能 import)
 
-from app.deps import _resolve_data_dir  # noqa: E402
+from app.deps import _resolve_data_dir, mcp_auth_ok  # noqa: E402
 
 router = APIRouter()
 
@@ -66,6 +66,13 @@ async def mcp_post(request: Request) -> Response:
     的 Headers 物件，`.get(key)` 為 case-insensitive，滿足
     handle_mcp_post() 對 headers 參數「dict-like，只用到 .get()」的要求。
     """
+    if not mcp_auth_ok():
+        # fail-closed（2026-09-17 架構體檢 A5）：ALPHAVIBE_MCP_TOKEN 沒設定
+        # 時，底層 gateway 的 _auth_ok() 會放行——但 /mcp 不受儀表板認證
+        # 保護，那等於全部工具無認證公開。啟動斷言已經先擋掉這個情況，
+        # 這裡是第二道防線（防執行期環境變數被清掉之類的意外）。
+        return Response(content="伺服器未設定 MCP 認證".encode("utf-8"),
+                        status_code=503, media_type="text/plain; charset=utf-8")
     body_bytes = await request.body()
     status, content_type, body = mcp_http_gateway.handle_mcp_post(
         request.headers, body_bytes, data_dir=_resolve_data_dir())

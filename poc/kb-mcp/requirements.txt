@@ -1,0 +1,12 @@
+# poc/kb-mcp/ 的第一個第三方依賴（2026-09-08，Python 3.9.6 上實測安裝
+# 成功）。這一層原本刻意維持零第三方依賴（所有既有 client 都只用
+# urllib 標準庫）——這次例外，理由：us_stock_price_client.py 的備援
+# 報價來源原本手刻直接呼叫 Yahoo Finance 公開端點，實測被 HTTP 429
+# 擋下（Yahoo 現在需要正確的 session/crumb/TLS 指紋處理才放行，
+# yfinance 套件底層用 curl_cffi 處理這些），手刻重現這段的風險與維護
+# 成本比多裝一個依賴更高，PO 2026-09-08 確認改裝真正的套件。
+#
+# 只有 poc/kb-mcp/us_stock_price_client.py::get_quote_fallback() 用到，
+# 其餘 poc/kb-mcp/ 既有 client（finmind_client.py／twse_price_client.py
+# 等）不受影響，維持零依賴。
+yfinance==1.2.0
