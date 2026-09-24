@@ -255,6 +255,100 @@ class ExpandTrackTest(unittest.TestCase):
             self.assertNotEqual(i["legs"][1]["date"][5:7], ws[5:7])
 
 
+class ExpandRoundtripTrackTest(unittest.TestCase):
+    """008：單純來回的展開邏輯——多目的地、轉機偏好、天數區間。"""
+
+    def setUp(self):
+        self.ws, self.we = _future_window()
+
+    def _track(self, **kw):
+        args = dict(destinations=["AOJ", "CTS"], hub="TPE",
+                    preferred_transit=None, window_start=self.ws,
+                    window_end=self.we, trip_days_min=3, trip_days_max=7,
+                    samples_per_month=2)
+        args.update(kw)
+        return args
+
+    def test_combination_count_is_destinations_times_days_times_samples(self):
+        t = self._track(destinations=["AOJ", "CTS"], trip_days_min=3,
+                        trip_days_max=7)
+        itins, skipped = svc.expand_roundtrip_track(t)
+        # 2 月 × 2 抽樣 × 2 目的地 × 5 天數選項
+        self.assertEqual(len(itins), 2 * 2 * 2 * 5)
+        self.assertEqual(skipped, [])
+
+    def test_single_destination_is_valid(self):
+        """spec.md Edge Cases：只填 1 個候選目的地仍正常運作。"""
+        t = self._track(destinations=["AOJ"])
+        itins, _ = svc.expand_roundtrip_track(t)
+        self.assertTrue(itins)
+        self.assertTrue(all(i["destination"] == "AOJ" for i in itins))
+
+    def test_each_itinerary_tagged_with_destination(self):
+        t = self._track(destinations=["AOJ", "CTS"])
+        itins, _ = svc.expand_roundtrip_track(t)
+        seen = {i["destination"] for i in itins}
+        self.assertEqual(seen, {"AOJ", "CTS"})
+
+    def test_no_transit_produces_two_legs(self):
+        """未指定 preferred_transit：2 段，google_flights_url() 會自動
+        編碼成來回（research.md §1）。"""
+        t = self._track(preferred_transit=None, destinations=["AOJ"],
+                        trip_days_min=5, trip_days_max=5)
+        itins, _ = svc.expand_roundtrip_track(t)
+        legs = itins[0]["legs"]
+        self.assertEqual(len(legs), 2)
+        self.assertEqual(legs[0]["departure_id"], "TPE")
+        self.assertEqual(legs[0]["arrival_id"], "AOJ")
+        self.assertEqual(legs[1]["departure_id"], "AOJ")
+        self.assertEqual(legs[1]["arrival_id"], "TPE")
+
+    def test_preferred_transit_produces_four_legs(self):
+        """指定 preferred_transit：4 段，落入既有多城市編碼分支。"""
+        t = self._track(preferred_transit="NRT", destinations=["AOJ"],
+                        trip_days_min=5, trip_days_max=5)
+        itins, _ = svc.expand_roundtrip_track(t)
+        legs = itins[0]["legs"]
+        self.assertEqual(len(legs), 4)
+        self.assertEqual([l["departure_id"] for l in legs],
+                         ["TPE", "NRT", "AOJ", "NRT"])
+        self.assertEqual([l["arrival_id"] for l in legs],
+                         ["NRT", "AOJ", "NRT", "TPE"])
+
+    def test_transit_legs_share_outbound_and_return_dates(self):
+        """轉機的兩段去程共用出發日、兩段回程共用回程日——是同一趟行程
+        被強制走指定轉機點，不是四段票那種刻意拉開日期的結構。"""
+        t = self._track(preferred_transit="NRT", destinations=["AOJ"],
+                        trip_days_min=5, trip_days_max=5, samples_per_month=1)
+        itins, _ = svc.expand_roundtrip_track(t)
+        legs = itins[0]["legs"]
+        self.assertEqual(legs[0]["date"], legs[1]["date"])
+        self.assertEqual(legs[2]["date"], legs[3]["date"])
+        self.assertNotEqual(legs[0]["date"], legs[2]["date"])
+
+    def test_return_date_follows_trip_days(self):
+        t = self._track(destinations=["AOJ"], trip_days_min=5,
+                        trip_days_max=5, samples_per_month=1)
+        itins, _ = svc.expand_roundtrip_track(t)
+        legs = itins[0]["legs"]
+        out = datetime.date.fromisoformat(legs[0]["date"])
+        ret = datetime.date.fromisoformat(legs[1]["date"])
+        self.assertEqual((ret - out).days, 5)
+
+    def test_day_range_covers_multiple_day_counts(self):
+        t = self._track(destinations=["AOJ"], trip_days_min=3,
+                        trip_days_max=7, samples_per_month=1)
+        itins, _ = svc.expand_roundtrip_track(t)
+        day_counts = {i["trip_days"] for i in itins}
+        self.assertEqual(day_counts, {3, 4, 5, 6, 7})
+
+    def test_skipped_always_empty(self):
+        """單純來回沒有 lead/trail 排除月份判斷，不會有東西被跳過。"""
+        t = self._track()
+        _, skipped = svc.expand_roundtrip_track(t)
+        self.assertEqual(skipped, [])
+
+
 class CombinationCountTest(unittest.TestCase):
     """007：組合數上限守衛用的純函式（不依賴 Track 物件形狀）。"""
 

@@ -68,7 +68,28 @@ id=9 已在正式庫遷移至 10～14 天並重新查價（最低價 NT$46,872�
 但正式環境的合併／部署順序仍建議先 `trip-day-range` 再
 `roundtrip-search`，避免正式環境同時處理兩個對已上線功能的異動。
 
+### 進度更新（2026-09-25）
+
+**`roundtrip-search` 包（Spec Kit `specs/008-roundtrip-search/`）已完成
+開發（Phase 1-7，T001-T031 全數完成）**：新增 `roundtrip_track`／
+`roundtrip_scan_result` 獨立表（不與四段票共用 schema）、多候選目的地
+展開與比價（`expand_roundtrip_track()`）、可選偏好轉機城市（2 段／
+4 段自動切換，`google_flights_url()` 沿用不修改）、達標與現況通知
+標示觸發的候選目的地、組合數上限守衛。298 個機票單元測試全綠（僅 1
+個與本 feature 無關的既有日期敏感測試失敗，見
+`specs/008-roundtrip-search/tasks.md` T029 備註）＋smoke test 全項
+PASS（含新增的 preferred_transit 持久化驗證）。
+
+**T032（正式環境部署）尚未執行，待 PO 另外確認**——程式碼尚未合併進
+`function/alphavibe`、正式服務也還沒重啟套用。這是
+`flight-roundtrip-search` pre-spec 工作區兩包中的最後一包；兩包程式碼
+層級皆已完成，工作區狀態可視 T032 完成後再更新為 `Handoff Complete`。
+
 ### 非阻斷的已知待辦
 
 - 組合數上限（60）與 id=9 遷移區間（10～14 天）為 Claude assumption，
   執行 T028（正式環境部署）前可視情況再調整，不需重跑 pre-spec
+- `roundtrip-search` 包的 `preferred_transit` 轉機城市是否確實生效，
+  T002 已用真實瀏覽器查價驗證過 URL 編碼層級（2 段 vs 4 段 legs，
+  trip type 正確），但完整端到端（含轉機城市顯示在結果頁）留待 T032
+  正式環境部署時人工核對一次

@@ -446,5 +446,161 @@ class ResultTest(unittest.TestCase):
         self.assertEqual(r["connector_price"], 6800)
 
 
+def _base_roundtrip(store, **kw):
+    args = dict(destinations=["AOJ", "CTS"], window_start="2027-01",
+                window_end="2027-02", trip_days_min=3, trip_days_max=7)
+    args.update(kw)
+    return store.create_roundtrip_track(**args)
+
+
+class RoundtripTrackTest(unittest.TestCase):
+    """008：單純來回追蹤條件——schema、CRUD、驗證規則。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="flight-roundtrip-test-")
+        self.store = FlightStore(self.tmp)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_table_created(self):
+        rows = self.store.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        names = set(r["name"] for r in rows)
+        self.assertIn("roundtrip_track", names)
+        self.assertIn("roundtrip_scan_result", names)
+
+    def test_create_and_get_roundtrip(self):
+        t = _base_roundtrip(self.store, target_price=30000)
+        got = self.store.get_roundtrip_track(t["id"])
+        self.assertEqual(got["destinations"], ["AOJ", "CTS"])
+        self.assertEqual(got["trip_days_min"], 3)
+        self.assertEqual(got["trip_days_max"], 7)
+        self.assertEqual(got["target_price"], 30000)
+        self.assertEqual(got["track_type"], "roundtrip")
+        self.assertIsNone(got["preferred_transit"])
+
+    def test_single_destination_is_valid(self):
+        """spec.md Edge Cases：只填 1 個候選目的地仍合法。"""
+        t = _base_roundtrip(self.store, destinations=["AOJ"])
+        self.assertEqual(t["destinations"], ["AOJ"])
+
+    def test_rejects_empty_destinations(self):
+        with self.assertRaises(ValueError) as ctx:
+            _base_roundtrip(self.store, destinations=[])
+        self.assertIn("destinations", str(ctx.exception))
+
+    def test_rejects_bad_destination_code(self):
+        """候選清單中每一個都要驗證，不能只驗第一個（spec.md Edge Cases）。"""
+        with self.assertRaises(ValueError):
+            _base_roundtrip(self.store, destinations=["AOJ", "XX"])
+
+    def test_preferred_transit_optional(self):
+        t = _base_roundtrip(self.store, preferred_transit="NRT")
+        self.assertEqual(t["preferred_transit"], "NRT")
+
+    def test_preferred_transit_validated_when_provided(self):
+        with self.assertRaises(ValueError):
+            _base_roundtrip(self.store, preferred_transit="XX")
+
+    def test_rejects_trip_days_max_below_min(self):
+        with self.assertRaises(ValueError):
+            _base_roundtrip(self.store, trip_days_min=7, trip_days_max=3)
+
+    def test_delete_removes_track_and_results(self):
+        t = _base_roundtrip(self.store)
+        self.store.upsert_roundtrip_result(
+            t["id"], "AOJ", "2027-01-15", "2027-01-20", price=23773)
+        self.assertEqual(self.store.count_roundtrip_results(t["id"]), 1)
+        self.assertTrue(self.store.delete_roundtrip_track(t["id"]))
+        self.assertIsNone(self.store.get_roundtrip_track(t["id"]))
+        self.assertEqual(self.store.count_roundtrip_results(t["id"]), 0)
+
+    def test_mark_roundtrip_success_records_timestamp(self):
+        t = _base_roundtrip(self.store)
+        self.assertIsNone(t["last_success_at"])
+        self.store.mark_roundtrip_success(t["id"], "2026-09-24T10:00:00")
+        self.assertEqual(
+            self.store.get_roundtrip_track(t["id"])["last_success_at"],
+            "2026-09-24T10:00:00")
+
+    def test_record_roundtrip_notification(self):
+        t = _base_roundtrip(self.store)
+        self.store.record_roundtrip_notification(
+            t["id"], 23773, ok=True, when="2026-09-24T10:00:00")
+        n = self.store.get_roundtrip_track(t["id"])["notify"]
+        self.assertEqual(n["last_notified_price"], 23773)
+        self.assertFalse(n["last_notify_failed"])
+
+    def test_list_roundtrip_tracks_does_not_include_four_segment(self):
+        """兩張表各自獨立列表，不互相污染。"""
+        _base_roundtrip(self.store)
+        self.store.create_track(
+            destination="PRG", outstations=["NRT"], window_start="2027-04",
+            window_end="2027-04", trip_days_min=12, trip_days_max=12)
+        self.assertEqual(len(self.store.list_roundtrip_tracks()), 1)
+        self.assertEqual(len(self.store.list_tracks()), 1)
+
+
+class RoundtripResultTest(unittest.TestCase):
+    """008：單純來回掃描結果——跨目的地最低價、狀態區分。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="flight-roundtrip-result-test-")
+        self.store = FlightStore(self.tmp)
+        self.track = _base_roundtrip(self.store)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _r(self, destination="AOJ", outbound_date="2027-01-15",
+          return_date="2027-01-20", **kw):
+        args = dict(track_id=self.track["id"], destination=destination,
+                    outbound_date=outbound_date, return_date=return_date,
+                    price=23773)
+        args.update(kw)
+        return self.store.upsert_roundtrip_result(**args)
+
+    def test_upsert_and_list(self):
+        self._r()
+        rows = self.store.list_roundtrip_results(self.track["id"])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["destination"], "AOJ")
+        self.assertEqual(rows[0]["price"], 23773)
+
+    def test_same_combo_overwrites_not_accumulates(self):
+        self._r(price=23773)
+        self._r(price=21000)
+        rows = self.store.list_roundtrip_results(self.track["id"])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["price"], 21000)
+
+    def test_lowest_result_across_all_destinations(self):
+        """跨候選目的地判定最低價，不是固定某一個（spec.md FR-09）。"""
+        self._r(destination="AOJ", price=46872)
+        self._r(destination="CTS", price=23773,
+               outbound_date="2027-01-10", return_date="2027-01-15")
+        low = self.store.roundtrip_lowest_result(self.track["id"])
+        self.assertEqual(low["price"], 23773)
+        self.assertEqual(low["destination"], "CTS")
+
+    def test_lowest_result_ignores_non_ok(self):
+        self._r(destination="AOJ", status="failed", price=None)
+        self._r(destination="CTS", price=23773,
+               outbound_date="2027-01-10", return_date="2027-01-15")
+        low = self.store.roundtrip_lowest_result(self.track["id"])
+        self.assertEqual(low["price"], 23773)
+
+    def test_lowest_result_none_when_no_successful_row(self):
+        self._r(status="failed", price=None)
+        self.assertIsNone(self.store.roundtrip_lowest_result(self.track["id"]))
+
+    def test_no_fare_and_failed_must_not_carry_price(self):
+        with self.assertRaises(ValueError):
+            self._r(status="failed", price=1000)
+
+
 if __name__ == "__main__":
     unittest.main()

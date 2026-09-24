@@ -187,6 +187,68 @@ def expand_track(track):
     return itineraries, skipped
 
 
+def expand_roundtrip_track(track):
+    """把單純來回追蹤條件展開成完整的組合清單（008）。
+
+    回傳 (itineraries, skipped)——形狀與 `expand_track()` 對稱，但
+    `skipped` 目前恆為空清單：單純來回沒有第1/4段、沒有 lead/trail
+    排除月份判斷（那是四段票特有的概念），沒有東西會因為「找不到
+    可行間隔」而被跳過。保留這個回傳形狀是為了讓呼叫端（建立時的
+    組合數驗證等）不必依 track_type 另外分兩套介面。
+
+    對每個候選目的地 × 天數區間內每個天數值，呼叫既有 `sample_dates()`
+    展開 `(outbound_date, return_date)`，再依是否指定
+    `preferred_transit` 決定組 2 段（純來回）或 4 段（含轉機）的
+    `legs`——`google_flights_url()` 依段數自動判斷 trip type，本函式
+    不需要關心那個細節（research.md §1）。指定轉機時，第1、2 段共用
+    `outbound_date`、第3、4 段共用 `return_date`：這是**同一趟行程被
+    強制走指定轉機點**，不是四段票那種刻意拉開日期、包裝成兩趟獨立
+    行程的結構（四段票的 lead/trail 概念本次不適用，research.md §2）。
+    """
+    start_date, months = months_between(track["window_start"],
+                                        track["window_end"])
+    hub = track.get("hub", "TPE")
+    transit = track.get("preferred_transit")
+    pairs = []
+    for days in range(track["trip_days_min"], track["trip_days_max"] + 1):
+        for outbound_date, return_date in fs.sample_dates(
+                months_ahead=months,
+                per_month=track.get("samples_per_month", 2),
+                trip_days=days,
+                start_date=start_date):
+            pairs.append((days, outbound_date, return_date))
+
+    itineraries = []
+    for destination in track["destinations"]:
+        for days, outbound_date, return_date in pairs:
+            if transit:
+                legs = [
+                    {"departure_id": hub, "arrival_id": transit,
+                     "date": outbound_date},
+                    {"departure_id": transit, "arrival_id": destination,
+                     "date": outbound_date},
+                    {"departure_id": destination, "arrival_id": transit,
+                     "date": return_date},
+                    {"departure_id": transit, "arrival_id": hub,
+                     "date": return_date},
+                ]
+            else:
+                legs = [
+                    {"departure_id": hub, "arrival_id": destination,
+                     "date": outbound_date},
+                    {"departure_id": destination, "arrival_id": hub,
+                     "date": return_date},
+                ]
+            itineraries.append({
+                "destination": destination,
+                "outbound_date": outbound_date,
+                "return_date": return_date,
+                "trip_days": days,
+                "legs": legs,
+            })
+    return itineraries, []
+
+
 def _is_cached(itinerary, data_dir, currency=fs.DEFAULT_CURRENCY,
                gl="tw", hl="zh-TW"):
     key = fs._cache_key(itinerary["legs"], 1, 1, currency, gl, hl)
@@ -402,6 +464,139 @@ def run_scan(track_id, data_dir, hourly_limit=fs.HOURLY_BROWSER_LIMIT,
         store.close()
 
 
+# ---------- 單純來回（008）：與上面四段票的對應函式平行存在 ----------
+#
+# 不共用實作：四段票版本綁死 outstation／leg1_date～leg4_date／
+# lead_days／trail_days／connector_price 這組欄位形狀（`_row_from_
+# itinerary()`／`run_scan()` 內都直接假設這個形狀），單純來回沒有這些
+# 概念（data-model.md）。`_is_cached()` 是唯一雙方共用不變的函式——
+# 它只依賴 `itinerary["legs"]`，兩種類型的 itinerary 都有這個欄位。
+
+def pending_roundtrip_combinations(track, data_dir):
+    """尚未查過的組合（比照 `pending_combinations()`）。"""
+    itineraries, _skipped = expand_roundtrip_track(track)
+    return [i for i in itineraries if not _is_cached(i, data_dir)]
+
+
+def roundtrip_scan_plan(track, data_dir, hourly_limit=fs.HOURLY_BROWSER_LIMIT):
+    """回報「這次觸發會做什麼」（比照 `scan_plan()`）。"""
+    itineraries, skipped = expand_roundtrip_track(track)
+    pending = [i for i in itineraries if not _is_cached(i, data_dir)]
+    left = (fs.remaining_browser_quota(data_dir, hourly_limit)
+            if hourly_limit else len(pending))
+    return {
+        "planned": len(itineraries),
+        "already_cached": len(itineraries) - len(pending),
+        "pending": len(pending),
+        "will_query": min(len(pending), left),
+        "quota_left": left,
+        "seconds_until_free": (fs.seconds_until_quota_frees(data_dir,
+                                                            hourly_limit)
+                               if hourly_limit else 0),
+        "skipped": skipped,
+    }
+
+
+def _row_from_roundtrip_itinerary(itin, summary):
+    """把一組行程＋價格摘要轉成 `upsert_roundtrip_result()` 需要的欄位
+    （比照 `_row_from_itinerary()`）。"""
+    price = summary.get("price") if summary else None
+    return {
+        "destination": itin["destination"],
+        "outbound_date": itin["outbound_date"],
+        "return_date": itin["return_date"],
+        "status": "ok" if price else "no_fare",
+        "price": int(price) if price else None,
+        "airline": "／".join(dict.fromkeys(
+            (summary or {}).get("airlines") or [])) or None,
+    }
+
+
+def sync_cached_roundtrip_results(track_id, track, data_dir, store):
+    """把已在查價快取、但結果表還沒有的組合補寫進去（比照
+    `sync_cached_results()`，理由與 007 事故背景相同）。"""
+    itineraries, _skipped = expand_roundtrip_track(track)
+    existing = set()
+    for r in store.list_roundtrip_results(track_id):
+        existing.add((r["destination"], r["outbound_date"], r["return_date"]))
+    written = 0
+    for itin in itineraries:
+        key = (itin["destination"], itin["outbound_date"], itin["return_date"])
+        if key in existing:
+            continue
+        ck = fs._cache_key(itin["legs"], 1, 1, fs.DEFAULT_CURRENCY, "tw", "zh-TW")
+        cached = fs._read_cache(data_dir, ck)
+        if cached is None:
+            continue
+        store.upsert_roundtrip_result(
+            track_id=track_id, **_row_from_roundtrip_itinerary(itin, cached))
+        written += 1
+    return written
+
+
+def run_roundtrip_scan(track_id, data_dir, hourly_limit=fs.HOURLY_BROWSER_LIMIT,
+                       min_delay_ms=fs.SCRAPE_MIN_DELAY_MS,
+                       max_delay_ms=fs.SCRAPE_MAX_DELAY_MS,
+                       session_limit=fs.SCRAPE_SESSION_LIMIT, progress=None):
+    """執行一輪單純來回掃描並把結果寫回資料庫（比照 `run_scan()`）。
+
+    不含接駁價估算——單純來回沒有接駁票概念（data-model.md）。
+    """
+    store = FlightStore(data_dir)
+    try:
+        track = store.get_roundtrip_track(track_id)
+        if track is None:
+            return {"error": "track_not_found", "track_id": track_id}
+
+        from_cache = sync_cached_roundtrip_results(track_id, track, data_dir,
+                                                    store)
+
+        pending = pending_roundtrip_combinations(track, data_dir)
+        if not pending:
+            store.mark_roundtrip_success(track_id)
+            return {"queried": 0, "written": from_cache, "blocked": False,
+                    "from_cache": from_cache, "note": "no_pending"}
+
+        outcome = fs.scrape_itineraries(
+            pending, data_dir=data_dir, min_delay_ms=min_delay_ms,
+            max_delay_ms=max_delay_ms, session_limit=session_limit,
+            progress=progress, hourly_limit=hourly_limit)
+        if outcome.get("error"):
+            return {"error": outcome["error"], "queried": 0, "written": 0}
+
+        written = 0
+        for row in outcome.get("results", []):
+            price = row.get("price")
+            if price is not None:
+                status, price_val = "ok", int(price)
+            elif row.get("error") in ("no_fare", "empty"):
+                status, price_val = "no_fare", None
+            else:
+                status, price_val = "failed", None
+            store.upsert_roundtrip_result(
+                track_id=track_id,
+                destination=row["destination"],
+                outbound_date=row["outbound_date"],
+                return_date=row["return_date"],
+                status=status, price=price_val,
+                airline="／".join(dict.fromkeys(row.get("airlines") or [])) or None,
+            )
+            written += 1
+
+        # 同 run_scan()：只有本輪沒有剩餘未完成組合才算成功完成一輪
+        if not pending_roundtrip_combinations(track, data_dir):
+            store.mark_roundtrip_success(track_id)
+
+        return {
+            "queried": len(outcome.get("results", [])),
+            "written": written,
+            "blocked": outcome.get("blocked", False),
+            "soft_blocked": outcome.get("soft_blocked", False),
+        }
+    finally:
+        store.close()
+
+
 # 排程把條件分散到一週七天，避免同一天累積過多查詢而撞上速率上限。
 _SCHEDULE_SLOTS = 7
 
@@ -467,8 +662,18 @@ def next_scan_date(track, today=None):
 
 
 def due_tracks(store, today=None):
-    """今天該重掃的所有條件，依 id 排序（執行順序可預期）。"""
+    """今天該重掃的所有四段票條件，依 id 排序（執行順序可預期）。"""
     return [t for t in store.list_tracks() if is_due(t, today)]
+
+
+def due_roundtrip_tracks(store, today=None):
+    """今天該重掃的所有單純來回條件（比照 `due_tracks()`）。
+
+    `is_due()` 只依賴 `id`／`scan_frequency_days`／`last_success_at`
+    三個欄位，`roundtrip_track` 都有，函式本身不需要修改
+    （specs/008-roundtrip-search/research.md §3）。
+    """
+    return [t for t in store.list_roundtrip_tracks() if is_due(t, today)]
 
 
 def should_notify(track, lowest_price, state=None):
@@ -646,3 +851,122 @@ def derive_state(track, data_dir, store=None, scanning=False,
     if hourly_limit and fs.remaining_browser_quota(data_dir, hourly_limit) <= 0:
         return "queued"
     return "partial" if has_results else "idle"
+
+
+def derive_roundtrip_state(track, data_dir, store=None, scanning=False,
+                           hourly_limit=fs.HOURLY_BROWSER_LIMIT,
+                           stale_periods=2, period_days=None):
+    """推導單純來回條件使用者看得到的狀態（比照 `derive_state()`）。"""
+    if period_days is None:
+        period_days = int(track.get("scan_frequency_days") or 7)
+
+    pending = pending_roundtrip_combinations(track, data_dir)
+    owns_store = store is None
+    if owns_store:
+        store = FlightStore(data_dir)
+    try:
+        has_results = store.count_roundtrip_results(track["id"]) > 0
+    finally:
+        if owns_store:
+            store.close()
+
+    last = track.get("last_success_at")
+    if last:
+        try:
+            age = (datetime.datetime.now()
+                   - datetime.datetime.fromisoformat(last)).days
+            if age > stale_periods * period_days:
+                return "stale"
+        except ValueError:
+            pass
+
+    if scanning:
+        return "scanning"
+    if not pending:
+        return "complete" if has_results else "idle"
+    if hourly_limit and fs.remaining_browser_quota(data_dir, hourly_limit) <= 0:
+        return "queued"
+    return "partial" if has_results else "idle"
+
+
+def _roundtrip_notification_legs(track, lowest_row):
+    """單純來回通知訊息用的航段（比照 `_notification_legs()`）。
+
+    段數判斷邏輯跟 `expand_roundtrip_track()` 一致：未指定偏好轉機城市
+    傳 2 段（`google_flights_url()` 自動編碼來回），指定時傳 4 段
+    （自動編碼多城市）——兩處不能各寫一份，否則行為分岔。
+    """
+    hub = track.get("hub", "TPE")
+    transit = track.get("preferred_transit")
+    destination = lowest_row["destination"]
+    outbound_date = lowest_row["outbound_date"]
+    return_date = lowest_row["return_date"]
+    if transit:
+        return [
+            {"departure_id": hub, "arrival_id": transit, "date": outbound_date},
+            {"departure_id": transit, "arrival_id": destination,
+             "date": outbound_date},
+            {"departure_id": destination, "arrival_id": transit,
+             "date": return_date},
+            {"departure_id": transit, "arrival_id": hub, "date": return_date},
+        ]
+    return [
+        {"departure_id": hub, "arrival_id": destination, "date": outbound_date},
+        {"departure_id": destination, "arrival_id": hub, "date": return_date},
+    ]
+
+
+def _roundtrip_notification_trip_lines(lowest_row):
+    """單純來回通知訊息共用的行程細節（比照
+    `_notification_trip_lines()`）。**明確標示目的地**——這是跟四段票
+    通知的關鍵差異：多目的地候選情境下不標示會讓 PO 不知道要看哪個
+    行程（spec.md FR-10）。沒有接駁票概念，不需要那一行。
+    """
+    lines = [
+        "目的地：%s" % lowest_row["destination"],
+        "去程 %s ～ 回程 %s" % (lowest_row["outbound_date"],
+                              lowest_row["return_date"]),
+    ]
+    airline_desc = fs.describe_airlines(
+        (lowest_row.get("airline") or "").split("／"))
+    if airline_desc:
+        lines.append("航空 %s" % airline_desc)
+    return lines
+
+
+def build_roundtrip_notification(track, lowest_row):
+    """組出單純來回的達標通知訊息（比照 `build_notification()`）。
+
+    不含四段票專屬的「第1段不可 no-show」提醒——單純來回沒有這個風險
+    （data-model.md「與既有機制的相容性」）。
+    """
+    legs = _roundtrip_notification_legs(track, lowest_row)
+    lines = [
+        "✈️ 機票降到目標價以下",
+        "",
+        "%s" % track["name"],
+        "來回票 NT$%s（目標 NT$%s）" % (
+            format(int(lowest_row["price"]), ","),
+            format(int(track["target_price"]), ",")),
+    ]
+    lines += _roundtrip_notification_trip_lines(lowest_row)
+    lines += ["", fs.google_flights_url(legs)]
+    return "\n".join(lines)
+
+
+def build_roundtrip_status_notification(track, lowest_row):
+    """組出單純來回未達標時的現況通知（比照 `build_status_notification()`）。"""
+    legs = _roundtrip_notification_legs(track, lowest_row)
+    gap = int(lowest_row["price"]) - int(track["target_price"])
+    lines = [
+        "📊 本輪掃描完成（尚未達標）",
+        "",
+        "%s" % track["name"],
+        "目前最低 NT$%s（目標 NT$%s，還差 NT$%s）" % (
+            format(int(lowest_row["price"]), ","),
+            format(int(track["target_price"]), ","),
+            format(gap, ",")),
+    ]
+    lines += _roundtrip_notification_trip_lines(lowest_row)
+    lines += ["", fs.google_flights_url(legs)]
+    return "\n".join(lines)

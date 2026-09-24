@@ -1529,6 +1529,176 @@ def main() -> int:
                     print("FAIL /api/flights/tracks/{id} 刪除：status=%s" % del_status)
                     failures.append("flights delete")
 
+        # ---- 單純來回（specs/008-roundtrip-search，T019）----
+        # 同樣是深度檢查：建立→與底層 expand_roundtrip_track() 比對
+        # 組合數→觸發掃描（配額已在上面佔滿，必為 queued）→查詢結果。
+        roundtrip_track_id = None
+        try:
+            rt_created_status, rt_created = _post(
+                "/api/flights/tracks/roundtrip",
+                json.dumps({
+                    "destinations": ["AOJ", "CTS"],
+                    "window_start": "2027-01", "window_end": "2027-02",
+                    "trip_days_min": 3, "trip_days_max": 7,
+                    "samples_per_month": 2,
+                }).encode("utf-8"),
+                {"Content-Type": "application/json"})
+            rt_created = _json_or_none(rt_created)
+            if rt_created_status == 201 and rt_created and rt_created.get("id"):
+                roundtrip_track_id = rt_created["id"]
+                print("PASS /api/flights/tracks/roundtrip 建立條件（id=%s）"
+                      % roundtrip_track_id)
+            else:
+                print("FAIL /api/flights/tracks/roundtrip 建立條件：status=%s body=%s"
+                      % (rt_created_status, rt_created))
+                failures.append("roundtrip create")
+
+            if roundtrip_track_id:
+                # 獨立 import：不依賴上面四段票區塊是否成功執行到
+                # `import flight_scan_service as _svc` 那一步（若
+                # flight_track_id 建立失敗，那段 import 不會執行）
+                sys.path.insert(0, os.path.join(_APP_ROOT, "poc", "kb-mcp"))
+                import flight_scan_service as _svc
+                import flight_store as _fstore
+                _st_rt = _fstore.FlightStore(os.environ["ALPHAVIBE_DATA_DIR"])
+                try:
+                    _rt_track = _st_rt.get_roundtrip_track(roundtrip_track_id)
+                    _rt_itins, _rt_skipped = _svc.expand_roundtrip_track(_rt_track)
+                    expected_rt_total = len(_rt_itins)
+                finally:
+                    _st_rt.close()
+
+                rt_list_status, rt_list_body = _get("/api/flights/tracks")
+                rt_api_total = None
+                rt_track_type = None
+                for t in (rt_list_body or {}).get("tracks", []):
+                    if t.get("id") == roundtrip_track_id and t.get("track_type") == "roundtrip":
+                        rt_api_total = (t.get("progress") or {}).get("total")
+                        rt_track_type = t.get("track_type")
+                if (rt_list_status == 200 and rt_api_total == expected_rt_total
+                        and expected_rt_total > 0 and rt_track_type == "roundtrip"):
+                    print("PASS /api/flights/tracks 合併清單含單純來回、"
+                          "組合數與底層 expand_roundtrip_track 一致（%d 組）"
+                          % expected_rt_total)
+                else:
+                    print("FAIL 單純來回組合數不一致：api=%s expand_roundtrip_track=%s"
+                          % (rt_api_total, expected_rt_total))
+                    failures.append("roundtrip combination count mismatch")
+
+                # 配額已在四段票流程開頭佔滿，觸發掃描必為 queued
+                rt_scan_status, rt_scan_body = _post(
+                    "/api/flights/tracks/roundtrip/%d/scan" % roundtrip_track_id,
+                    b"{}", {"Content-Type": "application/json"})
+                rt_scan_body = _json_or_none(rt_scan_body)
+                if rt_scan_status == 200 and (rt_scan_body or {}).get("state") == "queued":
+                    print("PASS /api/flights/tracks/roundtrip/{id}/scan "
+                          "配額用盡時回 200 排隊（非錯誤）")
+                else:
+                    print("FAIL /api/flights/tracks/roundtrip/{id}/scan：status=%s body=%s"
+                          % (rt_scan_status, rt_scan_body))
+                    failures.append("roundtrip scan trigger")
+
+                rt_res_status, rt_res_body = _get(
+                    "/api/flights/tracks/roundtrip/%d/results" % roundtrip_track_id)
+                if (rt_res_status == 200 and "results" in (rt_res_body or {})
+                        and "notify" in (rt_res_body or {})):
+                    print("PASS /api/flights/tracks/roundtrip/{id}/results "
+                          "回應含 results 與 notify")
+                else:
+                    print("FAIL /api/flights/tracks/roundtrip/{id}/results：status=%s"
+                          % rt_res_status)
+                    failures.append("roundtrip results")
+
+            # 候選目的地為空必須被拒絕（FR-025 精神延伸至單純來回）
+            rt_bad_status, rt_bad_body = _post(
+                "/api/flights/tracks/roundtrip",
+                json.dumps({"destinations": [],
+                            "window_start": "2027-01", "window_end": "2027-02",
+                            "trip_days_min": 3, "trip_days_max": 7}).encode("utf-8"),
+                {"Content-Type": "application/json"})
+            rt_bad_body = _json_or_none(rt_bad_body)
+            if (rt_bad_status == 400
+                    and "destinations" in str((rt_bad_body or {}).get("detail", ""))):
+                print("PASS /api/flights/tracks/roundtrip 空候選目的地被拒絕並說明原因")
+            else:
+                print("FAIL /api/flights/tracks/roundtrip 空候選目的地未被正確拒絕："
+                      "status=%s" % rt_bad_status)
+                failures.append("roundtrip validation")
+
+            # ---- preferred_transit 持久化（008 US2，T022）----
+            # 建立時帶 preferred_transit，確認 create→list 往返後欄位值
+            # 不變（4 段 legs 的判斷依據，見 flight_scan_service.py
+            # expand_roundtrip_track() 的 transit 分支）
+            rt_transit_id = None
+            try:
+                rt_t_status, rt_t_created = _post(
+                    "/api/flights/tracks/roundtrip",
+                    json.dumps({
+                        "destinations": ["FRA"],
+                        "window_start": "2027-01", "window_end": "2027-02",
+                        "trip_days_min": 5, "trip_days_max": 9,
+                        "preferred_transit": "NRT",
+                        "samples_per_month": 1,
+                    }).encode("utf-8"),
+                    {"Content-Type": "application/json"})
+                rt_t_created = _json_or_none(rt_t_created)
+                if rt_t_status == 201 and rt_t_created and rt_t_created.get("id"):
+                    rt_transit_id = rt_t_created["id"]
+                    rt_t_list_status, rt_t_list_body = _get("/api/flights/tracks")
+                    persisted = None
+                    for t in (rt_t_list_body or {}).get("tracks", []):
+                        if t.get("id") == rt_transit_id and t.get("track_type") == "roundtrip":
+                            persisted = t.get("preferred_transit")
+                    if rt_t_list_status == 200 and persisted == "NRT":
+                        print("PASS preferred_transit 持久化：create→list 往返後仍為 NRT")
+                    else:
+                        print("FAIL preferred_transit 未正確持久化：got=%r" % persisted)
+                        failures.append("roundtrip preferred_transit persistence")
+                else:
+                    print("FAIL preferred_transit 建立條件：status=%s body=%s"
+                          % (rt_t_status, rt_t_created))
+                    failures.append("roundtrip preferred_transit create")
+            finally:
+                if rt_transit_id:
+                    rt_t_del_status, _ = _delete(
+                        "/api/flights/tracks/roundtrip/%d" % rt_transit_id)
+                    if rt_t_del_status != 204:
+                        print("FAIL preferred_transit 測試條件刪除：status=%s"
+                              % rt_t_del_status)
+                        failures.append("roundtrip preferred_transit cleanup")
+
+            # ---- 組合數上限守衛（008 US4，T028）----
+            # 候選目的地 4 個 × 天數選項 100 個（1~100 天）× 每月抽樣 4 次
+            # × 3 個月 = 4800，遠超過上限 60
+            rt_cap_status, rt_cap_body = _post(
+                "/api/flights/tracks/roundtrip",
+                json.dumps({
+                    "destinations": ["AOJ", "CTS", "AXT", "KIJ"],
+                    "window_start": "2027-01", "window_end": "2027-03",
+                    "trip_days_min": 1, "trip_days_max": 100,
+                    "samples_per_month": 4,
+                }).encode("utf-8"),
+                {"Content-Type": "application/json"})
+            rt_cap_body = _json_or_none(rt_cap_body)
+            rt_cap_detail = str((rt_cap_body or {}).get("detail", ""))
+            if (rt_cap_status == 400 and "組合數" in rt_cap_detail
+                    and "60" in rt_cap_detail):
+                print("PASS 單純來回組合數超標（4800 > 60）被拒絕並說明組合數與上限")
+            else:
+                print("FAIL 單純來回組合數超標未被正確拒絕：status=%s body=%s"
+                      % (rt_cap_status, rt_cap_body))
+                failures.append("roundtrip combination cap")
+        finally:
+            if roundtrip_track_id:
+                rt_del_status, _ = _delete(
+                    "/api/flights/tracks/roundtrip/%d" % roundtrip_track_id)
+                if rt_del_status == 204:
+                    print("PASS /api/flights/tracks/roundtrip/{id} 刪除回 204")
+                else:
+                    print("FAIL /api/flights/tracks/roundtrip/{id} 刪除：status=%s"
+                          % rt_del_status)
+                    failures.append("roundtrip delete")
+
         # 2026-08-22 教訓：get_kb_store() 是 sync generator dependency，
         # Starlette 用 anyio thread pool 執行，「建立」跟「關閉」不保證
         # 同一條 worker thread——沒有 check_same_thread=False 時，正式

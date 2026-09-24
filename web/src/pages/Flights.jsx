@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { apiGet, apiPost, apiDelete, apiPatch } from '../api/client.js'
 import FlightTrackForm from './FlightTrackForm.jsx'
+import RoundtripTrackForm from './RoundtripTrackForm.jsx'
 
 const STATE_LABEL = {
   idle: '待掃描',
@@ -81,6 +82,42 @@ function ResultTable({ results }) {
         </tbody>
       </table>
       <small className="flight-muted">接駁票為單一代表日期的估算值，實際購買前請重查。</small>
+    </div>
+  )
+}
+
+function RoundtripResultTable({ results }) {
+  if (!results.length) return <p className="flight-muted">尚無結果，觸發掃描後會顯示。</p>
+  return (
+    <div className="flight-table-scroll">
+      <table className="flight-table">
+        <thead>
+          <tr>
+            <th>目的地</th><th>去程</th><th>回程</th><th>來回票(NTD)</th>
+            <th>航空</th><th>查價</th>
+          </tr>
+        </thead>
+        <tbody>
+          {results.map((r, i) => (
+            <tr key={i} className={r.status !== 'ok' ? 'flight-row--muted' : undefined}>
+              <td>{r.destination}</td>
+              <td>{md(r.outbound_date)}</td>
+              <td>{md(r.return_date)}</td>
+              <td>
+                {r.status === 'ok'
+                  ? ntd(r.price)
+                  : <span className="flight-muted">{RESULT_STATUS_LABEL[r.status] || r.status}</span>}
+              </td>
+              <td className="flight-muted">{r.airline || '—'}</td>
+              <td className="flight-links">
+                {r.links?.round_trip && (
+                  <a href={r.links.round_trip} target="_blank" rel="noreferrer">來回票</a>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
@@ -243,11 +280,118 @@ function TrackCard({ track, onScan, onDelete, onOpen, onFrequency, onTargetPrice
   )
 }
 
+/* 單純來回的卡片（specs/008-roundtrip-search，T018）。跟 TrackCard
+   並列、獨立的元件——欄位形狀不同（候選目的地清單、可選轉機城市，
+   沒有外站／接駁票概念），且目前不支援 PATCH 編輯頻率／目標價
+   （contracts/roundtrip-api.md §7 明確列為 Deferred），所以這裡兩者
+   都顯示成唯讀文字，不是可編輯的輸入框——避免顯示出一個其實按下去
+   沒有作用的欄位。
+
+   `onScan`／`onOpen`／`onDelete` 由容器元件（Flights）綁好對應到
+   `/roundtrip/` 端點的呼叫，本元件不自己判斷要打哪個 API。 */
+function RoundtripTrackCard({ track, onScan, onDelete, onOpen, open, detail }) {
+  const p = track.progress || { done: 0, total: 0 }
+  return (
+    <article className="flight-card">
+      <header className="flight-card__head">
+        <h3>{track.name}</h3>
+        <span className={`flight-pill flight-pill--${STATE_PILL[track.state] || 'pending'}`}>
+          {STATE_LABEL[track.state] || track.state}
+        </span>
+      </header>
+      <p className="flight-muted">
+        {track.window_start}～{track.window_end} · 行程{' '}
+        {track.trip_days_min === track.trip_days_max
+          ? `${track.trip_days_min} 天`
+          : `${track.trip_days_min}～${track.trip_days_max} 天`} ·
+        候選目的地 {track.destinations.join('／')}
+        {track.preferred_transit && <> · 經 {track.preferred_transit} 轉機</>}
+        {' '}· 已查 {p.done}/{p.total}
+      </p>
+      {track.lowest ? (
+        <p>
+          最低 <strong>{ntd(track.lowest.price)}</strong>
+          （{track.lowest.destination}，{md(track.lowest.outbound_date)} 出發）
+          {track.lowest.target_met ? (
+            <span className="flight-pill flight-pill--ok">已達目標價</span>
+          ) : track.lowest.gap_to_target != null && (
+            <span className="flight-muted"> · 距目標價還差 {ntd(track.lowest.gap_to_target)}</span>
+          )}
+        </p>
+      ) : (
+        <p className="flight-muted">尚無報價</p>
+      )}
+      {track.state === 'stale' && (
+        <p className="flight-stale">
+          距上次成功掃描已超過兩個週期，畫面上的價格可能不再有效；
+          達標通知也會暫停，直到重新掃描成功為止。
+        </p>
+      )}
+      <p className="flight-muted">
+        自動重掃：{FREQ_OPTIONS.find((o) => o.days === track.scan_frequency_days)?.label
+          || `每 ${track.scan_frequency_days} 天`}
+        {track.next_scan_date && <> · 下次 {md(track.next_scan_date)}</>}
+        {track.last_success_at && <> · 上次成功 {md(track.last_success_at.slice(0, 10))}</>}
+      </p>
+      <p className="flight-muted">
+        目標價：{track.target_price != null ? ntd(track.target_price) : '未設定，不會發送任何通知'}
+        {' '}<small>（頻率與目標價目前僅建立時可設定，暫不支援事後編輯）</small>
+      </p>
+      {track.notify?.last_notified_at && (
+        <p className={track.notify.last_notify_failed ? 'flight-error' : 'flight-muted'}>
+          {track.notify.last_notify_failed
+            ? `上次達標通知（NT$${(track.notify.last_notified_price || 0).toLocaleString()}）送出失敗，請檢查 Telegram 設定`
+            : `已通知達標 NT$${(track.notify.last_notified_price || 0).toLocaleString()}（${md(track.notify.last_notified_at.slice(0, 10))}）`}
+        </p>
+      )}
+      <div className="flight-card__actions">
+        <button onClick={() => onScan(track.id)}>重新掃描</button>
+        <button onClick={() => onOpen(open ? null : track.id)}>
+          {open ? '收合結果' : '查看結果'}
+        </button>
+        <button className="flight-btn--danger" onClick={() => onDelete(track.id)}>刪除</button>
+      </div>
+      {open && detail && (
+        <>
+          {detail.state === 'queued' && (
+            <p className="flight-muted">
+              已達查詢速率上限，約 {Math.ceil((detail.quota?.seconds_until_free || 0) / 60)} 分鐘後接續。
+            </p>
+          )}
+          {detail.blocked && (
+            <p className="flight-muted">
+              {detail.blocked_kind === 'soft_timeout'
+                ? '上次掃描遇到連續逾時（外部服務的軟性阻擋），已中止並保留已完成的部分。隔一段時間再試即可。'
+                : '上次掃描被外部服務明確阻擋，已中止並保留已完成的部分。建議放慢查詢節奏後再試。'}
+            </p>
+          )}
+          {detail.state === 'scanning' && (
+            <p className="flight-muted">
+              掃描中：{detail.progress?.done}/{detail.progress?.total}（畫面會自動更新）
+            </p>
+          )}
+          <RoundtripResultTable results={detail.results || []} />
+        </>
+      )}
+    </article>
+  )
+}
+
+/* 四段票與單純來回共用同一份清單（contracts/roundtrip-api.md §2），
+   但兩張底層資料表各自獨立 AUTOINCREMENT，同一個整數 id 可能同時
+   存在於兩邊——`openId` 因此不能只存裸 id，必須連同 `track_type` 一起
+   記，否則收合／展開、輪詢結果都可能對錯條件（quickstart.md 坑 1）。 */
+function apiPathFor(trackType, id, suffix = '') {
+  return trackType === 'roundtrip'
+    ? `/api/flights/tracks/roundtrip/${id}${suffix}`
+    : `/api/flights/tracks/${id}${suffix}`
+}
+
 export default function Flights() {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
-  const [showForm, setShowForm] = useState(false)
-  const [openId, setOpenId] = useState(null)
+  const [formType, setFormType] = useState(null)   // null｜'four_segment'｜'roundtrip'
+  const [openTrack, setOpenTrack] = useState(null) // {id, track_type}｜null
   const [detail, setDetail] = useState(null)
   const [notice, setNotice] = useState(null)
 
@@ -266,25 +410,26 @@ export default function Flights() {
      只會徒增請求。沿用 Gateway.jsx 既有的 setInterval 模式，不為此
      引入 SSE／WebSocket——專案內無既有用例，而這裡的更新頻率極低。 */
   useEffect(() => {
-    if (openId == null) { setDetail(null); return }
+    if (openTrack == null) { setDetail(null); return }
     let alive = true
     let timer = null
 
-    const fetchDetail = () => apiGet(`/api/flights/tracks/${openId}/results`)
-      .then((d) => {
-        if (!alive) return
-        setDetail(d)
-        // 只有還在跑或排隊中才需要繼續輪詢
-        const running = d.state === 'scanning' || d.state === 'queued'
-        if (!running && timer) { clearInterval(timer); timer = null }
-      })
-      .catch((e) => { if (alive) setError(e.message) })
+    const fetchDetail = () =>
+      apiGet(apiPathFor(openTrack.track_type, openTrack.id, '/results'))
+        .then((d) => {
+          if (!alive) return
+          setDetail(d)
+          // 只有還在跑或排隊中才需要繼續輪詢
+          const running = d.state === 'scanning' || d.state === 'queued'
+          if (!running && timer) { clearInterval(timer); timer = null }
+        })
+        .catch((e) => { if (alive) setError(e.message) })
 
     fetchDetail().then(() => {
       if (alive && !timer) timer = setInterval(fetchDetail, POLL_MS)
     })
     return () => { alive = false; if (timer) clearInterval(timer) }
-  }, [openId])
+  }, [openTrack])
 
   /* 掃描中時，卡片上的狀態與進度也要跟著更新（不只展開的結果區）。 */
   useEffect(() => {
@@ -295,17 +440,20 @@ export default function Flights() {
     return () => clearInterval(timer)
   }, [data, load])
 
-  async function scan(id) {
+  async function scan(id, trackType) {
     try {
-      const r = await apiPost(`/api/flights/tracks/${id}/scan`, {})
+      const r = await apiPost(apiPathFor(trackType, id, '/scan'), {})
       setNotice(r.message || `掃描已開始：本次將查 ${r.will_query} 組`)
       load()
     } catch (e) { setError(e.message) }
   }
 
   async function setFrequency(id, days) {
+    // 只有四段票支援 PATCH（contracts/roundtrip-api.md §7 明確列為
+    // 單純來回 Deferred），呼叫端只會是 TrackCard，不需要 trackType 參數
     try {
-      await apiPatch(`/api/flights/tracks/${id}`, { scan_frequency_days: days })
+      await apiPatch(apiPathFor('four_segment', id),
+                     { scan_frequency_days: days })
       setNotice('已更新重掃頻率')
       load()
     } catch (e) { setError(e.message) }
@@ -313,19 +461,26 @@ export default function Flights() {
 
   async function setTargetPrice(id, price) {
     try {
-      await apiPatch(`/api/flights/tracks/${id}`,
+      await apiPatch(apiPathFor('four_segment', id),
         price === null ? { clear_target_price: true } : { target_price: price })
       setNotice(price === null ? '已清空目標價（不再發送通知）' : '已更新目標價')
       load()
     } catch (e) { setError(e.message) }
   }
 
-  async function remove(id) {
+  async function remove(id, trackType) {
     try {
-      await apiDelete(`/api/flights/tracks/${id}`)
-      if (openId === id) setOpenId(null)
+      await apiDelete(apiPathFor(trackType, id))
+      if (openTrack?.id === id && openTrack?.track_type === trackType) {
+        setOpenTrack(null)
+      }
       load()
     } catch (e) { setError(e.message) }
+  }
+
+  function toggleOpen(id, trackType) {
+    const same = openTrack?.id === id && openTrack?.track_type === trackType
+    setOpenTrack(same ? null : { id, track_type: trackType })
   }
 
   const quota = data?.quota
@@ -333,13 +488,21 @@ export default function Flights() {
     <section className="flight-page">
       <header className="flight-page__head">
         <h1>機票</h1>
-        <button className="flight-btn--primary" onClick={() => setShowForm(!showForm)}>
-          {showForm ? '關閉表單' : '新增追蹤'}
-        </button>
+        <div className="flight-form-toggle">
+          <button className="flight-btn--primary"
+                  onClick={() => setFormType(formType === 'four_segment' ? null : 'four_segment')}>
+            {formType === 'four_segment' ? '關閉表單' : '新增外站四段票'}
+          </button>
+          <button className="flight-btn--primary"
+                  onClick={() => setFormType(formType === 'roundtrip' ? null : 'roundtrip')}>
+            {formType === 'roundtrip' ? '關閉表單' : '新增單純來回'}
+          </button>
+        </div>
       </header>
       <p className="flight-page__lead">
-        外站四段票掃描。給定目的地、候選外站與出發區間，系統抽樣日期查價，
-        回傳依價格排序的組合——不需要自己指定日期。
+        外站四段票掃描或單純來回搜尋，兩種類型共用同一份清單。給定目的地
+        （或多個候選目的地）與出發區間，系統抽樣日期查價，回傳依價格
+        排序的組合——不需要自己指定日期。
       </p>
 
       {quota && (
@@ -354,26 +517,45 @@ export default function Flights() {
       {notice && <p className="flight-muted">{notice}</p>}
       {error && <p className="flight-error">發生錯誤：{error}</p>}
 
-      {showForm && (
+      {formType === 'four_segment' && (
         <FlightTrackForm
-          onCancel={() => setShowForm(false)}
-          onCreated={() => { setShowForm(false); setNotice('條件已建立，可按「重新掃描」開始查價'); load() }}
+          onCancel={() => setFormType(null)}
+          onCreated={() => { setFormType(null); setNotice('條件已建立，可按「重新掃描」開始查價'); load() }}
+        />
+      )}
+      {formType === 'roundtrip' && (
+        <RoundtripTrackForm
+          onCancel={() => setFormType(null)}
+          onCreated={() => { setFormType(null); setNotice('條件已建立，可按「重新掃描」開始查價'); load() }}
         />
       )}
 
       {!data && !error && <p className="flight-muted">載入中…</p>}
-      {data && data.tracks.length === 0 && !showForm && (
-        <p className="flight-muted">還沒有查詢條件。按「新增追蹤」建立第一個。</p>
+      {data && data.tracks.length === 0 && !formType && (
+        <p className="flight-muted">還沒有查詢條件。按上方按鈕建立第一個。</p>
       )}
-      {data && data.tracks.map((t) => (
-        <TrackCard key={t.id} track={t} onScan={scan} onDelete={remove}
-                   onFrequency={setFrequency} onTargetPrice={setTargetPrice}
-                   onOpen={setOpenId} open={openId === t.id} detail={detail} />
-      ))}
+      {data && data.tracks.map((t) => {
+        const open = openTrack?.id === t.id && openTrack?.track_type === t.track_type
+        return t.track_type === 'roundtrip' ? (
+          <RoundtripTrackCard key={`rt-${t.id}`} track={t}
+                              onScan={(id) => scan(id, 'roundtrip')}
+                              onDelete={(id) => remove(id, 'roundtrip')}
+                              onOpen={() => toggleOpen(t.id, 'roundtrip')}
+                              open={open} detail={open ? detail : null} />
+        ) : (
+          <TrackCard key={`fs-${t.id}`} track={t}
+                     onScan={(id) => scan(id, 'four_segment')}
+                     onDelete={(id) => remove(id, 'four_segment')}
+                     onFrequency={setFrequency} onTargetPrice={setTargetPrice}
+                     onOpen={() => toggleOpen(t.id, 'four_segment')}
+                     open={open} detail={open ? detail : null} />
+        )
+      })}
 
       <p className="flight-muted">
-        提醒：第1段（外站→台北）一定要搭，no-show 會讓後三段全部失效；
-        四段票僅經濟艙適用，商務艙在多城市查詢會跳艙翻倍。
+        提醒：外站四段票的第1段（外站→台北）一定要搭，no-show 會讓後
+        三段全部失效；四段票僅經濟艙適用，商務艙在多城市查詢會跳艙
+        翻倍。單純來回沒有這個限制。
       </p>
 
       <NativeTracking />

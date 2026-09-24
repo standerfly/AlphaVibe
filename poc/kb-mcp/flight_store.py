@@ -87,6 +87,52 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_flight_result_combo
 
 CREATE INDEX IF NOT EXISTS idx_flight_result_track
     ON flight_scan_result (track_id);
+
+-- 008：單純來回——獨立資料表，不與上面的四段票表共用 schema。
+-- 欄位重疊度低（四段票的外站／lead-trail 策略對單純來回沒有意義，
+-- 單純來回的候選目的地清單也不是四段票任何欄位能表示），見
+-- specs/008-roundtrip-search/research.md §2。全新表用
+-- CREATE TABLE IF NOT EXISTS 即可，不需要 _migrate() 的 ALTER 路徑。
+CREATE TABLE IF NOT EXISTS roundtrip_track (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    destinations TEXT NOT NULL,
+    hub TEXT NOT NULL DEFAULT 'TPE',
+    preferred_transit TEXT,
+    window_start TEXT NOT NULL,
+    window_end TEXT NOT NULL,
+    trip_days_min INTEGER NOT NULL,
+    trip_days_max INTEGER NOT NULL,
+    samples_per_month INTEGER NOT NULL DEFAULT 2,
+    target_price INTEGER,
+    created_at TEXT NOT NULL,
+    last_success_at TEXT,
+    scan_frequency_days INTEGER NOT NULL DEFAULT 7,
+    last_notified_at TEXT,
+    last_notified_price INTEGER,
+    last_notify_failed INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS roundtrip_scan_result (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    track_id INTEGER NOT NULL,
+    destination TEXT NOT NULL,
+    outbound_date TEXT NOT NULL,
+    return_date TEXT NOT NULL,
+    price INTEGER,
+    airline TEXT,
+    status TEXT NOT NULL,
+    queried_at TEXT NOT NULL,
+    FOREIGN KEY (track_id) REFERENCES roundtrip_track(id)
+);
+
+-- 同一條件下，同一個目的地＋同一組日期只保留一筆（重掃時覆寫）
+CREATE UNIQUE INDEX IF NOT EXISTS idx_roundtrip_result_combo
+    ON roundtrip_scan_result (track_id, destination, outbound_date,
+                              return_date);
+
+CREATE INDEX IF NOT EXISTS idx_roundtrip_result_track
+    ON roundtrip_scan_result (track_id);
 """
 
 
@@ -549,6 +595,243 @@ class FlightStore:
         return {
             "price": row["price"],
             "outstation": row["outstation"],
+            "outbound_date": row["outbound_date"],
+            "return_date": row["return_date"],
+        }
+
+    # ---------- roundtrip_track（008，單純來回）----------
+    #
+    # 獨立於四段票的一整套方法，欄位形狀與驗證規則刻意跟 create_track()
+    # 系列保持相同慣例（同樣的正整數/YYYY-MM/機場代碼驗證），但資料表
+    # 各自獨立（specs/008-roundtrip-search/data-model.md）。
+
+    def _validate_destinations(self, destinations, field):
+        """候選目的地清單：至少 1 個，逐一驗證機場代碼。
+
+        不強制多個——只填 1 個候選目的地時退化為「單一目的地的天數
+        區間比價」，仍是合法輸入（spec.md Edge Cases）。
+        """
+        codes = _parse_codes(",".join(destinations)
+                             if isinstance(destinations, (list, tuple))
+                             else destinations)
+        if not codes:
+            raise ValueError("%s 不得為空" % field)
+        for c in codes:
+            _validate_airport(c, "%s 的項目" % field)
+        return codes
+
+    def create_roundtrip_track(self, destinations, window_start, window_end,
+                               trip_days_min, trip_days_max, hub="TPE",
+                               preferred_transit=None, name=None,
+                               samples_per_month=2, target_price=None,
+                               scan_frequency_days=7):
+        """建立單純來回追蹤條件。驗證失敗一律拋 ValueError（比照
+        `create_track()` 的既有慣例）。
+
+        `preferred_transit`：可選偏好轉機城市。`None` 或空字串代表
+        不限制，交給 Google Flights 自動決定（spec.md FR-07）。
+        """
+        codes = self._validate_destinations(destinations, "destinations")
+        hub = _validate_airport(hub, "hub")
+        if preferred_transit is not None and str(preferred_transit).strip():
+            preferred_transit = _validate_airport(preferred_transit,
+                                                   "preferred_transit")
+        else:
+            preferred_transit = None
+
+        window_start = _validate_year_month(window_start, "window_start")
+        window_end = _validate_year_month(window_end, "window_end")
+        if window_end < window_start:
+            raise ValueError("window_end（%s）不得早於 window_start（%s）"
+                             % (window_end, window_start))
+
+        try:
+            trip_days_min = int(trip_days_min)
+            trip_days_max = int(trip_days_max)
+        except (ValueError, TypeError):
+            raise ValueError("trip_days_min／trip_days_max 必須是整數，"
+                             "收到：%r／%r" % (trip_days_min, trip_days_max))
+        if trip_days_min <= 0 or trip_days_max <= 0:
+            raise ValueError("trip_days_min／trip_days_max 必須是正整數，"
+                             "收到：%d／%d" % (trip_days_min, trip_days_max))
+        if trip_days_max < trip_days_min:
+            raise ValueError("trip_days_max（%d）不得小於 trip_days_min（%d）"
+                             % (trip_days_max, trip_days_min))
+
+        if samples_per_month is None:
+            samples_per_month = 2
+        samples_per_month = int(samples_per_month)
+        if samples_per_month <= 0:
+            raise ValueError("samples_per_month 必須是正整數")
+
+        if target_price is not None:
+            target_price = int(target_price)
+            if target_price < 0:
+                raise ValueError("target_price 不得為負")
+
+        if scan_frequency_days is None:
+            scan_frequency_days = 7
+        scan_frequency_days = int(scan_frequency_days)
+        if scan_frequency_days <= 0:
+            raise ValueError("scan_frequency_days 必須是正整數，收到：%d"
+                             % scan_frequency_days)
+
+        if not name or not str(name).strip():
+            name = "%s %s~%s" % ("／".join(codes), window_start, window_end)
+
+        cur = self.conn.execute(
+            "INSERT INTO roundtrip_track"
+            " (name, destinations, hub, preferred_transit, window_start,"
+            "  window_end, trip_days_min, trip_days_max, samples_per_month,"
+            "  target_price, created_at, scan_frequency_days)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (str(name).strip(), ",".join(codes), hub, preferred_transit,
+             window_start, window_end, trip_days_min, trip_days_max,
+             samples_per_month, target_price, _now(), scan_frequency_days),
+        )
+        self.conn.commit()
+        return self.get_roundtrip_track(cur.lastrowid)
+
+    def _row_to_roundtrip_track(self, row):
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "track_type": "roundtrip",
+            "name": row["name"],
+            "destinations": _parse_codes(row["destinations"]),
+            "hub": row["hub"],
+            "preferred_transit": row["preferred_transit"],
+            "window_start": row["window_start"],
+            "window_end": row["window_end"],
+            "trip_days_min": row["trip_days_min"],
+            "trip_days_max": row["trip_days_max"],
+            "samples_per_month": row["samples_per_month"],
+            "target_price": row["target_price"],
+            "created_at": row["created_at"],
+            "last_success_at": row["last_success_at"],
+            "scan_frequency_days": row["scan_frequency_days"],
+            "notify": {
+                "last_notified_at": row["last_notified_at"],
+                "last_notified_price": row["last_notified_price"],
+                "last_notify_failed": bool(row["last_notify_failed"]),
+            },
+        }
+
+    def get_roundtrip_track(self, track_id):
+        row = self.conn.execute(
+            "SELECT * FROM roundtrip_track WHERE id=?", (track_id,)).fetchone()
+        return self._row_to_roundtrip_track(row)
+
+    def list_roundtrip_tracks(self):
+        rows = self.conn.execute(
+            "SELECT * FROM roundtrip_track ORDER BY id").fetchall()
+        return [self._row_to_roundtrip_track(r) for r in rows]
+
+    def delete_roundtrip_track(self, track_id):
+        """刪除條件與其掃描結果。不刪除查價快取（理由同 `delete_track()`）。"""
+        if self.get_roundtrip_track(track_id) is None:
+            return False
+        self.conn.execute(
+            "DELETE FROM roundtrip_scan_result WHERE track_id=?", (track_id,))
+        self.conn.execute("DELETE FROM roundtrip_track WHERE id=?", (track_id,))
+        self.conn.commit()
+        return True
+
+    def mark_roundtrip_success(self, track_id, when=None):
+        """記錄本輪掃描成功完成的時間（比照 `mark_success()`）。"""
+        self.conn.execute(
+            "UPDATE roundtrip_track SET last_success_at=? WHERE id=?",
+            (when or _now(), track_id))
+        self.conn.commit()
+
+    def record_roundtrip_notification(self, track_id, price, ok, when=None):
+        """記錄一次通知嘗試（比照 `record_notification()`）。
+
+        `price` 是觸發這次通知的**跨候選目的地最低價**（spec.md FR-09）。
+        """
+        self.conn.execute(
+            "UPDATE roundtrip_track SET last_notified_at=?,"
+            " last_notified_price=?, last_notify_failed=? WHERE id=?",
+            (when or _now(), int(price), 0 if ok else 1, track_id))
+        self.conn.commit()
+
+    # ---------- roundtrip_scan_result ----------
+
+    def upsert_roundtrip_result(self, track_id, destination, outbound_date,
+                                return_date, status="ok", price=None,
+                                airline=None, queried_at=None):
+        """寫入或覆寫一筆組合的報價（比照 `upsert_result()`）。
+
+        以 (track_id, 目的地, 出發日, 回程日) 為唯一鍵覆寫。
+        """
+        if status not in VALID_RESULT_STATUS:
+            raise ValueError("status 必須是 %s 之一，收到：%r"
+                             % (list(VALID_RESULT_STATUS), status))
+        if status == "ok" and (price is None or price <= 0):
+            raise ValueError("status=ok 時 price 必須是正整數")
+        if status != "ok" and price is not None:
+            raise ValueError("status=%s 時不應帶 price" % status)
+
+        self.conn.execute(
+            "INSERT INTO roundtrip_scan_result"
+            " (track_id, destination, outbound_date, return_date, price,"
+            "  airline, status, queried_at)"
+            " VALUES (?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(track_id, destination, outbound_date, return_date)"
+            " DO UPDATE SET price=excluded.price,"
+            "               airline=excluded.airline,"
+            "               status=excluded.status,"
+            "               queried_at=excluded.queried_at",
+            (track_id, destination.upper(), outbound_date, return_date,
+             price, airline, status, queried_at or _now()),
+        )
+        self.conn.commit()
+
+    def list_roundtrip_results(self, track_id):
+        """回傳該條件的結果，依價格升冪；查無票價與查詢失敗排在最後
+        （比照 `list_results()`）。"""
+        rows = self.conn.execute(
+            "SELECT * FROM roundtrip_scan_result WHERE track_id=?"
+            " ORDER BY CASE WHEN status='ok' THEN 0 ELSE 1 END,"
+            "          price ASC, destination ASC",
+            (track_id,)).fetchall()
+        out = []
+        for r in rows:
+            out.append({
+                "destination": r["destination"],
+                "outbound_date": r["outbound_date"],
+                "return_date": r["return_date"],
+                "price": r["price"],
+                "airline": r["airline"],
+                "status": r["status"],
+                "queried_at": r["queried_at"],
+            })
+        return out
+
+    def count_roundtrip_results(self, track_id):
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS n FROM roundtrip_scan_result WHERE track_id=?",
+            (track_id,)).fetchone()
+        return row["n"] if row else 0
+
+    def roundtrip_lowest_result(self, track_id):
+        """跨**全部候選目的地**的最低價那筆（只看 status='ok'）；沒有則
+        回 None。
+
+        判定基準是全部候選目的地中的最低價，不是固定某一個
+        （spec.md FR-09、Edge Cases）——`ORDER BY price ASC` 本來就會
+        掃過這個 track 底下所有目的地的所有結果，不需要額外分組。
+        """
+        row = self.conn.execute(
+            "SELECT * FROM roundtrip_scan_result"
+            " WHERE track_id=? AND status='ok' AND price IS NOT NULL"
+            " ORDER BY price ASC LIMIT 1", (track_id,)).fetchone()
+        if row is None:
+            return None
+        return {
+            "price": row["price"],
+            "destination": row["destination"],
             "outbound_date": row["outbound_date"],
             "return_date": row["return_date"],
         }

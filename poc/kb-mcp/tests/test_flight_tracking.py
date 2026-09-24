@@ -376,6 +376,169 @@ class TrackingJobTest(unittest.TestCase):
         self.assertEqual(len(self.sent), 2, "未達標的現況通知每輪都該發")
 
 
+class RoundtripTrackingJobTest(unittest.TestCase):
+    """008：排程涵蓋單純來回條件（比照 TrackingJobTest，兩者共用
+    _scrape()／_notifier() 這類通用替身，因為那些只依賴 legs／回呼
+    介面，不關心背後是哪種追蹤條件）。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="flight-rt-job-test-")
+        self.store = FlightStore(self.tmp)
+        w = _window()
+        self.track = self.store.create_roundtrip_track(
+            destinations=["AOJ", "CTS"], window_start=w, window_end=w,
+            trip_days_min=5, trip_days_max=5, samples_per_month=1,
+            target_price=30000)
+        self._orig_scrape = fs.scrape_itineraries
+        self.sent = []
+
+    def tearDown(self):
+        fs.scrape_itineraries = self._orig_scrape
+        self.store.close()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _scrape(self, price):
+        def scrape(itineraries, **kw):
+            rows = []
+            for i in itineraries:
+                row = dict(i)
+                row["price"] = price
+                row["airlines"] = ["星宇航空"]
+                k = fs._cache_key(i["legs"], 1, 1, fs.DEFAULT_CURRENCY,
+                                  "tw", "zh-TW")
+                fs._write_cache(self.tmp, k, {"price": price,
+                                              "airlines": ["星宇航空"]})
+                rows.append(row)
+            return {"results": rows, "blocked": False, "soft_blocked": False,
+                    "stats": {}}
+        return scrape
+
+    def _notifier(self, ok=True):
+        def send(text):
+            self.sent.append(text)
+            return (1, []) if ok else (0, ["Telegram 未設定"])
+        return send
+
+    def _its_day(self):
+        d = datetime.date.today()
+        while d.weekday() != svc.scheduled_weekday(self.track):
+            d += datetime.timedelta(days=1)
+        return d
+
+    def test_due_roundtrip_tracks_covered_by_scheduling(self):
+        """排程迴圈確實會選到單純來回條件（不是只選四段票）。"""
+        self.assertIn(self.track,
+                      svc.due_roundtrip_tracks(self.store, self._its_day()))
+
+    def test_scan_and_notify_includes_destination(self):
+        fs.scrape_itineraries = self._scrape(23773)
+        res = job.run(self.tmp, today=self._its_day(),
+                      notifier=self._notifier())
+        rt_result = [r for r in res if r.get("track_type") == "roundtrip"]
+        self.assertTrue(rt_result)
+        self.assertTrue(rt_result[0]["notified"])
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("23,773", self.sent[0])
+        # spec.md FR-10：通知內容必須明確標示觸發的候選目的地
+        self.assertIn("AOJ", self.sent[0])
+        self.assertIn("目的地", self.sent[0])
+        n = self.store.get_roundtrip_track(self.track["id"])["notify"]
+        self.assertEqual(n["last_notified_price"], 23773)
+
+    def test_status_notification_when_not_met(self):
+        fs.scrape_itineraries = self._scrape(55000)
+        res = job.run(self.tmp, today=self._its_day(),
+                      notifier=self._notifier())
+        rt_result = [r for r in res if r.get("track_type") == "roundtrip"]
+        self.assertTrue(rt_result[0].get("status_notified"))
+        self.assertIn("尚未達標", self.sent[0])
+        self.assertIn("55,000", self.sent[0])
+
+    def test_notification_uses_cross_destination_lowest(self):
+        """多候選目的地時，通知判定基準是全部候選目的地中的最低價
+        （spec.md User Story 3 情境 3／Edge Cases）——不是固定挑第一個
+        候選目的地。"""
+        call_count = [0]
+        orig = fs.scrape_itineraries
+
+        def scrape(itineraries, **kw):
+            rows = []
+            for i in itineraries:
+                row = dict(i)
+                # AOJ 較貴、CTS 較便宜——通知應該抓到 CTS 那個更低價
+                row["price"] = 46872 if i["destination"] == "AOJ" else 23773
+                row["airlines"] = ["星宇航空"]
+                k = fs._cache_key(i["legs"], 1, 1, fs.DEFAULT_CURRENCY,
+                                  "tw", "zh-TW")
+                fs._write_cache(self.tmp, k, {"price": row["price"],
+                                              "airlines": ["星宇航空"]})
+                rows.append(row)
+            return {"results": rows, "blocked": False, "soft_blocked": False,
+                    "stats": {}}
+        fs.scrape_itineraries = scrape
+        try:
+            res = job.run(self.tmp, today=self._its_day(),
+                          notifier=self._notifier())
+        finally:
+            fs.scrape_itineraries = orig
+        rt_result = [r for r in res if r.get("track_type") == "roundtrip"]
+        self.assertTrue(rt_result[0]["notified"])
+        self.assertIn("23,773", self.sent[0])
+        self.assertIn("CTS", self.sent[0])
+
+    def test_notify_failure_keeps_results_and_flags(self):
+        """通知失敗不影響掃描結果，並標記未送達（比照四段票行為）。"""
+        fs.scrape_itineraries = self._scrape(23773)
+        res = job.run(self.tmp, today=self._its_day(),
+                      notifier=self._notifier(ok=False))
+        rt_result = [r for r in res if r.get("track_type") == "roundtrip"]
+        self.assertTrue(rt_result[0]["scanned"])
+        self.assertFalse(rt_result[0]["notified"])
+        self.assertTrue(
+            self.store.count_roundtrip_results(self.track["id"]) > 0)
+        n = self.store.get_roundtrip_track(self.track["id"])["notify"]
+        self.assertTrue(n["last_notify_failed"])
+
+    def test_dry_run_does_not_scan_or_notify(self):
+        fs.scrape_itineraries = lambda *a, **k: self.fail("dry-run 不該查價")
+        res = job.run(self.tmp, dry_run=True, today=self._its_day(),
+                      notifier=self._notifier())
+        rt_result = [r for r in res if r.get("track_type") == "roundtrip"]
+        self.assertTrue(rt_result)
+        self.assertFalse(rt_result[0]["scanned"])
+        self.assertEqual(self.sent, [])
+
+    def test_run_processes_both_track_types_together(self):
+        """同一輪排程要能同時處理四段票與單純來回，互不干擾。
+
+        `scheduled_weekday()` 是 `id % 7`，兩個獨立條件的 id 不保證
+        落在同一天——用有界重試（最多 7 次，週期本身就是 7 天）建立
+        四段票條件，直到跟既有的單純來回條件同一天到期，而不是無界
+        while 迴圈硬等（那可能永遠等不到、造成測試真的卡死）。
+        """
+        w = _window()
+        target_weekday = svc.scheduled_weekday(self.track)
+        four_segment = None
+        for _ in range(7):
+            candidate = self.store.create_track(
+                destination="PRG", outstations=["NRT"], window_start=w,
+                window_end=w, trip_days_min=12, trip_days_max=12,
+                samples_per_month=1, target_price=50000)
+            if svc.scheduled_weekday(candidate) == target_weekday:
+                four_segment = candidate
+                break
+            self.store.delete_track(candidate["id"])
+        self.assertIsNotNone(
+            four_segment, "7 次內應該找得到同一天到期的四段票條件")
+
+        day = self._its_day()
+        fs.scrape_itineraries = self._scrape(23773)
+        res = job.run(self.tmp, today=day, notifier=self._notifier())
+        types = {r.get("track_type") for r in res}
+        self.assertIn("roundtrip", types)
+        self.assertIn(None, types)   # 四段票的 summary 沒有 track_type 欄位
+
+
 class StaleProtectionTest(unittest.TestCase):
     """過期防護（FR-013、FR-014、FR-015）。"""
 

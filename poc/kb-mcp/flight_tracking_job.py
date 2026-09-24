@@ -134,18 +134,107 @@ def process_track(track, data_dir, store, dry_run=False, notifier=None):
     return summary
 
 
+def process_roundtrip_track(track, data_dir, store, dry_run=False,
+                            notifier=None):
+    """處理單一單純來回條件（比照 `process_track()`）。
+
+    不重用 `process_track()`：兩者呼叫的 store／service 方法系列完全
+    不同（`get_roundtrip_track`／`roundtrip_lowest_result`／
+    `run_roundtrip_scan` 等，見 data-model.md「與既有機制的相容性」），
+    硬要共用一份會需要在函式內部到處判斷類型分支，不如各自獨立清楚。
+    `should_notify()`／`should_notify_status()` 這兩個真正通用的判定
+    函式仍直接重用，不重寫。
+    """
+    tid = track["id"]
+    summary = {"id": tid, "name": track["name"], "track_type": "roundtrip",
+              "scanned": False, "notified": False, "skipped_reason": None}
+
+    if dry_run:
+        plan = svc.roundtrip_scan_plan(track, data_dir)
+        summary["skipped_reason"] = "dry-run"
+        summary["plan"] = plan
+        _log("  [roundtrip %d] %s｜待查 %d／%d 組，本時段可查 %d"
+             % (tid, track["name"], plan["pending"], plan["planned"],
+                plan["will_query"]))
+        return summary
+
+    outcome = svc.run_roundtrip_scan(tid, data_dir)
+    summary["scanned"] = True
+    summary["outcome"] = outcome
+    _log("  [roundtrip %d] %s｜查詢 %d 筆、寫入 %d 筆%s"
+         % (tid, track["name"], outcome.get("queried", 0),
+            outcome.get("written", 0),
+            "（偵測到阻擋）" if outcome.get("blocked") else ""))
+
+    track = store.get_roundtrip_track(tid)
+    if track is None:
+        summary["skipped_reason"] = "track_deleted"
+        return summary
+
+    # 跨全部候選目的地判定最低價（spec.md FR-09）
+    lowest = store.roundtrip_lowest_result(tid)
+    if not lowest:
+        summary["skipped_reason"] = "no_priced_result"
+        return summary
+
+    state = svc.derive_roundtrip_state(track, data_dir, store=store)
+    send = notifier or notify.send_telegram
+
+    rows = [r for r in store.list_roundtrip_results(tid)
+            if r["status"] == "ok" and r["price"] == lowest["price"]]
+    if not rows:
+        summary["skipped_reason"] = "row_not_found"
+        return summary
+
+    if svc.should_notify(track, lowest["price"], state=state):
+        message = svc.build_roundtrip_notification(track, rows[0])
+        sent, errors = send(message)
+        ok = sent > 0
+        store.record_roundtrip_notification(tid, lowest["price"], ok=ok)
+        summary["notified"] = ok
+        summary["notify_errors"] = errors
+        _log("  [roundtrip %d] 通知%s（NT$%s，%s）%s"
+             % (tid, "已送出" if ok else "失敗", format(lowest["price"], ","),
+                lowest["destination"],
+                "；" + "；".join(errors) if errors else ""))
+        return summary
+
+    if svc.should_notify_status(track, lowest["price"], state=state):
+        message = svc.build_roundtrip_status_notification(track, rows[0])
+        sent, errors = send(message)
+        summary["status_notified"] = sent > 0
+        summary["status_notify_errors"] = errors
+        _log("  [roundtrip %d] 現況通知%s（最低 NT$%s，%s，未達標）%s"
+             % (tid, "已送出" if sent > 0 else "失敗",
+                format(lowest["price"], ","), lowest["destination"],
+                "；" + "；".join(errors) if errors else ""))
+        summary["skipped_reason"] = "not_below_target_status_sent"
+        return summary
+
+    summary["skipped_reason"] = (
+        "stale" if state == "stale" else "not_below_target_or_duplicate")
+    return summary
+
+
 def run(data_dir, dry_run=False, today=None, notifier=None):
-    """一次排程執行。回傳所有處理過的條件摘要。"""
+    """一次排程執行。回傳所有處理過的條件摘要（四段票＋單純來回）。"""
     store = FlightStore(data_dir)
     try:
         today = today or datetime.date.today()
         all_tracks = store.list_tracks()
+        all_roundtrip = store.list_roundtrip_tracks()
         due = svc.due_tracks(store, today)
-        _log("排程啟動｜%s（星期%d）｜條件 %d 個，今天輪到 %d 個%s"
+        due_roundtrip = svc.due_roundtrip_tracks(store, today)
+        _log("排程啟動｜%s（星期%d）｜四段票 %d 個（今天 %d 個）、"
+             "單純來回 %d 個（今天 %d 個）%s"
              % (today.isoformat(), today.weekday() + 1, len(all_tracks),
-                len(due), "｜DRY-RUN" if dry_run else ""))
+                len(due), len(all_roundtrip), len(due_roundtrip),
+                "｜DRY-RUN" if dry_run else ""))
         results = [process_track(t, data_dir, store, dry_run, notifier)
                    for t in due]
+        results += [process_roundtrip_track(t, data_dir, store, dry_run,
+                                            notifier)
+                   for t in due_roundtrip]
         _log("排程結束｜掃描 %d、通知 %d"
              % (sum(1 for r in results if r["scanned"]),
                 sum(1 for r in results if r["notified"])))

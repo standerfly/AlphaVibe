@@ -121,11 +121,22 @@ def _track_summary(store: FlightStore, track: Dict[str, Any],
 
 @router.get("/api/flights/tracks")
 def list_tracks(store: FlightStore = Depends(get_flight_store)) -> Dict[str, Any]:
-    """條件清單，含推導狀態、進度、最低價摘要與配額（contracts §1）。"""
+    """條件清單，含推導狀態、進度、最低價摘要與配額（contracts §1）。
+
+    008：合併四段票與單純來回兩種類型，每筆附 `track_type` 供前端
+    判斷（contracts/roundtrip-api.md §2）。四段票摘要原本不含這個
+    欄位，這裡補上；單純來回摘要已經在 `_row_to_roundtrip_track()`
+    內含 `track_type`，`_roundtrip_track_summary()` 的 `dict(track)`
+    會自動帶過去。
+    """
     data_dir = store.data_dir
+    four_segment = [dict(_track_summary(store, t, data_dir),
+                         track_type="four_segment")
+                    for t in store.list_tracks()]
+    roundtrip = [_roundtrip_track_summary(store, t, data_dir)
+                for t in store.list_roundtrip_tracks()]
     return {
-        "tracks": [_track_summary(store, t, data_dir)
-                   for t in store.list_tracks()],
+        "tracks": four_segment + roundtrip,
         "quota": _quota_block(data_dir),
     }
 
@@ -389,6 +400,229 @@ def get_results(track_id: int,
         # 通知狀態（FR-019）：上次通知的時間與價格，以及是否送達失敗。
         # 送達失敗要讓使用者看得到——否則他會以為「沒通知＝沒達標」，
         # 實際上是通知管道壞了
+        "notify": track.get("notify"),
+        "next_scan_date": svc.next_scan_date(track),
+    }
+
+
+# ============================================================
+# 單純來回（008-roundtrip-search）
+#
+# 獨立的一整套端點（/roundtrip/ 字首），不與四段票共用同一組路由。
+# roundtrip_track 與 flight_track 各自獨立 AUTOINCREMENT，同一個整數
+# id 可能同時存在於兩張表，路徑必須區分類型才能判斷要查哪張表
+# （contracts/roundtrip-api.md「端點命名」）。
+# ============================================================
+
+class RoundtripTrackCreate(BaseModel):
+    destinations: List[str]
+    window_start: str
+    window_end: str
+    trip_days_min: int
+    trip_days_max: int
+    hub: str = "TPE"
+    preferred_transit: Optional[str] = None
+    name: Optional[str] = None
+    samples_per_month: int = 2
+    target_price: Optional[int] = None
+    scan_frequency_days: int = 7
+
+
+# 與 _SCANNING／_LAST_OUTCOME 同性質的暫態，各自獨立的字典／集合——
+# 不能共用同一份，否則四段票 id=3 與單純來回 id=3 的掃描狀態會互相污染。
+_ROUNDTRIP_SCANNING: set = set()
+_ROUNDTRIP_LAST_OUTCOME: Dict[int, Dict[str, Any]] = {}
+
+
+def _roundtrip_track_summary(store: FlightStore, track: Dict[str, Any],
+                             data_dir: str) -> Dict[str, Any]:
+    itineraries, skipped = svc.expand_roundtrip_track(track)
+    pending = [i for i in itineraries if not svc._is_cached(i, data_dir)]
+    state = svc.derive_roundtrip_state(
+        track, data_dir, store=store,
+        scanning=track["id"] in _ROUNDTRIP_SCANNING)
+    lowest = store.roundtrip_lowest_result(track["id"])
+    if lowest and track.get("target_price") is not None:
+        target_met = lowest["price"] <= track["target_price"]
+        lowest = dict(lowest, target_met=target_met)
+        if not target_met:
+            lowest["gap_to_target"] = lowest["price"] - track["target_price"]
+    out = dict(track)
+    out["state"] = state
+    out["progress"] = {"done": len(itineraries) - len(pending),
+                       "total": len(itineraries)}
+    out["lowest"] = lowest
+    out["skipped_count"] = len(skipped)
+    out["next_scan_date"] = svc.next_scan_date(track)
+    return out
+
+
+@router.post("/api/flights/tracks/roundtrip", status_code=201)
+def create_roundtrip_track(
+        body: RoundtripTrackCreate,
+        store: FlightStore = Depends(get_flight_store)) -> Dict[str, Any]:
+    """建立單純來回條件（contracts/roundtrip-api.md §1）。**不自動開始
+    掃描**，理由同既有四段票端點。
+
+    組合數上限守衛（008 FR-11）：沿用既有 007 的守衛函式，`num_targets`
+    傳候選目的地數量（見既有 `create_track()` 端點的同名檢查，本處不
+    重寫一份不同的邏輯）。
+    """
+    try:
+        months = svc.months_between(body.window_start, body.window_end)[1]
+        num_days = body.trip_days_max - body.trip_days_min + 1
+        combo = svc.combination_count(months, body.samples_per_month,
+                                      len(body.destinations), num_days)
+        if combo > svc.MAX_COMBINATIONS_PER_TRACK:
+            raise HTTPException(
+                status_code=400,
+                detail="查詢組合數 %d 超過上限 %d，請縮小天數區間或候選"
+                       "目的地數量" % (combo, svc.MAX_COMBINATIONS_PER_TRACK))
+    except HTTPException:
+        raise
+    except (TypeError, ValueError):
+        pass  # 交給下面 create_roundtrip_track() 的既有驗證回報
+
+    try:
+        track = store.create_roundtrip_track(
+            destinations=body.destinations, window_start=body.window_start,
+            window_end=body.window_end, trip_days_min=body.trip_days_min,
+            trip_days_max=body.trip_days_max, hub=body.hub,
+            preferred_transit=body.preferred_transit, name=body.name,
+            samples_per_month=body.samples_per_month,
+            target_price=body.target_price,
+            scan_frequency_days=body.scan_frequency_days,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"id": track["id"]}
+
+
+@router.delete("/api/flights/tracks/roundtrip/{track_id}", status_code=204)
+def delete_roundtrip_track(
+        track_id: int,
+        store: FlightStore = Depends(get_flight_store)) -> None:
+    """刪除條件與其結果（contracts/roundtrip-api.md §5）。"""
+    if not store.delete_roundtrip_track(track_id):
+        raise HTTPException(status_code=404, detail="查詢條件不存在")
+    _ROUNDTRIP_SCANNING.discard(track_id)
+    _ROUNDTRIP_LAST_OUTCOME.pop(track_id, None)
+
+
+def _run_roundtrip_scan_background(track_id: int, data_dir: str) -> None:
+    """背景任務入口（比照 `_run_scan_background()`）。自行建立與關閉
+    連線，不使用 request-scoped 依賴。"""
+    try:
+        outcome = svc.run_roundtrip_scan(track_id, data_dir) or {}
+        _ROUNDTRIP_LAST_OUTCOME[track_id] = {
+            "blocked": bool(outcome.get("blocked")),
+            "blocked_kind": ("soft_timeout" if outcome.get("soft_blocked")
+                             else ("explicit" if outcome.get("blocked")
+                                   else None)),
+            "queried": outcome.get("queried", 0),
+            "written": outcome.get("written", 0),
+        }
+    finally:
+        _ROUNDTRIP_SCANNING.discard(track_id)
+
+
+@router.post("/api/flights/tracks/roundtrip/{track_id}/scan")
+def trigger_roundtrip_scan(
+        track_id: int, background_tasks: BackgroundTasks,
+        store: FlightStore = Depends(get_flight_store)) -> Dict[str, Any]:
+    """觸發單純來回掃描（contracts/roundtrip-api.md §3，比照既有四段票
+    端點的行為：配額不足回 200 排隊，非錯誤）。"""
+    track = store.get_roundtrip_track(track_id)
+    if track is None:
+        raise HTTPException(status_code=404, detail="查詢條件不存在")
+
+    data_dir = store.data_dir
+    synced = svc.sync_cached_roundtrip_results(track_id, track, data_dir,
+                                               store)
+    plan = svc.roundtrip_scan_plan(track, data_dir)
+
+    if track_id in _ROUNDTRIP_SCANNING:
+        return {"state": "scanning", "planned": plan["planned"],
+                "done": plan["already_cached"],
+                "message": "此條件已有掃描進行中"}
+
+    if plan["pending"] == 0:
+        store.mark_roundtrip_success(track_id)
+        return {"state": "complete", "planned": plan["planned"],
+                "already_cached": plan["already_cached"], "will_query": 0,
+                "from_cache": synced}
+
+    if plan["will_query"] == 0:
+        wait = plan["seconds_until_free"]
+        return {
+            "state": "queued", "planned": plan["planned"],
+            "already_cached": plan["already_cached"], "will_query": 0,
+            "seconds_until_free": wait,
+            "message": "最近一小時已達查詢上限，約 %d 分鐘後釋出名額"
+                       % ((wait + 59) // 60),
+        }
+
+    _ROUNDTRIP_SCANNING.add(track_id)
+    background_tasks.add_task(_run_roundtrip_scan_background, track_id,
+                              data_dir)
+    return {"state": "scanning", "planned": plan["planned"],
+            "already_cached": plan["already_cached"],
+            "will_query": plan["will_query"]}
+
+
+@router.get("/api/flights/tracks/roundtrip/{track_id}/results")
+def get_roundtrip_results(
+        track_id: int,
+        store: FlightStore = Depends(get_flight_store)) -> Dict[str, Any]:
+    """單純來回結果與進度（contracts/roundtrip-api.md §4）。"""
+    track = store.get_roundtrip_track(track_id)
+    if track is None:
+        raise HTTPException(status_code=404, detail="查詢條件不存在")
+
+    data_dir = store.data_dir
+    itineraries, skipped = svc.expand_roundtrip_track(track)
+    pending = [i for i in itineraries if not svc._is_cached(i, data_dir)]
+    results = store.list_roundtrip_results(track_id)
+    hub = track.get("hub", "TPE")
+    transit = track.get("preferred_transit")
+    for r in results:
+        r["airline"] = fs.describe_airlines(
+            (r.get("airline") or "").split("／"))
+        # 未指定轉機偏好傳 2 段（自動編碼來回）；指定時傳 4 段（自動
+        # 編碼多城市）——google_flights_url() 依段數自動判斷，這裡不用
+        # 額外指定 trip type（research.md §1）
+        if transit:
+            legs = [
+                {"departure_id": hub, "arrival_id": transit,
+                 "date": r["outbound_date"]},
+                {"departure_id": transit, "arrival_id": r["destination"],
+                 "date": r["outbound_date"]},
+                {"departure_id": r["destination"], "arrival_id": transit,
+                 "date": r["return_date"]},
+                {"departure_id": transit, "arrival_id": hub,
+                 "date": r["return_date"]},
+            ]
+        else:
+            legs = [
+                {"departure_id": hub, "arrival_id": r["destination"],
+                 "date": r["outbound_date"]},
+                {"departure_id": r["destination"], "arrival_id": hub,
+                 "date": r["return_date"]},
+            ]
+        r["links"] = {"round_trip": fs.google_flights_url(legs)}
+
+    last = _ROUNDTRIP_LAST_OUTCOME.get(track_id) or {}
+    return {
+        "state": svc.derive_roundtrip_state(
+            track, data_dir, store=store,
+            scanning=track_id in _ROUNDTRIP_SCANNING),
+        "progress": {"done": len(itineraries) - len(pending),
+                     "total": len(itineraries)},
+        "quota": _quota_block(data_dir),
+        "blocked": bool(last.get("blocked")),
+        "blocked_kind": last.get("blocked_kind"),
+        "results": results,
+        "skipped": skipped,
         "notify": track.get("notify"),
         "next_scan_date": svc.next_scan_date(track),
     }

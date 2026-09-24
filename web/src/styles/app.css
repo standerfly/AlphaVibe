@@ -542,6 +542,7 @@ details.collapse summary::marker { color: var(--accent); }
 
 .flight-page { display: flex; flex-direction: column; gap: 1rem; }
 .flight-page__head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.flight-form-toggle { display: flex; gap: .5rem; }
 .flight-page__lead { color: var(--ink-dim); font-size: .88rem; line-height: 1.7; margin: 0; }
 .flight-muted { color: var(--ink-dim); font-size: .82rem; line-height: 1.6; }
 .flight-error { color: var(--red-ink); background: var(--red-soft); border: 1px solid var(--red); border-radius: 8px; padding: .55rem .75rem; font-size: .85rem; }
