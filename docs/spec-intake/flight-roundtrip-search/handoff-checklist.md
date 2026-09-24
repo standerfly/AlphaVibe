@@ -51,10 +51,25 @@
    id=9 遷移（前提工作，對已上線生產功能與資料的異動）
 2. `roundtrip-search`——新增「單純來回」查詢類型（依賴第一包）
 
+### 進度更新（2026-09-24）
+
+**`trip-day-range` 包（Spec Kit `specs/007-trip-day-range/`）開發與測試
+已完成**：`trip_days` 已改為 `trip_days_min`／`trip_days_max` 區間、
+組合數上限守衛（60／條件）已實作並經 264 個單元測試＋smoke test 119
+項驗證；排程／通知／過期防護機制沿用既有判定邏輯，未發現需要調整
+（原本標註的待驗證技術假設已在此階段驗證成立）。id=9 遷移腳本
+（`poc/kb-mcp/migrate_trip_days_range.py`）已對測試庫驗證通過。
+**尚未合併進 `function/alphavibe`、id=9 尚未在正式庫遷移、正式服務也
+還沒重啟套用**——待 PO 確認後執行（`specs/007-trip-day-range/tasks.md`
+T028）。
+
+`roundtrip-search` 包（第二包）可以開始 Spec Kit（`speckit-specify`），
+不需要等 `trip-day-range` 先合併／部署到正式環境——兩包在程式碼層級
+的依賴（共用天數區間概念與組合數守衛函式）已經在同一個分支上滿足，
+但正式環境的合併／部署順序仍建議先 `trip-day-range` 再
+`roundtrip-search`，避免正式環境同時處理兩個對已上線功能的異動。
+
 ### 非阻斷的已知待辦
 
 - 組合數上限（60）與 id=9 遷移區間（10～14 天）為 Claude assumption，
-  Spec Kit 技術規劃階段若發現不合理可回頭調整，不需重跑 pre-spec
-- 排程／通知／過期防護機制在天數區間化與多目的地情境下是否需要調整
-  判定邏輯，留給 Spec Kit `plan.md` 階段逐一驗證（product-spec.md
-  「Constraints And Assumptions」已標註此為待驗證的技術假設）
+  執行 T028（正式環境部署）前可視情況再調整，不需重跑 pre-spec

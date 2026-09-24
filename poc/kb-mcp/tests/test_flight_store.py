@@ -20,7 +20,8 @@ from flight_store import FlightStore  # noqa: E402
 
 def _base_track(store, **kw):
     args = dict(destination="PRG", outstations=["NRT", "OKA"],
-                window_start="2027-04", window_end="2027-06", trip_days=12)
+                window_start="2027-04", window_end="2027-06",
+                trip_days_min=12, trip_days_max=12)
     args.update(kw)
     return store.create_track(**args)
 
@@ -199,6 +200,37 @@ class TrackingFieldsTest(unittest.TestCase):
         updated = self.store.update_target_price(t["id"], 40000)
         self.assertEqual(updated["scan_frequency_days"], 14)
 
+    def test_update_trip_days_range(self):
+        """007：id=9 遷移機制的底層方法。"""
+        t = _base_track(self.store, trip_days_min=12, trip_days_max=12)
+        updated = self.store.update_trip_days_range(t["id"], 10, 14)
+        self.assertEqual(updated["trip_days_min"], 10)
+        self.assertEqual(updated["trip_days_max"], 14)
+
+    def test_update_trip_days_range_rejects_max_below_min(self):
+        t = _base_track(self.store)
+        with self.assertRaises(ValueError):
+            self.store.update_trip_days_range(t["id"], 14, 10)
+
+    def test_update_trip_days_range_rejects_non_positive(self):
+        t = _base_track(self.store)
+        with self.assertRaises(ValueError):
+            self.store.update_trip_days_range(t["id"], 0, 10)
+
+    def test_update_trip_days_range_missing_track_returns_none(self):
+        self.assertIsNone(self.store.update_trip_days_range(9999, 10, 14))
+
+    def test_update_trip_days_range_preserves_other_fields(self):
+        """遷移不得變動目標價、重掃頻率等非天數欄位（spec.md US2 驗收情境 1）。"""
+        t = _base_track(self.store, target_price=40000,
+                        scan_frequency_days=7)
+        self.store.record_notification(t["id"], 37265, ok=True,
+                                       when="2026-09-23T10:00:00")
+        updated = self.store.update_trip_days_range(t["id"], 10, 14)
+        self.assertEqual(updated["target_price"], 40000)
+        self.assertEqual(updated["scan_frequency_days"], 7)
+        self.assertEqual(updated["notify"]["last_notified_price"], 37265)
+
     def test_record_notification_success(self):
         t = _base_track(self.store)
         self.store.record_notification(t["id"], 37265, ok=True,
@@ -273,7 +305,28 @@ class TrackValidationTest(unittest.TestCase):
     def test_rejects_non_positive_trip_days(self):
         for bad in (0, -5):
             with self.assertRaises(ValueError):
-                _base_track(self.store, trip_days=bad)
+                _base_track(self.store, trip_days_min=bad, trip_days_max=bad)
+
+    def test_rejects_trip_days_max_below_min(self):
+        """007：上限不得小於下限。"""
+        with self.assertRaises(ValueError) as ctx:
+            _base_track(self.store, trip_days_min=14, trip_days_max=10)
+        self.assertIn("trip_days_max", str(ctx.exception))
+
+    def test_accepts_trip_days_min_equal_max(self):
+        """007：下限等於上限是合法輸入，等同舊版單一天數（spec.md Edge Cases）。"""
+        t = _base_track(self.store, trip_days_min=12, trip_days_max=12)
+        self.assertEqual(t["trip_days_min"], 12)
+        self.assertEqual(t["trip_days_max"], 12)
+
+    def test_accepts_trip_days_range(self):
+        t = _base_track(self.store, trip_days_min=10, trip_days_max=14)
+        self.assertEqual(t["trip_days_min"], 10)
+        self.assertEqual(t["trip_days_max"], 14)
+
+    def test_rejects_non_integer_trip_days(self):
+        with self.assertRaises(ValueError):
+            _base_track(self.store, trip_days_min="十天", trip_days_max=14)
 
     def test_rejects_months_out_of_range(self):
         for bad in ([0], [13], [6, 13]):

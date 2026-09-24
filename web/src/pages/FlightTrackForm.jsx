@@ -50,7 +50,8 @@ export default function FlightTrackForm({ onCreated, onCancel }) {
   const [outstations, setOutstations] = useState([])
   const [windowStart, setWindowStart] = useState('')
   const [windowEnd, setWindowEnd] = useState('')
-  const [tripDays, setTripDays] = useState(12)
+  const [tripDaysMin, setTripDaysMin] = useState(10)
+  const [tripDaysMax, setTripDaysMax] = useState(14)
   const [leadStrategy, setLeadStrategy] = useState('m3')
   const [trailStrategy, setTrailStrategy] = useState('m1')
   const [exTrip, setExTrip] = useState([])
@@ -76,7 +77,8 @@ export default function FlightTrackForm({ onCreated, onCancel }) {
         outstations,
         window_start: windowStart,
         window_end: windowEnd,
-        trip_days: Number(tripDays),
+        trip_days_min: Number(tripDaysMin),
+        trip_days_max: Number(tripDaysMax),
         lead_strategy: leadStrategy,
         trail_strategy: trailStrategy,
         exclude_months: { trip: exTrip, lead: exLead, trail: exTrail },
@@ -97,6 +99,8 @@ export default function FlightTrackForm({ onCreated, onCancel }) {
       <h2>新增查詢條件</h2>
       <p className="flight-muted">
         不需要輸入出發日——給區間與行程天數，系統會在區間內抽樣日期查價。
+        行程天數也是區間（例如 10～14 天），系統會一併比較不同天數的價格，
+        不再侷限單一固定天數。
       </p>
 
       <div className="flight-form__row">
@@ -126,9 +130,12 @@ export default function FlightTrackForm({ onCreated, onCancel }) {
       </div>
 
       <div className="flight-form__row flight-form__row--inline">
-        <label className="flight-form__label" htmlFor="td">行程天數</label>
-        <input id="td" type="number" min="1" value={tripDays}
-               onChange={(e) => setTripDays(e.target.value)} />
+        <label className="flight-form__label" htmlFor="tdmin">行程天數</label>
+        <input id="tdmin" type="number" min="1" value={tripDaysMin}
+               onChange={(e) => setTripDaysMin(e.target.value)} />
+        <span>～</span>
+        <input id="tdmax" type="number" min="1" value={tripDaysMax}
+               onChange={(e) => setTripDaysMax(e.target.value)} />
         <label className="flight-form__label" htmlFor="sp">每月抽樣</label>
         <input id="sp" type="number" min="1" value={samples}
                onChange={(e) => setSamples(e.target.value)} />

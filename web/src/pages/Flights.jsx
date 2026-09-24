@@ -145,7 +145,10 @@ function TrackCard({ track, onScan, onDelete, onOpen, onFrequency, onTargetPrice
         </span>
       </header>
       <p className="flight-muted">
-        {track.window_start}～{track.window_end} · 行程 {track.trip_days} 天 ·
+        {track.window_start}～{track.window_end} · 行程{' '}
+        {track.trip_days_min === track.trip_days_max
+          ? `${track.trip_days_min} 天`
+          : `${track.trip_days_min}～${track.trip_days_max} 天`} ·
         外站 {track.outstations.join('／')} · 已查 {p.done}/{p.total}
       </p>
       {track.lowest ? (

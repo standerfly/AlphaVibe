@@ -51,12 +51,38 @@ AUTO_LEAD_CANDIDATES = [210, 180, 150, 120, 90, 60, 30]
 AUTO_TRAIL_CANDIDATES = [150, 120, 90, 60, 30, 14, 1]
 
 
-def _months_between(window_start, window_end):
-    """把 YYYY-MM 區間換算成 sample_dates 需要的起始日與月份數。"""
+def months_between(window_start, window_end):
+    """把 YYYY-MM 區間換算成 sample_dates 需要的起始日與月份數。
+
+    007：升格為公開函式——`app/routers/flights.py` 的組合數上限守衛
+    （建立條件前，不經過完整 `expand_track()`）需要用同一個月份數算法，
+    不能各自算一份而分岔。
+    """
     start = datetime.datetime.strptime(window_start, "%Y-%m").date()
     end = datetime.datetime.strptime(window_end, "%Y-%m").date()
     months = (end.year - start.year) * 12 + (end.month - start.month) + 1
     return start.isoformat(), max(1, months)
+
+
+# 007：建立條件時的組合數上限守衛（避免天數區間帶來的組合數暴增吃光
+# 共用查詢配額）。60 是 pre-spec 階段的 Claude 提案並經 PO 採納的
+# assumption，非精確驗證過的數字——依現行速率上限約 20 筆／小時推算，
+# 60 組合約需 3 小時分批查完，是背景排程可接受的上限，可隨時調整
+# （見 docs/spec-intake/flight-roundtrip-search/clarification-log.md
+# Q-010、specs/007-trip-day-range/spec.md「Assumptions」）。
+MAX_COMBINATIONS_PER_TRACK = 60
+
+
+def combination_count(months, samples_per_month, num_targets, num_day_options):
+    """算出一個追蹤條件展開後的查詢組合數。
+
+    刻意寫成**不依賴 `Track` 物件形狀**的純函式，只吃抽象計數參數
+    （月份數、每月抽樣數、目標數量、天數選項數）——四段票的「目標數量」
+    是外站數，未來 roundtrip-search 包的「目標數量」是候選目的地數，
+    兩者可以呼叫同一支函式而不需要共用資料模型，避免各自實作一份
+    幾乎相同的算法而分岔（research.md §4）。
+    """
+    return int(months) * int(samples_per_month) * int(num_targets) * int(num_day_options)
 
 
 def _resolve_offsets(track, outbound_date, return_date):
@@ -116,20 +142,32 @@ def expand_track(track):
     枚舉本身全部委派給 `flight_search`：日期抽樣用 `sample_dates()`、
     四段行程用 `build_itineraries_fixed_trip()`，本函式只負責「條件怎麼
     對應到那些函式的參數」。
+
+    007 天數區間化：對 `trip_days_min`～`trip_days_max` 內每個天數值
+    各呼叫一次 `sample_dates()`，再累加所有 `(天數, outbound_date,
+    return_date)` 組合逐一處理。`sample_dates()`／
+    `build_itineraries_fixed_trip()` 本身不需要改動——出發日的抽樣
+    不依賴天數，只有回程日會變（specs/007-trip-day-range/research.md
+    §1）。同一個出發日在不同天數選項下，lead／trail 是否可行可能不同
+    （trail 依賴 return_date，隨天數而變），所以 skip 判斷仍以每個
+    `(天數, outbound_date)` 組合各自為單位。
     """
-    start_date, months = _months_between(track["window_start"],
-                                         track["window_end"])
+    start_date, months = months_between(track["window_start"],
+                                        track["window_end"])
     ex = track.get("exclude_months") or {}
-    pairs = fs.sample_dates(
-        months_ahead=months,
-        per_month=track.get("samples_per_month", 2),
-        trip_days=track["trip_days"],
-        start_date=start_date,
-        exclude_months=ex.get("trip") or [],
-    )
+    day_options = range(track["trip_days_min"], track["trip_days_max"] + 1)
+    pairs = []
+    for days in day_options:
+        for outbound_date, return_date in fs.sample_dates(
+                months_ahead=months,
+                per_month=track.get("samples_per_month", 2),
+                trip_days=days,
+                start_date=start_date,
+                exclude_months=ex.get("trip") or []):
+            pairs.append((days, outbound_date, return_date))
 
     itineraries, skipped = [], []
-    for outbound_date, return_date in pairs:
+    for days, outbound_date, return_date in pairs:
         lead, trail, lead_reason, trail_reason = _resolve_offsets(
             track, outbound_date, return_date)
         if lead is None or trail is None:
@@ -139,6 +177,7 @@ def expand_track(track):
                       if reason == "past_date"
                       else "%s 找不到能避開排除月份的間隔" % which)
             skipped.append({"outbound_date": outbound_date,
+                            "trip_days": days,
                             "reason": reason or "no_feasible_offset",
                             "detail": detail})
             continue
