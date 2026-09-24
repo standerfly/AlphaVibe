@@ -94,7 +94,7 @@ Foundational 因此很短。
 - [X] T030 [P] 更新 `CLAUDE.md` 與 `docs/architecture.md` 的機票分頁列，補上自動重掃與通知
 - [X] T031 完整回歸：`poc/kb-mcp/tests` 全套綠、smoke test 整體 PASS、前端 `npx vite build` 通過
 - [X] T032 以 `--dry-run` 實跑 `poc/kb-mcp/flight_tracking_job.py`，確認「今天輪到誰」的判定正確且不發出任何查詢或通知
-- [ ] T033 ⏸ **待跨日觀察**：實際載入 `~/Library/LaunchAgents/com.alphavibe.flighttracking.plist` 並等待第一次自動執行——需跨日觀察，無法在單次工作階段內驗證。**2026-09-23 已完成的部分**：plist 已寫入 `ops/launchd/com.alphavibe.flighttracking.plist`（`plutil -lint` 通過）、已 `launchctl bootstrap` 載入、已在 launchd 的極簡 PATH 下驗證 `node_binary()` 找得到 node、已用 `--dry-run` 實跑確認選取邏輯正確。**尚未驗證的部分**：第一次真正到點（每日 09:30）自動執行的結果——這要等隔天看 `~/Library/Logs/alphavibe-flight-tracking.log`
+- [X] T033 **跨日觀察已完成**：實際載入 `~/Library/LaunchAgents/com.alphavibe.flighttracking.plist` 並等待第一次自動執行——需跨日觀察，無法在單次工作階段內驗證。**2026-09-23 已完成的部分**：plist 已寫入 `ops/launchd/com.alphavibe.flighttracking.plist`（`plutil -lint` 通過）、已 `launchctl bootstrap` 載入、已在 launchd 的極簡 PATH 下驗證 `node_binary()` 找得到 node、已用 `--dry-run` 實跑確認選取邏輯正確。**2026-09-24 09:30:03 已自行到點執行**（`runs = 2`、`last exit code = 0`、stderr 空），排程機制本身確認可用。**仍未被證實的部分**：當天正式庫有 0 個追蹤條件，所以這次執行沒有走到查價與通知路徑——launchd 環境下真正啟動 node 子行程、開瀏覽器查價、發出 Telegram 的完整鏈路，要等正式庫有條件後的第一次到點才會被驗證。屆時看同一份 log 是否出現「查詢 N 筆、寫入 N 筆」。
 
 ---
 
