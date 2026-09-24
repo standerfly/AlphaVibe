@@ -356,6 +356,26 @@ class FlightStore:
         self.conn.commit()
         return self.get_track(track_id)
 
+    def update_target_price(self, track_id, price):
+        """更新目標價（2026-09-24 新增）。`None` 代表清空（不再比較達標）。
+
+        跟 `update_track_frequency()` 不同的是，改目標價**不影響既有
+        枚舉結果**——它只是達標判定的比較門檻，不像 `trip_days` 或排除
+        月份那樣會讓查詢組合整套改變，因此可以安全地隨時調整，不必當成
+        「建新條件」處理。
+        """
+        if price is not None:
+            price = int(price)
+            if price < 0:
+                raise ValueError("target_price 不得為負")
+        if self.get_track(track_id) is None:
+            return None
+        self.conn.execute(
+            "UPDATE flight_track SET target_price=? WHERE id=?",
+            (price, track_id))
+        self.conn.commit()
+        return self.get_track(track_id)
+
     def record_notification(self, track_id, price, ok, when=None):
         """記錄一次通知嘗試。
 

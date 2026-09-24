@@ -118,8 +118,24 @@ function SkippedList({ skipped }) {
   )
 }
 
-function TrackCard({ track, onScan, onDelete, onOpen, onFrequency, open, detail }) {
+function TrackCard({ track, onScan, onDelete, onOpen, onFrequency, onTargetPrice, open, detail }) {
   const p = track.progress || { done: 0, total: 0 }
+  const [targetDraft, setTargetDraft] = useState(
+    track.target_price != null ? String(track.target_price) : '')
+  useEffect(() => {
+    setTargetDraft(track.target_price != null ? String(track.target_price) : '')
+  }, [track.target_price])
+  function commitTarget() {
+    const trimmed = targetDraft.trim()
+    if (trimmed === '') {
+      if (track.target_price != null) onTargetPrice(track.id, null)
+      return
+    }
+    const n = Number(trimmed)
+    if (Number.isFinite(n) && n >= 0 && n !== track.target_price) {
+      onTargetPrice(track.id, n)
+    }
+  }
   return (
     <article className="flight-card">
       <header className="flight-card__head">
@@ -170,6 +186,18 @@ function TrackCard({ track, onScan, onDelete, onOpen, onFrequency, open, detail 
         </select>
         {track.next_scan_date && <> · 下次 {md(track.next_scan_date)}</>}
         {track.last_success_at && <> · 上次成功 {md(track.last_success_at.slice(0, 10))}</>}
+      </p>
+      <p className="flight-muted">
+        目標價（NTD）：
+        <input
+          type="number" min="0" className="flight-target-input"
+          value={targetDraft}
+          placeholder="不設定"
+          onChange={(e) => setTargetDraft(e.target.value)}
+          onBlur={commitTarget}
+          onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur() }}
+        />
+        {track.target_price == null && '（未設定，不會發送任何通知）'}
       </p>
       {track.notify?.last_notified_at && (
         <p className={track.notify.last_notify_failed ? 'flight-error' : 'flight-muted'}>
@@ -280,6 +308,15 @@ export default function Flights() {
     } catch (e) { setError(e.message) }
   }
 
+  async function setTargetPrice(id, price) {
+    try {
+      await apiPatch(`/api/flights/tracks/${id}`,
+        price === null ? { clear_target_price: true } : { target_price: price })
+      setNotice(price === null ? '已清空目標價（不再發送通知）' : '已更新目標價')
+      load()
+    } catch (e) { setError(e.message) }
+  }
+
   async function remove(id) {
     try {
       await apiDelete(`/api/flights/tracks/${id}`)
@@ -327,7 +364,7 @@ export default function Flights() {
       )}
       {data && data.tracks.map((t) => (
         <TrackCard key={t.id} track={t} onScan={scan} onDelete={remove}
-                   onFrequency={setFrequency}
+                   onFrequency={setFrequency} onTargetPrice={setTargetPrice}
                    onOpen={setOpenId} open={openId === t.id} detail={detail} />
       ))}
 

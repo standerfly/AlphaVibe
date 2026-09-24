@@ -174,6 +174,31 @@ class TrackingFieldsTest(unittest.TestCase):
     def test_update_frequency_missing_track_returns_none(self):
         self.assertIsNone(self.store.update_track_frequency(9999, 14))
 
+    def test_update_target_price(self):
+        t = _base_track(self.store, target_price=38000)
+        updated = self.store.update_target_price(t["id"], 40000)
+        self.assertEqual(updated["target_price"], 40000)
+
+    def test_update_target_price_to_none_clears_it(self):
+        """2026-09-24 新增：清空目標價（等同取消通知），不是拒絕，是合法操作。"""
+        t = _base_track(self.store, target_price=38000)
+        updated = self.store.update_target_price(t["id"], None)
+        self.assertIsNone(updated["target_price"])
+
+    def test_update_target_price_rejects_negative(self):
+        t = _base_track(self.store)
+        with self.assertRaises(ValueError):
+            self.store.update_target_price(t["id"], -100)
+
+    def test_update_target_price_missing_track_returns_none(self):
+        self.assertIsNone(self.store.update_target_price(9999, 40000))
+
+    def test_update_target_price_does_not_affect_frequency(self):
+        """改目標價不該動到其他欄位（跟 update_track_frequency 對稱）。"""
+        t = _base_track(self.store, scan_frequency_days=14)
+        updated = self.store.update_target_price(t["id"], 40000)
+        self.assertEqual(updated["scan_frequency_days"], 14)
+
     def test_record_notification_success(self):
         t = _base_track(self.store)
         self.store.record_notification(t["id"], 37265, ok=True,

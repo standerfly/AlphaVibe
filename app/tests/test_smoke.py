@@ -1414,6 +1414,45 @@ def main() -> int:
                     print("FAIL /results 通知狀態欄位：%s" % (nblock,))
                     failures.append("flights notify block")
 
+                # ---- 目標價可獨立 PATCH（2026-09-24 新增）----
+                # 跟頻率不同，改目標價不影響已枚舉的組合，所以要能單獨改
+                # 且不動到剛才設的 scan_frequency_days=30
+                tp_status, tp_body = _patch(
+                    "/api/flights/tracks/%d" % flight_track_id,
+                    json.dumps({"target_price": 40000}).encode("utf-8"))
+                tp_body = _json_or_none(tp_body)
+                if (tp_status == 200 and tp_body
+                        and tp_body.get("target_price") == 40000
+                        and tp_body.get("scan_frequency_days") == 30):
+                    print("PASS PATCH target_price 更新且不影響其他欄位")
+                else:
+                    print("FAIL PATCH target_price：status=%s body=%s"
+                          % (tp_status, tp_body))
+                    failures.append("flights patch target_price")
+
+                # 清空目標價：用 clear_target_price 旗標而非省略欄位，
+                # 因為 JSON 缺席欄位與明確 null 在這個 schema 下都可能
+                # 代表「沒有要改」，需要明確旗標才能表達「故意清空」
+                cl_status, cl_body = _patch(
+                    "/api/flights/tracks/%d" % flight_track_id,
+                    json.dumps({"clear_target_price": True}).encode("utf-8"))
+                cl_body = _json_or_none(cl_body)
+                if cl_status == 200 and cl_body and cl_body.get("target_price") is None:
+                    print("PASS PATCH clear_target_price 清空目標價")
+                else:
+                    print("FAIL PATCH clear_target_price：status=%s body=%s"
+                          % (cl_status, cl_body))
+                    failures.append("flights patch clear_target_price")
+
+                # 空 PATCH（什麼都沒帶）必須被拒絕，不該悄悄變成 no-op
+                empty_status, _eb = _patch(
+                    "/api/flights/tracks/%d" % flight_track_id, b"{}")
+                if empty_status == 400:
+                    print("PASS PATCH 空 body 被拒絕（400）")
+                else:
+                    print("FAIL PATCH 空 body 未被拒絕：status=%s" % empty_status)
+                    failures.append("flights patch empty body")
+
             # 驗證失敗必須回 400 並說明原因（FR-025）
             bad_status, bad_body = _post(
                 "/api/flights/tracks",

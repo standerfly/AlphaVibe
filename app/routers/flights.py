@@ -157,20 +157,43 @@ def create_track(body: TrackCreate,
 
 
 class TrackUpdate(BaseModel):
-    """目前只開放頻率——其他欄位改動會使既有結果的對應關係失效。
+    """只開放頻率與目標價——兩者都只是「怎麼判斷/怎麼排程」的參數，
+    不影響已枚舉的查詢組合。
 
-    例如改了 `trip_days` 或排除月份，枚舉出的組合就整組不同了，既有
-    結果會變成孤兒列。要改那些，語意上是「建新條件」而非「編輯」。
+    `trip_days`、`window_start/end`、排除月份、外站清單這些欄位不開放
+    PATCH：改了枚舉出的組合就整組不同，既有結果會變成孤兒列。要改那些，
+    語意上是「建新條件」而非「編輯」。
+
+    兩個欄位都選填，但至少要有一個——空的 PATCH request 沒有意義，
+    寧可在這裡明確拒絕，不要讓它悄悄變成 no-op。
     """
-    scan_frequency_days: int
+    scan_frequency_days: Optional[int] = None
+    target_price: Optional[int] = None
+    clear_target_price: bool = False
+    """PATCH 語意下無法區分「沒填 target_price」跟「故意清空」——兩者
+    在 JSON 裡都可能是欄位缺席或 null。用這個旗標明確表達「清空」意圖，
+    避免使用者想取消目標價時被誤判成「沒有要改」而忽略。"""
 
 
 @router.patch("/api/flights/tracks/{track_id}")
 def update_track(track_id: int, body: TrackUpdate,
                  store: FlightStore = Depends(get_flight_store)) -> Dict[str, Any]:
-    """調整重掃頻率（FR-005）。回傳更新後的摘要，前端不必再打一次清單。"""
+    """調整重掃頻率（FR-005）與／或目標價。回傳更新後的摘要，前端不必
+    再打一次清單。"""
+    if (body.scan_frequency_days is None and body.target_price is None
+            and not body.clear_target_price):
+        raise HTTPException(status_code=400,
+                            detail="至少要提供 scan_frequency_days 或 target_price")
     try:
-        track = store.update_track_frequency(track_id, body.scan_frequency_days)
+        track = None
+        if body.scan_frequency_days is not None:
+            track = store.update_track_frequency(track_id,
+                                                  body.scan_frequency_days)
+            if track is None:
+                raise HTTPException(status_code=404, detail="查詢條件不存在")
+        if body.target_price is not None or body.clear_target_price:
+            new_price = None if body.clear_target_price else body.target_price
+            track = store.update_target_price(track_id, new_price)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if track is None:
