@@ -37,7 +37,7 @@ class ScheduleSelectionTest(unittest.TestCase):
         w = _window()
         self.track = self.store.create_track(
             destination="PRG", outstations=["NRT"], window_start=w,
-            window_end=w, trip_days=12)
+            window_end=w, trip_days_min=12, trip_days_max=12)
 
     def tearDown(self):
         self.store.close()
@@ -78,7 +78,7 @@ class ScheduleSelectionTest(unittest.TestCase):
         w = _window()
         monthly = self.store.create_track(
             destination="PRG", outstations=["NRT"], window_start=w,
-            window_end=w, trip_days=12, scan_frequency_days=30)
+            window_end=w, trip_days_min=12, trip_days_max=12, scan_frequency_days=30)
         day = self._day_for(monthly)
         self.store.mark_success(monthly["id"],
                                 (day - datetime.timedelta(days=10)).isoformat()
@@ -93,7 +93,7 @@ class ScheduleSelectionTest(unittest.TestCase):
         for _ in range(6):
             ids.append(self.store.create_track(
                 destination="PRG", outstations=["NRT"], window_start=w,
-                window_end=w, trip_days=12)["id"])
+                window_end=w, trip_days_min=12, trip_days_max=12)["id"])
         days = [svc.scheduled_weekday({"id": i}) for i in ids]
         self.assertEqual(len(set(days)), 7, "7 個連號條件應落在 7 個不同天")
 
@@ -223,7 +223,7 @@ class TrackingJobTest(unittest.TestCase):
         w = _window()
         self.track = self.store.create_track(
             destination="PRG", outstations=["NRT"], window_start=w,
-            window_end=w, trip_days=12, samples_per_month=1,
+            window_end=w, trip_days_min=12, trip_days_max=12, samples_per_month=1,
             target_price=50000)
         self._orig_scrape = fs.scrape_itineraries
         self._orig_conn = fs.estimate_connectors_browser
@@ -313,7 +313,7 @@ class TrackingJobTest(unittest.TestCase):
         w = _window()
         t = self.store.create_track(
             destination="PRG", outstations=["OKA"], window_start=w,
-            window_end=w, trip_days=12, samples_per_month=1)
+            window_end=w, trip_days_min=12, trip_days_max=12, samples_per_month=1)
         fs.scrape_itineraries = self._scrape(30000)
         d = datetime.date.today()
         while d.weekday() != svc.scheduled_weekday(t):
@@ -385,7 +385,7 @@ class StaleProtectionTest(unittest.TestCase):
         w = _window()
         self.track = self.store.create_track(
             destination="PRG", outstations=["NRT"], window_start=w,
-            window_end=w, trip_days=12, samples_per_month=1,
+            window_end=w, trip_days_min=12, trip_days_max=12, samples_per_month=1,
             target_price=50000)
 
     def tearDown(self):

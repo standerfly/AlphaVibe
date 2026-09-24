@@ -43,7 +43,7 @@ class ExpandTrackTest(unittest.TestCase):
 
     def _track(self, **kw):
         args = dict(destination="PRG", outstations=["NRT", "OKA"],
-                    window_start=self.ws, window_end=self.we, trip_days=12)
+                    window_start=self.ws, window_end=self.we, trip_days_min=12, trip_days_max=12)
         args.update(kw)
         return self.store.create_track(**args)
 
@@ -52,6 +52,42 @@ class ExpandTrackTest(unittest.TestCase):
         itins, skipped = svc.expand_track(t)
         self.assertEqual(len(itins), 2 * 2 * 2)   # 2 月 × 2 抽樣 × 2 外站
         self.assertEqual(skipped, [])
+
+    def test_day_range_multiplies_combination_count(self):
+        """007：天數區間是額外的乘數維度（spec.md FR-003）。"""
+        t = self._track(samples_per_month=2, trip_days_min=10, trip_days_max=14)
+        itins, skipped = svc.expand_track(t)
+        self.assertEqual(len(itins), 2 * 2 * 2 * 5)  # 2月×2抽樣×2外站×5天數選項
+        self.assertEqual(skipped, [])
+
+    def test_day_range_covers_at_least_three_distinct_day_counts(self):
+        """驗收情境 1：結果中至少出現 3 種不同天數的組合。"""
+        t = self._track(outstations=["NRT"], samples_per_month=1,
+                        trip_days_min=10, trip_days_max=14)
+        itins, _ = svc.expand_track(t)
+        day_counts = set()
+        for i in itins:
+            legs = i["legs"]
+            d1 = datetime.date.fromisoformat(legs[1]["date"])
+            d2 = datetime.date.fromisoformat(legs[2]["date"])
+            day_counts.add((d2 - d1).days)
+        self.assertGreaterEqual(len(day_counts), 3)
+        self.assertEqual(day_counts, {10, 11, 12, 13, 14})
+
+    def test_day_range_degenerates_to_single_value_when_min_equals_max(self):
+        """spec.md Edge Cases：下限等於上限時行為等同舊版單一天數。"""
+        single = self._track(outstations=["NRT"], samples_per_month=1,
+                             trip_days_min=12, trip_days_max=12)
+        ranged = self._track(outstations=["OKA"], samples_per_month=1,
+                             trip_days_min=12, trip_days_max=12)
+        itins_single, _ = svc.expand_track(single)
+        itins_ranged, _ = svc.expand_track(ranged)
+        self.assertEqual(len(itins_single), len(itins_ranged))
+        for i in itins_single:
+            legs = i["legs"]
+            d1 = datetime.date.fromisoformat(legs[1]["date"])
+            d2 = datetime.date.fromisoformat(legs[2]["date"])
+            self.assertEqual((d2 - d1).days, 12)
 
     def test_four_legs_with_correct_shape(self):
         t = self._track(outstations=["NRT"], samples_per_month=1)
@@ -219,6 +255,34 @@ class ExpandTrackTest(unittest.TestCase):
             self.assertNotEqual(i["legs"][1]["date"][5:7], ws[5:7])
 
 
+class CombinationCountTest(unittest.TestCase):
+    """007：組合數上限守衛用的純函式（不依賴 Track 物件形狀）。"""
+
+    def test_basic_multiplication(self):
+        self.assertEqual(svc.combination_count(2, 2, 2, 1), 8)
+
+    def test_day_options_is_a_real_multiplier(self):
+        self.assertEqual(svc.combination_count(2, 2, 2, 5), 40)
+
+    def test_single_day_option_matches_expand_track_fixed_case(self):
+        """天數選項數為 1 時，等同舊版單一天數的組合數公式。"""
+        self.assertEqual(svc.combination_count(3, 2, 2, 1), 12)
+
+    def test_reusable_with_abstract_target_count(self):
+        """不叫 outstations／destinations，供未來 roundtrip-search 包
+        用「候選目的地數」呼叫同一支函式（research.md §4）。
+        """
+        four_segment_outstations = 3
+        roundtrip_destinations = 4
+        self.assertEqual(
+            svc.combination_count(1, 2, four_segment_outstations, 1), 6)
+        self.assertEqual(
+            svc.combination_count(1, 2, roundtrip_destinations, 1), 8)
+
+    def test_max_combinations_constant_exists(self):
+        self.assertEqual(svc.MAX_COMBINATIONS_PER_TRACK, 60)
+
+
 class PendingAndPlanTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="flight-pending-test-")
@@ -226,7 +290,7 @@ class PendingAndPlanTest(unittest.TestCase):
         self.ws, self.we = _future_window(span=1)
         self.track = self.store.create_track(
             destination="PRG", outstations=["NRT"], window_start=self.ws,
-            window_end=self.we, trip_days=12, samples_per_month=2)
+            window_end=self.we, trip_days_min=12, trip_days_max=12, samples_per_month=2)
 
     def tearDown(self):
         self.store.close()
@@ -268,7 +332,7 @@ class RunScanTest(unittest.TestCase):
         self.ws, self.we = _future_window(span=1)
         self.track = self.store.create_track(
             destination="PRG", outstations=["NRT"], window_start=self.ws,
-            window_end=self.we, trip_days=12, samples_per_month=2)
+            window_end=self.we, trip_days_min=12, trip_days_max=12, samples_per_month=2)
         self._orig = fs.scrape_itineraries
 
     def tearDown(self):
@@ -507,7 +571,7 @@ class DeriveStateTest(unittest.TestCase):
         self.ws, self.we = _future_window(span=1)
         self.track = self.store.create_track(
             destination="PRG", outstations=["NRT"], window_start=self.ws,
-            window_end=self.we, trip_days=12, samples_per_month=1)
+            window_end=self.we, trip_days_min=12, trip_days_max=12, samples_per_month=1)
 
     def tearDown(self):
         self.store.close()

@@ -1273,7 +1273,8 @@ def main() -> int:
                 json.dumps({
                     "destination": "PRG", "outstations": ["NRT", "OKA"],
                     "window_start": "2027-04", "window_end": "2027-05",
-                    "trip_days": 12, "samples_per_month": 2,
+                    "trip_days_min": 10, "trip_days_max": 14,
+                    "samples_per_month": 2,
                     "lead_strategy": "m3", "trail_strategy": "m1",
                 }).encode("utf-8"),
                 {"Content-Type": "application/json"})
@@ -1414,6 +1415,39 @@ def main() -> int:
                     print("FAIL /results 通知狀態欄位：%s" % (nblock,))
                     failures.append("flights notify block")
 
+                # ---- 組合數上限守衛（007-trip-day-range，T024）----
+                # 天數區間 1~100（100 個選項）配 4 外站 × 每月抽樣 4 次
+                # × 3 個月 = 4*4*3*100 = 4800，遠超過上限 60，必須被拒絕
+                cap_status, cap_body = _post(
+                    "/api/flights/tracks",
+                    json.dumps({
+                        "destination": "PRG",
+                        "outstations": ["NRT", "OKA", "KIX", "FUK"],
+                        "window_start": "2027-04", "window_end": "2027-06",
+                        "trip_days_min": 1, "trip_days_max": 100,
+                        "samples_per_month": 4,
+                    }).encode("utf-8"),
+                    {"Content-Type": "application/json"})
+                cap_body = _json_or_none(cap_body)
+                cap_detail = str((cap_body or {}).get("detail", ""))
+                if (cap_status == 400 and "組合數" in cap_detail
+                        and "60" in cap_detail):
+                    print("PASS 組合數超標（4800 > 60）被拒絕並說明組合數與上限")
+                else:
+                    print("FAIL 組合數超標未被正確拒絕：status=%s body=%s"
+                          % (cap_status, cap_body))
+                    failures.append("flights combination cap")
+
+                # 資料庫確認沒有真的寫入這筆超標條件——不能只信任 API
+                # 回應，要對照底層資料
+                _list_status, _list_body = _get("/api/flights/tracks")
+                _names = [t.get("name") for t in (_list_body or {}).get("tracks", [])]
+                if not any("FUK" in str(n) for n in _names):
+                    print("PASS 超標條件確認未寫入資料庫")
+                else:
+                    print("FAIL 超標條件疑似仍被寫入資料庫：%s" % _names)
+                    failures.append("flights combination cap db write")
+
                 # ---- 目標價可獨立 PATCH（2026-09-24 新增）----
                 # 跟頻率不同，改目標價不影響已枚舉的組合，所以要能單獨改
                 # 且不動到剛才設的 scan_frequency_days=30
@@ -1453,12 +1487,31 @@ def main() -> int:
                     print("FAIL PATCH 空 body 未被拒絕：status=%s" % empty_status)
                     failures.append("flights patch empty body")
 
+                # ---- 天數區間不開放 PATCH（007-trip-day-range，T025）----
+                # 帶 trip_days_min/max 但也帶合法的 scan_frequency_days：
+                # 請求應該成功（頻率有改），但天數必須維持不變——確認
+                # 這兩個欄位被悄悄忽略，而不是被吃進去卻沒生效或報錯
+                td_status, td_body = _patch(
+                    "/api/flights/tracks/%d" % flight_track_id,
+                    json.dumps({"scan_frequency_days": 14,
+                               "trip_days_min": 999,
+                               "trip_days_max": 999}).encode("utf-8"))
+                td_body = _json_or_none(td_body)
+                if (td_status == 200 and td_body
+                        and td_body.get("scan_frequency_days") == 14
+                        and td_body.get("trip_days_min") != 999
+                        and td_body.get("trip_days_max") != 999):
+                    print("PASS PATCH 天數區間欄位被忽略，其餘欄位正常生效")
+                else:
+                    print("FAIL PATCH 天數區間欄位未被正確忽略：%s" % td_body)
+                    failures.append("flights patch ignores trip_days_range")
+
             # 驗證失敗必須回 400 並說明原因（FR-025）
             bad_status, bad_body = _post(
                 "/api/flights/tracks",
                 json.dumps({"destination": "PRG", "outstations": [],
                             "window_start": "2027-04", "window_end": "2027-05",
-                            "trip_days": 12}).encode("utf-8"),
+                            "trip_days_min": 10, "trip_days_max": 14}).encode("utf-8"),
                 {"Content-Type": "application/json"})
             bad_body = _json_or_none(bad_body)
             if bad_status == 400 and "outstations" in str((bad_body or {}).get("detail", "")):

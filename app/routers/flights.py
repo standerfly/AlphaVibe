@@ -50,7 +50,8 @@ class TrackCreate(BaseModel):
     outstations: List[str]
     window_start: str
     window_end: str
-    trip_days: int
+    trip_days_min: int
+    trip_days_max: int
     hub: str = "TPE"
     name: Optional[str] = None
     lead_strategy: str = "none"
@@ -136,12 +137,36 @@ def create_track(body: TrackCreate,
 
     驗證失敗回 400 並說明原因（FR-025）。驗證規則定義在 FlightStore，
     不在這裡重寫一份，避免兩處分岔。
+
+    例外：組合數上限守衛（007 FR-004）**不放在 FlightStore**——算組合數
+    要用到 `svc.months_between()`／`svc.combination_count()`，那是
+    `flight_scan_service` 的職責（`FlightStore` 不依賴它，兩個模組的
+    既有分工），在建立前先擋比等到 `expand_track()` 展開完才發現超標
+    划算得多。
     """
+    try:
+        months = svc.months_between(body.window_start, body.window_end)[1]
+        num_days = body.trip_days_max - body.trip_days_min + 1
+        combo = svc.combination_count(months, body.samples_per_month,
+                                      len(body.outstations), num_days)
+        if combo > svc.MAX_COMBINATIONS_PER_TRACK:
+            raise HTTPException(
+                status_code=400,
+                detail="查詢組合數 %d 超過上限 %d，請縮小天數區間或外站"
+                       "數量" % (combo, svc.MAX_COMBINATIONS_PER_TRACK))
+    except HTTPException:
+        raise
+    except (TypeError, ValueError):
+        # 輸入格式本身有誤（例如 window_start 不是 YYYY-MM）——交給下面
+        # store.create_track() 的既有驗證回報正確的錯誤訊息，這裡不重複
+        pass
+
     try:
         track = store.create_track(
             destination=body.destination, outstations=body.outstations,
             window_start=body.window_start, window_end=body.window_end,
-            trip_days=body.trip_days, hub=body.hub, name=body.name,
+            trip_days_min=body.trip_days_min, trip_days_max=body.trip_days_max,
+            hub=body.hub, name=body.name,
             lead_strategy=body.lead_strategy,
             trail_strategy=body.trail_strategy,
             exclude_months_trip=body.exclude_months.trip,

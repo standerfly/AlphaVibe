@@ -180,6 +180,13 @@ class FlightStore:
             "ALTER TABLE flight_track ADD COLUMN last_notified_price INTEGER",
             "ALTER TABLE flight_track ADD COLUMN"
             " last_notify_failed INTEGER NOT NULL DEFAULT 0",
+            # 007：天數從單一固定整數升級為區間。舊的 trip_days 欄位保留
+            # 在 schema 裡（SQLite 的安全做法只有 ADD COLUMN，見
+            # specs/007-trip-day-range/research.md §2），應用程式碼完全
+            # 停止讀取它；新建列時仍鏡射寫入（= trip_days_max）純粹是為
+            # 了滿足它的既有 NOT NULL 約束，不是第二個真實來源。
+            "ALTER TABLE flight_track ADD COLUMN trip_days_min INTEGER",
+            "ALTER TABLE flight_track ADD COLUMN trip_days_max INTEGER",
         ):
             try:
                 self.conn.execute(ddl)
@@ -192,15 +199,19 @@ class FlightStore:
     # ---------- flight_track ----------
 
     def create_track(self, destination, outstations, window_start, window_end,
-                     trip_days, hub="TPE", name=None, lead_strategy="none",
-                     trail_strategy="none", exclude_months_trip=None,
-                     exclude_months_lead=None, exclude_months_trail=None,
-                     target_price=None, samples_per_month=2,
-                     scan_frequency_days=7):
+                     trip_days_min, trip_days_max, hub="TPE", name=None,
+                     lead_strategy="none", trail_strategy="none",
+                     exclude_months_trip=None, exclude_months_lead=None,
+                     exclude_months_trail=None, target_price=None,
+                     samples_per_month=2, scan_frequency_days=7):
         """建立查詢條件。驗證失敗一律拋 ValueError（spec FR-025）。
 
         `target_price` 在本 feature 僅儲存與顯示，**不觸發任何通知**——
         通知屬 flight-price-tracking（pre-spec handoff order 2）。
+
+        `trip_days_min`／`trip_days_max`：007 天數區間化——取代原本的
+        單一 `trip_days`，系統在區間內展開每個天數選項各自查價（見
+        specs/007-trip-day-range/spec.md）。
         """
         destination = _validate_airport(destination, "destination")
         hub = _validate_airport(hub, "hub")
@@ -220,11 +231,17 @@ class FlightStore:
                              % (window_end, window_start))
 
         try:
-            trip_days = int(trip_days)
+            trip_days_min = int(trip_days_min)
+            trip_days_max = int(trip_days_max)
         except (ValueError, TypeError):
-            raise ValueError("trip_days 必須是整數，收到：%r" % (trip_days,))
-        if trip_days <= 0:
-            raise ValueError("trip_days 必須是正整數，收到：%d" % trip_days)
+            raise ValueError("trip_days_min／trip_days_max 必須是整數，"
+                             "收到：%r／%r" % (trip_days_min, trip_days_max))
+        if trip_days_min <= 0 or trip_days_max <= 0:
+            raise ValueError("trip_days_min／trip_days_max 必須是正整數，"
+                             "收到：%d／%d" % (trip_days_min, trip_days_max))
+        if trip_days_max < trip_days_min:
+            raise ValueError("trip_days_max（%d）不得小於 trip_days_min（%d）"
+                             % (trip_days_max, trip_days_min))
 
         for field, val in (("lead_strategy", lead_strategy),
                            ("trail_strategy", trail_strategy)):
@@ -261,15 +278,19 @@ class FlightStore:
         cur = self.conn.execute(
             "INSERT INTO flight_track"
             " (name, destination, hub, outstations, window_start, window_end,"
-            "  trip_days, lead_strategy, trail_strategy, exclude_months_trip,"
-            "  exclude_months_lead, exclude_months_trail, target_price,"
-            "  samples_per_month, created_at, scan_frequency_days)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "  trip_days, trip_days_min, trip_days_max, lead_strategy,"
+            "  trail_strategy, exclude_months_trip, exclude_months_lead,"
+            "  exclude_months_trail, target_price, samples_per_month,"
+            "  created_at, scan_frequency_days)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            # trip_days（舊欄位）鏡射寫入 trip_days_max，僅為滿足既有
+            # NOT NULL 約束，不作為任何邏輯的輸入來源（research.md §2）
             (str(name).strip(), destination, hub, ",".join(codes),
-             window_start, window_end, trip_days, lead_strategy,
-             trail_strategy, _months_to_text(ex_trip),
-             _months_to_text(ex_lead), _months_to_text(ex_trail),
-             target_price, samples_per_month, _now(), scan_frequency_days),
+             window_start, window_end, trip_days_max, trip_days_min,
+             trip_days_max, lead_strategy, trail_strategy,
+             _months_to_text(ex_trip), _months_to_text(ex_lead),
+             _months_to_text(ex_trail), target_price, samples_per_month,
+             _now(), scan_frequency_days),
         )
         self.conn.commit()
         return self.get_track(cur.lastrowid)
@@ -285,7 +306,8 @@ class FlightStore:
             "outstations": _parse_codes(row["outstations"]),
             "window_start": row["window_start"],
             "window_end": row["window_end"],
-            "trip_days": row["trip_days"],
+            "trip_days_min": row["trip_days_min"],
+            "trip_days_max": row["trip_days_max"],
             "lead_strategy": row["lead_strategy"],
             "trail_strategy": row["trail_strategy"],
             "exclude_months": {
@@ -373,6 +395,35 @@ class FlightStore:
         self.conn.execute(
             "UPDATE flight_track SET target_price=? WHERE id=?",
             (price, track_id))
+        self.conn.commit()
+        return self.get_track(track_id)
+
+    def update_trip_days_range(self, track_id, trip_days_min, trip_days_max):
+        """更新天數區間（007 新增，供一次性遷移腳本使用）。
+
+        **不是一般使用者可透過 API 呼叫的路徑**——FR-007 明確規定天數
+        區間不開放 PATCH 編輯（改變枚舉結果的欄位視為「建新條件」）。
+        這支方法只給 `migrate_trip_days_range.py` 這類一次性腳本用，
+        驗證規則與 `create_track()` 一致，不寫第二套規則。
+        """
+        try:
+            trip_days_min = int(trip_days_min)
+            trip_days_max = int(trip_days_max)
+        except (ValueError, TypeError):
+            raise ValueError("trip_days_min／trip_days_max 必須是整數，"
+                             "收到：%r／%r" % (trip_days_min, trip_days_max))
+        if trip_days_min <= 0 or trip_days_max <= 0:
+            raise ValueError("trip_days_min／trip_days_max 必須是正整數，"
+                             "收到：%d／%d" % (trip_days_min, trip_days_max))
+        if trip_days_max < trip_days_min:
+            raise ValueError("trip_days_max（%d）不得小於 trip_days_min（%d）"
+                             % (trip_days_max, trip_days_min))
+        if self.get_track(track_id) is None:
+            return None
+        self.conn.execute(
+            "UPDATE flight_track SET trip_days_min=?, trip_days_max=?,"
+            " trip_days=? WHERE id=?",
+            (trip_days_min, trip_days_max, trip_days_max, track_id))
         self.conn.commit()
         return self.get_track(track_id)
 

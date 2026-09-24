@@ -34,7 +34,10 @@ DEFAULT_DEST = os.path.expanduser("~/AlphaVibe-backups")
 DAILY_KEEP = 30
 MONTHLY_KEEP = 24
 
-DATABASES = ("alphavibe.db", "us_stocks.db")
+DATABASES = ("alphavibe.db", "us_stocks.db", "flights.db")
+# 2026-09-24（007-trip-day-range quickstart.md 發現的缺口）：機票功能
+# 2026-09-23 上線以來一直不在既有每日自動備份範圍。本次要對
+# flights.db 做 schema 遷移，順手補上——低成本，直接保護這次異動。
 
 
 def _log(msg):
