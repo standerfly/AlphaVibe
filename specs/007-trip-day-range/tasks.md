@@ -108,7 +108,7 @@ P2 id=9 遷移、P3 組合數上限守衛）分階段，各自可獨立測試與
 
 - [X] T026 [P] 在 `poc/kb-mcp/backup_databases.py` 的 `DATABASES` 常數加入 `"flights.db"`（quickstart.md 記錄的既有缺口——四段票功能上線以來不在既有每日自動備份範圍，本次要對其做 schema 遷移，低成本一併修正）
 - [X] T027 完整回歸：`poc/kb-mcp/tests` 全套綠、`npx vite build`（`web/`）通過、smoke test 乾淨測試庫（`poc/data-test/`，比照 CLAUDE.md 既有重建步驟）整體 PASS
-- [ ] T028 **⏸ 待 PO 確認的正式環境部署**：備份正式庫 `poc/data/flights.db`（用 T026 更新後的 `backup_databases.py` 或手動執行一次）→ 合併程式碼到 `function/alphavibe` → 重啟 `com.alphavibe.reportserver` → 對正式庫執行 `migrate_trip_days_range.py`（先 `--dry-run`）→ 觸發 id=9 手動掃描確認新組合可查價 → `curl` 直接驗證正式 API 回傳的 `trip_days_min`／`trip_days_max` 欄位正確（quickstart.md「正式環境部署順序」，比照本 session 過去對 005／006／通知功能的正式環境驗證慣例）
+- [X] T028 **正式環境部署已完成（2026-09-24）**：備份正式庫 `poc/data/flights.db`（用 T026 更新後的 `backup_databases.py` 或手動執行一次）→ 合併程式碼到 `function/alphavibe` → 重啟 `com.alphavibe.reportserver` → 對正式庫執行 `migrate_trip_days_range.py`（先 `--dry-run`）→ 觸發 id=9 手動掃描確認新組合可查價 → `curl` 直接驗證正式 API 回傳的 `trip_days_min`／`trip_days_max` 欄位正確（quickstart.md「正式環境部署順序」，比照本 session 過去對 005／006／通知功能的正式環境驗證慣例）
 - [X] T029 [P] 更新 `CLAUDE.md`／`docs/architecture.md` 的機票分頁列，補上天數區間化與 id=9 遷移後的現況
 - [X] T030 更新 `docs/spec-intake/flight-roundtrip-search/handoff-checklist.md`「非阻斷的已知待辦」段落，標記 `trip-day-range` 包已實作完成，`roundtrip-search` 包可以開始（供下一個 Spec Kit feature 接手時查證現況）
 

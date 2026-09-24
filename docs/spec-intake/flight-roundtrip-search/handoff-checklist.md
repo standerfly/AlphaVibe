@@ -53,15 +53,14 @@
 
 ### 進度更新（2026-09-24）
 
-**`trip-day-range` 包（Spec Kit `specs/007-trip-day-range/`）開發與測試
-已完成**：`trip_days` 已改為 `trip_days_min`／`trip_days_max` 區間、
-組合數上限守衛（60／條件）已實作並經 264 個單元測試＋smoke test 119
-項驗證；排程／通知／過期防護機制沿用既有判定邏輯，未發現需要調整
-（原本標註的待驗證技術假設已在此階段驗證成立）。id=9 遷移腳本
-（`poc/kb-mcp/migrate_trip_days_range.py`）已對測試庫驗證通過。
-**尚未合併進 `function/alphavibe`、id=9 尚未在正式庫遷移、正式服務也
-還沒重啟套用**——待 PO 確認後執行（`specs/007-trip-day-range/tasks.md`
-T028）。
+**`trip-day-range` 包（Spec Kit `specs/007-trip-day-range/`）已完成並
+正式上線（2026-09-24）**：`trip_days` 已改為 `trip_days_min`／
+`trip_days_max` 區間、組合數上限守衛（60／條件）已實作並經 264 個
+單元測試＋smoke test 119 項驗證；排程／通知／過期防護機制沿用既有
+判定邏輯，未發現需要調整（原本標註的待驗證技術假設已驗證成立）。
+id=9 已在正式庫遷移至 10～14 天並重新查價（最低價 NT$46,872，14 天，
+證實區間確實找到比原固定 12 天更划算的組合），已合併進
+`function/alphavibe`、正式服務已重啟套用（T028 完成）。
 
 `roundtrip-search` 包（第二包）可以開始 Spec Kit（`speckit-specify`），
 不需要等 `trip-day-range` 先合併／部署到正式環境——兩包在程式碼層級

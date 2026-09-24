@@ -34,7 +34,7 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 | 資產 | `Assets.jsx` | `assets.py` | `kb_store.py` 新增 5 張表，手動輸入，無外部依賴 |
 | 美股（2026-09-08新增） | `UsStocks.jsx`／`UsStockDetail.jsx`／`UsStockImport.jsx` | `app/routers/us_stocks.py` | `poc/kb-mcp/us_stock_store.py`（獨立`USStockStore`+獨立db`us_stocks.db`，刻意不共用`KBStore`/`alphavibe.db`——美股與台股要完全獨立是產品硬性要求，非技術偏好）；Telegram推播暫為stub，`function/stnd-gateway-web`未合併進develop |
 | 相簿 | `Photos.jsx`／`PhotoDetail.jsx`／`SearchPanel.jsx`／`ImportWizard.jsx`／`AlbumGrid.jsx`／`AlbumDetail.jsx`／`SyncStatusCard.jsx` | `app/routers/photos.py` | `poc/kb-mcp/photo_store.py`（獨立`PhotoStore`+獨立db`photos.db`，比照`us_stock_store.py`先例）／`photo_importer.py`／`photo_metadata_sync.py`（呼叫`exiftool`寫回XMP/IPTC，新增系統層依賴，需`brew install exiftool`）；三個User Story（匯入整理/全域搜尋/中繼資料同步）2026-09-18已完整實作並通過測試（單元測試54個＋smoke test深度驗證＋Playwright瀏覽器實測），**但分支`004-photos-albums-search`尚未合併進`function/alphavibe`、正式服務`com.alphavibe.reportserver`也還沒重啟套用**，不要假設已上線；規格見`specs/004-photos-albums-search/` |
-| 機票（2026-09-23 新增，持續擴充中） | `Flights.jsx`／`FlightTrackForm.jsx` | `app/routers/flights.py` | `poc/kb-mcp/flight_store.py`（獨立`FlightStore`+獨立db`flights.db`，比照`us_stock_store.py`先例）／`flight_scan_service.py`／`flight_search.py`（查價與枚舉）／`scraper/`（Node+Playwright，需`npm install`）；外站四段票掃描，**日期是輸出不是輸入**——給區間與行程天數，系統抽樣日期查價。查價走瀏覽器路徑（免費、免註冊）但**有速率上限**（預設20筆/小時，為推估值；超過會被軟封鎖成連續逾時）。005（掃描分頁）＋006（價格追蹤：每日排程重掃、跌破目標價Telegram通知含現況通知、過期資料不通知）皆已上線；007（天數區間化：`trip_days`從單一固定整數改為`trip_days_min`/`trip_days_max`區間，系統展開多天數選項比價，建立時有組合數上限守衛防吃光配額）已完成開發與測試（264個機票測試＋smoke test 119項全綠），**尚未合併進`function/alphavibe`、id=9尚未遷移、正式服務也還沒重啟套用**——遷移腳本`poc/kb-mcp/migrate_trip_days_range.py`已備妥，待PO確認後執行；排程進入點`flight_tracking_job.py`＋`ops/launchd/com.alphavibe.flighttracking.plist`（每日09:30）。規格見`specs/005-flight-scan-page/`／`specs/006-flight-price-tracking/`／`specs/007-trip-day-range/`，需求基線見`docs/spec-intake/flight-search/`與`docs/spec-intake/flight-roundtrip-search/`（含後續單純來回搜尋功能的pre-spec，已Accepted待Spec Kit開發） |
+| 機票（2026-09-23 新增，持續擴充中） | `Flights.jsx`／`FlightTrackForm.jsx` | `app/routers/flights.py` | `poc/kb-mcp/flight_store.py`（獨立`FlightStore`+獨立db`flights.db`，比照`us_stock_store.py`先例）／`flight_scan_service.py`／`flight_search.py`（查價與枚舉）／`scraper/`（Node+Playwright，需`npm install`）；外站四段票掃描，**日期是輸出不是輸入**——給區間與行程天數，系統抽樣日期查價。查價走瀏覽器路徑（免費、免註冊）但**有速率上限**（預設20筆/小時，為推估值；超過會被軟封鎖成連續逾時）。005（掃描分頁）＋006（價格追蹤：每日排程重掃、跌破目標價Telegram通知含現況通知、過期資料不通知）皆已上線；007（天數區間化：`trip_days`從單一固定整數改為`trip_days_min`/`trip_days_max`區間，系統展開多天數選項比價，建立時有組合數上限守衛防吃光配額）2026-09-24已完成開發並**正式上線**（264個機票測試＋smoke test 119項全綠，已合併進`function/alphavibe`、id=9已遷移至10~14天並重新查價驗證、正式服務已重啟套用）；排程進入點`flight_tracking_job.py`＋`ops/launchd/com.alphavibe.flighttracking.plist`（每日09:30）。規格見`specs/005-flight-scan-page/`／`specs/006-flight-price-tracking/`／`specs/007-trip-day-range/`，需求基線見`docs/spec-intake/flight-search/`與`docs/spec-intake/flight-roundtrip-search/`（含後續單純來回搜尋功能的pre-spec，已Accepted待Spec Kit開發） |
 | 旅遊（未來，尚未建立） | — | — | 內容/研究在**另一個獨立專案** `/Users/stander/My_project/mytravel/`——若要做這個分頁，程式碼仍會建在這個 repo，但要不要整合 mytravel 的資料、整合到多深，屬於獨立待討論的範圍決策，不要預設 |
 
 新增分頁前的判斷順序：(1) 先跟 PO 討論這個領域要不要進 STND、做到多深
@@ -56,16 +56,16 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 決策依據：`docs/adr/0027-prespec-workflow.md`。
 
 <!-- SPECKIT START -->
-目前進行中的 Spec Kit 技術規劃：`specs/007-trip-day-range/plan.md`
-（四段票天數區間化：`trip_days` 從單一固定整數升級為區間、id=9 遷移、
-組合數上限守衛，分支 `007-trip-day-range`，建在 005/006 之上，是
-`docs/spec-intake/flight-roundtrip-search/` 拆包的第一包）。開發與測試
-已完成（T001-T027），T028（正式環境部署：備份、合併、id=9 遷移、重啟）
-待 PO 確認後執行——見 `specs/007-trip-day-range/tasks.md`。接手前先讀
-`specs/007-trip-day-range/quickstart.md`。
+`specs/007-trip-day-range/plan.md`（四段票天數區間化：`trip_days` 從
+單一固定整數升級為區間、id=9 遷移、組合數上限守衛，`docs/spec-intake/
+flight-roundtrip-search/` 拆包的第一包）**2026-09-24 已完成並正式
+部署**：全部 33 個任務完成（含 T028 正式環境部署——備份、合併進
+`function/alphavibe`、id=9 遷移至 10～14 天並重新查價、服務重啟），
+見 `specs/007-trip-day-range/tasks.md`。
 
-第二包 `roundtrip-search`（單純來回搜尋：多目的地候選、可選轉機城市
-偏好，依賴本包）待本包合併後開始 Spec Kit。
+目前進行中：第二包 `roundtrip-search`（單純來回搜尋：多目的地候選、
+可選轉機城市偏好，依賴本包已完成的天數區間概念與組合數守衛）可以開始
+`speckit-specify`。
 
 前置已上線功能：`specs/005-flight-scan-page/plan.md`（機票掃描分頁）、
 `specs/006-flight-price-tracking/plan.md`（價格追蹤與通知）。接手實作
