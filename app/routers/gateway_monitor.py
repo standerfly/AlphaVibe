@@ -59,6 +59,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from app import gateway_rc_deps as rc_deps
+
 router = APIRouter()
 
 # ---------------------------------------------------------------------------
@@ -193,12 +195,26 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
+def _empty_domain_entry() -> Dict[str, Any]:
+    """2026-09-25「擴充三：Remote Control」新增 `started_at`／`is_favorite`／
+    `session_history`——邏輯對齊 telegram_gateway/state.py::_empty_domain_entry()。
+    `is_favorite` 只有這個 app（網頁側）會寫，但欄位形狀兩邊要一致。"""
+    return {
+        "session_id": None,
+        "started_at": None,
+        "last_active": None,
+        "is_favorite": False,
+        "session_history": [],
+    }
+
+
 def _empty_state() -> Dict[str, Any]:
     return {
         "version": 2,
-        "domains": {name: {"session_id": None, "last_active": None} for name in PROJECT_DOMAINS},
+        "domains": {name: _empty_domain_entry() for name in PROJECT_DOMAINS},
         "chats": {},
         "inflight_bg_tasks": [],
+        "active_remote_controls": [],
     }
 
 
@@ -242,9 +258,18 @@ def _load_state() -> Dict[str, Any]:
     # 第一次使用（_set_session_id／_add_inflight 等）時會自然透過
     # setdefault 建立。
     for name in PROJECT_DOMAINS:
-        state.setdefault("domains", {}).setdefault(name, {"session_id": None, "last_active": None})
+        state.setdefault("domains", {}).setdefault(name, _empty_domain_entry())
+    # 幫「已存在但建立於 2026-09-25 Remote Control 擴充之前」的 domain
+    # 補齊新欄位（邏輯對齊 telegram_gateway/state.py::load_state()）。
+    for info in state.get("domains", {}).values():
+        info.setdefault("session_id", None)
+        info.setdefault("started_at", None)
+        info.setdefault("last_active", None)
+        info.setdefault("is_favorite", False)
+        info.setdefault("session_history", [])
     state.setdefault("chats", {})
     state.setdefault("inflight_bg_tasks", [])
+    state.setdefault("active_remote_controls", [])
     if _purge_stale_completed(state):
         _save_state(state)
     return state
@@ -273,10 +298,50 @@ def _get_session_id(domain: str) -> Optional[str]:
 
 
 def _set_session_id(domain: str, session_id: str) -> None:
+    """2026-09-25「擴充三：Remote Control」擴充：只有 session_id 真的
+    變動時才重設 `started_at`。邏輯對齊
+    telegram_gateway/state.py::set_session_id()。"""
     state = _load_state()
-    state.setdefault("domains", {}).setdefault(domain, {})
-    state["domains"][domain]["session_id"] = session_id
-    state["domains"][domain]["last_active"] = _now_iso()
+    domain_entry = state.setdefault("domains", {}).setdefault(domain, _empty_domain_entry())
+    old_session_id = domain_entry.get("session_id")
+    domain_entry["session_id"] = session_id
+    domain_entry["last_active"] = _now_iso()
+    if session_id != old_session_id:
+        domain_entry["started_at"] = _now_iso()
+    _save_state(state)
+
+
+def _archive_current_session(domain: str) -> Optional[Dict[str, Any]]:
+    """把 `domains[domain]` 目前的 session_id/started_at/last_active 搬進
+    `session_history`，`session_id`/`started_at` 設回 `None`。沒有
+    `session_id` 時 no-op 回傳 `None`。呼叫點：`app/gateway_rc_deps.py`
+    「對已存在捷徑建立新 session」流程。邏輯對齊
+    telegram_gateway/state.py::archive_current_session()。"""
+    state = _load_state()
+    domain_entry = state.setdefault("domains", {}).setdefault(domain, _empty_domain_entry())
+    session_id = domain_entry.get("session_id")
+    if not session_id:
+        return None
+    archived_entry = {
+        "session_id": session_id,
+        "started_at": domain_entry.get("started_at"),
+        "last_active_at": domain_entry.get("last_active"),
+        "archived_at": _now_iso(),
+    }
+    domain_entry.setdefault("session_history", []).append(archived_entry)
+    domain_entry["session_id"] = None
+    domain_entry["started_at"] = None
+    _save_state(state)
+    return archived_entry
+
+
+def _set_favorite(domain: str, value: bool) -> None:
+    """只有這個 app（網頁側）需要——純 UI 偏好標記，跟 RC 技術狀態無關。
+    Telegram 側沒有對應功能（見「擴充三：Remote Control」決定 3、「明確
+    不做」：只做網頁側）。"""
+    state = _load_state()
+    domain_entry = state.setdefault("domains", {}).setdefault(domain, _empty_domain_entry())
+    domain_entry["is_favorite"] = bool(value)
     _save_state(state)
 
 
@@ -544,8 +609,16 @@ def list_conversations() -> Dict[str, Any]:
     bug）：改成走訪 `state.get("domains", {})` 本身，不再走訪
     `PROJECT_DOMAINS`（固定字典）——不修的話，Telegram 建立的任意新
     主題永遠不會出現在這裡，直接打臉「跨管道共用記憶看得到」這個核心
-    賣點。依 `last_active` 新到舊排序（`None` 排最後），方便前端
-    datalist 選單直接使用。"""
+    賣點。
+
+    2026-09-25「擴充三：Remote Control」擴充：每個 domain 物件新增
+    `is_favorite`／`session_history[]`；排序改成「星號優先，其餘依
+    `last_active` 新到舊」（Python `sort` 是穩定排序，先依 `last_active`
+    排一次、再依 `is_favorite` 排一次，等於「星號優先＋組內仍照
+    last_active 新到舊」）；回應本身多帶一個 `active_remote_controls`
+    欄位（跟 `GET /api/gateway/remote-control` 共用
+    `rc_deps.list_active_remote_controls()`），前端不用為 RC 卡片另開
+    一條輪詢。"""
     state = _load_state()
     inflight_domains = {
         t.get("domain") for t in state.get("inflight_bg_tasks", [])
@@ -556,11 +629,19 @@ def list_conversations() -> Dict[str, Any]:
         domains.append({
             "name": name,
             "session_id": info.get("session_id"),
+            "started_at": info.get("started_at"),
             "last_active": info.get("last_active"),
             "has_inflight_task": name in inflight_domains,
+            "is_favorite": bool(info.get("is_favorite")),
+            "session_history": info.get("session_history", []),
         })
     domains.sort(key=lambda d: d["last_active"] or "", reverse=True)
-    return {"domains": domains, "lockdown": _lockdown_payload()}
+    domains.sort(key=lambda d: d["is_favorite"], reverse=True)
+    return {
+        "domains": domains,
+        "lockdown": _lockdown_payload(),
+        "active_remote_controls": rc_deps.list_active_remote_controls(),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -806,3 +887,87 @@ async def post_task(payload: TaskRequest) -> Dict[str, Any]:
         "domain": normalized,
         "message": "已受理，背景執行中；完成狀態請查 /api/gateway/tasks",
     }
+
+
+# ---------------------------------------------------------------------------
+# Remote Control（2026-09-25「擴充三」新增）：建立新 session、對既有/歷史
+# session 掛 Claude Code 官方 Remote Control、列出/停止有效連線、收藏標記。
+# 實際 PTY 行程管理在 app/gateway_rc_deps.py（rc_deps），這裡只負責 HTTP
+# 介面轉接與 LOCKDOWN／輸入驗證閘門——LOCKDOWN 與命名驗證都要在呼叫
+# rc_deps 之前就擋下（不能等 spawn 了才發現不該做），測試用
+# unittest.mock.patch 斷言 _spawn_and_handshake 完全沒被呼叫來驗證這件事。
+# ---------------------------------------------------------------------------
+
+class CreateSessionRequest(BaseModel):
+    cwd_choice: str = Field(
+        ..., description="'home'（自訂名稱＋固定家目錄）或已知專案捷徑（見 PROJECT_DOMAINS）")
+    name: Optional[str] = Field(
+        None, description="cwd_choice='home' 時必填的主題名稱；選捷徑時忽略（主題名稱＝捷徑名稱本身）")
+
+
+@router.post("/api/gateway/sessions")
+async def post_create_session(payload: CreateSessionRequest) -> Dict[str, Any]:
+    if _is_locked_down():
+        raise HTTPException(status_code=423, detail="系統已鎖定（LOCKDOWN），拒絕執行。解鎖需要在本機手動刪除旗標檔（見 telegram_gateway/state.py）。")
+    try:
+        return await rc_deps.create_new_session(payload.cwd_choice, payload.name)
+    except rc_deps.RcError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+
+class RemoteControlRequest(BaseModel):
+    domain: str = Field(..., description="目標主題名稱")
+    session_id: str = Field(..., description="要掛 RC 的 session（目前 session 或歷史 session 皆可）")
+    name: Optional[str] = Field(None, description="Remote Control 顯示名稱，留空預設用 domain 名稱")
+
+
+@router.post("/api/gateway/remote-control")
+async def post_remote_control(payload: RemoteControlRequest) -> Dict[str, Any]:
+    if _is_locked_down():
+        raise HTTPException(status_code=423, detail="系統已鎖定（LOCKDOWN），拒絕執行。解鎖需要在本機手動刪除旗標檔（見 telegram_gateway/state.py）。")
+    normalized = normalize_domain_name(payload.domain)
+    if not is_valid_domain_name(normalized):
+        raise HTTPException(status_code=400, detail="不合法的主題名稱：%s（長度需 1~%d、不能包含空白或「/」）" % (
+            payload.domain, MAX_DOMAIN_NAME_LEN))
+    try:
+        return await rc_deps.attach_remote_control(normalized, payload.session_id, payload.name)
+    except rc_deps.RcError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+
+@router.get("/api/gateway/remote-control")
+def get_remote_control() -> Dict[str, Any]:
+    """列出目前有效連線（給頁面最上方卡片，含即時存活自我修復）。跟
+    `GET /api/gateway/conversations` 共用同一份底層函式
+    （`rc_deps.list_active_remote_controls()`）。"""
+    return {
+        "active_remote_controls": rc_deps.list_active_remote_controls(),
+        "lockdown": _lockdown_payload(),
+    }
+
+
+@router.delete("/api/gateway/remote-control/{rc_id}")
+async def delete_remote_control(rc_id: str) -> Dict[str, Any]:
+    """停止一個連線。**不受 LOCKDOWN 限制**——停止連線是安全閥，鎖定
+    期間仍可主動掐斷任何 RC。對不存在的 id 冪等回成功（`stopped` 只是
+    告知呼叫端「這個 id 剛才實際觸發了停止動作」還是「本來就沒有」，
+    不影響回應狀態碼，兩種情況呼叫端都應視為「現在確定沒有這個連線」）。
+    """
+    stopped = await rc_deps.stop_rc(rc_id)
+    return {"id": rc_id, "stopped": stopped}
+
+
+class FavoriteRequest(BaseModel):
+    is_favorite: bool = Field(..., description="是否釘選在主題清單最上方")
+
+
+@router.patch("/api/gateway/conversations/{domain}/favorite")
+def patch_favorite(domain: str, payload: FavoriteRequest) -> Dict[str, Any]:
+    """純 UI 偏好標記，跟 RC 技術狀態無關（見方案決定 3）。只有這個 app
+    （網頁側）需要，Telegram 側沒有對應功能。"""
+    normalized = normalize_domain_name(domain)
+    if not is_valid_domain_name(normalized):
+        raise HTTPException(status_code=400, detail="不合法的主題名稱：%s（長度需 1~%d、不能包含空白或「/」）" % (
+            domain, MAX_DOMAIN_NAME_LEN))
+    _set_favorite(normalized, payload.is_favorite)
+    return {"domain": normalized, "is_favorite": payload.is_favorite}
