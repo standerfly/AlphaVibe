@@ -542,6 +542,47 @@ class RoundtripTrackTest(unittest.TestCase):
         self.assertEqual(len(self.store.list_roundtrip_tracks()), 1)
         self.assertEqual(len(self.store.list_tracks()), 1)
 
+    # ---- 編輯頻率／目標價（2026-09-25 補上，比照四段票的
+    # update_track_frequency()／update_target_price() 測試） ----
+
+    def test_update_roundtrip_frequency(self):
+        t = _base_roundtrip(self.store)
+        updated = self.store.update_roundtrip_track_frequency(t["id"], 14)
+        self.assertEqual(updated["scan_frequency_days"], 14)
+
+    def test_update_roundtrip_frequency_rejects_invalid(self):
+        t = _base_roundtrip(self.store)
+        with self.assertRaises(ValueError):
+            self.store.update_roundtrip_track_frequency(t["id"], 0)
+
+    def test_update_roundtrip_frequency_missing_track_returns_none(self):
+        self.assertIsNone(
+            self.store.update_roundtrip_track_frequency(9999, 14))
+
+    def test_update_roundtrip_target_price(self):
+        t = _base_roundtrip(self.store, target_price=30000)
+        updated = self.store.update_roundtrip_target_price(t["id"], 25000)
+        self.assertEqual(updated["target_price"], 25000)
+
+    def test_update_roundtrip_target_price_to_none_clears_it(self):
+        t = _base_roundtrip(self.store, target_price=30000)
+        updated = self.store.update_roundtrip_target_price(t["id"], None)
+        self.assertIsNone(updated["target_price"])
+
+    def test_update_roundtrip_target_price_rejects_negative(self):
+        t = _base_roundtrip(self.store)
+        with self.assertRaises(ValueError):
+            self.store.update_roundtrip_target_price(t["id"], -100)
+
+    def test_update_roundtrip_target_price_missing_track_returns_none(self):
+        self.assertIsNone(
+            self.store.update_roundtrip_target_price(9999, 40000))
+
+    def test_update_roundtrip_target_price_does_not_affect_frequency(self):
+        t = _base_roundtrip(self.store, scan_frequency_days=14)
+        updated = self.store.update_roundtrip_target_price(t["id"], 25000)
+        self.assertEqual(updated["scan_frequency_days"], 14)
+
 
 class RoundtripResultTest(unittest.TestCase):
     """008：單純來回掃描結果——跨目的地最低價、狀態區分。"""

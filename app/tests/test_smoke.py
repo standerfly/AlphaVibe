@@ -1585,6 +1585,47 @@ def main() -> int:
                           % (rt_api_total, expected_rt_total))
                     failures.append("roundtrip combination count mismatch")
 
+                # ---- 單純來回可編輯頻率／目標價（2026-09-25 補上，
+                # 比照四段票 PATCH 端點）----
+                rt_tp_status, rt_tp_body = _patch(
+                    "/api/flights/tracks/roundtrip/%d" % roundtrip_track_id,
+                    json.dumps({"target_price": 40000,
+                               "scan_frequency_days": 14}).encode("utf-8"))
+                rt_tp_body = _json_or_none(rt_tp_body)
+                if (rt_tp_status == 200 and rt_tp_body
+                        and rt_tp_body.get("target_price") == 40000
+                        and rt_tp_body.get("scan_frequency_days") == 14):
+                    print("PASS PATCH /api/flights/tracks/roundtrip/{id} "
+                          "頻率與目標價同時更新")
+                else:
+                    print("FAIL PATCH /api/flights/tracks/roundtrip/{id}："
+                          "status=%s body=%s" % (rt_tp_status, rt_tp_body))
+                    failures.append("roundtrip patch frequency/target_price")
+
+                rt_cl_status, rt_cl_body = _patch(
+                    "/api/flights/tracks/roundtrip/%d" % roundtrip_track_id,
+                    json.dumps({"clear_target_price": True}).encode("utf-8"))
+                rt_cl_body = _json_or_none(rt_cl_body)
+                if (rt_cl_status == 200 and rt_cl_body
+                        and rt_cl_body.get("target_price") is None):
+                    print("PASS PATCH /api/flights/tracks/roundtrip/{id} "
+                          "clear_target_price 清空目標價")
+                else:
+                    print("FAIL PATCH clear_target_price（roundtrip）："
+                          "status=%s body=%s" % (rt_cl_status, rt_cl_body))
+                    failures.append("roundtrip patch clear_target_price")
+
+                rt_empty_status, _rt_eb = _patch(
+                    "/api/flights/tracks/roundtrip/%d" % roundtrip_track_id,
+                    b"{}")
+                if rt_empty_status == 400:
+                    print("PASS PATCH /api/flights/tracks/roundtrip/{id} "
+                          "空 body 被拒絕（400）")
+                else:
+                    print("FAIL PATCH 空 body（roundtrip）未被拒絕：status=%s"
+                          % rt_empty_status)
+                    failures.append("roundtrip patch empty body")
+
                 # 配額已在四段票流程開頭佔滿，觸發掃描必為 queued
                 rt_scan_status, rt_scan_body = _post(
                     "/api/flights/tracks/roundtrip/%d/scan" % roundtrip_track_id,

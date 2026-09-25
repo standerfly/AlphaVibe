@@ -738,6 +738,33 @@ class FlightStore:
         self.conn.commit()
         return True
 
+    def update_roundtrip_track_frequency(self, track_id, days):
+        """更新重掃頻率（比照 `update_track_frequency()`）。"""
+        days = int(days)
+        if days <= 0:
+            raise ValueError("scan_frequency_days 必須是正整數，收到：%d" % days)
+        if self.get_roundtrip_track(track_id) is None:
+            return None
+        self.conn.execute(
+            "UPDATE roundtrip_track SET scan_frequency_days=? WHERE id=?",
+            (days, track_id))
+        self.conn.commit()
+        return self.get_roundtrip_track(track_id)
+
+    def update_roundtrip_target_price(self, track_id, price):
+        """更新目標價（比照 `update_target_price()`）。`None` 代表清空。"""
+        if price is not None:
+            price = int(price)
+            if price < 0:
+                raise ValueError("target_price 不得為負")
+        if self.get_roundtrip_track(track_id) is None:
+            return None
+        self.conn.execute(
+            "UPDATE roundtrip_track SET target_price=? WHERE id=?",
+            (price, track_id))
+        self.conn.commit()
+        return self.get_roundtrip_track(track_id)
+
     def mark_roundtrip_success(self, track_id, when=None):
         """記錄本輪掃描成功完成的時間（比照 `mark_success()`）。"""
         self.conn.execute(

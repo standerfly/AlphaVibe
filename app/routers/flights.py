@@ -498,11 +498,41 @@ def create_roundtrip_track(
     return {"id": track["id"]}
 
 
+@router.patch("/api/flights/tracks/roundtrip/{track_id}")
+def update_roundtrip_track(
+        track_id: int, body: TrackUpdate,
+        store: FlightStore = Depends(get_flight_store)) -> Dict[str, Any]:
+    """調整單純來回條件的重掃頻率與／或目標價（contracts/roundtrip-api.md
+    §5，比照既有 `update_track()`）。原本列為 Deferred，PO 2026-09-25
+    確認需要後補上——沿用同一個 `TrackUpdate` 請求模型（欄位形狀相同：
+    頻率與目標價，不影響已展開的查詢組合），只是呼叫單純來回專屬的
+    store 方法。"""
+    if (body.scan_frequency_days is None and body.target_price is None
+            and not body.clear_target_price):
+        raise HTTPException(status_code=400,
+                            detail="至少要提供 scan_frequency_days 或 target_price")
+    try:
+        track = None
+        if body.scan_frequency_days is not None:
+            track = store.update_roundtrip_track_frequency(
+                track_id, body.scan_frequency_days)
+            if track is None:
+                raise HTTPException(status_code=404, detail="查詢條件不存在")
+        if body.target_price is not None or body.clear_target_price:
+            new_price = None if body.clear_target_price else body.target_price
+            track = store.update_roundtrip_target_price(track_id, new_price)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if track is None:
+        raise HTTPException(status_code=404, detail="查詢條件不存在")
+    return _roundtrip_track_summary(store, track, store.data_dir)
+
+
 @router.delete("/api/flights/tracks/roundtrip/{track_id}", status_code=204)
 def delete_roundtrip_track(
         track_id: int,
         store: FlightStore = Depends(get_flight_store)) -> None:
-    """刪除條件與其結果（contracts/roundtrip-api.md §5）。"""
+    """刪除條件與其結果（contracts/roundtrip-api.md §6）。"""
     if not store.delete_roundtrip_track(track_id):
         raise HTTPException(status_code=404, detail="查詢條件不存在")
     _ROUNDTRIP_SCANNING.discard(track_id)

@@ -142,7 +142,24 @@ GET /api/flights/tracks/roundtrip/{id}/results
 
 ---
 
-## 5. 刪除條件（新端點）
+## 5. 編輯條件：頻率／目標價（2026-09-25 新增，原列為 Deferred）
+
+```
+PATCH /api/flights/tracks/roundtrip/{id}
+```
+
+行為與既有 `PATCH /api/flights/tracks/{id}` 完全一致（同一個
+`TrackUpdate` 請求模型）：只開放 `scan_frequency_days`／
+`target_price`／`clear_target_price` 三個欄位，兩者都只是「怎麼
+判斷/怎麼排程」的參數，不影響已枚舉的查詢組合；候選目的地清單、
+天數區間、偏好轉機城市不開放 PATCH（改了枚舉結果視為建新條件）。
+空 PATCH（三個欄位都沒帶）回 400。PO 2026-09-25 確認需要後補上，
+原本 speckit-input.md 的 FR-04～11 未要求（見下方章節），技術上
+沿用既有四段票端點的既定模式，無阻礙。
+
+---
+
+## 6. 刪除條件（新端點）
 
 ```
 DELETE /api/flights/tracks/roundtrip/{id}
@@ -153,7 +170,7 @@ DELETE /api/flights/tracks/roundtrip/{id}
 
 ---
 
-## 6. 通知內容（背景排程，非 HTTP 端點）
+## 7. 通知內容（背景排程，非 HTTP 端點）
 
 達標／現況通知訊息明確標示觸發的候選目的地（spec.md FR-10），例如：
 
@@ -172,8 +189,7 @@ DELETE /api/flights/tracks/roundtrip/{id}
 
 ---
 
-## 7. 不在本次範圍（Deferred）
+## 8. 不在本次範圍
 
-- `PATCH /api/flights/tracks/roundtrip/{id}`（調整目標價／重掃頻率）：
-  speckit-input.md 的 FR-04～11 未要求，本次不做；若後續需要，可比照
-  既有 `PATCH /api/flights/tracks/{id}` 的既定模式新增，技術上無阻礙
+（目前無。原本列為 Deferred 的 `PATCH /api/flights/tracks/roundtrip/{id}`
+已於 2026-09-25 依 PO 要求補上，見上方 §5。）

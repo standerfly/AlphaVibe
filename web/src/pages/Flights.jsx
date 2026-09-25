@@ -282,15 +282,31 @@ function TrackCard({ track, onScan, onDelete, onOpen, onFrequency, onTargetPrice
 
 /* 單純來回的卡片（specs/008-roundtrip-search，T018）。跟 TrackCard
    並列、獨立的元件——欄位形狀不同（候選目的地清單、可選轉機城市，
-   沒有外站／接駁票概念），且目前不支援 PATCH 編輯頻率／目標價
-   （contracts/roundtrip-api.md §7 明確列為 Deferred），所以這裡兩者
-   都顯示成唯讀文字，不是可編輯的輸入框——避免顯示出一個其實按下去
-   沒有作用的欄位。
+   沒有外站／接駁票概念）。頻率／目標價編輯原本在 contracts/
+   roundtrip-api.md §5 列為 Deferred，PO 2026-09-25 確認需要後補上，
+   沿用 TrackCard 同一套可編輯輸入框模式。
 
-   `onScan`／`onOpen`／`onDelete` 由容器元件（Flights）綁好對應到
-   `/roundtrip/` 端點的呼叫，本元件不自己判斷要打哪個 API。 */
-function RoundtripTrackCard({ track, onScan, onDelete, onOpen, open, detail }) {
+   `onScan`／`onOpen`／`onDelete`／`onFrequency`／`onTargetPrice` 由
+   容器元件（Flights）綁好對應到 `/roundtrip/` 端點的呼叫，本元件不
+   自己判斷要打哪個 API。 */
+function RoundtripTrackCard({ track, onScan, onDelete, onFrequency, onTargetPrice, onOpen, open, detail }) {
   const p = track.progress || { done: 0, total: 0 }
+  const [targetDraft, setTargetDraft] = useState(
+    track.target_price != null ? String(track.target_price) : '')
+  useEffect(() => {
+    setTargetDraft(track.target_price != null ? String(track.target_price) : '')
+  }, [track.target_price])
+  function commitTarget() {
+    const trimmed = targetDraft.trim()
+    if (trimmed === '') {
+      if (track.target_price != null) onTargetPrice(track.id, null)
+      return
+    }
+    const n = Number(trimmed)
+    if (Number.isFinite(n) && n >= 0 && n !== track.target_price) {
+      onTargetPrice(track.id, n)
+    }
+  }
   return (
     <article className="flight-card">
       <header className="flight-card__head">
@@ -328,14 +344,30 @@ function RoundtripTrackCard({ track, onScan, onDelete, onOpen, open, detail }) {
         </p>
       )}
       <p className="flight-muted">
-        自動重掃：{FREQ_OPTIONS.find((o) => o.days === track.scan_frequency_days)?.label
-          || `每 ${track.scan_frequency_days} 天`}
+        自動重掃：
+        <select
+          className="flight-freq"
+          value={track.scan_frequency_days}
+          onChange={(e) => onFrequency(track.id, Number(e.target.value))}
+        >
+          {FREQ_OPTIONS.map((o) => (
+            <option key={o.days} value={o.days}>{o.label}</option>
+          ))}
+        </select>
         {track.next_scan_date && <> · 下次 {md(track.next_scan_date)}</>}
         {track.last_success_at && <> · 上次成功 {md(track.last_success_at.slice(0, 10))}</>}
       </p>
       <p className="flight-muted">
-        目標價：{track.target_price != null ? ntd(track.target_price) : '未設定，不會發送任何通知'}
-        {' '}<small>（頻率與目標價目前僅建立時可設定，暫不支援事後編輯）</small>
+        目標價（NTD）：
+        <input
+          type="number" min="0" className="flight-target-input"
+          value={targetDraft}
+          placeholder="不設定"
+          onChange={(e) => setTargetDraft(e.target.value)}
+          onBlur={commitTarget}
+          onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur() }}
+        />
+        {track.target_price == null && '（未設定，不會發送任何通知）'}
       </p>
       {track.notify?.last_notified_at && (
         <p className={track.notify.last_notify_failed ? 'flight-error' : 'flight-muted'}>
@@ -448,20 +480,17 @@ export default function Flights() {
     } catch (e) { setError(e.message) }
   }
 
-  async function setFrequency(id, days) {
-    // 只有四段票支援 PATCH（contracts/roundtrip-api.md §7 明確列為
-    // 單純來回 Deferred），呼叫端只會是 TrackCard，不需要 trackType 參數
+  async function setFrequency(id, days, trackType) {
     try {
-      await apiPatch(apiPathFor('four_segment', id),
-                     { scan_frequency_days: days })
+      await apiPatch(apiPathFor(trackType, id), { scan_frequency_days: days })
       setNotice('已更新重掃頻率')
       load()
     } catch (e) { setError(e.message) }
   }
 
-  async function setTargetPrice(id, price) {
+  async function setTargetPrice(id, price, trackType) {
     try {
-      await apiPatch(apiPathFor('four_segment', id),
+      await apiPatch(apiPathFor(trackType, id),
         price === null ? { clear_target_price: true } : { target_price: price })
       setNotice(price === null ? '已清空目標價（不再發送通知）' : '已更新目標價')
       load()
@@ -540,13 +569,16 @@ export default function Flights() {
           <RoundtripTrackCard key={`rt-${t.id}`} track={t}
                               onScan={(id) => scan(id, 'roundtrip')}
                               onDelete={(id) => remove(id, 'roundtrip')}
+                              onFrequency={(id, days) => setFrequency(id, days, 'roundtrip')}
+                              onTargetPrice={(id, price) => setTargetPrice(id, price, 'roundtrip')}
                               onOpen={() => toggleOpen(t.id, 'roundtrip')}
                               open={open} detail={open ? detail : null} />
         ) : (
           <TrackCard key={`fs-${t.id}`} track={t}
                      onScan={(id) => scan(id, 'four_segment')}
                      onDelete={(id) => remove(id, 'four_segment')}
-                     onFrequency={setFrequency} onTargetPrice={setTargetPrice}
+                     onFrequency={(id, days) => setFrequency(id, days, 'four_segment')}
+                     onTargetPrice={(id, price) => setTargetPrice(id, price, 'four_segment')}
                      onOpen={() => toggleOpen(t.id, 'four_segment')}
                      open={open} detail={open ? detail : null} />
         )
