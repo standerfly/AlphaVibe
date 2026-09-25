@@ -89,6 +89,31 @@ def _make_thumbnail(src_path, dest_path, max_dim=256):
             "sips 縮圖失敗：%s" % proc.stderr.decode("utf-8", "replace"))
 
 
+def external_volume_mounted(path):
+    """確認 `path` 底下的 `/Volumes/<name>` 那一層，真的是掛載中的磁碟，
+    不是開機硬碟上剛好也有一個同名的普通資料夾。
+
+    **背景**（2026-09-25 使用者要設定固定的外接硬碟預設路徑時，程式碼
+    審查發現的風險）：外接儲存的 `commit_import()` 用 `os.makedirs()`
+    確保目的地資料夾存在——如果外接硬碟沒接、`dest_dir` 指向的
+    `/Volumes/<name>/...` 路徑不存在，`os.makedirs()` 不會報錯，而是
+    直接在**開機硬碟**的 `/Volumes/` 底下建立一個同名的普通資料夾，
+    照片就這樣悄悄被寫進內接硬碟，卻沒有任何錯誤或警告——使用者會
+    誤以為存到外接硬碟了。這個函式在真正寫入前擋下這種情況。
+
+    只認 `/Volumes/<name>` 這一層是否為掛載點（`os.path.ismount()`），
+    不要求 `dest_dir` 本身（可能是硬碟下的子資料夾）已經存在——那一段
+    交給 `os.makedirs()` 在確認硬碟有掛載之後照常建立。"""
+    normalized = os.path.abspath(path)
+    parts = normalized.split(os.sep)
+    if len(parts) >= 3 and parts[1] == "Volumes":
+        mount_point = os.sep.join(parts[:3])
+        return os.path.ismount(mount_point)
+    # 不在 /Volumes/ 底下的路徑（理論上外接硬碟都掛在這裡）——保守起見
+    # 退回檢查路徑本身是否已經存在。
+    return os.path.isdir(normalized)
+
+
 def scan_folder(source_path, photo_store):
     """掃描來源資料夾，計算去重預覽。**不複製任何檔案**——這是
     `file_hash` 凍結計算的唯一時機點，之後 `commit_import()` 只會使用
@@ -156,7 +181,17 @@ def commit_import(new_files, storage_location, dest_dir, thumbnail_dir,
       "failed": [{"filename", "reason"}]}`——`imported_photo_ids` 供
     呼叫端（`app/routers/photos.py` 的匯入 job 狀態）知道這批剛匯入的
     照片是哪幾筆，不用另外查詢。
+
+    Raises:
+        RuntimeError: `storage_location == "external"` 但 `dest_dir`
+            指向的硬碟目前沒有掛載（見 `external_volume_mounted()`
+            docstring）——整批匯入直接中止，不寫入任何檔案，避免
+            `os.makedirs()` 悄悄在開機硬碟建立同名資料夾。
     """
+    if storage_location == "external" and not external_volume_mounted(dest_dir):
+        raise RuntimeError(
+            "外接硬碟未連接或路徑不存在：%s，請確認硬碟已連接後再試一次"
+            % dest_dir)
     os.makedirs(dest_dir, exist_ok=True)
     os.makedirs(thumbnail_dir, exist_ok=True)
 

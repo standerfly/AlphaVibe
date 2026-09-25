@@ -49,7 +49,8 @@ _PHOTO_KB_MCP_DIR = Path(__file__).resolve().parent.parent.parent / "poc" / "kb-
 if str(_PHOTO_KB_MCP_DIR) not in sys.path:
     sys.path.insert(0, str(_PHOTO_KB_MCP_DIR))
 
-from photo_importer import scan_folder, commit_import  # noqa: E402
+from photo_importer import (  # noqa: E402
+    scan_folder, commit_import, external_volume_mounted)
 from photo_metadata_sync import (  # noqa: E402
     MetadataSyncUnavailable, write_metadata)
 
@@ -114,6 +115,11 @@ def import_scan(
         raise HTTPException(
             status_code=400,
             detail="storage_location=external 時必須提供 dest_path")
+    if body.storage_location == "external" and not external_volume_mounted(body.dest_path):
+        raise HTTPException(
+            status_code=400,
+            detail="外接硬碟未連接或路徑不存在：%s，請確認硬碟已連接後再試一次"
+            % body.dest_path)
     try:
         scan_result = scan_folder(body.source_path, store)
     except ValueError as exc:

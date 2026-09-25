@@ -13,11 +13,13 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
-from photo_importer import scan_folder, commit_import, _compute_md5  # noqa: E402
+from photo_importer import (  # noqa: E402
+    scan_folder, commit_import, _compute_md5, external_volume_mounted)
 from photo_metadata_sync import write_metadata  # noqa: E402
 from photo_store import PhotoStore  # noqa: E402
 
@@ -45,6 +47,32 @@ _TINY_JPEG_B64 = (
 def _write_tiny_jpeg(path):
     with open(path, "wb") as f:
         f.write(base64.b64decode(_TINY_JPEG_B64))
+
+
+class ExternalVolumeMountedTest(unittest.TestCase):
+    """2026-09-25：使用者要設定固定外接硬碟預設路徑時，程式碼審查發現
+    `os.makedirs()` 在硬碟沒接時會悄悄在開機硬碟建立同名資料夾——這組
+    測試驗證擋下這個情況的判斷邏輯。"""
+
+    def test_true_when_volumes_mount_point_is_mounted(self):
+        with mock.patch("os.path.ismount", return_value=True) as m:
+            self.assertTrue(
+                external_volume_mounted("/Volumes/macmini_ext8G/2026-import"))
+            m.assert_called_once_with("/Volumes/macmini_ext8G")
+
+    def test_false_when_volumes_mount_point_not_mounted(self):
+        with mock.patch("os.path.ismount", return_value=False):
+            self.assertFalse(
+                external_volume_mounted("/Volumes/macmini_ext8G/2026-import"))
+
+    def test_non_volumes_path_falls_back_to_isdir(self):
+        tmp = tempfile.mkdtemp(prefix="external-volume-test-")
+        try:
+            self.assertTrue(external_volume_mounted(tmp))
+            self.assertFalse(
+                external_volume_mounted(os.path.join(tmp, "does-not-exist")))
+        finally:
+            shutil.rmtree(tmp)
 
 
 class ScanFolderTest(unittest.TestCase):
@@ -120,6 +148,24 @@ class CommitImportTest(unittest.TestCase):
         self.store.close()
         for d in (self.source_dir, self.store_dir, self.dest_dir, self.thumb_dir):
             shutil.rmtree(d)
+
+    def test_commit_raises_when_external_dest_not_mounted_and_writes_nothing(self):
+        """2026-09-25：外接硬碟沒接時，commit_import 必須直接中止、
+        不寫入任何檔案或資料庫紀錄——不能讓 os.makedirs() 悄悄在開機
+        硬碟建立同名資料夾（見 external_volume_mounted() docstring）。"""
+        _write_tiny_jpeg(os.path.join(self.source_dir, "a.jpg"))
+        scan = scan_folder(self.source_dir, self.store)
+        fake_external_dest = "/Volumes/definitely-not-a-real-mounted-drive-xyz/import"
+
+        with mock.patch("photo_importer.external_volume_mounted", return_value=False):
+            with self.assertRaises(RuntimeError):
+                commit_import(
+                    scan["new_files"], "external", fake_external_dest,
+                    self.thumb_dir, self.store)
+
+        self.assertEqual(self.store.list_albums(), [])  # sanity: store 可用
+        self.assertIsNone(self.store.find_by_hash(scan["new_files"][0]["file_hash"]))
+        self.assertFalse(os.path.exists("/Volumes/definitely-not-a-real-mounted-drive-xyz"))
 
     def test_commit_creates_photo_record_with_real_files_on_disk(self):
         _write_tiny_jpeg(os.path.join(self.source_dir, "a.jpg"))
