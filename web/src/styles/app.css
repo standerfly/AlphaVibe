@@ -535,6 +535,109 @@ details.collapse summary::marker { color: var(--accent); }
   .gateway-chat-bubble { max-width: 100%; }
 }
 
+/* Remote Control（2026-09-25 新增，「擴充三」，見
+   ~/.claude/plans/hazy-petting-wreath.md）：頂部連線卡片、主題清單的
+   收藏星號／展開歷史／逐 session 連線按鈕、新增 session modal。UX 對齊
+   使用者已核可的 mockup，配色沿用既有 token，卡片/表格/按鈕沿用
+   .card／.preview-table／.btn-sm／.btn-danger-outline／.success-box／
+   .error-box，這裡只新增 mockup 裡沒有對應既有 class 的部分。 */
+.gateway-rc-list { display: flex; flex-direction: column; }
+.gateway-rc-item {
+  display: flex; align-items: center; gap: .8rem;
+  padding: .7rem 0; border-bottom: 1px solid var(--rule);
+}
+.gateway-rc-item:last-child { border-bottom: none; padding-bottom: 0; }
+.gateway-rc-item:first-child { padding-top: 0; }
+.gateway-rc-dot {
+  width: 9px; height: 9px; border-radius: 50%; background: var(--green);
+  box-shadow: 0 0 0 3px var(--paper-sunken); flex-shrink: 0;
+}
+.gateway-rc-main { flex: 1; min-width: 0; }
+.gateway-rc-name { font-weight: 700; font-size: .9rem; }
+.gateway-rc-meta { color: var(--ink-dim); font-size: .76rem; margin-top: .1rem; }
+.gateway-rc-url {
+  font-size: .76rem; color: var(--accent); word-break: break-all;
+  display: block; margin-top: .25rem;
+}
+.gateway-rc-actions { display: flex; align-items: center; gap: .4rem; flex-shrink: 0; }
+.gateway-rc-copied { font-size: .72rem; color: var(--green); }
+
+.gateway-rc-icon-btn {
+  background: none; border: 1px solid var(--rule); color: var(--ink-dim);
+  border-radius: 6px; width: 28px; height: 28px; display: inline-flex;
+  align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0;
+  padding: 0;
+}
+.gateway-rc-icon-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.gateway-rc-icon-btn:disabled { cursor: not-allowed; opacity: .45; }
+.gateway-rc-icon-btn.is-connected { color: var(--green); border-color: var(--green); opacity: 1; }
+
+.gateway-rc-success {
+  margin-top: .9rem; padding: .7rem .8rem; background: var(--accent-soft);
+  border-radius: 8px;
+}
+.gateway-rc-success__title {
+  display: flex; align-items: baseline; justify-content: space-between;
+  font-weight: 700; font-size: .86rem;
+}
+.gateway-rc-success__close {
+  background: none; border: none; cursor: pointer; color: var(--ink-dim);
+  font-size: 1rem; line-height: 1; padding: 0 .2rem;
+}
+.gateway-rc-success__url-row {
+  display: flex; align-items: center; gap: .5rem; margin-top: .4rem; flex-wrap: wrap;
+}
+.gateway-rc-success__url-row .mono { flex: 1; min-width: 0; font-size: .78rem; color: var(--accent); word-break: break-all; }
+
+.gateway-row-actions { display: flex; justify-content: flex-end; gap: .4rem; flex-wrap: wrap; }
+
+.gateway-topic-name { display: flex; align-items: center; gap: .4rem; font-weight: 600; }
+.gateway-expand-btn {
+  background: none; border: none; cursor: pointer; padding: 0; color: var(--ink-dim);
+  display: inline-flex; align-items: center; flex-shrink: 0; transition: transform .15s;
+  font-size: .8rem; width: 1rem;
+}
+.gateway-expand-btn.is-open { transform: rotate(90deg); }
+.gateway-expand-btn:hover { color: var(--accent); }
+.gateway-expand-spacer { display: inline-block; width: 1rem; flex-shrink: 0; }
+
+.gateway-fav-star {
+  background: none; border: none; cursor: pointer; padding: 0; line-height: 1;
+  font-size: .95rem; color: var(--rule-strong); flex-shrink: 0;
+}
+.gateway-fav-star:hover:not(:disabled) { color: var(--amber); }
+.gateway-fav-star.is-fav { color: var(--amber); }
+.gateway-fav-star:disabled { cursor: not-allowed; opacity: .6; }
+
+.gateway-session-history-row td { padding: 0; border-bottom: 1px solid var(--rule); }
+.gateway-session-history { background: var(--paper-sunken); padding: .3rem .8rem .6rem 2.2rem; }
+.gateway-session-history__item {
+  display: flex; align-items: center; gap: .8rem; padding: .5rem 0;
+  border-bottom: 1px dashed var(--rule); font-size: .82rem;
+}
+.gateway-session-history__item:last-child { border-bottom: none; }
+.gateway-session-history__main { flex: 1; min-width: 0; }
+.gateway-session-history__label { font-weight: 600; }
+.gateway-session-history__label.is-current { color: var(--accent); }
+.gateway-session-history__meta { color: var(--ink-dim); font-size: .74rem; margin-top: .1rem; }
+.gateway-session-history__id { color: var(--ink-dim); font-size: .7rem; }
+
+.gateway-modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,.4);
+  display: flex; align-items: center; justify-content: center;
+  padding: 1rem; z-index: 20;
+}
+.gateway-modal {
+  background: var(--paper); border-radius: 12px; border: 1px solid var(--rule);
+  width: 100%; max-width: 420px; padding: 1.4rem; box-shadow: 0 8px 28px rgba(0,0,0,.22);
+}
+.gateway-modal h3 { margin: 0 0 .3rem; font-size: 1.05rem; }
+
+@media (max-width: 640px) {
+  .gateway-rc-item { flex-wrap: wrap; }
+  .gateway-rc-actions { width: 100%; justify-content: flex-end; }
+}
+
 /* ── 機票掃描分頁（specs/005-flight-scan-page）─────────────────────
    命名沿用本檔案既有的「功能前綴 ＋ BEM」慣例（.pocket-card、
    .album-card…），不新增通用的 .card／.pill 等全域名稱——那會跟其他

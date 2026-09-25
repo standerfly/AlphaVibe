@@ -121,14 +121,18 @@ if _KB_MCP_DIR not in sys.path:
 _GATEWAY_UNIT_CHECK_SCRIPT = r"""
 import asyncio
 import json
+import os
+import re
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 from fastapi import HTTPException
 
 from app.routers import gateway_monitor as gw
+from app import gateway_rc_deps as rc_deps
 
 failures = []
 
@@ -315,6 +319,277 @@ with tempfile.TemporaryDirectory() as tmp:
     real_path = gw._transcript_path("adbfa17c-05d3-4025-8dba-86bc37b1b758")
     check("真實 session_id 找得到逐字稿（底線變破折號的路徑，不是用猜的）",
           real_path is not None and "-Users-stander-My-project-AlphaVibe" in str(real_path))
+
+    # ---- Remote Control（2026-09-25「擴充三」新增）：state schema、
+    # archive_current_session()、is_favorite、list_conversations() 排序、
+    # RC URL 正則迴歸測試、_pid_alive()、reconcile_on_startup()、
+    # create_new_session()/attach_remote_control() 的輸入驗證與
+    # LOCKDOWN 閘門（mock 掉 _spawn_and_handshake，斷言未被呼叫）。----
+
+    gw._set_session_id("archive-test-domain", "sess-before-archive")
+    archived = gw._archive_current_session("archive-test-domain")
+    check("archive_current_session 回傳歸檔紀錄",
+          archived is not None and archived["session_id"] == "sess-before-archive"
+          and "archived_at" in archived)
+    check("archive 後 domain 的 session_id 清空", gw._get_session_id("archive-test-domain") is None)
+    check("archive 後 session_history 有一筆",
+          len(gw._load_state()["domains"]["archive-test-domain"]["session_history"]) == 1)
+    check("archive_current_session 對沒有 session_id 的 domain 回傳 None（no-op）",
+          gw._archive_current_session("archive-test-domain") is None)
+
+    gw._set_session_id("started-at-test", "sess-1")
+    st = gw._load_state()
+    st["domains"]["started-at-test"]["started_at"] = "SENTINEL-UNCHANGED"
+    gw._save_state(st)
+    gw._set_session_id("started-at-test", "sess-1")  # 同一 session_id，不該重設
+    check("set_session_id 同一 session_id 不動 started_at",
+          gw._load_state()["domains"]["started-at-test"]["started_at"] == "SENTINEL-UNCHANGED")
+    gw._set_session_id("started-at-test", "sess-2")  # session_id 真的變動才重設
+    check("set_session_id 不同 session_id 會重設 started_at",
+          gw._load_state()["domains"]["started-at-test"]["started_at"] != "SENTINEL-UNCHANGED")
+
+    gw._set_favorite("alphavibe", True)
+    check("is_favorite 寫入為 True", gw._load_state()["domains"]["alphavibe"]["is_favorite"] is True)
+    gw._set_favorite("alphavibe", False)
+    check("is_favorite 寫回 False", gw._load_state()["domains"]["alphavibe"]["is_favorite"] is False)
+
+    st = gw._load_state()
+    for name, last_active, is_fav in [
+        ("order-a", "2020-01-01T00:00:00+00:00", False),
+        ("order-b", "2022-01-01T00:00:00+00:00", True),
+        ("order-c", "2024-01-01T00:00:00+00:00", False),
+        ("order-d", "2021-01-01T00:00:00+00:00", True),
+    ]:
+        st["domains"][name] = {
+            "session_id": "s-" + name, "started_at": None, "last_active": last_active,
+            "is_favorite": is_fav, "session_history": [],
+        }
+    gw._save_state(st)
+    conv = gw.list_conversations()
+    order_names = [d["name"] for d in conv["domains"] if d["name"].startswith("order-")]
+    check("list_conversations() 排序：星號優先，組內仍依 last_active 新到舊",
+          order_names == ["order-b", "order-d", "order-c", "order-a"])
+    check("list_conversations() 每個 domain 帶 is_favorite/session_history",
+          all("is_favorite" in d and "session_history" in d for d in conv["domains"]))
+    check("list_conversations() 回應含 active_remote_controls 陣列",
+          isinstance(conv.get("active_remote_controls"), list))
+
+    # RC URL 正則的迴歸測試：對著真實抓到的髒字串跑一次，斷言擷取結果
+    # 不含 `─`／`❯`——這條測試直接把本次規劃發現的 bug 鎖進迴歸測試，
+    # 避免以後被「優化」回 `\S+` 版本。
+    dirty_output = (
+        "  /remote-control is active \xb7 Continue here, on your phone, or at   "
+        "https://claude.ai/code/session_01THWPX97xFUkkMVJxTMEBYn"
+        + "─" * 40 + "❯ " + "─" * 40
+        + "\xa0Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSIONmarkr \xb7 r…"
+    )
+    url_match = rc_deps.RC_URL_RE.search(dirty_output)
+    check("RC URL 正則抓到乾淨網址、不含垃圾字元",
+          url_match is not None
+          and url_match.group(0) == "https://claude.ai/code/session_01THWPX97xFUkkMVJxTMEBYn"
+          and "─" not in url_match.group(0) and "❯" not in url_match.group(0))
+
+    # RC 啟用偵測的迴歸測試（2026-09-25 手動驗證時親眼撞見，見
+    # gateway_rc_deps.py::_RC_ACTIVE_MARKERS 註解）：squash 空白後比對，
+    # 覆蓋兩種真實畫面——(1) 全新啟用；(2) 對已經連過 RC、本機行程已死
+    # 的 session 重新 attach 時出現的「管理既有連線」畫面（不含
+    # "remote-control is active" 這句話，只有這條測試沒過的話，這個
+    # 案例會被誤判成交握失敗，即使 RC 其實已經可用）。
+    def _squash_for_test(text):
+        return re.sub(r"\s+", "", text.lower())
+
+    fresh_activation_text = (
+        "/remote-control \"x\"\n" + "▔" * 40 + "\n"
+        "/remote-control is active \xb7 Continue here, on your phone, or at "
+        "https://claude.ai/code/session_01THWPX97xFUkkMVJxTMEBYn"
+    )
+    already_connected_text = (
+        "Remote Control\nThis session is available in the Claude mobile app "
+        "and at https://claude.ai/code/session_01MQRTNWErCPMojdQw23haJH.\n"
+        "Disconnect this session     Show QR code  Scan with your phone to "
+        "open this session   \xe2\x9d\xaf Continue"
+    )
+    unrelated_text = "Quick safety check: Is this a project you created or trust?"
+    check("RC 啟用偵測：全新啟用畫面判定為 True",
+          any(m in _squash_for_test(fresh_activation_text) for m in rc_deps._RC_ACTIVE_MARKERS))
+    check("RC 啟用偵測：已連線過的管理畫面（無 is active 字樣）也判定為 True",
+          any(m in _squash_for_test(already_connected_text) for m in rc_deps._RC_ACTIVE_MARKERS))
+    check("RC 啟用偵測：無關文字（信任對話框）判定為 False",
+          not any(m in _squash_for_test(unrelated_text) for m in rc_deps._RC_ACTIVE_MARKERS))
+
+    check("_pid_alive 對自己的 pid 回 True", rc_deps._pid_alive(os.getpid()) is True)
+    check("_pid_alive 對不存在的極大 PID 回 False", rc_deps._pid_alive(2**30) is False)
+
+    st = gw._load_state()
+    st["active_remote_controls"] = [{
+        "id": "rc_fake1", "domain": "alphavibe", "session_id": "s1",
+        "rc_name": "x", "rc_url": "https://claude.ai/code/session_fake",
+        "pid": 2**30, "cwd": "/tmp", "mode": "new_session",
+        "started_at": "2020-01-01T00:00:00+00:00",
+    }]
+    gw._save_state(st)
+    rc_deps.reconcile_on_startup()
+    check("reconcile_on_startup() 清空殘留連線，不因 ProcessLookupError 而炸掉",
+          gw._load_state()["active_remote_controls"] == [])
+
+    st = gw._load_state()
+    st.setdefault("active_remote_controls", []).append({
+        "id": "rc_dead", "domain": "alphavibe", "session_id": "s-dead",
+        "rc_name": "x", "rc_url": "https://claude.ai/code/session_dead",
+        "pid": 2**30, "cwd": "/tmp", "mode": "new_session",
+        "started_at": "2020-01-01T00:00:00+00:00",
+    })
+    st["active_remote_controls"].append({
+        "id": "rc_alive", "domain": "alphavibe", "session_id": "s-alive",
+        "rc_name": "x", "rc_url": "https://claude.ai/code/session_alive",
+        "pid": os.getpid(), "cwd": "/tmp", "mode": "new_session",
+        "started_at": "2020-01-01T00:00:00+00:00",
+    })
+    gw._save_state(st)
+    alive_list = rc_deps.list_active_remote_controls()
+    check("list_active_remote_controls() 自我修復：死掉的 pid 被移除",
+          all(e["id"] != "rc_dead" for e in alive_list)
+          and all(e["id"] != "rc_dead" for e in gw._load_state()["active_remote_controls"]))
+    check("list_active_remote_controls() 保留存活中的連線",
+          any(e["id"] == "rc_alive" for e in alive_list))
+    st = gw._load_state()
+    st["active_remote_controls"] = [e for e in st["active_remote_controls"] if e["id"] != "rc_alive"]
+    gw._save_state(st)
+
+    # create_new_session()／attach_remote_control() 的輸入驗證——都要在
+    # spawn 任何行程之前就擋下，用 mock.patch 斷言 _spawn_and_handshake
+    # 完全沒被呼叫（不能真的 spawn claude 行程，會消耗真實訂閱額度）。
+    async def _check_create_session_validation():
+        results = {}
+        with mock.patch.object(rc_deps, "_spawn_and_handshake") as spawn_mock:
+            try:
+                await rc_deps.create_new_session("not-a-real-choice", None)
+                results["invalid_cwd_choice"] = False
+            except rc_deps.RcError as exc:
+                results["invalid_cwd_choice"] = exc.status_code == 400 and not spawn_mock.called
+            # 選家目錄且沒給名稱：前端 placeholder 承諾「留空自動命名」
+            # （見 Gateway.jsx），所以這裡**不該**回 400，而是要真的用
+            # 自動產生的名稱繼續往下走（proceeds past validation）——
+            # 用 side_effect 讓 mock 在被呼叫時就丟一個好辨識的例外，
+            # 藉此同時證明「有被呼叫」（沒有卡在驗證層）且不用真的
+            # spawn claude 行程或處理後續的 session_id 解析邏輯。
+            spawn_mock.side_effect = RuntimeError("__sentinel_reached_spawn__")
+            try:
+                await rc_deps.create_new_session("home", None)
+                results["home_without_name_auto_named"] = False
+            except rc_deps.RcError as exc:
+                results["home_without_name_auto_named"] = (
+                    exc.status_code == 502
+                    and spawn_mock.called
+                    and "__sentinel_reached_spawn__" in str(exc)
+                )
+            spawn_mock.side_effect = None
+            spawn_mock.reset_mock()
+            try:
+                await rc_deps.create_new_session("home", "not/a-domain")
+                results["home_invalid_name"] = False
+            except rc_deps.RcError as exc:
+                results["home_invalid_name"] = exc.status_code == 400 and not spawn_mock.called
+        return results
+
+    create_results = asyncio.run(_check_create_session_validation())
+    check("create_new_session 對不合法 cwd_choice 回 400（未 spawn）",
+          create_results["invalid_cwd_choice"])
+    check("create_new_session 選家目錄但沒給名稱時自動命名並繼續（未卡在驗證層）",
+          create_results["home_without_name_auto_named"])
+    check("create_new_session 選家目錄但名稱不合法回 400（未 spawn）",
+          create_results["home_invalid_name"])
+
+    gw._set_session_id("attach-test-domain", "real-session-id")
+
+    async def _check_attach_validation():
+        results = {}
+        with mock.patch.object(rc_deps, "_spawn_and_handshake") as spawn_mock:
+            try:
+                await rc_deps.attach_remote_control("brand-new-unused-domain-xyz", "whatever", None)
+                results["unknown_domain"] = False
+            except rc_deps.RcError as exc:
+                results["unknown_domain"] = exc.status_code == 404 and not spawn_mock.called
+            try:
+                await rc_deps.attach_remote_control("attach-test-domain", "not-the-real-one", None)
+                results["wrong_session_id"] = False
+            except rc_deps.RcError as exc:
+                results["wrong_session_id"] = exc.status_code == 404 and not spawn_mock.called
+        return results
+
+    attach_results = asyncio.run(_check_attach_validation())
+    check("attach_remote_control 對不存在的主題回 404（未 spawn）", attach_results["unknown_domain"])
+    check("attach_remote_control 對不屬於該主題的 session_id 回 404（未 spawn）",
+          attach_results["wrong_session_id"])
+
+    # 409：session 已經有 RC 在跑
+    st = gw._load_state()
+    st.setdefault("active_remote_controls", []).append({
+        "id": "rc_existing", "domain": "attach-test-domain", "session_id": "real-session-id",
+        "rc_name": "x", "rc_url": "https://claude.ai/code/session_existing",
+        "pid": 2**30, "cwd": "/tmp", "mode": "resume_existing",
+        "started_at": "2020-01-01T00:00:00+00:00",
+    })
+    gw._save_state(st)
+
+    async def _check_attach_conflict():
+        with mock.patch.object(rc_deps, "_spawn_and_handshake") as spawn_mock:
+            try:
+                await rc_deps.attach_remote_control("attach-test-domain", "real-session-id", None)
+                return False
+            except rc_deps.RcError as exc:
+                return exc.status_code == 409 and not spawn_mock.called
+
+    check("attach_remote_control 對已有 RC 的 session 回 409（未重複 spawn）",
+          asyncio.run(_check_attach_conflict()))
+    st = gw._load_state()
+    st["active_remote_controls"] = [e for e in st["active_remote_controls"] if e["id"] != "rc_existing"]
+    gw._save_state(st)
+
+    # LOCKDOWN 閘門：router 層（post_create_session／post_remote_control）
+    # 要在呼叫 rc_deps 之前就擋下，跟既有 post_chat／post_task 閘門測試
+    # 同一組手法。
+    gw._LOCKDOWN_FLAG_PATH.write_text(json.dumps({"locked_at": "t"}), encoding="utf-8")
+
+    async def _check_rc_lockdown():
+        results = {}
+        with mock.patch.object(rc_deps, "_spawn_and_handshake") as spawn_mock:
+            try:
+                await gw.post_create_session(gw.CreateSessionRequest(cwd_choice="alphavibe"))
+                results["sessions"] = False
+            except HTTPException as exc:
+                results["sessions"] = exc.status_code == 423 and not spawn_mock.called
+            try:
+                await gw.post_remote_control(
+                    gw.RemoteControlRequest(domain="alphavibe", session_id="whatever"))
+                results["remote_control"] = False
+            except HTTPException as exc:
+                results["remote_control"] = exc.status_code == 423 and not spawn_mock.called
+        return results
+
+    lockdown_results = asyncio.run(_check_rc_lockdown())
+    check("鎖定時 POST /api/gateway/sessions 回 423（未呼叫 _spawn_and_handshake）",
+          lockdown_results["sessions"])
+    check("鎖定時 POST /api/gateway/remote-control 回 423（未呼叫 _spawn_and_handshake）",
+          lockdown_results["remote_control"])
+    gw._LOCKDOWN_FLAG_PATH.unlink()
+
+    async def _check_rc_domain_validation():
+        with mock.patch.object(rc_deps, "_spawn_and_handshake") as spawn_mock:
+            try:
+                await gw.post_remote_control(
+                    gw.RemoteControlRequest(domain="not/a-domain", session_id="whatever"))
+                return False
+            except HTTPException as exc:
+                return exc.status_code == 400 and not spawn_mock.called
+
+    check("不合法主題名稱 POST /api/gateway/remote-control 回 400（未呼叫 _spawn_and_handshake）",
+          asyncio.run(_check_rc_domain_validation()))
+
+    # DELETE .../remote-control/{不存在id}：冪等回成功
+    delete_result = asyncio.run(gw.delete_remote_control("rc_does_not_exist"))
+    check("DELETE 不存在的 rc_id 冪等回成功（stopped=False，狀態碼由 FastAPI 預設 200）",
+          delete_result == {"id": "rc_does_not_exist", "stopped": False})
 
 print()
 if failures:
@@ -1524,6 +1799,73 @@ def main() -> int:
             print("FAIL /api/gateway/usage 今日花費跟手動加總不一致：expected=%s actual=%s"
                   % (expected_today_cost, actual_today_cost))
             failures.append("gateway usage aggregation mismatch")
+
+        # ---- Remote Control（2026-09-25「擴充三」新增）：對正式
+        # telegram_gateway/state/ 資料的黑箱驗證。不觸發任何真的 spawn
+        # claude 行程的路徑（PATCH favorite 只是切旗標；DELETE 對不存在
+        # 的 id 冪等；GET 只讀）。----
+        status, conv_body2 = _get("/api/gateway/conversations")
+        rc_shape_ok = (
+            status == 200
+            and isinstance(conv_body2.get("active_remote_controls"), list)
+            and all("is_favorite" in d and "session_history" in d
+                    for d in conv_body2.get("domains", []))
+        )
+        if rc_shape_ok:
+            print("PASS GET /api/gateway/conversations 每個 domain 帶 is_favorite/"
+                  "session_history，且回應含 active_remote_controls 陣列")
+        else:
+            print("FAIL GET /api/gateway/conversations 缺少 Remote Control 擴充欄位：%r"
+                  % conv_body2)
+            failures.append("gateway conversations missing RC fields")
+
+        # PATCH favorite：round-trip + 測試結束前改回原值（這支測試對
+        # 正式資料不是唯讀，用 try/finally 確保就算斷言失敗也會還原）。
+        target_domain = "alphavibe"
+        original_fav = next(
+            (d["is_favorite"] for d in conv_body2.get("domains", []) if d["name"] == target_domain),
+            False,
+        )
+        try:
+            toggled = not original_fav
+            fav_status, fav_body_raw = _patch(
+                "/api/gateway/conversations/%s/favorite" % target_domain,
+                json.dumps({"is_favorite": toggled}).encode("utf-8"))
+            fav_body = _json_or_none(fav_body_raw)
+            if fav_status == 200 and fav_body == {"domain": target_domain, "is_favorite": toggled}:
+                print("PASS PATCH .../favorite round-trip 正確（%s -> %s）" % (original_fav, toggled))
+            else:
+                print("FAIL PATCH .../favorite round-trip 不符：status=%s body=%r"
+                      % (fav_status, fav_body))
+                failures.append("gateway favorite roundtrip mismatch")
+
+            # 注意：不能拿含「/」的名稱測這條路徑參數——URL 路徑裡的「/」
+            # 不管編碼與否，都會被路由當成多一段路徑，根本不會命中這個
+            # 單一 {domain} 參數的 route（命中的反而是 SPA catch-all，
+            # 對 PATCH 方法回 405，不是我們要測的 400）。改用「超過長度
+            # 上限」這個一樣不合法、但不含路徑分隔字元的案例。
+            invalid_fav_status, _ = _patch(
+                "/api/gateway/conversations/%s/favorite" % ("a" * 41),
+                json.dumps({"is_favorite": True}).encode("utf-8"))
+            if invalid_fav_status == 400:
+                print("PASS PATCH .../favorite 對不合法主題名稱（超過長度上限）回 400")
+            else:
+                print("FAIL PATCH .../favorite 對不合法主題名稱應回 400，實際 %s" % invalid_fav_status)
+                failures.append("gateway favorite invalid domain should 400")
+        finally:
+            _patch(
+                "/api/gateway/conversations/%s/favorite" % target_domain,
+                json.dumps({"is_favorite": original_fav}).encode("utf-8"))
+
+        # DELETE 對不存在的 id 冪等回成功（不會真的 spawn/kill 任何行程）。
+        del_status, del_body_raw = _delete("/api/gateway/remote-control/rc_does_not_exist_http")
+        del_body = _json_or_none(del_body_raw)
+        if del_status == 200 and del_body == {"id": "rc_does_not_exist_http", "stopped": False}:
+            print("PASS DELETE .../remote-control/{不存在id} 冪等回成功")
+        else:
+            print("FAIL DELETE .../remote-control/{不存在id} 不符：status=%s body=%r"
+                  % (del_status, del_body))
+            failures.append("gateway delete nonexistent rc should be idempotent")
 
         # ---- 機票分頁（specs/005-flight-scan-page，T026）----
         # 深度檢查而非只看 200：建立→列出→觸發→查詢→刪除跑完整流程，

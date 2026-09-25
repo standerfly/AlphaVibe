@@ -83,6 +83,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.deps import (DashboardAuthMiddleware, KBStore, get_kb_store,
                       assert_auth_configured)
+from app import gateway_rc_deps as gateway_rc_deps_module
 from app import version as app_version
 from app.routers import actions as actions_router
 from app.routers import assets as assets_router
@@ -161,6 +162,24 @@ app.include_router(photos_router.router)
 # 「管家」分頁（2026-08-31 新增）：STND Telegram 管家閘道的網頁監控＋
 # 聊天介面，見上方 docstring 說明。
 app.include_router(gateway_monitor_router.router)
+
+
+@app.on_event("startup")
+async def _reconcile_gateway_remote_control_on_startup() -> None:
+    """「管家」分頁 Remote Control（2026-09-25 新增，見
+    app/gateway_rc_deps.py 檔頭 docstring）：伺服器重啟＝所有 RC 連線
+    視為結束——`master_fd`／`Popen` 是行程內活物件不能序列化，重啟後
+    拿不回原本的檔案描述符去繼續 drain 輸出，這裡把上次殘留的
+    `active_remote_controls[]` 全部 SIGTERM 清掉、清空陣列，不嘗試
+    「認養」孤兒行程（見方案「已識別但技術上沒有其他選項」段落）。
+
+    **`@app.on_event("startup")` 已標記 deprecated**（2026-09-25 實測
+    FastAPI 0.128.8：只印 DeprecationWarning，功能正常運作，不會拋錯）
+    ——這次刻意沿用它而不是遷移到 `lifespan` context manager，因為
+    `app/main.py` 目前完全沒有其他 startup/shutdown 邏輯，沒有必要為了
+    一個 hook 做全面遷移；等日後有第二個 startup 需求時再一併評估
+    `lifespan` 寫法。"""
+    gateway_rc_deps_module.reconcile_on_startup()
 
 
 @app.get("/api/healthz")
