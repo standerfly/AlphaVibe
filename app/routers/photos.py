@@ -29,6 +29,15 @@ FastAPI `BackgroundTasks`，進度寫進這個模組內的記憶體字典
 把掃描結果（含每個新照片的來源路徑與已計算好的 `file_hash`）存進去，
 `import/commit` 用 `scan_token` 取出——**不會重新掃描、不會重新計算
 hash**，這是 `research.md` §4 核心保證在 API 層的具體落實。
+
+**人工確認清單**（2026-09-25 新增，`import/resolve-match`）：`reference`
+模式的搬家偵測純靠 hash 比對，若照片搬家前已經被 STND 打過標籤，檔案
+內容（因而 hash）已經變了，自動偵測會失效（見 `photo_importer.py
+scan_folder()` docstring「已知限制」）。這裡用檔名比對列出候選
+（`possible_matches`），交由使用者在前端人工確認——確認後才會真的
+更新資料庫，避免純檔名比對的誤判風險（例如相機預設檔名撞名）被自動
+套用。`resolve-match` 必須在對應 `scan_token` 被 `import/commit` 用掉
+（`_SCAN_CACHE.pop`）之前呼叫，否則對不到快取。
 """
 from __future__ import annotations
 
@@ -50,7 +59,8 @@ if str(_PHOTO_KB_MCP_DIR) not in sys.path:
     sys.path.insert(0, str(_PHOTO_KB_MCP_DIR))
 
 from photo_importer import (  # noqa: E402
-    scan_folder, commit_import, external_volume_mounted, heal_moved_paths)
+    scan_folder, commit_import, external_volume_mounted, heal_moved_paths,
+    resolve_possible_match)
 from photo_metadata_sync import (  # noqa: E402
     MetadataSyncUnavailable, write_metadata)
 
@@ -138,6 +148,7 @@ def import_scan(
     _SCAN_CACHE[scan_token] = {
         "new_files": scan_result["new_files"],
         "moved_files": scan_result["moved_files"],
+        "possible_matches": scan_result["possible_matches"],
         "storage_location": body.storage_location,
         "dest_dir": dest_dir,
         "thumbnail_dir": _thumbnail_dir(store.data_dir),
@@ -148,8 +159,55 @@ def import_scan(
         "total": scan_result["total"],
         "new_count": len(scan_result["new_files"]),
         "moved_count": len(scan_result["moved_files"]),
+        "possible_matches": scan_result["possible_matches"],
         "duplicate_count": scan_result["duplicate_count"],
         "unreadable": scan_result["unreadable"],
+    }
+
+
+class ResolveMatchRequest(BaseModel):
+    scan_token: str
+    photo_id: int
+    new_path: str
+
+
+@router.post("/api/photos/import/resolve-match")
+def import_resolve_match(
+    body: ResolveMatchRequest,
+    store: PhotoStore = Depends(get_photo_store),
+) -> Dict[str, Any]:
+    """人工確認清單：使用者確認某個 `possible_matches` 候選「就是同一張
+    搬家前已經打過標籤的照片」，立即更新該筆紀錄的 storage_path／
+    file_hash（見 `PhotoStore.resolve_possible_match()` docstring），
+    並把這個候選從快取的 `new_files`／`possible_matches` 移除，避免
+    使用者接著按「確認匯入」時把同一份檔案又當成全新照片匯入一次。
+    必須在對應的 `scan_token` 還沒被 `import/commit` 用掉前呼叫。"""
+    cached = _SCAN_CACHE.get(body.scan_token)
+    if cached is None:
+        raise HTTPException(status_code=404, detail="scan_token 不存在或已使用過")
+
+    match = next(
+        (m for m in cached["possible_matches"]
+         if m["photo_id"] == body.photo_id and m["new_path"] == body.new_path),
+        None)
+    if match is None:
+        raise HTTPException(status_code=404, detail="找不到對應的候選項目")
+
+    resolved = resolve_possible_match(match, store)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="照片紀錄不存在")
+
+    cached["new_files"] = [
+        f for f in cached["new_files"] if f["path"] != body.new_path]
+    cached["possible_matches"] = [
+        m for m in cached["possible_matches"]
+        if not (m["photo_id"] == body.photo_id and m["new_path"] == body.new_path)]
+
+    return {
+        "resolved": True, "photo_id": resolved["id"],
+        "storage_path": resolved["storage_path"],
+        "new_count": len(cached["new_files"]),
+        "possible_matches": cached["possible_matches"],
     }
 
 

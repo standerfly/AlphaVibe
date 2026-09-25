@@ -1266,6 +1266,148 @@ def main() -> int:
             shutil.rmtree(ref_src_dir, ignore_errors=True)
             shutil.rmtree(ref_new_dir, ignore_errors=True)
 
+        # ---- 人工確認清單（2026-09-25 新增，緩解上面搬家偵測的已知
+        # 限制）：照片先被打過標籤（內容因此改變）才搬家，hash 比對
+        # 失效，應該落入 possible_matches 讓使用者人工確認；確認後
+        # storage_path／file_hash 都要更新成目前檔案的真實狀態。
+        _TINY_JPEG_D = base64.b64decode(
+            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA0JCgsKCA0LCgsODg0PEyAVExIS"
+            "EyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk//"
+            "2wBDAQ4ODhMREyYVFSZPNS01T09PT09PT09PT09PT09PT09PT09PT09PT09"
+            "PT09PT09PT09PT09PT09PT09PT09PT09PT0//wAARCAAIAAgDASIAAhEBAx"
+            "EB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAw"
+            "IEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2"
+            "JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaG"
+            "lqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5us"
+            "LDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAw"
+            "EBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQ"
+            "J3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8R"
+            "cYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eH"
+            "l6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyM"
+            "nK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwClpv"
+            "h/p8n6UUUVhWxVXm3Ly3G1vYLU/9k="
+        )
+        match_src_dir = tempfile.mkdtemp(prefix="alphavibe-smoke-photos-match-")
+        match_new_dir = tempfile.mkdtemp(prefix="alphavibe-smoke-photos-match-moved-")
+        try:
+            match_original_path = os.path.join(match_src_dir, "d.jpg")
+            with open(match_original_path, "wb") as fh:
+                fh.write(_TINY_JPEG_D)
+
+            m_scan_status, m_scan_raw = _post(
+                "/api/photos/import/scan",
+                json.dumps({"source_path": match_src_dir,
+                            "storage_location": "reference"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"})
+            m_scan_body = json.loads(m_scan_raw.decode("utf-8")) if m_scan_raw else {}
+            m_commit_status, m_commit_raw = _post(
+                "/api/photos/import/commit",
+                json.dumps({"scan_token": m_scan_body.get("scan_token")}).encode("utf-8"),
+                headers={"Content-Type": "application/json"})
+            m_commit_body = json.loads(m_commit_raw.decode("utf-8")) if m_commit_raw else {}
+            m_job_id = m_commit_body.get("job_id") if m_commit_status == 200 else None
+
+            match_photo_id = None
+            if m_job_id:
+                deadline = time.time() + 10
+                m_job_body = {}
+                while time.time() < deadline:
+                    _, m_job_body = _get("/api/photos/import/jobs/%s" % m_job_id)
+                    if m_job_body.get("status") in ("completed", "failed"):
+                        break
+                    time.sleep(0.2)
+                ids = m_job_body.get("imported_photo_ids", [])
+                if m_job_body.get("status") == "completed" and len(ids) == 1:
+                    match_photo_id = ids[0]
+
+            if match_photo_id is not None:
+                _, before_photo = _get("/api/photos/photos/%d" % match_photo_id)
+                original_hash = before_photo.get("file_hash")
+
+                # 打標籤（觸發背景寫回，會實際改寫檔案位元組、改變 hash）。
+                batch_status, batch_raw = _post(
+                    "/api/photos/photos/batch",
+                    json.dumps({
+                        "photo_ids": [match_photo_id], "add_tags": ["夕陽"],
+                        "set_rating": 4,
+                    }).encode("utf-8"),
+                    headers={"Content-Type": "application/json"})
+                sync_deadline = time.time() + 10
+                tagged_photo = {}
+                while time.time() < sync_deadline:
+                    _, tagged_photo = _get("/api/photos/photos/%d" % match_photo_id)
+                    if tagged_photo.get("metadata_sync_status") in ("synced", "failed"):
+                        break
+                    time.sleep(0.3)
+                if batch_status != 200 or tagged_photo.get("metadata_sync_status") != "synced":
+                    print("FAIL 人工確認清單前置：標籤寫回未完成：%r" % tagged_photo)
+                    failures.append("photos possible-match setup tagging failed")
+
+                match_new_path = os.path.join(match_new_dir, "d.jpg")
+                shutil.move(match_original_path, match_new_path)
+
+                pm_scan_status, pm_scan_raw = _post(
+                    "/api/photos/import/scan",
+                    json.dumps({"source_path": match_new_dir,
+                                "storage_location": "reference"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"})
+                pm_scan_body = json.loads(pm_scan_raw.decode("utf-8")) if pm_scan_raw else {}
+                possible = pm_scan_body.get("possible_matches", [])
+                if (pm_scan_status == 200 and pm_scan_body.get("new_count") == 1
+                        and pm_scan_body.get("moved_count") == 0
+                        and len(possible) == 1
+                        and possible[0].get("photo_id") == match_photo_id):
+                    print("PASS 已打標籤後搬家：hash 對不上，但人工確認清單正確列出候選")
+                else:
+                    print("FAIL 人工確認清單掃描結果不符：%s %r" % (pm_scan_status, pm_scan_body))
+                    failures.append("photos possible-match scan mismatch")
+
+                if possible:
+                    resolve_status, resolve_raw = _post(
+                        "/api/photos/import/resolve-match",
+                        json.dumps({
+                            "scan_token": pm_scan_body.get("scan_token"),
+                            "photo_id": possible[0]["photo_id"],
+                            "new_path": possible[0]["new_path"],
+                        }).encode("utf-8"),
+                        headers={"Content-Type": "application/json"})
+                    resolve_body = json.loads(resolve_raw.decode("utf-8")) if resolve_raw else {}
+                    if (resolve_status == 200 and resolve_body.get("resolved") is True
+                            and resolve_body.get("new_count") == 0
+                            and resolve_body.get("possible_matches") == []):
+                        print("PASS resolve-match 確認候選成功，清單清空")
+                    else:
+                        print("FAIL resolve-match 回應不符：%s %r" % (resolve_status, resolve_body))
+                        failures.append("photos resolve-match response mismatch")
+
+                    _, after_photo = _get("/api/photos/photos/%d" % match_photo_id)
+                    if (after_photo.get("storage_path") == match_new_path
+                            and after_photo.get("file_hash") != original_hash):
+                        print("PASS resolve-match 後 storage_path／file_hash 都已更新為目前真實狀態")
+                    else:
+                        print("FAIL resolve-match 後照片紀錄未正確更新：%r" % after_photo)
+                        failures.append("photos resolve-match record mismatch")
+
+                    # 再重新掃描一次同一個位置，這次應該正確判成普通重複
+                    # （hash 已經同步成當下內容），不再跑出候選。
+                    rescan_status, rescan_raw = _post(
+                        "/api/photos/import/scan",
+                        json.dumps({"source_path": match_new_dir,
+                                    "storage_location": "reference"}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"})
+                    rescan_body = json.loads(rescan_raw.decode("utf-8")) if rescan_raw else {}
+                    if (rescan_status == 200 and rescan_body.get("new_count") == 0
+                            and rescan_body.get("duplicate_count") == 1
+                            and rescan_body.get("possible_matches") == []):
+                        print("PASS resolve-match 後重新掃描正確判成普通重複，不再跑出候選")
+                    else:
+                        print("FAIL resolve-match 後重新掃描結果不符：%s %r"
+                              % (rescan_status, rescan_body))
+                        failures.append("photos post-resolve rescan mismatch")
+        finally:
+            shutil.rmtree(match_src_dir, ignore_errors=True)
+            shutil.rmtree(match_new_dir, ignore_errors=True)
+
         # ---- gateway_monitor：對著真實 telegram_gateway/state/ 資料的
         # 深度驗證（2026-08-31 新增，STND「管家」分頁）。跟上面幾組
         # router 不同，這裡刻意不比對「底層函式」（沒有底層函式，資料

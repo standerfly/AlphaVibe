@@ -16,11 +16,16 @@
 `__init__` 只做 schema 建立，不寫入任何列。
 
 **`photos.file_hash` 只在匯入掃描時對來源檔案計算一次、永久保存，
-之後任何方法都不得重新計算**（`research.md` §4）——這是刻意設計，
-去重機制的正確性依賴這一點；日後標籤/評分中繼資料寫回會改變檔案本身
-的位元組，但絕不能因此重算 `file_hash`，否則同一份原始素材重複匯入
-會被誤判為「新照片」而不是重複。本檔案（Foundational＋User Story 1
-範圍）沒有任何方法會觸碰已存在照片的 `file_hash`。
+之後任何「自動」流程都不得重新計算**（`research.md` §4）——這是刻意
+設計，去重與搬家偵測的正確性依賴這一點；日後標籤/評分中繼資料寫回會
+改變檔案本身的位元組，但絕不能因此自動重算 `file_hash`，否則同一份
+原始素材重複匯入會被誤判為「新照片」而不是重複。
+
+**唯一的例外**（2026-09-25 新增 `resolve_possible_match()`）：使用者
+在「人工確認清單」UI 明確指認「這份新掃到的檔案就是那張搬家前已經被
+改過內容的舊照片」之後，才允許更新那筆紀錄的 `file_hash`——因為這是
+人親自確認的身份對應，不是程式自動比對，不受上面那條規則保護的風險
+（誤判）不適用。其餘所有方法仍然完全不觸碰既有照片的 `file_hash`。
 
 **本次（`specs/004-photos-albums-search`）實作範圍**：Foundational
 （schema／相簿 CRUD／照片基礎方法／標籤方法）＋ User Story 1（匯入、
@@ -270,6 +275,32 @@ class PhotoStore:
         row = self.conn.execute(
             "SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
         return dict(row) if row else None
+
+    def list_reference_photos(self):
+        """所有 `storage_location='reference'` 的照片紀錄——供
+        `photo_importer.py` 的「人工確認搬家候選」比對用（掃描時找出
+        `storage_path` 已經不存在的孤兒紀錄，見該檔案 `find_possible_
+        matches()` docstring）。個人相片庫規模下全表掃描成本可忽略，
+        不特別建索引。"""
+        rows = self.conn.execute(
+            "SELECT * FROM photos WHERE storage_location='reference'").fetchall()
+        return [dict(r) for r in rows]
+
+    def resolve_possible_match(self, photo_id, new_storage_path, new_file_hash):
+        """人工確認「這份新掃到的檔案其實是同一張照片，只是搬家前內容
+        已經被改過（通常是 STND 寫入標籤）」後呼叫——跟
+        `update_storage_path()` 不同，這裡**會**更新 `file_hash`（改成
+        目前這份檔案真實的內容 hash），因為內容確實變了：不更新的話，
+        之後任何重新掃描都會拿舊 hash 去比對，永遠對不上這個檔案現在
+        的真實內容。標籤/評分本身當初打標籤時就已經寫進資料庫也寫進
+        檔案，這裡不需要重新處理。"""
+        if self.get_photo(photo_id) is None:
+            return None
+        self.conn.execute(
+            "UPDATE photos SET storage_path=?, file_hash=? WHERE id=?",
+            (new_storage_path, new_file_hash, photo_id))
+        self.conn.commit()
+        return self.get_photo(photo_id)
 
     def delete_photo(self, photo_id):
         """刪除照片紀錄（spec.md FR-011：僅刪 db，**不刪磁碟上的原始

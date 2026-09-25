@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 
 from photo_importer import (  # noqa: E402
     scan_folder, commit_import, _compute_md5, external_volume_mounted,
-    heal_moved_paths)
+    heal_moved_paths, resolve_possible_match)
 from photo_metadata_sync import write_metadata  # noqa: E402
 from photo_store import PhotoStore  # noqa: E402
 
@@ -444,7 +444,9 @@ class MoveDetectionTest(unittest.TestCase):
         write_metadata() 會實際改寫檔案位元組，搬移後重新算出來的 hash
         因此對不上資料庫凍結的舊 hash，搬移偵測抓不到——這裡驗證的是
         「這個限制的具體行為」，不是驗證這樣做沒問題；標籤本身仍完整
-        留在檔案的 XMP/IPTC 裡，只是資料庫端把它當成一張新照片。"""
+        留在檔案的 XMP/IPTC 裡，只是資料庫端把它當成一張新照片。
+        同時驗證緩解措施：人工確認清單（possible_matches）要正確列出
+        這筆候選，交給使用者判斷。"""
         photo = self._import_reference_photo()
         write_metadata(photo["storage_path"], ["夕陽"], 4)
 
@@ -463,6 +465,59 @@ class MoveDetectionTest(unittest.TestCase):
         exif = json.loads(result.stdout.decode("utf-8"))[0]
         self.assertEqual(exif["Rating"], 4)
         self.assertEqual(exif["Subject"], "夕陽")
+
+        # 人工確認清單：檔名同樣是 a.jpg、舊紀錄的 storage_path 已經不
+        # 存在（檔案被搬走了）——應該被列為候選，等使用者確認。
+        self.assertEqual(len(scan["possible_matches"]), 1)
+        match = scan["possible_matches"][0]
+        self.assertEqual(match["photo_id"], photo["id"])
+        self.assertEqual(match["old_path"], photo["storage_path"])
+        self.assertEqual(match["new_path"], new_path)
+        self.assertEqual(match["new_file_hash"], scan["new_files"][0]["file_hash"])
+        self.assertNotEqual(match["new_file_hash"], photo["file_hash"])
+
+    def test_resolve_possible_match_updates_path_and_hash(self):
+        """使用者在人工確認清單裡點下「確認是同一張」後，storage_path
+        跟 file_hash 都要更新成目前檔案的真實狀態——跟 heal_moved_paths()
+        不同（那個保持 file_hash 不變），這裡內容真的變了，必須更新，
+        否則之後任何重新掃描永遠對不上這個檔案現在的真實內容。"""
+        photo = self._import_reference_photo()
+        write_metadata(photo["storage_path"], ["夕陽"], 4)
+        new_path = os.path.join(self.new_dir, "a.jpg")
+        shutil.move(photo["storage_path"], new_path)
+        scan = scan_folder(self.new_dir, self.store)
+        match = scan["possible_matches"][0]
+
+        resolved = resolve_possible_match(match, self.store)
+
+        self.assertEqual(resolved["storage_path"], new_path)
+        self.assertEqual(resolved["file_hash"], match["new_file_hash"])
+        self.assertNotEqual(resolved["file_hash"], photo["file_hash"])
+        # 再重新掃描同一個位置，這次應該正確判成「普通重複」（hash 已
+        # 經更新成當下內容），不會再跑出候選或搬家或新照片。
+        rescan = scan_folder(self.new_dir, self.store)
+        self.assertEqual(rescan["new_files"], [])
+        self.assertEqual(rescan["moved_files"], [])
+        self.assertEqual(rescan["possible_matches"], [])
+        self.assertEqual(rescan["duplicate_count"], 1)
+
+    def test_possible_match_not_suggested_when_old_file_still_exists(self):
+        """孤兒判斷要求舊紀錄的 storage_path 現在真的不存在——如果舊
+        檔案還在原地（沒有搬家），就算有另一個檔名恰好相同的無關檔案，
+        也不該被誤判成候選（避免把兩張完全不同的照片湊在一起建議合併）。"""
+        photo = self._import_reference_photo()
+        write_metadata(photo["storage_path"], ["夕陽"], 4)
+        # 注意：這裡刻意不搬移 photo["storage_path"]，舊檔案還在原位。
+
+        unrelated_dir = tempfile.mkdtemp(prefix="photo-unrelated-")
+        try:
+            unrelated_path = os.path.join(unrelated_dir, "a.jpg")
+            _write_tiny_jpeg_variant(unrelated_path)  # 內容不同，檔名恰好相同
+            scan = scan_folder(unrelated_dir, self.store)
+            self.assertEqual(len(scan["new_files"]), 1)
+            self.assertEqual(scan["possible_matches"], [])
+        finally:
+            shutil.rmtree(unrelated_dir)
 
     def test_copy_mode_rescan_is_plain_duplicate_not_moved(self):
         """`internal`／`external` 複製模式的既有紀錄，`storage_path`

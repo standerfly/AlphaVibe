@@ -170,9 +170,25 @@ def scan_folder(source_path, photo_store, recursive=False):
     STND 資料庫端會多一筆指向舊路徑、狀態顯示「原檔離線」的孤兒紀錄，
     需要使用者自行從相簿頁刪除。要完全避免：搬移資料夾整理**在**
     幫照片打標籤**之前**做。
+
+    **人工確認清單**（2026-09-25 新增，緩解上面那條已知限制）：對每個
+    落入 `new_files` 的候選檔案，額外用「檔名」去比對資料庫裡目前
+    `storage_path` 已經不存在的孤兒 `reference` 紀錄（見
+    `PhotoStore.list_reference_photos()`）——檔名相同就列進
+    `possible_matches`，供前端顯示「這可能是搬家前已經打過標籤的舊
+    照片」讓使用者人工確認。**這只是建議，不會自動套用**：候選檔案
+    仍然留在 `new_files` 裡，使用者不理會的話就當成全新照片正常匯入；
+    只有明確呼叫 `resolve_possible_match()` 才會真的把兩筆紀錄關聯
+    起來（見該函式與 `PhotoStore.resolve_possible_match()` docstring）。
+    純檔名比對有誤判風險（例如相機預設檔名 DSC_0001.jpg 很容易撞名，
+    但指向完全不同的照片）——這正是刻意設計成「只建議、人工確認」而
+    非自動合併的原因。
+
+    回傳：
         {"total": int, "new_files": [...], "moved_files": [{"photo_id",
-          "old_path", "new_path", "filename"}], "duplicate_count": int,
-          "unreadable": [filename,...]}
+          "old_path", "new_path", "filename"}], "possible_matches":
+          [{"photo_id", "old_path", "new_path", "filename"}],
+          "duplicate_count": int, "unreadable": [filename,...]}
     """
     if not os.path.isdir(source_path):
         raise ValueError("source_path 不是有效的資料夾：%s" % source_path)
@@ -217,11 +233,40 @@ def scan_folder(source_path, photo_store, recursive=False):
             "file_hash": file_hash, "file_size": file_size,
         })
 
+    possible_matches = _find_possible_matches(new_files, photo_store)
+
     total = len(new_files) + len(moved_files) + duplicate_count + len(unreadable)
     return {
         "total": total, "new_files": new_files, "moved_files": moved_files,
+        "possible_matches": possible_matches,
         "duplicate_count": duplicate_count, "unreadable": unreadable,
     }
+
+
+def _find_possible_matches(new_files, photo_store):
+    """`scan_folder()` 的人工確認清單比對本體：對 `new_files` 裡的每個
+    候選檔案，用檔名（不含路徑）去比對資料庫裡「`storage_path` 目前
+    已經不存在」的孤兒 `reference` 紀錄。個人相片庫規模下，對每筆孤兒
+    紀錄呼叫一次 `os.path.exists()` 成本可忽略，不特別最佳化。"""
+    if not new_files:
+        return []
+    orphans_by_filename = {}
+    for rec in photo_store.list_reference_photos():
+        if not os.path.exists(rec["storage_path"]):
+            orphans_by_filename.setdefault(
+                os.path.basename(rec["storage_path"]), []).append(rec)
+    if not orphans_by_filename:
+        return []
+
+    possible_matches = []
+    for entry in new_files:
+        for rec in orphans_by_filename.get(os.path.basename(entry["filename"]), []):
+            possible_matches.append({
+                "photo_id": rec["id"], "filename": entry["filename"],
+                "old_path": rec["storage_path"], "new_path": entry["path"],
+                "new_file_hash": entry["file_hash"],
+            })
+    return possible_matches
 
 
 def heal_moved_paths(moved_files, photo_store):
@@ -234,6 +279,17 @@ def heal_moved_paths(moved_files, photo_store):
         if photo_store.update_storage_path(moved["photo_id"], moved["new_path"]):
             healed += 1
     return healed
+
+
+def resolve_possible_match(match, photo_store):
+    """使用者在人工確認清單裡明確指認「這就是同一張照片」後呼叫——
+    見 `scan_folder()` docstring「人工確認清單」段落、`PhotoStore.
+    resolve_possible_match()` docstring（**會**更新 `file_hash`，這是
+    唯一允許這麼做的路徑）。`match` 是 `possible_matches`裡的一筆
+    （`{"photo_id", "new_path", "new_file_hash", ...}`）。回傳更新後的
+    照片紀錄，找不到對應照片時回傳 `None`。"""
+    return photo_store.resolve_possible_match(
+        match["photo_id"], match["new_path"], match["new_file_hash"])
 
 
 def commit_import(new_files, storage_location, dest_dir, thumbnail_dir,

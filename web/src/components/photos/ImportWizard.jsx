@@ -5,9 +5,12 @@ import { UploadIcon } from '../icons.jsx'
 /* 相簿匯入流程（User Story 1，T022）：三步驟——選路徑與儲存位置→
    去重預覽→背景匯入進度。互動細節比照已驗證的流程圖/畫面 Demo
    （https://claude.ai/code/artifact/57660844-0f08-419e-84e7-cec1aba4d1ef），
-   對應後端 app/routers/photos.py 的 /api/photos/import/* 三個端點。
+   對應後端 app/routers/photos.py 的 /api/photos/import/* 端點。
    輪詢間隔固定 800ms，MVP 不做退避/取消，匯入批次小（個人相片庫規模）
-   實測下很快就會完成（見 poc/kb-mcp/tests/test_photo_importer.py）。 */
+   實測下很快就會完成（見 poc/kb-mcp/tests/test_photo_importer.py）。
+   2026-09-25：新增「原地索引」模式（不複製）＋搬家偵測＋人工確認
+   清單（見 photo_importer.py scan_folder() docstring 的完整設計說明，
+   /api/photos/import/resolve-match 對應的處理函式）。 */
 export default function ImportWizard({ albums, onDone, onCancel }) {
   const [step, setStep] = useState(1)
   const [sourcePath, setSourcePath] = useState('')
@@ -48,6 +51,27 @@ export default function ImportWizard({ albums, onDone, onCancel }) {
       const result = await apiPost('/api/photos/import/scan', body)
       setScanResult(result)
       setStep(2)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleResolveMatch(match) {
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await apiPost('/api/photos/import/resolve-match', {
+        scan_token: scanResult.scan_token,
+        photo_id: match.photo_id,
+        new_path: match.new_path,
+      })
+      setScanResult((prev) => ({
+        ...prev,
+        new_count: result.new_count,
+        possible_matches: result.possible_matches,
+      }))
     } catch (err) {
       setError(err.message)
     } finally {
@@ -170,23 +194,56 @@ export default function ImportWizard({ albums, onDone, onCancel }) {
         )}
 
         {step === 2 && scanResult && (
-          <table className="itinerary-table" style={{ width: '100%', fontSize: '.85rem' }}>
-            <tbody>
-              <tr><td>掃描到的檔案</td><td style={{ textAlign: 'right' }}>{scanResult.total}</td></tr>
-              <tr><td>新照片（將匯入）</td>
-                <td style={{ textAlign: 'right', color: 'var(--green)' }}>{scanResult.new_count}</td></tr>
-              {scanResult.moved_count > 0 && (
-                <tr><td>偵測到搬家（將更新路徑）</td>
-                  <td style={{ textAlign: 'right', color: 'var(--green)' }}>{scanResult.moved_count}</td></tr>
-              )}
-              <tr><td>重複檔案（將跳過）</td>
-                <td style={{ textAlign: 'right', color: 'var(--ink-dim)' }}>{scanResult.duplicate_count}</td></tr>
-              {scanResult.unreadable.length > 0 && (
-                <tr><td>無法讀取</td>
-                  <td style={{ textAlign: 'right', color: 'var(--red)' }}>{scanResult.unreadable.length}</td></tr>
-              )}
-            </tbody>
-          </table>
+          <>
+            <table className="itinerary-table" style={{ width: '100%', fontSize: '.85rem' }}>
+              <tbody>
+                <tr><td>掃描到的檔案</td><td style={{ textAlign: 'right' }}>{scanResult.total}</td></tr>
+                <tr><td>新照片（將匯入）</td>
+                  <td style={{ textAlign: 'right', color: 'var(--green)' }}>{scanResult.new_count}</td></tr>
+                {scanResult.moved_count > 0 && (
+                  <tr><td>偵測到搬家（將更新路徑）</td>
+                    <td style={{ textAlign: 'right', color: 'var(--green)' }}>{scanResult.moved_count}</td></tr>
+                )}
+                <tr><td>重複檔案（將跳過）</td>
+                  <td style={{ textAlign: 'right', color: 'var(--ink-dim)' }}>{scanResult.duplicate_count}</td></tr>
+                {scanResult.unreadable.length > 0 && (
+                  <tr><td>無法讀取</td>
+                    <td style={{ textAlign: 'right', color: 'var(--red)' }}>{scanResult.unreadable.length}</td></tr>
+                )}
+              </tbody>
+            </table>
+
+            {scanResult.possible_matches?.length > 0 && (
+              <div style={{ marginTop: '1rem', borderTop: '1px solid var(--rule)', paddingTop: '.9rem' }}>
+                <div className="meta" style={{ marginBottom: '.4rem' }}>
+                  以下檔名跟已經離線的舊照片相同，可能是搬家前已經打過標籤、
+                  內容因此改變了的同一張照片——確認的話會更新舊紀錄的位置，
+                  不會另外匯入一份；不確定就先不用理它，直接匯入成新照片。
+                </div>
+                {scanResult.possible_matches.map((match) => (
+                  <div key={`${match.photo_id}-${match.new_path}`}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '.6rem',
+                      padding: '.4rem 0', borderBottom: '1px dashed var(--rule)',
+                    }}>
+                    <div style={{ flex: 1, fontSize: '.8rem' }}>
+                      <div>{match.filename}</div>
+                      <div className="meta" style={{ fontSize: '.75rem' }}>
+                        舊：{match.old_path}
+                      </div>
+                      <div className="meta" style={{ fontSize: '.75rem' }}>
+                        新：{match.new_path}
+                      </div>
+                    </div>
+                    <button type="button" className="btn-muted" disabled={busy}
+                      onClick={() => handleResolveMatch(match)}>
+                      確認是同一張
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
         )}
 
         {step === 3 && (
