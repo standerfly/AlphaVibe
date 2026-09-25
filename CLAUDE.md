@@ -329,3 +329,24 @@ roundtrip-search 來源）。
   `web/dist/`，正式服務不用重啟即生效（直接讀磁碟）；已 commit+push
   （`2fc2bc5`）。日後若再遷移對外服務方式（例如換回 devtunnel 或改用
   自訂網域），這個 header 對非 ngrok 環境無副作用，不用移除
+
+- 2026-09-25｜情境：管家新增 Remote Control（PTY 驅動 `claude` 互動
+  行程），手動驗證時撞見兩個純靠讀文件/程式碼推不出來的真實 bug：
+  (1) 判斷「/remote-control 啟用成功」原本比對字面字串
+  `"remote-control is active"`，但終端機渲染有時會把空白擠壓掉變成
+  `"remote-controlisactive"`，導致明明成功的連線被誤判失敗、強制關閉；
+  (2) 對「已經連過 RC、但本機行程已死」的 session 重新掛 RC，畫面是
+  另一種「管理既有連線」畫面（含 `Disconnect this session`），不會出現
+  「is active」這句話——這代表 `stop_rc()`／伺服器重啟只清得掉本機行程，
+  Anthropic 伺服器端對這個 session 的 RC 記憶不會跟著清掉
+  ｜教訓：**任何比對 PTY/終端機輸出文字的邏輯，先假設空白會被隨機
+  擠壓，一律 squash 掉空白再比對特徵字串**（`gateway_rc_deps.py` 的
+  `_TRUST_DIALOG_MARKERS`／`_RC_ACTIVE_MARKERS` 都用這招）；且測試環境
+  若巢狀在另一個 Claude Code session 底下（子行程會繼承
+  `CLAUDE_CODE_CHILD_SESSION=1`），子行程的 transcript saving 會被關閉，
+  拿這種環境驗證「建立新 session 抓 session_id」這類機制會得到偽陰性，
+  驗證前要先剝除 `CLAUDE_CODE_*` 環境變數模擬正式常駐服務的乾淨環境
+  ｜動作：`app/gateway_rc_deps.py::_looks_like_rc_active()` 改用
+  squash-再比對＋雙特徵字串；已補迴歸測試（`test_smoke.py` 「RC 啟用
+  偵測」三項）；完整方案與這次撞見的地雷見
+  `~/.claude/plans/hazy-petting-wreath.md`「擴充三」
