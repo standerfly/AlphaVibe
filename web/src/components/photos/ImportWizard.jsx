@@ -12,7 +12,12 @@ export default function ImportWizard({ albums, onDone, onCancel }) {
   const [step, setStep] = useState(1)
   const [sourcePath, setSourcePath] = useState('')
   const [storageLocation, setStorageLocation] = useState('internal')
-  const [destPath, setDestPath] = useState('')
+  // 2026-09-25：PO 目前固定用這顆外接硬碟存照片，預先帶入路徑省得每次
+  // 手動打——仍是可編輯的一般 input，硬碟改名/換硬碟時直接在畫面上改，
+  // 不用改程式碼。後端 scan/commit 兩處都會驗證這個路徑當下真的有掛載
+  // （見 photo_importer.py::external_volume_mounted()），沒接的話會擋
+  // 下來提示，不會悄悄寫進內接硬碟。
+  const [destPath, setDestPath] = useState('/Volumes/macmini_ext8G/')
   const [scanResult, setScanResult] = useState(null)
   const [job, setJob] = useState(null)
   const [error, setError] = useState(null)
