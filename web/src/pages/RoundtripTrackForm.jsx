@@ -13,7 +13,9 @@ const CANDIDATE_DESTINATIONS = [
 ]
 
 export default function RoundtripTrackForm({ onCreated, onCancel }) {
+  const [hub, setHub] = useState('TPE')
   const [destinations, setDestinations] = useState([])
+  const [customDest, setCustomDest] = useState('')
   const [preferredTransit, setPreferredTransit] = useState('')
   const [windowStart, setWindowStart] = useState('')
   const [windowEnd, setWindowEnd] = useState('')
@@ -30,11 +32,20 @@ export default function RoundtripTrackForm({ onCreated, onCancel }) {
       ? destinations.filter((c) => c !== code)
       : [...destinations, code])
 
+  function addCustomDestination() {
+    const code = customDest.trim().toUpperCase()
+    if (code && !destinations.includes(code)) {
+      setDestinations([...destinations, code])
+    }
+    setCustomDest('')
+  }
+
   async function submit(e) {
     e.preventDefault()
     setBusy(true); setError(null)
     try {
       const created = await apiPost('/api/flights/tracks/roundtrip', {
+        hub: hub.trim().toUpperCase(),
         destinations,
         preferred_transit: preferredTransit.trim()
           ? preferredTransit.trim().toUpperCase() : null,
@@ -65,13 +76,30 @@ export default function RoundtripTrackForm({ onCreated, onCancel }) {
       </p>
 
       <div className="flight-form__row">
+        <label className="flight-form__label" htmlFor="rt-hub">出發地機場</label>
+        <input id="rt-hub" value={hub} maxLength={3}
+               placeholder="TPE" onChange={(e) => setHub(e.target.value)} />
+      </div>
+
+      <div className="flight-form__row">
         <span className="flight-form__label">候選目的地（可複選，至少 1 個）</span>
         <div className="flight-chips">
-          {CANDIDATE_DESTINATIONS.map((c) => (
+          {CANDIDATE_DESTINATIONS.concat(
+            destinations.filter((c) => !CANDIDATE_DESTINATIONS.includes(c))
+          ).map((c) => (
             <button key={c} type="button"
                     className={destinations.includes(c) ? 'flight-chip flight-chip--on' : 'flight-chip'}
                     onClick={() => toggleDestination(c)}>{c}</button>
           ))}
+        </div>
+        <div className="flight-form__row--inline">
+          <input value={customDest} maxLength={3}
+                 placeholder="其他機場代碼，例如 FRA"
+                 onChange={(e) => setCustomDest(e.target.value)}
+                 onKeyDown={(e) => {
+                   if (e.key === 'Enter') { e.preventDefault(); addCustomDestination() }
+                 }} />
+          <button type="button" onClick={addCustomDestination}>加入候選</button>
         </div>
       </div>
 
@@ -127,8 +155,7 @@ export default function RoundtripTrackForm({ onCreated, onCancel }) {
           <option value={30}>每月</option>
         </select>
         <small className="flight-muted">
-          建立後暫時無法再調整頻率或目標價（僅建立時可設定），這個能力
-          留待後續視需要再開放。
+          建立後仍可在條件卡片上調整頻率與目標價。
         </small>
       </div>
 

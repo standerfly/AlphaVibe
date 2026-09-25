@@ -1940,15 +1940,19 @@ def main() -> int:
                       "status=%s" % rt_bad_status)
                 failures.append("roundtrip validation")
 
-            # ---- preferred_transit 持久化（008 US2，T022）----
-            # 建立時帶 preferred_transit，確認 create→list 往返後欄位值
-            # 不變（4 段 legs 的判斷依據，見 flight_scan_service.py
-            # expand_roundtrip_track() 的 transit 分支）
+            # ---- preferred_transit／hub 持久化（008 US2，T022；hub
+            # 為 2026-09-25 補的前端出發地欄位，一併驗證同一個請求裡的
+            # 兩個欄位都正確持久化，不需要額外的 API 呼叫）----
+            # 建立時帶 preferred_transit 與非預設 hub，確認 create→list
+            # 往返後欄位值不變（4 段 legs 的判斷依據，見
+            # flight_scan_service.py expand_roundtrip_track() 的 transit
+            # 分支；hub 則是 google_flights_url() 組連結的起點機場）
             rt_transit_id = None
             try:
                 rt_t_status, rt_t_created = _post(
                     "/api/flights/tracks/roundtrip",
                     json.dumps({
+                        "hub": "KHH",
                         "destinations": ["FRA"],
                         "window_start": "2027-01", "window_end": "2027-02",
                         "trip_days_min": 5, "trip_days_max": 9,
@@ -1960,19 +1964,24 @@ def main() -> int:
                 if rt_t_status == 201 and rt_t_created and rt_t_created.get("id"):
                     rt_transit_id = rt_t_created["id"]
                     rt_t_list_status, rt_t_list_body = _get("/api/flights/tracks")
-                    persisted = None
+                    persisted_transit = None
+                    persisted_hub = None
                     for t in (rt_t_list_body or {}).get("tracks", []):
                         if t.get("id") == rt_transit_id and t.get("track_type") == "roundtrip":
-                            persisted = t.get("preferred_transit")
-                    if rt_t_list_status == 200 and persisted == "NRT":
-                        print("PASS preferred_transit 持久化：create→list 往返後仍為 NRT")
+                            persisted_transit = t.get("preferred_transit")
+                            persisted_hub = t.get("hub")
+                    if (rt_t_list_status == 200 and persisted_transit == "NRT"
+                            and persisted_hub == "KHH"):
+                        print("PASS preferred_transit／hub 持久化：create→list "
+                              "往返後仍為 NRT／KHH")
                     else:
-                        print("FAIL preferred_transit 未正確持久化：got=%r" % persisted)
-                        failures.append("roundtrip preferred_transit persistence")
+                        print("FAIL preferred_transit／hub 未正確持久化："
+                              "transit=%r hub=%r" % (persisted_transit, persisted_hub))
+                        failures.append("roundtrip preferred_transit/hub persistence")
                 else:
-                    print("FAIL preferred_transit 建立條件：status=%s body=%s"
+                    print("FAIL preferred_transit／hub 建立條件：status=%s body=%s"
                           % (rt_t_status, rt_t_created))
-                    failures.append("roundtrip preferred_transit create")
+                    failures.append("roundtrip preferred_transit/hub create")
             finally:
                 if rt_transit_id:
                     rt_t_del_status, _ = _delete(
