@@ -79,6 +79,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.deps import (DashboardAuthMiddleware, KBStore, get_kb_store,
                       assert_auth_configured)
@@ -103,8 +104,41 @@ from app.routers import us_stocks as us_stocks_router
 # 會立刻被發現，靜默全開則永遠不會。
 assert_auth_configured()
 
+class StaticCacheMiddleware(BaseHTTPMiddleware):
+    """`/assets/*`（vite 內容雜湊檔名，改內容就換檔名）可以放心快取
+    整年；SPA 殼層 `index.html`（走最後的 `serve_spa` catch-all）沒有
+    雜湊檔名，每次都要重新驗證，不能讓瀏覽器長期快取。
+
+    **2026-09-25 PO 實際回報的事故**：Starlette 的 `StaticFiles`／
+    `FileResponse` 預設只帶 `ETag`／`Last-Modified`，完全沒有
+    `Cache-Control`——沒有明確指示時，瀏覽器會套用自己的「試探性快取」
+    （heuristic caching，通常抓 `Last-Modified` 到現在間隔的一小段
+    百分比當快取時間），服務跑了一段時間後，瀏覽器可能長期不重新跟
+    伺服器確認，直接沿用舊版 `index.html`，裡面引用的卻是上一次
+    build 之後就已經被覆蓋刪除的舊雜湊檔名——使用者端會看到頁面部分
+    渲染失敗、JS 例外等難以自行排查的怪異畫面，換一個乾淨的瀏覽器
+    設定檔（例如無痕視窗）因為沒有這份舊快取才會「剛好正常」，很容易
+    被誤判成瀏覽器擴充功能或其他原因。這個 middleware 補上明確的
+    `Cache-Control`，讓瀏覽器的快取行為變成可預期，不再套用試探性
+    規則。"""
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if path.startswith("/assets/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif not path.startswith("/api/") and not path.startswith("/mcp"):
+            # SPA 殼層（index.html，經 serve_spa catch-all）與其他非
+            # API 路徑：每次都要求瀏覽器重新驗證，ETag/Last-Modified
+            # 仍在，304 條件式請求還是省頻寬，只是不再允許「完全不問
+            # 伺服器」的試探性快取。
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 app = FastAPI(title="AlphaVibe App (skeleton)")
 app.add_middleware(DashboardAuthMiddleware)
+app.add_middleware(StaticCacheMiddleware)
 app.include_router(mcp_router.router)
 app.include_router(screen_router.router)
 app.include_router(market_scan_router.router)
