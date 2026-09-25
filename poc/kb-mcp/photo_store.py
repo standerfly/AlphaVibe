@@ -89,7 +89,15 @@ CREATE INDEX IF NOT EXISTS idx_photo_tags_tag ON photo_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_photo_tags_photo ON photo_tags(photo_id);
 """
 
-VALID_STORAGE_LOCATIONS = ("internal", "external")
+VALID_STORAGE_LOCATIONS = ("internal", "external", "reference")
+# reference（2026-09-25 新增）：原地索引模式，不複製檔案——storage_path
+# 直接是使用者既有檔案的原始路徑。用途：使用者已經用自己的方式整理好
+# 一大批照片（例如依相機型號分資料夾），不想被 STND 複製一份打散重排。
+# 這個模式下 photo_metadata_sync.write_metadata() 寫入的就是使用者的
+# 原始檔案本身，不是另一份 STND 管理的副本——這正是「標籤跟著照片走」
+# 最直接的體現。風險：使用者若之後在 STND 以外移動/刪除/重新命名這些
+# 原始檔案，STND 記錄的 storage_path 會失效（見既有「原檔離線」設計，
+# 通用機制沿用，不需要另外處理）。
 VALID_SYNC_STATUSES = ("synced", "pending", "failed")
 VALID_SORT_FIELDS = {"date": "photo_date", "rating": "rating"}
 
@@ -239,6 +247,24 @@ class PhotoStore:
         )
         self.conn.commit()
         return self.get_photo(cur.lastrowid)
+
+    def update_storage_path(self, photo_id, new_storage_path):
+        """`reference` 模式的「移動偵測」用（2026-09-25 新增，見
+        `photo_importer.py` 的 `moved_files`／`heal_moved_paths()`）：
+        使用者在 STND 之外把原地索引的照片搬到新資料夾，`file_hash`
+        不變但舊的 `storage_path` 已經找不到檔案。重新掃描新位置時，
+        用同一個 hash 對上既有紀錄，呼叫這個方法把 `storage_path` 更新
+        成新路徑——**完全不碰 `file_hash`／`metadata_sync_status`**：
+        檔案內容沒變（hash 相同），先前若已經把標籤寫進這個檔案本身
+        （見 `photo_metadata_sync.py`），搬到新位置後那些標籤還在檔案
+        裡，不需要重新同步。"""
+        if self.get_photo(photo_id) is None:
+            return None
+        self.conn.execute(
+            "UPDATE photos SET storage_path=? WHERE id=?",
+            (new_storage_path, photo_id))
+        self.conn.commit()
+        return self.get_photo(photo_id)
 
     def get_photo(self, photo_id):
         row = self.conn.execute(

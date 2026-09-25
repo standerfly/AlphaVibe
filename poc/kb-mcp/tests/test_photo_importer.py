@@ -8,8 +8,10 @@
 執行：python3 -m unittest discover -s poc/kb-mcp/tests -p "test_photo_importer*"
 """
 import base64
+import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -19,7 +21,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
 from photo_importer import (  # noqa: E402
-    scan_folder, commit_import, _compute_md5, external_volume_mounted)
+    scan_folder, commit_import, _compute_md5, external_volume_mounted,
+    heal_moved_paths)
 from photo_metadata_sync import write_metadata  # noqa: E402
 from photo_store import PhotoStore  # noqa: E402
 
@@ -47,6 +50,32 @@ _TINY_JPEG_B64 = (
 def _write_tiny_jpeg(path):
     with open(path, "wb") as f:
         f.write(base64.b64decode(_TINY_JPEG_B64))
+
+
+# 內容不同的第二張 8x8 JPEG（純色不同）——recursive 掃描測試要驗證的是
+# 「兩個不同檔案都被找到」，如果兩份 fixture 位元組相同會被同一批次去重
+# 邏輯（seen_hashes_this_batch）判成互相重複，反而測不出遞迴掃描本身。
+_TINY_JPEG_B64_VARIANT = (
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDABALDA4MChAODQ4SERATGCgaGBYWGDEj"
+    "JR0oOjM9PDkzODdASFxOQERXRTc4UG1RV19iZ2hnPk1xeXBkeFxlZ2P/2wBDARES"
+    "EhgVGC8aGi9jQjhCY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2Nj"
+    "Y2NjY2NjY2NjY2NjY2P/wAARCAAIAAgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEA"
+    "AAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIh"
+    "MUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6"
+    "Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZ"
+    "mqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx"
+    "8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREA"
+    "AgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAV"
+    "YnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hp"
+    "anN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPE"
+    "xcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwAo"
+    "oor2DxT/2Q=="
+)
+
+
+def _write_tiny_jpeg_variant(path):
+    with open(path, "wb") as f:
+        f.write(base64.b64decode(_TINY_JPEG_B64_VARIANT))
 
 
 class ExternalVolumeMountedTest(unittest.TestCase):
@@ -258,6 +287,201 @@ class CommitImportTest(unittest.TestCase):
             self.store)
         row = self.store.find_by_hash(scan["new_files"][0]["file_hash"])
         self.assertIn(scan["new_files"][0]["file_hash"], row["storage_path"])
+
+
+class RecursiveScanTest(unittest.TestCase):
+    """2026-09-25 新增：`recursive=True` 讓原地索引模式可以掃到既有
+    相片庫常見的巢狀資料夾（例如依相機型號分類、底下還有年份子資料夾）。"""
+
+    def setUp(self):
+        self.source_dir = tempfile.mkdtemp(prefix="photo-recursive-src-")
+        self.store_dir = tempfile.mkdtemp(prefix="photo-recursive-store-")
+        self.store = PhotoStore(self.store_dir)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.source_dir)
+        shutil.rmtree(self.store_dir)
+
+    def test_non_recursive_ignores_subfolder(self):
+        os.makedirs(os.path.join(self.source_dir, "2026-秋季"))
+        _write_tiny_jpeg(os.path.join(self.source_dir, "2026-秋季", "a.jpg"))
+        result = scan_folder(self.source_dir, self.store, recursive=False)
+        self.assertEqual(result["total"], 0)
+
+    def test_recursive_finds_nested_files(self):
+        os.makedirs(os.path.join(self.source_dir, "2026-秋季"))
+        os.makedirs(os.path.join(self.source_dir, "GOPRO", "day1"))
+        _write_tiny_jpeg(os.path.join(self.source_dir, "2026-秋季", "a.jpg"))
+        # 用內容不同的第二份 fixture——兩個檔案位元組相同的話會被同一批次
+        # 去重邏輯判成互相重複，變成只驗證到 1 筆，測不出遞迴掃描本身。
+        _write_tiny_jpeg_variant(os.path.join(self.source_dir, "GOPRO", "day1", "b.jpg"))
+        result = scan_folder(self.source_dir, self.store, recursive=True)
+        self.assertEqual(len(result["new_files"]), 2)
+        filenames = {f["filename"] for f in result["new_files"]}
+        self.assertEqual(
+            filenames,
+            {os.path.join("2026-秋季", "a.jpg"), os.path.join("GOPRO", "day1", "b.jpg")})
+
+
+class ReferenceModeTest(unittest.TestCase):
+    """2026-09-25 新增：`storage_location="reference"`——不複製，原地
+    索引使用者既有的照片庫。"""
+
+    def setUp(self):
+        self.source_dir = tempfile.mkdtemp(prefix="photo-reference-src-")
+        self.store_dir = tempfile.mkdtemp(prefix="photo-reference-store-")
+        self.thumb_dir = tempfile.mkdtemp(prefix="photo-reference-thumb-")
+        self.store = PhotoStore(self.store_dir)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.source_dir)
+        shutil.rmtree(self.store_dir)
+        shutil.rmtree(self.thumb_dir)
+
+    def test_reference_mode_does_not_copy_original_file(self):
+        original_path = os.path.join(self.source_dir, "a.jpg")
+        _write_tiny_jpeg(original_path)
+        scan = scan_folder(self.source_dir, self.store)
+        result = commit_import(
+            scan["new_files"], "reference", None, self.thumb_dir, self.store)
+        self.assertEqual(result["imported_count"], 1)
+
+        row = self.store.find_by_hash(scan["new_files"][0]["file_hash"])
+        self.assertEqual(row["storage_path"], original_path)
+        self.assertEqual(row["storage_location"], "reference")
+        # 縮圖仍然是 STND 自己管理、獨立於原始檔案位置的檔案。
+        self.assertTrue(os.path.exists(row["thumbnail_path"]))
+        self.assertTrue(row["thumbnail_path"].startswith(self.thumb_dir))
+        # 來源資料夾裡除了那張原始照片，不該多出任何檔案（沒有被複製）。
+        self.assertEqual(os.listdir(self.source_dir), ["a.jpg"])
+
+    def test_reference_mode_metadata_write_touches_original_file(self):
+        original_path = os.path.join(self.source_dir, "a.jpg")
+        _write_tiny_jpeg(original_path)
+        scan = scan_folder(self.source_dir, self.store)
+        commit_import(
+            scan["new_files"], "reference", None, self.thumb_dir, self.store)
+        row = self.store.find_by_hash(scan["new_files"][0]["file_hash"])
+
+        write_metadata(row["storage_path"], ["原地標籤"], 5)
+
+        result = subprocess.run(
+            ["exiftool", "-j", "-Rating", "-Subject", original_path],
+            capture_output=True, timeout=15)
+        exif = json.loads(result.stdout.decode("utf-8"))[0]
+        self.assertEqual(exif["Rating"], 5)
+        self.assertEqual(exif["Subject"], "原地標籤")
+
+
+class MoveDetectionTest(unittest.TestCase):
+    """2026-09-25 新增：使用者在 STND 之外把原地索引的照片搬到新資料夾，
+    重新掃描新位置應該偵測到「搬家」並更新 `storage_path`，而不是
+    當成普通重複跳過或重新匯入一份。"""
+
+    def setUp(self):
+        self.store_dir = tempfile.mkdtemp(prefix="photo-moved-store-")
+        self.thumb_dir = tempfile.mkdtemp(prefix="photo-moved-thumb-")
+        self.old_dir = tempfile.mkdtemp(prefix="photo-moved-old-")
+        self.new_dir = tempfile.mkdtemp(prefix="photo-moved-new-")
+        self.store = PhotoStore(self.store_dir)
+
+    def tearDown(self):
+        self.store.close()
+        for d in (self.store_dir, self.thumb_dir, self.old_dir, self.new_dir):
+            shutil.rmtree(d)
+
+    def _import_reference_photo(self):
+        old_path = os.path.join(self.old_dir, "a.jpg")
+        _write_tiny_jpeg(old_path)
+        scan = scan_folder(self.old_dir, self.store)
+        commit_import(
+            scan["new_files"], "reference", None, self.thumb_dir, self.store)
+        return self.store.find_by_hash(scan["new_files"][0]["file_hash"])
+
+    def test_scan_detects_moved_reference_file(self):
+        photo = self._import_reference_photo()
+        new_path = os.path.join(self.new_dir, "a.jpg")
+        shutil.move(os.path.join(self.old_dir, "a.jpg"), new_path)
+
+        result = scan_folder(self.new_dir, self.store)
+        self.assertEqual(result["new_files"], [])
+        self.assertEqual(result["duplicate_count"], 0)
+        self.assertEqual(len(result["moved_files"]), 1)
+        moved = result["moved_files"][0]
+        self.assertEqual(moved["photo_id"], photo["id"])
+        self.assertEqual(moved["old_path"], os.path.join(self.old_dir, "a.jpg"))
+        self.assertEqual(moved["new_path"], new_path)
+
+    def test_heal_moved_paths_updates_storage_path_only(self):
+        """移動偵測靠的是 hash 比對，這裡刻意**不**呼叫 write_metadata()
+        改動檔案位元組（那會改變 hash，見下面
+        test_move_after_tagging_is_not_detected_as_moved 驗證的已知限制），
+        只用 update_metadata_sync_status() 模擬「這張照片先前已經同步過」
+        的資料庫狀態，藉此單純驗證 heal_moved_paths() 真的只動
+        storage_path、不動其他欄位。"""
+        photo = self._import_reference_photo()
+        synced = self.store.update_metadata_sync_status(photo["id"], "synced")
+        self.assertEqual(synced["metadata_sync_status"], "synced")
+
+        new_path = os.path.join(self.new_dir, "a.jpg")
+        shutil.move(photo["storage_path"], new_path)
+        scan = scan_folder(self.new_dir, self.store)
+
+        healed_count = heal_moved_paths(scan["moved_files"], self.store)
+        self.assertEqual(healed_count, 1)
+
+        reloaded = self.store.get_photo(photo["id"])
+        self.assertEqual(reloaded["storage_path"], new_path)
+        # file_hash／同步狀態不受影響——檔案內容沒變，先前寫進檔案的
+        # 標籤還在，不需要重新同步。
+        self.assertEqual(reloaded["file_hash"], photo["file_hash"])
+        self.assertEqual(reloaded["metadata_sync_status"], "synced")
+
+    def test_move_after_tagging_is_not_detected_as_moved(self):
+        """已知限制（見 photo_importer.py scan_folder() docstring）：
+        write_metadata() 會實際改寫檔案位元組，搬移後重新算出來的 hash
+        因此對不上資料庫凍結的舊 hash，搬移偵測抓不到——這裡驗證的是
+        「這個限制的具體行為」，不是驗證這樣做沒問題；標籤本身仍完整
+        留在檔案的 XMP/IPTC 裡，只是資料庫端把它當成一張新照片。"""
+        photo = self._import_reference_photo()
+        write_metadata(photo["storage_path"], ["夕陽"], 4)
+
+        new_path = os.path.join(self.new_dir, "a.jpg")
+        shutil.move(photo["storage_path"], new_path)
+        scan = scan_folder(self.new_dir, self.store)
+
+        self.assertEqual(scan["moved_files"], [])
+        self.assertEqual(len(scan["new_files"]), 1)
+
+        # 標籤沒有遺失——還是好端端寫在檔案本身裡，只是 STND 資料庫
+        # 沒有自動把這筆新掃到的檔案跟舊紀錄關聯起來。
+        result = subprocess.run(
+            ["exiftool", "-j", "-Rating", "-Subject", new_path],
+            capture_output=True, timeout=15)
+        exif = json.loads(result.stdout.decode("utf-8"))[0]
+        self.assertEqual(exif["Rating"], 4)
+        self.assertEqual(exif["Subject"], "夕陽")
+
+    def test_copy_mode_rescan_is_plain_duplicate_not_moved(self):
+        """`internal`／`external` 複製模式的既有紀錄，`storage_path`
+        是 STND 自己管理的副本，重新掃到來源資料夾裡的原始檔本來就該
+        算普通重複，不該被誤判成「搬家」。"""
+        dest_dir = tempfile.mkdtemp(prefix="photo-moved-dest-")
+        try:
+            original_path = os.path.join(self.old_dir, "a.jpg")
+            _write_tiny_jpeg(original_path)
+            scan = scan_folder(self.old_dir, self.store)
+            commit_import(
+                scan["new_files"], "internal", dest_dir, self.thumb_dir,
+                self.store)
+
+            second_scan = scan_folder(self.old_dir, self.store)
+            self.assertEqual(second_scan["moved_files"], [])
+            self.assertEqual(second_scan["duplicate_count"], 1)
+        finally:
+            shutil.rmtree(dest_dir)
 
 
 if __name__ == "__main__":

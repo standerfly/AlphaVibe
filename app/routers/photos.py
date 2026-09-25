@@ -50,13 +50,13 @@ if str(_PHOTO_KB_MCP_DIR) not in sys.path:
     sys.path.insert(0, str(_PHOTO_KB_MCP_DIR))
 
 from photo_importer import (  # noqa: E402
-    scan_folder, commit_import, external_volume_mounted)
+    scan_folder, commit_import, external_volume_mounted, heal_moved_paths)
 from photo_metadata_sync import (  # noqa: E402
     MetadataSyncUnavailable, write_metadata)
 
 router = APIRouter()
 
-VALID_STORAGE_LOCATIONS = ("internal", "external")
+VALID_STORAGE_LOCATIONS = ("internal", "external", "reference")
 
 # 記憶體狀態（見本檔案開頭 docstring「匯入與中繼資料寫回的背景任務設計」／
 # 「掃描結果的暫存」）。單一 process 內全域共用，故意不落地成資料表
@@ -98,6 +98,7 @@ class ImportScanRequest(BaseModel):
     source_path: str
     storage_location: str
     dest_path: Optional[str] = None  # storage_location="external" 時必填
+    recursive: bool = False  # 連同子資料夾一起掃，見 photo_importer.py
 
 
 @router.post("/api/photos/import/scan")
@@ -106,7 +107,9 @@ def import_scan(
     store: PhotoStore = Depends(get_photo_store),
 ) -> Dict[str, Any]:
     """掃描來源資料夾、計算去重預覽（`research.md` §4：`file_hash` 在
-    這裡對來源檔案計算，之後永久不重算）。"""
+    這裡對來源檔案計算，之後永久不重算）。`storage_location="reference"`
+    時**不需要** `dest_path`——原地索引，不複製檔案（見
+    `photo_importer.py` `VALID_STORAGE_LOCATIONS` 說明）。"""
     if body.storage_location not in VALID_STORAGE_LOCATIONS:
         raise HTTPException(
             status_code=400,
@@ -121,15 +124,20 @@ def import_scan(
             detail="外接硬碟未連接或路徑不存在：%s，請確認硬碟已連接後再試一次"
             % body.dest_path)
     try:
-        scan_result = scan_folder(body.source_path, store)
+        scan_result = scan_folder(body.source_path, store, recursive=body.recursive)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    dest_dir = (body.dest_path if body.storage_location == "external"
-                else _internal_dest_dir(store.data_dir))
+    if body.storage_location == "external":
+        dest_dir = body.dest_path
+    elif body.storage_location == "reference":
+        dest_dir = None  # 不使用，原地索引不複製檔案
+    else:
+        dest_dir = _internal_dest_dir(store.data_dir)
     scan_token = uuid.uuid4().hex
     _SCAN_CACHE[scan_token] = {
         "new_files": scan_result["new_files"],
+        "moved_files": scan_result["moved_files"],
         "storage_location": body.storage_location,
         "dest_dir": dest_dir,
         "thumbnail_dir": _thumbnail_dir(store.data_dir),
@@ -139,23 +147,30 @@ def import_scan(
         "scan_token": scan_token,
         "total": scan_result["total"],
         "new_count": len(scan_result["new_files"]),
+        "moved_count": len(scan_result["moved_files"]),
         "duplicate_count": scan_result["duplicate_count"],
         "unreadable": scan_result["unreadable"],
     }
 
 
 def _run_import_job(job_id: str, data_dir: str, new_files: List[Dict[str, Any]],
-                     storage_location: str, dest_dir: str, thumbnail_dir: str) -> None:
+                     moved_files: List[Dict[str, Any]], storage_location: str,
+                     dest_dir: str, thumbnail_dir: str) -> None:
     """背景任務本體。**不使用** request-scoped 的 `PhotoStore`——自行
-    開一條獨立連線（見本檔案開頭 docstring）。"""
+    開一條獨立連線（見本檔案開頭 docstring）。`moved_files` 是
+    `reference` 模式偵測到「檔案搬家了」的既有照片，跟 `new_files`
+    一起處理：`heal_moved_paths()` 只更新路徑，不需要複製/縮圖/重新
+    同步（見該函式 docstring）。"""
     store = PhotoStore(data_dir)
     try:
         result = commit_import(
             new_files, storage_location, dest_dir, thumbnail_dir, store)
+        healed_count = heal_moved_paths(moved_files, store)
         _IMPORT_JOBS[job_id].update({
             "status": "completed",
             "imported_count": result["imported_count"],
             "imported_photo_ids": result["imported_photo_ids"],
+            "healed_count": healed_count,
             "failed": result["failed"],
         })
     except Exception as exc:  # noqa: BLE001 — 背景任務失敗要記錄，不能讓例外無聲消失
@@ -210,11 +225,12 @@ def import_commit(
     total = len(cached["new_files"])
     _IMPORT_JOBS[job_id] = {
         "job_id": job_id, "status": "running",
-        "imported_count": 0, "total": total, "failed": [],
+        "imported_count": 0, "total": total, "healed_count": 0, "failed": [],
     }
     background_tasks.add_task(
         _run_import_job, job_id, cached["data_dir"], cached["new_files"],
-        cached["storage_location"], cached["dest_dir"], cached["thumbnail_dir"])
+        cached["moved_files"], cached["storage_location"], cached["dest_dir"],
+        cached["thumbnail_dir"])
     return {"job_id": job_id, "status": "running"}
 
 

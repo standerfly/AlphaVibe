@@ -18,6 +18,11 @@ export default function ImportWizard({ albums, onDone, onCancel }) {
   // （見 photo_importer.py::external_volume_mounted()），沒接的話會擋
   // 下來提示，不會悄悄寫進內接硬碟。
   const [destPath, setDestPath] = useState('/Volumes/macmini_ext8G/')
+  // 2026-09-25：「原地索引」新模式——不複製，直接索引既有資料夾，
+  // 搬移偵測與原始檔標籤寫回見 photo_importer.py scan_folder()/
+  // heal_moved_paths() docstring。既有相片庫常見巢狀資料夾（依相機/
+  // 年份分類），所以一起加了「包含子資料夾」選項，三種儲存模式共用。
+  const [recursive, setRecursive] = useState(false)
   const [scanResult, setScanResult] = useState(null)
   const [job, setJob] = useState(null)
   const [error, setError] = useState(null)
@@ -35,7 +40,10 @@ export default function ImportWizard({ albums, onDone, onCancel }) {
     setBusy(true)
     setError(null)
     try {
-      const body = { source_path: sourcePath.trim(), storage_location: storageLocation }
+      const body = {
+        source_path: sourcePath.trim(), storage_location: storageLocation,
+        recursive,
+      }
       if (storageLocation === 'external') body.dest_path = destPath.trim()
       const result = await apiPost('/api/photos/import/scan', body)
       setScanResult(result)
@@ -123,7 +131,7 @@ export default function ImportWizard({ albums, onDone, onCancel }) {
                 placeholder="/Volumes/Photos/2026-11-import"
               />
             </div>
-            <div className="radio-row" style={{ display: 'flex', gap: '1.2rem', margin: '.8rem 0' }}>
+            <div className="radio-row" style={{ display: 'flex', gap: '1.2rem', margin: '.8rem 0', flexWrap: 'wrap' }}>
               <label>
                 <input type="radio" checked={storageLocation === 'internal'}
                   onChange={() => setStorageLocation('internal')} /> 存內接硬碟
@@ -131,6 +139,10 @@ export default function ImportWizard({ albums, onDone, onCancel }) {
               <label>
                 <input type="radio" checked={storageLocation === 'external'}
                   onChange={() => setStorageLocation('external')} /> 存外接硬碟
+              </label>
+              <label>
+                <input type="radio" checked={storageLocation === 'reference'}
+                  onChange={() => setStorageLocation('reference')} /> 原地索引，不複製
               </label>
             </div>
             {storageLocation === 'external' && (
@@ -140,6 +152,20 @@ export default function ImportWizard({ albums, onDone, onCancel }) {
                 placeholder="外接硬碟上的存放路徑，例如 /Volumes/PhotoArchive/2026"
               />
             )}
+            {storageLocation === 'reference' && (
+              <div className="meta" style={{ marginBottom: '.6rem' }}>
+                不複製檔案，直接在原資料夾建立索引，保留你原本的整理方式。
+                加標籤會直接寫進照片檔案本身；之後在 Finder 把照片搬到新資料夾，
+                重新掃描同一個來源路徑會自動偵測搬家並更新路徑——但如果搬移前已經
+                加過標籤，檔案內容會改變，搬移偵測會失效（標籤本身仍留在檔案裡不會
+                遺失，只是這裡不會自動關聯到舊紀錄，需要手動刪除變成離線的舊紀錄）。
+              </div>
+            )}
+            <label style={{ display: 'flex', alignItems: 'center', gap: '.4rem', marginTop: '.4rem' }}>
+              <input type="checkbox" checked={recursive}
+                onChange={(e) => setRecursive(e.target.checked)} />
+              包含子資料夾
+            </label>
           </>
         )}
 
@@ -149,6 +175,10 @@ export default function ImportWizard({ albums, onDone, onCancel }) {
               <tr><td>掃描到的檔案</td><td style={{ textAlign: 'right' }}>{scanResult.total}</td></tr>
               <tr><td>新照片（將匯入）</td>
                 <td style={{ textAlign: 'right', color: 'var(--green)' }}>{scanResult.new_count}</td></tr>
+              {scanResult.moved_count > 0 && (
+                <tr><td>偵測到搬家（將更新路徑）</td>
+                  <td style={{ textAlign: 'right', color: 'var(--green)' }}>{scanResult.moved_count}</td></tr>
+              )}
               <tr><td>重複檔案（將跳過）</td>
                 <td style={{ textAlign: 'right', color: 'var(--ink-dim)' }}>{scanResult.duplicate_count}</td></tr>
               {scanResult.unreadable.length > 0 && (
@@ -171,6 +201,7 @@ export default function ImportWizard({ albums, onDone, onCancel }) {
             {job?.status === 'completed' && (
               <div className="meta">
                 已匯入 {job.imported_count} 張
+                {job.healed_count > 0 && `，更新了 ${job.healed_count} 張搬家路徑`}
                 {job.failed?.length > 0 && `，${job.failed.length} 張失敗`}
               </div>
             )}

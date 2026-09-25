@@ -1134,6 +1134,138 @@ def main() -> int:
         finally:
             shutil.rmtree(photo_src_dir, ignore_errors=True)
 
+        # ---- 相簿「原地索引」模式 + 搬家偵測（2026-09-25 新增，見
+        # poc/kb-mcp/photo_importer.py scan_folder()/commit_import()/
+        # heal_moved_paths() docstring）：不複製檔案、直接對使用者原始
+        # 資料夾建立索引，搬移後重新掃描要能自動更新 storage_path。
+        # 用跟上面內容不同的第三張 fixture，避免跟上面已匯入的 A/B 撞
+        # hash 被誤判成重複。
+        _TINY_JPEG_C = base64.b64decode(
+            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDABALDA4MChAODQ4SERATGCgaGBYW"
+            "GDEjJR0oOjM9PDkzODdASFxOQERXRTc4UG1RV19iZ2hnPk1xeXBkeFxlZ2P/"
+            "2wBDARESEhgVGC8aGi9jQjhCY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2Nj"
+            "Y2NjY2NjY2NjY2NjY2NjY2NjY2NjY2P/wAARCAAIAAgDASIAAhEBAxEB/8QA"
+            "HwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUF"
+            "BAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkK"
+            "FhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1"
+            "dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXG"
+            "x8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEB"
+            "AQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAEC"
+            "AxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRom"
+            "JygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOE"
+            "hYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU"
+            "1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwAooor2DxT/"
+            "2Q=="
+        )
+        ref_src_dir = tempfile.mkdtemp(prefix="alphavibe-smoke-photos-ref-")
+        ref_new_dir = tempfile.mkdtemp(prefix="alphavibe-smoke-photos-ref-moved-")
+        try:
+            ref_original_path = os.path.join(ref_src_dir, "c.jpg")
+            with open(ref_original_path, "wb") as fh:
+                fh.write(_TINY_JPEG_C)
+
+            ref_scan_status, ref_scan_raw = _post(
+                "/api/photos/import/scan",
+                json.dumps({"source_path": ref_src_dir,
+                            "storage_location": "reference"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"})
+            ref_scan_body = json.loads(ref_scan_raw.decode("utf-8")) if ref_scan_raw else {}
+            if ref_scan_status == 200 and ref_scan_body.get("new_count") == 1:
+                print("PASS reference 模式 scan 找到 1 張新照片")
+            else:
+                print("FAIL reference 模式 scan -> %s %r" % (ref_scan_status, ref_scan_body))
+                failures.append("photos reference scan mismatch")
+
+            ref_commit_status, ref_commit_raw = _post(
+                "/api/photos/import/commit",
+                json.dumps({"scan_token": ref_scan_body.get("scan_token")}).encode("utf-8"),
+                headers={"Content-Type": "application/json"})
+            ref_commit_body = json.loads(ref_commit_raw.decode("utf-8")) if ref_commit_raw else {}
+            ref_job_id = ref_commit_body.get("job_id") if ref_commit_status == 200 else None
+
+            ref_photo_id = None
+            if ref_job_id:
+                deadline = time.time() + 10
+                ref_job_body = {}
+                while time.time() < deadline:
+                    _, ref_job_body = _get("/api/photos/import/jobs/%s" % ref_job_id)
+                    if ref_job_body.get("status") in ("completed", "failed"):
+                        break
+                    time.sleep(0.2)
+                ref_ids = ref_job_body.get("imported_photo_ids", [])
+                if ref_job_body.get("status") == "completed" and len(ref_ids) == 1:
+                    ref_photo_id = ref_ids[0]
+                    print("PASS reference 模式背景匯入完成，1 張成功")
+                else:
+                    print("FAIL reference 模式匯入任務未如預期完成：%r" % ref_job_body)
+                    failures.append("photos reference import job mismatch")
+
+            if ref_photo_id is not None:
+                _, ref_photo_body = _get("/api/photos/photos/%d" % ref_photo_id)
+                # 核心行為：storage_path 就是原始檔案的路徑（沒有被複製走），
+                # 且來源資料夾裡除了那張原始照片沒有多出任何檔案。
+                if (ref_photo_body.get("storage_path") == ref_original_path
+                        and os.listdir(ref_src_dir) == ["c.jpg"]):
+                    print("PASS reference 模式沒有複製檔案，storage_path 指向原始位置")
+                else:
+                    print("FAIL reference 模式應該原地索引不複製：%r（來源資料夾內容 %r）"
+                          % (ref_photo_body.get("storage_path"), os.listdir(ref_src_dir)))
+                    failures.append("photos reference no-copy mismatch")
+
+                # 搬家偵測：在 STND 之外把檔案搬到新資料夾，重新掃描新位置
+                # 應該偵測到「搬家」而不是當成新照片或普通重複。
+                ref_new_path = os.path.join(ref_new_dir, "c.jpg")
+                shutil.move(ref_original_path, ref_new_path)
+
+                moved_scan_status, moved_scan_raw = _post(
+                    "/api/photos/import/scan",
+                    json.dumps({"source_path": ref_new_dir,
+                                "storage_location": "reference"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"})
+                moved_scan_body = json.loads(moved_scan_raw.decode("utf-8")) if moved_scan_raw else {}
+                if (moved_scan_status == 200 and moved_scan_body.get("moved_count") == 1
+                        and moved_scan_body.get("new_count") == 0):
+                    print("PASS 搬家後重新掃描正確偵測到 1 筆搬家（不是新照片/重複）")
+                else:
+                    print("FAIL 搬家偵測結果不符：%s %r" % (moved_scan_status, moved_scan_body))
+                    failures.append("photos move-detection scan mismatch")
+
+                moved_commit_status, moved_commit_raw = _post(
+                    "/api/photos/import/commit",
+                    json.dumps({"scan_token": moved_scan_body.get("scan_token")}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"})
+                moved_commit_body = (
+                    json.loads(moved_commit_raw.decode("utf-8")) if moved_commit_raw else {})
+                moved_job_id = (
+                    moved_commit_body.get("job_id") if moved_commit_status == 200 else None)
+
+                if moved_job_id:
+                    deadline = time.time() + 10
+                    moved_job_body = {}
+                    while time.time() < deadline:
+                        _, moved_job_body = _get("/api/photos/import/jobs/%s" % moved_job_id)
+                        if moved_job_body.get("status") in ("completed", "failed"):
+                            break
+                        time.sleep(0.2)
+                    if (moved_job_body.get("status") == "completed"
+                            and moved_job_body.get("healed_count") == 1
+                            and moved_job_body.get("imported_count") == 0):
+                        print("PASS 搬家路徑更新（heal）背景任務完成，healed_count=1")
+                    else:
+                        print("FAIL 搬家路徑更新任務未如預期完成：%r" % moved_job_body)
+                        failures.append("photos move-heal job mismatch")
+
+                _, ref_photo_after_move = _get("/api/photos/photos/%d" % ref_photo_id)
+                if ref_photo_after_move.get("storage_path") == ref_new_path:
+                    print("PASS 搬家後 storage_path 已更新為新位置（同一筆紀錄，不是新增）")
+                else:
+                    print("FAIL 搬家後 storage_path 未正確更新：%r"
+                          % ref_photo_after_move.get("storage_path"))
+                    failures.append("photos move-heal storage_path mismatch")
+        finally:
+            shutil.rmtree(ref_src_dir, ignore_errors=True)
+            shutil.rmtree(ref_new_dir, ignore_errors=True)
+
         # ---- gateway_monitor：對著真實 telegram_gateway/state/ 資料的
         # 深度驗證（2026-08-31 新增，STND「管家」分頁）。跟上面幾組
         # router 不同，這裡刻意不比對「底層函式」（沒有底層函式，資料
