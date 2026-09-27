@@ -6,6 +6,7 @@
 執行：python3 -m unittest discover -s poc/kb-mcp/tests -p "test_flight_search*"
 """
 import datetime
+import hashlib
 import json
 import os
 import shutil
@@ -993,6 +994,69 @@ class BrowserScrapeTest(unittest.TestCase):
         self.assertEqual(len(cached), 1)
         self.assertEqual(cached[0]["price"], 47529)
 
+    def test_exclude_budget_sends_airline_list_to_scraper(self):
+        """`exclude_budget=True` 時，送進 scraper 的 payload 要帶
+        `exclude_airlines`（BUDGET_AIRLINES 的內容）；預設不傳這個 key，
+        既有呼叫路徑完全不受影響（PO 2026-09-27 新增）。"""
+        flight_search.subprocess.Popen = self._fake_run({
+            "results": [{"id": "0", "status": "ok", "price": 47529,
+                         "airline": "星宇航空"}],
+            "blocked": False, "stats": {}})
+        flight_search.scrape_itineraries(self.itins[:1], data_dir=self.tmp,
+                                         exclude_budget=True)
+        sent = self.sent[0]
+        self.assertIn("exclude_airlines", sent)
+        self.assertEqual(set(sent["exclude_airlines"]),
+                         flight_search.BUDGET_AIRLINES)
+
+    def test_default_does_not_send_exclude_airlines(self):
+        flight_search.subprocess.Popen = self._fake_run({
+            "results": [{"id": "0", "status": "ok", "price": 47529,
+                         "airline": "星宇航空"}],
+            "blocked": False, "stats": {}})
+        flight_search.scrape_itineraries(self.itins[:1], data_dir=self.tmp)
+        self.assertNotIn("exclude_airlines", self.sent[0])
+
+    def test_budget_only_flag_surfaces_in_result_row(self):
+        """scraper 回報 `budget_only` 時，`_browser_summary()` 要原樣
+        傳到 `scrape_itineraries()` 的回傳結果，供上層判斷要不要標示
+        「無全服務航空選項」。"""
+        flight_search.subprocess.Popen = self._fake_run({
+            "results": [{"id": "0", "status": "ok", "price": 21903,
+                         "airline": "捷星航空", "budget_only": True}],
+            "blocked": False, "stats": {}})
+        out = flight_search.scrape_itineraries(
+            self.itins[:1], data_dir=self.tmp, exclude_budget=True)
+        self.assertTrue(out["results"][0]["budget_only"])
+
+    def test_budget_only_defaults_false_when_absent(self):
+        flight_search.subprocess.Popen = self._fake_run({
+            "results": [{"id": "0", "status": "ok", "price": 47529,
+                         "airline": "長榮航空"}],
+            "blocked": False, "stats": {}})
+        out = flight_search.scrape_itineraries(self.itins[:1], data_dir=self.tmp)
+        self.assertFalse(out["results"][0]["budget_only"])
+
+    def test_exclude_budget_and_normal_query_use_separate_cache(self):
+        """同一組行程，排除廉航跟不排除各自快取，互不影響——這是
+        `_cache_key()` 加 exclude_budget 維度的存在意義。"""
+        flight_search.subprocess.Popen = self._fake_run({
+            "results": [{"id": "0", "status": "ok", "price": 47529,
+                         "airline": "星宇航空"}],
+            "blocked": False, "stats": {}})
+        flight_search.scrape_itineraries(self.itins[:1], data_dir=self.tmp)
+        self.assertEqual(len(self.sent), 1)
+
+        # 排除廉航是不同快取鍵，即使剛查過同組行程也必須真的再查一次
+        flight_search.subprocess.Popen = self._fake_run({
+            "results": [{"id": "0", "status": "ok", "price": 55000,
+                         "airline": "長榮航空", "budget_only": False}],
+            "blocked": False, "stats": {}})
+        out = flight_search.scrape_itineraries(
+            self.itins[:1], data_dir=self.tmp, exclude_budget=True)
+        self.assertEqual(len(self.sent), 2)
+        self.assertEqual(out["results"][0]["price"], 55000)
+
     def test_missing_scraper_reports_error(self):
         flight_search.scraper_available = lambda: False
         out = flight_search.scrape_itineraries(self.itins, data_dir=self.tmp)
@@ -1498,6 +1562,76 @@ class DescribeAirlinesTest(unittest.TestCase):
         """
         desc = flight_search.describe_airlines(["全日空航空"])
         self.assertEqual(desc, "全日空航空（星空聯盟）")
+
+
+class BudgetAirlineTest(unittest.TestCase):
+    """排除廉價航空（PO 2026-09-27：「找到的多數是廉價航空，可以有
+    不要廉價航空的選項嗎」）。`_is_budget_airline()` 是這個功能的判斷
+    核心，用已知名單子字串比對。
+    """
+
+    def test_known_budget_airline_is_budget(self):
+        for name in ("捷星航空", "捷星日本航空", "樂桃航空", "酷航",
+                    "虎航", "越捷航空", "亞洲航空", "香草航空"):
+            self.assertTrue(flight_search._is_budget_airline(name),
+                            "%s 應判定為廉航" % name)
+
+    def test_starlux_is_not_budget(self):
+        """星宇航空是全服務精品航空，只是不屬於三大聯盟——不能因為在
+        `AIRLINE_NO_ALLIANCE` 裡就被當成廉航濾掉。"""
+        self.assertFalse(flight_search._is_budget_airline("星宇航空"))
+
+    def test_emirates_is_not_budget(self):
+        """阿聯酋航空是公認的五星全服務航空，同樣只是不屬於三大聯盟，
+        跟星宇航空是同一種需要排除的誤判。"""
+        self.assertFalse(flight_search._is_budget_airline("阿聯酋航空"))
+
+    def test_full_service_alliance_member_is_not_budget(self):
+        self.assertFalse(flight_search._is_budget_airline("長榮航空"))
+        self.assertFalse(flight_search._is_budget_airline("中華航空"))
+
+    def test_unknown_airline_is_not_budget(self):
+        """未收錄的航空公司一律視為非廉航——寧可判斷不到，不要誤判。"""
+        self.assertFalse(flight_search._is_budget_airline("喜馬拉雅航空"))
+
+    def test_substring_match_like_alliance_lookup(self):
+        """比對方式跟 `_airline_alliance()` 一致：名稱裡含有已知廉航
+        品牌字串就算數，不要求完全相等。"""
+        self.assertTrue(flight_search._is_budget_airline("捷星日本航空"))
+
+
+class CacheKeyExcludeBudgetTest(unittest.TestCase):
+    """快取鍵必須依 exclude_budget 分流，否則排除廉航前後的查詢結果
+    會互相污染（2026-09-27 新增排除廉航功能時的正確性要求）。"""
+
+    def _legs(self):
+        return [{"departure_id": "TPE", "arrival_id": "AOJ",
+                 "date": "2027-01-01"}]
+
+    def test_default_false_matches_pre_feature_hash(self):
+        """不傳 exclude_budget 時的雜湊值，必須跟只給前 6 個欄位算出來的
+        雜湊完全一致——這是舊快取檔案不會集體失效的保證。"""
+        legs = self._legs()
+        old_style = hashlib.md5(json.dumps(
+            {"legs": legs, "c": 1, "a": 1, "cur": "TWD", "gl": "tw",
+             "hl": "zh-TW"}, sort_keys=True, ensure_ascii=False
+        ).encode("utf-8")).hexdigest()
+        new_default = flight_search._cache_key(legs, 1, 1, "TWD", "tw", "zh-TW")
+        self.assertEqual(old_style, new_default)
+
+    def test_exclude_budget_true_produces_different_key(self):
+        legs = self._legs()
+        key_false = flight_search._cache_key(legs, 1, 1, "TWD", "tw", "zh-TW",
+                                             exclude_budget=False)
+        key_true = flight_search._cache_key(legs, 1, 1, "TWD", "tw", "zh-TW",
+                                            exclude_budget=True)
+        self.assertNotEqual(key_false, key_true)
+
+    def test_exclude_budget_true_is_deterministic(self):
+        legs = self._legs()
+        k1 = flight_search._cache_key(legs, 1, 1, "TWD", "tw", "zh-TW", True)
+        k2 = flight_search._cache_key(legs, 1, 1, "TWD", "tw", "zh-TW", True)
+        self.assertEqual(k1, k2)
 
 
 if __name__ == "__main__":

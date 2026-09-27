@@ -60,6 +60,7 @@ class TrackCreate(BaseModel):
     target_price: Optional[int] = None
     samples_per_month: int = 2
     scan_frequency_days: int = 7
+    exclude_budget: bool = False
 
 
 # 目前有背景掃描在執行的 track id。
@@ -94,7 +95,8 @@ def _track_summary(store: FlightStore, track: Dict[str, Any],
                    data_dir: str) -> Dict[str, Any]:
     itineraries, skipped = svc.expand_track(track)
     pending = [i for i in itineraries
-               if not svc._is_cached(i, data_dir)]
+               if not svc._is_cached(i, data_dir,
+                                     exclude_budget=track.get("exclude_budget", False))]
     state = svc.derive_state(track, data_dir, store=store,
                              scanning=track["id"] in _SCANNING)
     lowest = store.lowest_result(track["id"])
@@ -186,6 +188,7 @@ def create_track(body: TrackCreate,
             target_price=body.target_price,
             samples_per_month=body.samples_per_month,
             scan_frequency_days=body.scan_frequency_days,
+            exclude_budget=body.exclude_budget,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -355,7 +358,9 @@ def get_results(track_id: int,
 
     data_dir = store.data_dir
     itineraries, skipped = svc.expand_track(track)
-    pending = [i for i in itineraries if not svc._is_cached(i, data_dir)]
+    pending = [i for i in itineraries
+              if not svc._is_cached(i, data_dir,
+                                    exclude_budget=track.get("exclude_budget", False))]
     results = store.list_results(track_id)
     for r in results:
         r["connector_is_estimate"] = True
@@ -426,6 +431,7 @@ class RoundtripTrackCreate(BaseModel):
     samples_per_month: int = 2
     target_price: Optional[int] = None
     scan_frequency_days: int = 7
+    exclude_budget: bool = False
 
 
 # 與 _SCANNING／_LAST_OUTCOME 同性質的暫態，各自獨立的字典／集合——
@@ -437,7 +443,9 @@ _ROUNDTRIP_LAST_OUTCOME: Dict[int, Dict[str, Any]] = {}
 def _roundtrip_track_summary(store: FlightStore, track: Dict[str, Any],
                              data_dir: str) -> Dict[str, Any]:
     itineraries, skipped = svc.expand_roundtrip_track(track)
-    pending = [i for i in itineraries if not svc._is_cached(i, data_dir)]
+    pending = [i for i in itineraries
+              if not svc._is_cached(i, data_dir,
+                                    exclude_budget=track.get("exclude_budget", False))]
     state = svc.derive_roundtrip_state(
         track, data_dir, store=store,
         scanning=track["id"] in _ROUNDTRIP_SCANNING)
@@ -492,6 +500,7 @@ def create_roundtrip_track(
             samples_per_month=body.samples_per_month,
             target_price=body.target_price,
             scan_frequency_days=body.scan_frequency_days,
+            exclude_budget=body.exclude_budget,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -611,7 +620,9 @@ def get_roundtrip_results(
 
     data_dir = store.data_dir
     itineraries, skipped = svc.expand_roundtrip_track(track)
-    pending = [i for i in itineraries if not svc._is_cached(i, data_dir)]
+    pending = [i for i in itineraries
+              if not svc._is_cached(i, data_dir,
+                                    exclude_budget=track.get("exclude_budget", False))]
     results = store.list_roundtrip_results(track_id)
     hub = track.get("hub", "TPE")
     transit = track.get("preferred_transit")

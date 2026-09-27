@@ -445,6 +445,30 @@ class ResultTest(unittest.TestCase):
         self.assertEqual(r["price"], 37265)
         self.assertEqual(r["connector_price"], 6800)
 
+    def test_budget_only_defaults_false(self):
+        self._r()
+        r = self.store.list_results(self.track["id"])[0]
+        self.assertFalse(r["budget_only"])
+
+    def test_budget_only_persists(self):
+        """2026-09-27 新增：排除廉航但該組合只查得到廉航時的旗標。"""
+        self._r(budget_only=True)
+        r = self.store.list_results(self.track["id"])[0]
+        self.assertTrue(r["budget_only"])
+
+    def test_budget_only_surfaces_in_lowest_result(self):
+        self._r(price=21903, budget_only=True)
+        low = self.store.lowest_result(self.track["id"])
+        self.assertTrue(low["budget_only"])
+
+    def test_upsert_overwrite_updates_budget_only(self):
+        """重掃後條件的 exclude_budget 若改變，budget_only 也要能覆寫
+        （不是只在第一次寫入時生效）。"""
+        self._r(budget_only=True)
+        self._r(price=55000, airline="長榮航空", budget_only=False)
+        r = self.store.list_results(self.track["id"])[0]
+        self.assertFalse(r["budget_only"])
+
 
 def _base_roundtrip(store, **kw):
     args = dict(destinations=["AOJ", "CTS"], window_start="2027-01",
@@ -641,6 +665,126 @@ class RoundtripResultTest(unittest.TestCase):
     def test_no_fare_and_failed_must_not_carry_price(self):
         with self.assertRaises(ValueError):
             self._r(status="failed", price=1000)
+
+
+class ExcludeBudgetTest(unittest.TestCase):
+    """排除廉價航空（2026-09-27 新增）：四段票與單純來回都要支援
+    `exclude_budget`（track 層）與 `budget_only`（result 層），且兩者
+    互不干擾。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="flight-exclude-budget-test-")
+        self.store = FlightStore(self.tmp)
+
+    def tearDown(self):
+        self.store.close()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_flight_track_exclude_budget_defaults_false(self):
+        t = _base_track(self.store)
+        self.assertFalse(t["exclude_budget"])
+
+    def test_flight_track_exclude_budget_can_be_set(self):
+        t = _base_track(self.store, exclude_budget=True)
+        self.assertTrue(t["exclude_budget"])
+        self.assertTrue(self.store.get_track(t["id"])["exclude_budget"])
+
+    def test_roundtrip_track_exclude_budget_defaults_false(self):
+        t = _base_roundtrip(self.store)
+        self.assertFalse(t["exclude_budget"])
+
+    def test_roundtrip_track_exclude_budget_can_be_set(self):
+        t = _base_roundtrip(self.store, exclude_budget=True)
+        self.assertTrue(t["exclude_budget"])
+        self.assertTrue(self.store.get_roundtrip_track(t["id"])["exclude_budget"])
+
+    def test_migrate_adds_columns_to_pre_feature_database(self):
+        """正式庫是在這個功能存在前建立的——手動建一份沒有
+        exclude_budget／budget_only 欄位的舊 schema 資料庫，確認
+        `_migrate()` 補欄位後既有資料完好、新欄位預設值是 0／False，
+        不能讓既有條件憑空變成「已排除廉航」。"""
+        self.store.close()
+        old_db = os.path.join(self.tmp, "flights.db")
+        os.remove(old_db)
+        conn = sqlite3.connect(old_db)
+        conn.executescript("""
+            CREATE TABLE flight_track (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL, destination TEXT NOT NULL,
+                hub TEXT NOT NULL, outstations TEXT NOT NULL,
+                window_start TEXT NOT NULL, window_end TEXT NOT NULL,
+                trip_days INTEGER NOT NULL, lead_strategy TEXT NOT NULL,
+                trail_strategy TEXT NOT NULL,
+                exclude_months_trip TEXT NOT NULL DEFAULT '',
+                exclude_months_lead TEXT NOT NULL DEFAULT '',
+                exclude_months_trail TEXT NOT NULL DEFAULT '',
+                target_price INTEGER, samples_per_month INTEGER NOT NULL DEFAULT 2,
+                created_at TEXT NOT NULL, last_success_at TEXT,
+                trip_days_min INTEGER, trip_days_max INTEGER
+            );
+            CREATE TABLE flight_scan_result (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, track_id INTEGER NOT NULL,
+                outstation TEXT NOT NULL, leg1_date TEXT NOT NULL,
+                outbound_date TEXT NOT NULL, return_date TEXT NOT NULL,
+                leg4_date TEXT NOT NULL, lead_days INTEGER NOT NULL,
+                trail_days INTEGER NOT NULL, price INTEGER,
+                connector_price INTEGER, airline TEXT, status TEXT NOT NULL,
+                queried_at TEXT NOT NULL
+            );
+            CREATE TABLE roundtrip_track (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+                destinations TEXT NOT NULL, hub TEXT NOT NULL DEFAULT 'TPE',
+                preferred_transit TEXT, window_start TEXT NOT NULL,
+                window_end TEXT NOT NULL, trip_days_min INTEGER NOT NULL,
+                trip_days_max INTEGER NOT NULL,
+                samples_per_month INTEGER NOT NULL DEFAULT 2,
+                target_price INTEGER, created_at TEXT NOT NULL,
+                last_success_at TEXT
+            );
+            CREATE TABLE roundtrip_scan_result (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, track_id INTEGER NOT NULL,
+                destination TEXT NOT NULL, outbound_date TEXT NOT NULL,
+                return_date TEXT NOT NULL, price INTEGER, airline TEXT,
+                status TEXT NOT NULL, queried_at TEXT NOT NULL
+            );
+        """)
+        conn.execute(
+            "INSERT INTO flight_track (id, name, destination, hub,"
+            " outstations, window_start, window_end, trip_days,"
+            " lead_strategy, trail_strategy, created_at, trip_days_min,"
+            " trip_days_max) VALUES"
+            " (1,'existing','PRG','TPE','NRT','2027-04','2027-04',12,"
+            "  'none','none','2026-01-01',12,12)")
+        conn.commit()
+        conn.close()
+
+        self.store = FlightStore(self.tmp)   # 觸發 _migrate()
+        existing = self.store.get_track(1)
+        self.assertIsNotNone(existing)
+        self.assertFalse(existing["exclude_budget"])
+        self.assertEqual(existing["name"], "existing")   # 既有資料完好
+
+        # 新欄位可正常讀寫，不只是預設值可讀
+        t2 = _base_track(self.store, exclude_budget=True)
+        self.assertTrue(self.store.get_track(t2["id"])["exclude_budget"])
+
+    def test_flight_result_budget_only_independent_of_roundtrip(self):
+        """四段票與單純來回的 budget_only 各自獨立的表，互不污染。"""
+        ft = _base_track(self.store)
+        rt = _base_roundtrip(self.store)
+        self.store.upsert_result(
+            track_id=ft["id"], outstation="NRT", leg1_date="2026-11-02",
+            outbound_date="2027-04-01", return_date="2027-04-13",
+            leg4_date="2027-04-14", lead_days=150, trail_days=1,
+            price=37265, budget_only=True)
+        self.store.upsert_roundtrip_result(
+            track_id=rt["id"], destination="AOJ",
+            outbound_date="2027-01-15", return_date="2027-01-20",
+            price=23773, budget_only=False)
+        self.assertTrue(
+            self.store.list_results(ft["id"])[0]["budget_only"])
+        self.assertFalse(
+            self.store.list_roundtrip_results(rt["id"])[0]["budget_only"])
 
 
 if __name__ == "__main__":

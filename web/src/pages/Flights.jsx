@@ -62,7 +62,12 @@ function ResultTable({ results }) {
               <td>{r.outstation}</td>
               <td>
                 {r.status === 'ok'
-                  ? ntd(r.price)
+                  ? <>
+                      {ntd(r.price)}
+                      {r.budget_only && (
+                        <><br /><small className="flight-muted">無全服務航空選項</small></>
+                      )}
+                    </>
                   : <span className="flight-muted">{RESULT_STATUS_LABEL[r.status] || r.status}</span>}
               </td>
               <td className="flight-muted">{r.connector_price ? ntd(r.connector_price) : '—'}</td>
@@ -105,7 +110,12 @@ function RoundtripResultTable({ results }) {
               <td>{md(r.return_date)}</td>
               <td>
                 {r.status === 'ok'
-                  ? ntd(r.price)
+                  ? <>
+                      {ntd(r.price)}
+                      {r.budget_only && (
+                        <><br /><small className="flight-muted">無全服務航空選項</small></>
+                      )}
+                    </>
                   : <span className="flight-muted">{RESULT_STATUS_LABEL[r.status] || r.status}</span>}
               </td>
               <td className="flight-muted">{r.airline || '—'}</td>

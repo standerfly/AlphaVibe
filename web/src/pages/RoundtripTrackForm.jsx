@@ -24,6 +24,7 @@ export default function RoundtripTrackForm({ onCreated, onCancel }) {
   const [samples, setSamples] = useState(2)
   const [targetPrice, setTargetPrice] = useState('')
   const [frequency, setFrequency] = useState(7)
+  const [excludeBudget, setExcludeBudget] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
@@ -56,6 +57,7 @@ export default function RoundtripTrackForm({ onCreated, onCancel }) {
         samples_per_month: Number(samples),
         target_price: targetPrice === '' ? null : Number(targetPrice),
         scan_frequency_days: Number(frequency),
+        exclude_budget: excludeBudget,
       })
       onCreated && onCreated(created.id)
     } catch (err) {
@@ -143,6 +145,19 @@ export default function RoundtripTrackForm({ onCreated, onCancel }) {
           來回票價跌破這個數字時會用 Telegram 通知。多個候選目的地時，
           判定基準是全部候選目的地中的最低價，通知內容會標示是哪個
           目的地觸發的。不填就只記錄不通知。
+        </small>
+      </div>
+
+      <div className="flight-form__row flight-form__row--inline">
+        <label htmlFor="rt-xb">
+          <input id="rt-xb" type="checkbox" checked={excludeBudget}
+                 onChange={(e) => setExcludeBudget(e.target.checked)} />
+          {' '}排除廉價航空
+        </label>
+        <small className="flight-muted">
+          用已知廉航名單過濾（星宇航空、阿聯酋航空等全服務航空不算廉航，
+          不會被排除）；某個日期只查得到廉航時，仍會顯示廉航價格並標示
+          「無全服務航空選項」，不會顯示查無票價。
         </small>
       </div>
 

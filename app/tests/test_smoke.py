@@ -1892,6 +1892,7 @@ def main() -> int:
                     "trip_days_min": 10, "trip_days_max": 14,
                     "samples_per_month": 2,
                     "lead_strategy": "m3", "trail_strategy": "m1",
+                    "exclude_budget": True,
                 }).encode("utf-8"),
                 {"Content-Type": "application/json"})
             created = _json_or_none(created)
@@ -1916,6 +1917,13 @@ def main() -> int:
                     expected_total = len(_itins)
                 finally:
                     _st.close()
+
+                if _track.get("exclude_budget") is True:
+                    print("PASS exclude_budget 建立時持久化（四段票）")
+                else:
+                    print("FAIL exclude_budget 未正確持久化（四段票）：got=%r"
+                          % _track.get("exclude_budget"))
+                    failures.append("flights exclude_budget persistence")
 
                 status, body = _get("/api/flights/tracks")
                 api_total = None
@@ -2282,11 +2290,12 @@ def main() -> int:
                       "status=%s" % rt_bad_status)
                 failures.append("roundtrip validation")
 
-            # ---- preferred_transit／hub 持久化（008 US2，T022；hub
-            # 為 2026-09-25 補的前端出發地欄位，一併驗證同一個請求裡的
-            # 兩個欄位都正確持久化，不需要額外的 API 呼叫）----
-            # 建立時帶 preferred_transit 與非預設 hub，確認 create→list
-            # 往返後欄位值不變（4 段 legs 的判斷依據，見
+            # ---- preferred_transit／hub／exclude_budget 持久化（008
+            # US2，T022；hub 為 2026-09-25 補的前端出發地欄位、
+            # exclude_budget 為 2026-09-27 排除廉航功能，一併驗證同一個
+            # 請求裡的三個欄位都正確持久化，不需要額外的 API 呼叫）----
+            # 建立時帶 preferred_transit、非預設 hub、exclude_budget，
+            # 確認 create→list 往返後欄位值不變（4 段 legs 的判斷依據，見
             # flight_scan_service.py expand_roundtrip_track() 的 transit
             # 分支；hub 則是 google_flights_url() 組連結的起點機場）
             rt_transit_id = None
@@ -2300,6 +2309,7 @@ def main() -> int:
                         "trip_days_min": 5, "trip_days_max": 9,
                         "preferred_transit": "NRT",
                         "samples_per_month": 1,
+                        "exclude_budget": True,
                     }).encode("utf-8"),
                     {"Content-Type": "application/json"})
                 rt_t_created = _json_or_none(rt_t_created)
@@ -2308,18 +2318,21 @@ def main() -> int:
                     rt_t_list_status, rt_t_list_body = _get("/api/flights/tracks")
                     persisted_transit = None
                     persisted_hub = None
+                    persisted_xb = None
                     for t in (rt_t_list_body or {}).get("tracks", []):
                         if t.get("id") == rt_transit_id and t.get("track_type") == "roundtrip":
                             persisted_transit = t.get("preferred_transit")
                             persisted_hub = t.get("hub")
+                            persisted_xb = t.get("exclude_budget")
                     if (rt_t_list_status == 200 and persisted_transit == "NRT"
-                            and persisted_hub == "KHH"):
-                        print("PASS preferred_transit／hub 持久化：create→list "
-                              "往返後仍為 NRT／KHH")
+                            and persisted_hub == "KHH" and persisted_xb is True):
+                        print("PASS preferred_transit／hub／exclude_budget 持久化："
+                              "create→list 往返後仍為 NRT／KHH／True")
                     else:
-                        print("FAIL preferred_transit／hub 未正確持久化："
-                              "transit=%r hub=%r" % (persisted_transit, persisted_hub))
-                        failures.append("roundtrip preferred_transit/hub persistence")
+                        print("FAIL preferred_transit／hub／exclude_budget 未正確"
+                              "持久化：transit=%r hub=%r exclude_budget=%r"
+                              % (persisted_transit, persisted_hub, persisted_xb))
+                        failures.append("roundtrip preferred_transit/hub/exclude_budget persistence")
                 else:
                     print("FAIL preferred_transit／hub 建立條件：status=%s body=%s"
                           % (rt_t_status, rt_t_created))

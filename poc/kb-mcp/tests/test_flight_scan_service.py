@@ -658,6 +658,155 @@ class RunScanTest(unittest.TestCase):
         self.assertEqual(out["error"], "track_not_found")
 
 
+class ExcludeBudgetScanTest(unittest.TestCase):
+    """排除廉價航空（2026-09-27）：`run_scan()`／`run_roundtrip_scan()`
+    要把條件的 `exclude_budget` 傳進 `scrape_itineraries()`，且寫入結果
+    時要帶上 `budget_only`；快取判斷（`pending_combinations()` 等）也要
+    依 `exclude_budget` 分流，不能跟一般查詢共用快取誤判命中。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="flight-exclude-budget-scan-test-")
+        self.store = FlightStore(self.tmp)
+        self.ws, self.we = _future_window(span=1)
+        self._orig_scrape = fs.scrape_itineraries
+
+    def tearDown(self):
+        fs.scrape_itineraries = self._orig_scrape
+        self.store.close()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_run_scan_passes_exclude_budget_to_scraper(self):
+        """`ensure_connector_prices()` 也會呼叫 `scrape_itineraries()`
+        查接駁票（不帶 `exclude_budget`，接駁價本來就不受這個功能影響），
+        因此假層要用 `"exclude_budget" in kw` 只挑主查詢那一次呼叫，
+        不能被接駁那次呼叫覆蓋掉。"""
+        track = self.store.create_track(
+            destination="PRG", outstations=["NRT"], window_start=self.ws,
+            window_end=self.we, trip_days_min=12, trip_days_max=12,
+            samples_per_month=2, exclude_budget=True)
+        seen = {}
+
+        def scrape(itineraries, **kw):
+            if "exclude_budget" in kw:
+                seen["exclude_budget"] = kw["exclude_budget"]
+            rows = []
+            for i in itineraries:
+                row = dict(i)
+                row["price"] = 55000
+                row["airlines"] = ["長榮航空"]
+                row["budget_only"] = False
+                rows.append(row)
+            return {"results": rows, "blocked": False, "soft_blocked": False,
+                    "stats": {}}
+        fs.scrape_itineraries = scrape
+
+        svc.run_scan(track["id"], self.tmp)
+        self.assertTrue(seen["exclude_budget"])
+
+    def test_run_scan_defaults_exclude_budget_false(self):
+        track = self.store.create_track(
+            destination="PRG", outstations=["NRT"], window_start=self.ws,
+            window_end=self.we, trip_days_min=12, trip_days_max=12,
+            samples_per_month=2)
+        seen = {}
+
+        def scrape(itineraries, **kw):
+            if "exclude_budget" in kw:
+                seen["exclude_budget"] = kw["exclude_budget"]
+            return {"results": [], "blocked": False, "soft_blocked": False,
+                    "stats": {}}
+        fs.scrape_itineraries = scrape
+
+        svc.run_scan(track["id"], self.tmp)
+        self.assertFalse(seen["exclude_budget"])
+
+    def test_run_scan_writes_budget_only_into_result(self):
+        track = self.store.create_track(
+            destination="PRG", outstations=["NRT"], window_start=self.ws,
+            window_end=self.we, trip_days_min=12, trip_days_max=12,
+            samples_per_month=2, exclude_budget=True)
+
+        def scrape(itineraries, **kw):
+            rows = []
+            for i in itineraries:
+                row = dict(i)
+                row["price"] = 21903
+                row["airlines"] = ["捷星航空"]
+                row["budget_only"] = True
+                rows.append(row)
+            return {"results": rows, "blocked": False, "soft_blocked": False,
+                    "stats": {}}
+        fs.scrape_itineraries = scrape
+
+        svc.run_scan(track["id"], self.tmp)
+        results = self.store.list_results(track["id"])
+        self.assertTrue(all(r["budget_only"] for r in results))
+
+    def test_run_roundtrip_scan_passes_exclude_budget_to_scraper(self):
+        track = self.store.create_roundtrip_track(
+            destinations=["AOJ"], window_start=self.ws, window_end=self.we,
+            trip_days_min=5, trip_days_max=9, samples_per_month=1,
+            exclude_budget=True)
+        seen = {}
+
+        def scrape(itineraries, **kw):
+            seen["exclude_budget"] = kw.get("exclude_budget")
+            rows = []
+            for i in itineraries:
+                row = dict(i)
+                row["price"] = 55000
+                row["airlines"] = ["長榮航空"]
+                row["budget_only"] = False
+                rows.append(row)
+            return {"results": rows, "blocked": False, "soft_blocked": False,
+                    "stats": {}}
+        fs.scrape_itineraries = scrape
+
+        svc.run_roundtrip_scan(track["id"], self.tmp)
+        self.assertTrue(seen["exclude_budget"])
+
+    def test_run_roundtrip_scan_writes_budget_only_into_result(self):
+        track = self.store.create_roundtrip_track(
+            destinations=["AOJ"], window_start=self.ws, window_end=self.we,
+            trip_days_min=5, trip_days_max=9, samples_per_month=1,
+            exclude_budget=True)
+
+        def scrape(itineraries, **kw):
+            rows = []
+            for i in itineraries:
+                row = dict(i)
+                row["price"] = 21903
+                row["airlines"] = ["捷星航空"]
+                row["budget_only"] = True
+                rows.append(row)
+            return {"results": rows, "blocked": False, "soft_blocked": False,
+                    "stats": {}}
+        fs.scrape_itineraries = scrape
+
+        svc.run_roundtrip_scan(track["id"], self.tmp)
+        results = self.store.list_roundtrip_results(track["id"])
+        self.assertTrue(all(r["budget_only"] for r in results))
+
+    def test_pending_combinations_uses_separate_cache_namespace(self):
+        """條件的 exclude_budget=True 時，`pending_combinations()` 不該
+        被「不排除廉航」時寫入的快取誤判成已完成——這是 `_is_cached()`
+        沒有正確帶入 exclude_budget 會出現的錯誤（回歸測試）。"""
+        track = self.store.create_track(
+            destination="PRG", outstations=["NRT"], window_start=self.ws,
+            window_end=self.we, trip_days_min=12, trip_days_max=12,
+            samples_per_month=2, exclude_budget=True)
+        itins, _ = svc.expand_track(track)
+        # 用「不排除廉航」的快取鍵把全部組合寫進快取
+        for i in itins:
+            k = fs._cache_key(i["legs"], 1, 1, fs.DEFAULT_CURRENCY,
+                              "tw", "zh-TW", False)
+            fs._write_cache(self.tmp, k, {"price": 21903,
+                                          "airlines": ["捷星航空"]})
+        # exclude_budget=True 的條件應該仍視為全部待查——不同快取命名空間
+        pending = svc.pending_combinations(track, self.tmp)
+        self.assertEqual(len(pending), len(itins))
+
+
 class DeriveStateTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="flight-state-test-")

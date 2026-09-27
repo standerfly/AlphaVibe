@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS flight_track (
     scan_frequency_days INTEGER NOT NULL DEFAULT 7,
     last_notified_at TEXT,
     last_notified_price INTEGER,
-    last_notify_failed INTEGER NOT NULL DEFAULT 0
+    last_notify_failed INTEGER NOT NULL DEFAULT 0,
+    exclude_budget INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS flight_scan_result (
@@ -77,6 +78,7 @@ CREATE TABLE IF NOT EXISTS flight_scan_result (
     airline TEXT,
     status TEXT NOT NULL,
     queried_at TEXT NOT NULL,
+    budget_only INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (track_id) REFERENCES flight_track(id)
 );
 
@@ -91,8 +93,10 @@ CREATE INDEX IF NOT EXISTS idx_flight_result_track
 -- 008：單純來回——獨立資料表，不與上面的四段票表共用 schema。
 -- 欄位重疊度低（四段票的外站／lead-trail 策略對單純來回沒有意義，
 -- 單純來回的候選目的地清單也不是四段票任何欄位能表示），見
--- specs/008-roundtrip-search/research.md §2。全新表用
--- CREATE TABLE IF NOT EXISTS 即可，不需要 _migrate() 的 ALTER 路徑。
+-- specs/008-roundtrip-search/research.md §2。當初新建表用
+-- CREATE TABLE IF NOT EXISTS 即可、不需要 _migrate() 的 ALTER 路徑；
+-- 2026-09-27 新增 exclude_budget／budget_only 欄位時，這兩張表在正式
+-- 環境已有既有資料列，這次就需要跟四段票表一樣走 _migrate() 補欄位。
 CREATE TABLE IF NOT EXISTS roundtrip_track (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -110,7 +114,8 @@ CREATE TABLE IF NOT EXISTS roundtrip_track (
     scan_frequency_days INTEGER NOT NULL DEFAULT 7,
     last_notified_at TEXT,
     last_notified_price INTEGER,
-    last_notify_failed INTEGER NOT NULL DEFAULT 0
+    last_notify_failed INTEGER NOT NULL DEFAULT 0,
+    exclude_budget INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS roundtrip_scan_result (
@@ -123,6 +128,7 @@ CREATE TABLE IF NOT EXISTS roundtrip_scan_result (
     airline TEXT,
     status TEXT NOT NULL,
     queried_at TEXT NOT NULL,
+    budget_only INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (track_id) REFERENCES roundtrip_track(id)
 );
 
@@ -233,6 +239,16 @@ class FlightStore:
             # 了滿足它的既有 NOT NULL 約束，不是第二個真實來源。
             "ALTER TABLE flight_track ADD COLUMN trip_days_min INTEGER",
             "ALTER TABLE flight_track ADD COLUMN trip_days_max INTEGER",
+            # 2026-09-27：排除廉價航空——四段票與單純來回都要，兩張
+            # track 表與兩張 result 表都需要補欄位。
+            "ALTER TABLE flight_track ADD COLUMN"
+            " exclude_budget INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE flight_scan_result ADD COLUMN"
+            " budget_only INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE roundtrip_track ADD COLUMN"
+            " exclude_budget INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE roundtrip_scan_result ADD COLUMN"
+            " budget_only INTEGER NOT NULL DEFAULT 0",
         ):
             try:
                 self.conn.execute(ddl)
@@ -249,7 +265,8 @@ class FlightStore:
                      lead_strategy="none", trail_strategy="none",
                      exclude_months_trip=None, exclude_months_lead=None,
                      exclude_months_trail=None, target_price=None,
-                     samples_per_month=2, scan_frequency_days=7):
+                     samples_per_month=2, scan_frequency_days=7,
+                     exclude_budget=False):
         """建立查詢條件。驗證失敗一律拋 ValueError（spec FR-025）。
 
         `target_price` 在本 feature 僅儲存與顯示，**不觸發任何通知**——
@@ -327,8 +344,8 @@ class FlightStore:
             "  trip_days, trip_days_min, trip_days_max, lead_strategy,"
             "  trail_strategy, exclude_months_trip, exclude_months_lead,"
             "  exclude_months_trail, target_price, samples_per_month,"
-            "  created_at, scan_frequency_days)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "  created_at, scan_frequency_days, exclude_budget)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             # trip_days（舊欄位）鏡射寫入 trip_days_max，僅為滿足既有
             # NOT NULL 約束，不作為任何邏輯的輸入來源（research.md §2）
             (str(name).strip(), destination, hub, ",".join(codes),
@@ -336,7 +353,7 @@ class FlightStore:
              trip_days_max, lead_strategy, trail_strategy,
              _months_to_text(ex_trip), _months_to_text(ex_lead),
              _months_to_text(ex_trail), target_price, samples_per_month,
-             _now(), scan_frequency_days),
+             _now(), scan_frequency_days, 1 if exclude_budget else 0),
         )
         self.conn.commit()
         return self.get_track(cur.lastrowid)
@@ -366,6 +383,7 @@ class FlightStore:
             "created_at": row["created_at"],
             "last_success_at": row["last_success_at"],
             "scan_frequency_days": row["scan_frequency_days"],
+            "exclude_budget": bool(row["exclude_budget"]),
             "notify": {
                 "last_notified_at": row["last_notified_at"],
                 "last_notified_price": row["last_notified_price"],
@@ -495,11 +513,14 @@ class FlightStore:
     def upsert_result(self, track_id, outstation, leg1_date, outbound_date,
                       return_date, leg4_date, lead_days, trail_days,
                       status="ok", price=None, connector_price=None,
-                      airline=None, queried_at=None):
+                      airline=None, queried_at=None, budget_only=False):
         """寫入或覆寫一筆組合的報價。
 
         以 (track_id, 外站, 四段日期) 為唯一鍵覆寫，避免重掃時同一組合
         累積多筆（data-model.md「唯一性」）。
+
+        `budget_only`（2026-09-27 新增）：條件要求排除廉航，但這組合
+        篩掉廉航後沒有其他選項、只能顯示廉航價格時為 True。
         """
         if status not in VALID_RESULT_STATUS:
             raise ValueError("status 必須是 %s 之一，收到：%r"
@@ -513,8 +534,8 @@ class FlightStore:
             "INSERT INTO flight_scan_result"
             " (track_id, outstation, leg1_date, outbound_date, return_date,"
             "  leg4_date, lead_days, trail_days, price, connector_price,"
-            "  airline, status, queried_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+            "  airline, status, queried_at, budget_only)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
             " ON CONFLICT(track_id, outstation, leg1_date, outbound_date,"
             "             return_date, leg4_date)"
             " DO UPDATE SET price=excluded.price,"
@@ -523,10 +544,12 @@ class FlightStore:
             "               status=excluded.status,"
             "               lead_days=excluded.lead_days,"
             "               trail_days=excluded.trail_days,"
-            "               queried_at=excluded.queried_at",
+            "               queried_at=excluded.queried_at,"
+            "               budget_only=excluded.budget_only",
             (track_id, outstation.upper(), leg1_date, outbound_date,
              return_date, leg4_date, int(lead_days), int(trail_days),
-             price, connector_price, airline, status, queried_at or _now()),
+             price, connector_price, airline, status, queried_at or _now(),
+             1 if budget_only else 0),
         )
         self.conn.commit()
 
@@ -556,6 +579,7 @@ class FlightStore:
                 "airline": r["airline"],
                 "status": r["status"],
                 "queried_at": r["queried_at"],
+                "budget_only": bool(r["budget_only"]),
             })
         return out
 
@@ -597,6 +621,7 @@ class FlightStore:
             "outstation": row["outstation"],
             "outbound_date": row["outbound_date"],
             "return_date": row["return_date"],
+            "budget_only": bool(row["budget_only"]),
         }
 
     # ---------- roundtrip_track（008，單純來回）----------
@@ -624,7 +649,7 @@ class FlightStore:
                                trip_days_min, trip_days_max, hub="TPE",
                                preferred_transit=None, name=None,
                                samples_per_month=2, target_price=None,
-                               scan_frequency_days=7):
+                               scan_frequency_days=7, exclude_budget=False):
         """建立單純來回追蹤條件。驗證失敗一律拋 ValueError（比照
         `create_track()` 的既有慣例）。
 
@@ -683,11 +708,12 @@ class FlightStore:
             "INSERT INTO roundtrip_track"
             " (name, destinations, hub, preferred_transit, window_start,"
             "  window_end, trip_days_min, trip_days_max, samples_per_month,"
-            "  target_price, created_at, scan_frequency_days)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "  target_price, created_at, scan_frequency_days, exclude_budget)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (str(name).strip(), ",".join(codes), hub, preferred_transit,
              window_start, window_end, trip_days_min, trip_days_max,
-             samples_per_month, target_price, _now(), scan_frequency_days),
+             samples_per_month, target_price, _now(), scan_frequency_days,
+             1 if exclude_budget else 0),
         )
         self.conn.commit()
         return self.get_roundtrip_track(cur.lastrowid)
@@ -711,6 +737,7 @@ class FlightStore:
             "created_at": row["created_at"],
             "last_success_at": row["last_success_at"],
             "scan_frequency_days": row["scan_frequency_days"],
+            "exclude_budget": bool(row["exclude_budget"]),
             "notify": {
                 "last_notified_at": row["last_notified_at"],
                 "last_notified_price": row["last_notified_price"],
@@ -787,7 +814,8 @@ class FlightStore:
 
     def upsert_roundtrip_result(self, track_id, destination, outbound_date,
                                 return_date, status="ok", price=None,
-                                airline=None, queried_at=None):
+                                airline=None, queried_at=None,
+                                budget_only=False):
         """寫入或覆寫一筆組合的報價（比照 `upsert_result()`）。
 
         以 (track_id, 目的地, 出發日, 回程日) 為唯一鍵覆寫。
@@ -803,15 +831,17 @@ class FlightStore:
         self.conn.execute(
             "INSERT INTO roundtrip_scan_result"
             " (track_id, destination, outbound_date, return_date, price,"
-            "  airline, status, queried_at)"
-            " VALUES (?,?,?,?,?,?,?,?)"
+            "  airline, status, queried_at, budget_only)"
+            " VALUES (?,?,?,?,?,?,?,?,?)"
             " ON CONFLICT(track_id, destination, outbound_date, return_date)"
             " DO UPDATE SET price=excluded.price,"
             "               airline=excluded.airline,"
             "               status=excluded.status,"
-            "               queried_at=excluded.queried_at",
+            "               queried_at=excluded.queried_at,"
+            "               budget_only=excluded.budget_only",
             (track_id, destination.upper(), outbound_date, return_date,
-             price, airline, status, queried_at or _now()),
+             price, airline, status, queried_at or _now(),
+             1 if budget_only else 0),
         )
         self.conn.commit()
 
@@ -833,6 +863,7 @@ class FlightStore:
                 "airline": r["airline"],
                 "status": r["status"],
                 "queried_at": r["queried_at"],
+                "budget_only": bool(r["budget_only"]),
             })
         return out
 
@@ -861,4 +892,5 @@ class FlightStore:
             "destination": row["destination"],
             "outbound_date": row["outbound_date"],
             "return_date": row["return_date"],
+            "budget_only": bool(row["budget_only"]),
         }

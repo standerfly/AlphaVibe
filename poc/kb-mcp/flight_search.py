@@ -499,11 +499,21 @@ def skyscanner_url(legs, market="tw", adults=1, cabin="economy"):
                                                     query)
 
 
-def _cache_key(legs, travel_class, adults, currency, gl="tw", hl="zh-TW"):
-    """快取鍵必須含 gl/hl——不同訂票地可能是不同價格，混在一起會互相污染。"""
-    raw = json.dumps({"legs": legs, "c": travel_class, "a": adults,
-                      "cur": currency, "gl": gl, "hl": hl},
-                     sort_keys=True, ensure_ascii=False)
+def _cache_key(legs, travel_class, adults, currency, gl="tw", hl="zh-TW",
+              exclude_budget=False):
+    """快取鍵必須含 gl/hl——不同訂票地可能是不同價格，混在一起會互相污染。
+
+    `exclude_budget`：排除廉航會改變查到的最低價（2026-09-27 新增），
+    不能跟一般查詢共用快取鍵，否則會把排除廉航後的價格誤當成一般最低價
+    回傳給沒有勾選排除的查詢，反之亦然。**只在為 True 時才加進雜湊
+    payload**——維持 False（預設）時的雜湊值與新增此參數前完全一致，
+    既有快取檔案不會因為這個參數的加入而集體失效。
+    """
+    payload = {"legs": legs, "c": travel_class, "a": adults,
+              "cur": currency, "gl": gl, "hl": hl}
+    if exclude_budget:
+        payload["xb"] = True
+    raw = json.dumps(payload, sort_keys=True, ensure_ascii=False)
     return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
 
@@ -1087,6 +1097,9 @@ def _browser_summary(res):
         "airlines": [res["airline"]] if res.get("airline") else [],
         "option_count": res.get("option_count", 0),
         "source": "browser",
+        # 排除廉航但該組合只查得到廉航時，scraper 會退回廉航價格並標記
+        # 這個旗標（2026-09-27 新增）——沒有要求排除時一律是 False。
+        "budget_only": bool(res.get("budget_only")),
     }
 
 
@@ -1095,7 +1108,8 @@ def scrape_itineraries(itineraries, data_dir=None, currency=DEFAULT_CURRENCY, gl
                        max_delay_ms=SCRAPE_MAX_DELAY_MS,
                        session_limit=SCRAPE_SESSION_LIMIT, timeout_ms=25000,
                        use_cache=True, progress=None,
-                       hourly_limit=HOURLY_BROWSER_LIMIT):
+                       hourly_limit=HOURLY_BROWSER_LIMIT,
+                       exclude_budget=False):
     """用 headless 瀏覽器批次查價。**不消耗任何 API 額度。**
 
     這是 PO 選定的主力路徑（2026-09-22）：不需註冊、無額度上限、比 API
@@ -1109,6 +1123,14 @@ def scrape_itineraries(itineraries, data_dir=None, currency=DEFAULT_CURRENCY, gl
     **Skyscanner 不可用此路徑**——其 robots.txt 明確 `Disallow: /transport/*`
     （即 `skyscanner_url()` 產生的路徑）。那些連結只能給人點。
 
+    `exclude_budget`（2026-09-27 新增）：排除已知廉價航空
+    （`BUDGET_AIRLINES`）。實際過濾邏輯在 scraper（`flight_scraper.js`）
+    端做——它本來就會抓到頁面上全部選項，只是原本直接挑最便宜的；這裡
+    只需要把廉航名單一併傳過去，不必改變回傳資料的形狀。某個查詢組合
+    如果篩掉廉航後沒有其他選項，scraper 會退回廉航價格並標記
+    `budget_only`（見 `_browser_summary()`）而不是回傳查無票價——有資訊
+    比沒資訊好。
+
     回傳 {"results": [...], "blocked": bool, "stats": {...}}，
     每筆 result 形狀與 `search_itinerary()` 一致（price／airlines），
     方便與 API 路徑互換。
@@ -1119,7 +1141,7 @@ def scrape_itineraries(itineraries, data_dir=None, currency=DEFAULT_CURRENCY, gl
 
     pending, cached_rows = [], []
     for idx, itin in enumerate(itineraries):
-        key = _cache_key(itin["legs"], 1, 1, currency, gl, hl)
+        key = _cache_key(itin["legs"], 1, 1, currency, gl, hl, exclude_budget)
         hit = _read_cache(data_dir, key) if use_cache else None
         if hit is not None:
             row = dict(itin)
@@ -1158,6 +1180,10 @@ def scrape_itineraries(itineraries, data_dir=None, currency=DEFAULT_CURRENCY, gl
             "session_limit": session_limit,
             "timeout_ms": timeout_ms,
         }
+        if exclude_budget:
+            # 名單只在真的要排除時才送——不排除的既有呼叫路徑完全不受
+            # 影響，scraper 端沒收到這個 key 時視同空清單、不過濾。
+            payload["exclude_airlines"] = sorted(BUDGET_AIRLINES)
         node = node_binary()
         if node is None:
             return {"results": [], "blocked": False, "soft_blocked": False,
@@ -1280,6 +1306,20 @@ AIRLINE_NO_ALLIANCE = {
     "星宇航空", "捷星航空", "捷星日本航空", "捷星亞洲航空", "樂桃航空",
     "酷航", "虎航", "越捷航空", "亞洲航空", "香草航空", "阿聯酋航空",
 }
+
+# 真正的廉價航空（PO 2026-09-27：多數查到的是廉航，要求可排除）。
+# **刻意不是 `AIRLINE_NO_ALLIANCE` 本身**——那份清單的語意是「不屬於
+# 三大聯盟」，混了兩種不同的東西：星宇航空是全服務精品航空（只是尚未
+# 加入任何聯盟）、阿聯酋航空是公認的五星全服務航空（獨立經營，不代表
+# 廉價），兩者都不該被「排除廉航」濾掉。這裡從 `AIRLINE_NO_ALLIANCE`
+# 減去這兩家，得到真正只收廉價航空的名單。
+BUDGET_AIRLINES = AIRLINE_NO_ALLIANCE - {"星宇航空", "阿聯酋航空"}
+
+
+def _is_budget_airline(name):
+    """用包含比對判斷是否為已知廉價航空，比對方式與 `_airline_alliance()`
+    一致。未收錄的航空公司一律視為非廉航（寧可判斷不到，不要誤判）。"""
+    return any(key in name for key in BUDGET_AIRLINES)
 
 
 def _airline_alliance(name):

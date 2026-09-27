@@ -71,7 +71,7 @@ function findChromium() {
 const BLOCK_RE = /unusual traffic|異常流量|我不是機器人|驗證您是人類|系統偵測到.*異常/i;
 const BLOCK_URL_RE = /\/sorry\/|\/recaptcha\/api2\/|captcha_redirect/i;
 
-async function scrapeOne(page, url, timeoutMs) {
+async function scrapeOne(page, url, timeoutMs, excludeAirlines) {
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
   // 多城市頁面：等「整趟行程」出現＝四段總價已渲染。
   // 單程／來回頁面**沒有**這個字樣（那是多城市專有的），改等任何票價
@@ -112,12 +112,26 @@ async function scrapeOne(page, url, timeoutMs) {
   const economy = options.filter((o) => !o.business);
   const pool = economy.length ? economy : options;
   if (!pool.length) return { status: 'empty' };
-  const best = pool.reduce((a, b) => (b.price < a.price ? b : a));
+
+  // 排除廉航（2026-09-27 新增）：名單由 Python 端傳入（`BUDGET_AIRLINES`，
+  // 唯一真相來源在那邊，這裡不重複維護一份航空公司知識）。用子字串
+  // 比對，跟 Python 端 `_is_budget_airline()` 同一種比對方式。篩掉後
+  // 若整組都是廉航（沒有其他選項），退回原始 pool 選最便宜的，並標記
+  // `budget_only`——有資訊比沒資訊好，不要因為篩選條件太嚴就回報查無
+  // 票價。
+  const filtered = (excludeAirlines && excludeAirlines.length)
+    ? pool.filter((o) => !excludeAirlines.some((name) => o.airline.includes(name)))
+    : pool;
+  const finalPool = filtered.length ? filtered : pool;
+  const budgetOnly = Boolean(excludeAirlines && excludeAirlines.length && !filtered.length);
+
+  const best = finalPool.reduce((a, b) => (b.price < a.price ? b : a));
   return {
     status: 'ok',
     price: best.price,
     airline: best.airline,
     option_count: pool.length,
+    budget_only: budgetOnly,
   };
 }
 
@@ -131,6 +145,7 @@ async function scrapeOne(page, url, timeoutMs) {
   const maxRetries = cfg.max_retries != null ? cfg.max_retries : 1;
   const sessionLimit = cfg.session_limit != null ? cfg.session_limit : 50;
   const timeoutMs = cfg.timeout_ms != null ? cfg.timeout_ms : 25000;
+  const excludeAirlines = cfg.exclude_airlines || [];
 
   const exe = findChromium();
   if (!exe) {
@@ -177,7 +192,7 @@ async function scrapeOne(page, url, timeoutMs) {
     for (let attempt = 0; attempt <= retriesNow; attempt++) {
       const t0 = Date.now();
       try {
-        out = await scrapeOne(page, item.url, timeoutMs);
+        out = await scrapeOne(page, item.url, timeoutMs, excludeAirlines);
       } catch (e) {
         out = { status: /Timeout/i.test(e.message) ? 'timeout' : 'error',
                 error: e.message.split('\n')[0] };

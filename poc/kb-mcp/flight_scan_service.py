@@ -250,8 +250,12 @@ def expand_roundtrip_track(track):
 
 
 def _is_cached(itinerary, data_dir, currency=fs.DEFAULT_CURRENCY,
-               gl="tw", hl="zh-TW"):
-    key = fs._cache_key(itinerary["legs"], 1, 1, currency, gl, hl)
+               gl="tw", hl="zh-TW", exclude_budget=False):
+    """`exclude_budget` 必須跟查價當下傳的值一致——排除廉航會改變查到
+    的價格，快取鍵也因此不同（見 `fs._cache_key()` 的說明），用錯值會
+    誤判快取命中，把不同篩選條件下的價格混在一起。"""
+    key = fs._cache_key(itinerary["legs"], 1, 1, currency, gl, hl,
+                        exclude_budget)
     return fs._read_cache(data_dir, key) is not None
 
 
@@ -262,7 +266,8 @@ def pending_combinations(track, data_dir):
     接續，都靠這個推導自然成立。
     """
     itineraries, _skipped = expand_track(track)
-    return [i for i in itineraries if not _is_cached(i, data_dir)]
+    xb = track.get("exclude_budget", False)
+    return [i for i in itineraries if not _is_cached(i, data_dir, exclude_budget=xb)]
 
 
 def scan_plan(track, data_dir, hourly_limit=fs.HOURLY_BROWSER_LIMIT):
@@ -272,7 +277,8 @@ def scan_plan(track, data_dir, hourly_limit=fs.HOURLY_BROWSER_LIMIT):
     本時段能查幾組、配額不足時還要等多久。
     """
     itineraries, skipped = expand_track(track)
-    pending = [i for i in itineraries if not _is_cached(i, data_dir)]
+    xb = track.get("exclude_budget", False)
+    pending = [i for i in itineraries if not _is_cached(i, data_dir, exclude_budget=xb)]
     left = (fs.remaining_browser_quota(data_dir, hourly_limit)
             if hourly_limit else len(pending))
     return {
@@ -317,6 +323,7 @@ def _row_from_itinerary(itin, summary):
         # 跟本檔案其他多值欄位的顯示慣例一致），顯示時交給
         # fs.describe_airlines() 判斷是否同一聯盟
         "airline": "／".join(dict.fromkeys((summary or {}).get("airlines") or [])) or None,
+        "budget_only": bool((summary or {}).get("budget_only")),
     }
 
 
@@ -332,6 +339,7 @@ def sync_cached_results(track_id, track, data_dir, store):
     單元測試抓不到，因為測試都從空快取開始。
     """
     itineraries, _skipped = expand_track(track)
+    xb = track.get("exclude_budget", False)
     existing = set()
     for r in store.list_results(track_id):
         existing.add((r["outstation"], r["leg1_date"], r["outbound_date"],
@@ -343,7 +351,7 @@ def sync_cached_results(track_id, track, data_dir, store):
                legs[2]["date"], legs[3]["date"])
         if key in existing:
             continue
-        ck = fs._cache_key(legs, 1, 1, fs.DEFAULT_CURRENCY, "tw", "zh-TW")
+        ck = fs._cache_key(legs, 1, 1, fs.DEFAULT_CURRENCY, "tw", "zh-TW", xb)
         cached = fs._read_cache(data_dir, ck)
         if cached is None:
             continue
@@ -414,7 +422,8 @@ def run_scan(track_id, data_dir, hourly_limit=fs.HOURLY_BROWSER_LIMIT,
         outcome = fs.scrape_itineraries(
             pending, data_dir=data_dir, min_delay_ms=min_delay_ms,
             max_delay_ms=max_delay_ms, session_limit=session_limit,
-            progress=progress, hourly_limit=hourly_limit)
+            progress=progress, hourly_limit=hourly_limit,
+            exclude_budget=track.get("exclude_budget", False))
         if outcome.get("error"):
             return {"error": outcome["error"], "queried": 0, "written": 0}
 
@@ -436,6 +445,7 @@ def run_scan(track_id, data_dir, hourly_limit=fs.HOURLY_BROWSER_LIMIT,
                 lead_days=row.get("lead", row.get("out_stay", 0)),
                 trail_days=row.get("trail", row.get("ret_stay", 0)),
                 status=status, price=price_val,
+                budget_only=bool(row.get("budget_only")),
                 # 同上（_row_from_itinerary 的註解）：保留全部航空公司，
                 # 不只取第一家
                 airline="／".join(dict.fromkeys(row.get("airlines") or [])) or None,
@@ -475,13 +485,15 @@ def run_scan(track_id, data_dir, hourly_limit=fs.HOURLY_BROWSER_LIMIT,
 def pending_roundtrip_combinations(track, data_dir):
     """尚未查過的組合（比照 `pending_combinations()`）。"""
     itineraries, _skipped = expand_roundtrip_track(track)
-    return [i for i in itineraries if not _is_cached(i, data_dir)]
+    xb = track.get("exclude_budget", False)
+    return [i for i in itineraries if not _is_cached(i, data_dir, exclude_budget=xb)]
 
 
 def roundtrip_scan_plan(track, data_dir, hourly_limit=fs.HOURLY_BROWSER_LIMIT):
     """回報「這次觸發會做什麼」（比照 `scan_plan()`）。"""
     itineraries, skipped = expand_roundtrip_track(track)
-    pending = [i for i in itineraries if not _is_cached(i, data_dir)]
+    xb = track.get("exclude_budget", False)
+    pending = [i for i in itineraries if not _is_cached(i, data_dir, exclude_budget=xb)]
     left = (fs.remaining_browser_quota(data_dir, hourly_limit)
             if hourly_limit else len(pending))
     return {
@@ -509,6 +521,7 @@ def _row_from_roundtrip_itinerary(itin, summary):
         "price": int(price) if price else None,
         "airline": "／".join(dict.fromkeys(
             (summary or {}).get("airlines") or [])) or None,
+        "budget_only": bool((summary or {}).get("budget_only")),
     }
 
 
@@ -516,6 +529,7 @@ def sync_cached_roundtrip_results(track_id, track, data_dir, store):
     """把已在查價快取、但結果表還沒有的組合補寫進去（比照
     `sync_cached_results()`，理由與 007 事故背景相同）。"""
     itineraries, _skipped = expand_roundtrip_track(track)
+    xb = track.get("exclude_budget", False)
     existing = set()
     for r in store.list_roundtrip_results(track_id):
         existing.add((r["destination"], r["outbound_date"], r["return_date"]))
@@ -524,7 +538,8 @@ def sync_cached_roundtrip_results(track_id, track, data_dir, store):
         key = (itin["destination"], itin["outbound_date"], itin["return_date"])
         if key in existing:
             continue
-        ck = fs._cache_key(itin["legs"], 1, 1, fs.DEFAULT_CURRENCY, "tw", "zh-TW")
+        ck = fs._cache_key(itin["legs"], 1, 1, fs.DEFAULT_CURRENCY, "tw",
+                           "zh-TW", xb)
         cached = fs._read_cache(data_dir, ck)
         if cached is None:
             continue
@@ -560,7 +575,8 @@ def run_roundtrip_scan(track_id, data_dir, hourly_limit=fs.HOURLY_BROWSER_LIMIT,
         outcome = fs.scrape_itineraries(
             pending, data_dir=data_dir, min_delay_ms=min_delay_ms,
             max_delay_ms=max_delay_ms, session_limit=session_limit,
-            progress=progress, hourly_limit=hourly_limit)
+            progress=progress, hourly_limit=hourly_limit,
+            exclude_budget=track.get("exclude_budget", False))
         if outcome.get("error"):
             return {"error": outcome["error"], "queried": 0, "written": 0}
 
@@ -579,6 +595,7 @@ def run_roundtrip_scan(track_id, data_dir, hourly_limit=fs.HOURLY_BROWSER_LIMIT,
                 outbound_date=row["outbound_date"],
                 return_date=row["return_date"],
                 status=status, price=price_val,
+                budget_only=bool(row.get("budget_only")),
                 airline="／".join(dict.fromkeys(row.get("airlines") or [])) or None,
             )
             written += 1

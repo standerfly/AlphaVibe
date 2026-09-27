@@ -60,6 +60,7 @@ export default function FlightTrackForm({ onCreated, onCancel }) {
   const [targetPrice, setTargetPrice] = useState('')
   const [samples, setSamples] = useState(2)
   const [frequency, setFrequency] = useState(7)
+  const [excludeBudget, setExcludeBudget] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
@@ -85,6 +86,7 @@ export default function FlightTrackForm({ onCreated, onCancel }) {
         target_price: targetPrice === '' ? null : Number(targetPrice),
         samples_per_month: Number(samples),
         scan_frequency_days: Number(frequency),
+        exclude_budget: excludeBudget,
       })
       onCreated && onCreated(created.id)
     } catch (err) {
@@ -169,6 +171,19 @@ export default function FlightTrackForm({ onCreated, onCancel }) {
           四段票價跌破這個數字時會用 Telegram 通知。不填就只記錄不通知。
           判定只看四段票價，不含接駁估價——接駁是估算值且會變動，
           納入會讓通知時定時不定。
+        </small>
+      </div>
+
+      <div className="flight-form__row flight-form__row--inline">
+        <label htmlFor="xb">
+          <input id="xb" type="checkbox" checked={excludeBudget}
+                 onChange={(e) => setExcludeBudget(e.target.checked)} />
+          {' '}排除廉價航空
+        </label>
+        <small className="flight-muted">
+          用已知廉航名單過濾（星宇航空、阿聯酋航空等全服務航空不算廉航，
+          不會被排除）；某個日期只查得到廉航時，仍會顯示廉航價格並標示
+          「無全服務航空選項」，不會顯示查無票價。
         </small>
       </div>
 
