@@ -91,18 +91,45 @@ async function scrapeOne(page, url, timeoutMs, excludeAirlines) {
 
   // 解析錨點依頁面型態切換：多城市用「整趟行程」鎖定四段總價，
   // 單程頁面沒有該字樣，改取每個結果列的票價。
+  //
+  // 2026-09-27 排查「排除廉航」濾不掉的問題時，用真實查詢資料（見
+  // docs/research，同日筆記）發現兩個獨立問題：
+  // (1) 單程／來回頁面的每個結果在 DOM 裡其實出現**兩次**——一次是
+  //     正常有換行結構的卡片，另一次是完全沒有 `\n`、所有文字擠成一行
+  //     的重複節點（疑似無障礙輔助用的重複標籤）。後者 innerText 裡仍
+  //     含價格數字，會被舊版的價格 filter 誤收進 options，讓
+  //     `option_count` 灌水兩倍。用 `t.includes('\n')` 排除——真正的
+  //     結果卡片一定有多行，這個重複節點沒有任何換行。
+  // (2) 舊版靠「這一行含『航空』兩字」抓航空公司名稱，但酷航、
+  //     台灣虎航、泰國獅航這些真實存在且常出現在報價裡的航空公司，
+  //     中文名稱本身就不含「航空」——這個假設本身是錯的，不是抓取
+  //     失敗的邊角案例。改用結構定位：航空公司名稱那一行**固定緊接在
+  //     航程時長那一行之前**（時長格式如「3 小時 45 分鐘」／
+  //     「45 分鐘」），不論名稱裡有沒有「航空」二字都適用，直達與轉機
+  //     航班（時長行前還會插入停留資訊）都驗證過一致。保留舊版子字串
+  //     比對當備援，以防版面再變動時這個定位方式失效。
   const isMultiCity = body.includes('整趟行程');
   const options = await page.$$eval('li', (els, multi) => els
     .map((e) => e.innerText)
-    .filter((t) => (multi ? t.includes('整趟行程')
+    .filter((t) => t.includes('\n') &&
+                   (multi ? t.includes('整趟行程')
                           : /\$[0-9][0-9,]{3,}/.test(t)))
     .map((t) => {
       const m = t.match(/\$([0-9,]+)/);
       if (!m) return null;
-      const air = t.match(/\n([^\n]*航空[^\n]*)\n/);
+      // Playwright $$eval 只能傳一個 arg，正則常數改為直接寫在
+      // browser-context 函式內（不透過外部參數傳入）。
+      const durationLineRe = /^(?:\d+\s*小時\s*)?\d+\s*分鐘$/;
+      const lines = t.split('\n');
+      const durIdx = lines.findIndex((l) => durationLineRe.test(l));
+      let airline = durIdx > 0 ? lines[durIdx - 1].trim() : '';
+      if (!airline) {
+        const air = t.match(/\n([^\n]*航空[^\n]*)\n/);
+        airline = air ? air[1].trim() : '';
+      }
       return {
         price: parseInt(m[1].replace(/,/g, ''), 10),
-        airline: air ? air[1].trim() : '',
+        airline,
         business: /商務艙/.test(t),
       };
     })

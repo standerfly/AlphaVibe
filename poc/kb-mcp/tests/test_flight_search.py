@@ -1572,9 +1572,15 @@ class BudgetAirlineTest(unittest.TestCase):
 
     def test_known_budget_airline_is_budget(self):
         for name in ("捷星航空", "捷星日本航空", "樂桃航空", "酷航",
-                    "虎航", "越捷航空", "亞洲航空", "香草航空"):
+                    "虎航", "越捷航空", "亞洲航空", "香草航空", "泰國獅航"):
             self.assertTrue(flight_search._is_budget_airline(name),
                             "%s 應判定為廉航" % name)
+
+    def test_taiwan_tigerair_matched_by_substring(self):
+        """scraper 修正後能抓到「台灣虎航」這種完整名稱（不是只有
+        「虎航」二字），確認子字串比對能涵蓋這個真實名稱（2026-09-27，
+        排查排除廉航濾不掉的問題時發現的真實案例）。"""
+        self.assertTrue(flight_search._is_budget_airline("台灣虎航"))
 
     def test_starlux_is_not_budget(self):
         """星宇航空是全服務精品航空，只是不屬於三大聯盟——不能因為在
