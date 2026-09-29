@@ -1683,6 +1683,230 @@ def main() -> int:
             shutil.rmtree(match_src_dir, ignore_errors=True)
             shutil.rmtree(match_new_dir, ignore_errors=True)
 
+        # ---- 依子資料夾自動建立相簿（2026-09-27 新增）：模擬使用者在
+        # 別的電腦上已經依事件分好資料匣，搬進 STND 索引時直接沿用這個
+        # 分類，不用進 STND 後重新手動分類一次。
+        _TINY_JPEG_E = base64.b64decode(
+            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA4KCw0LCQ4NDA0QDw4RFiQXFhQU"
+            "FiwgIRokNC43NjMuMjI6QVNGOj1OPjIySGJJTlZYXV5dOEVmbWVabFNbXVn/"
+            "2wBDAQ8QEBYTFioXFypZOzI7WVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZ"
+            "WVlZWVlZWVlZWVlZWVlZWVlZWVlZWVn/wAARCAAIAAgDASIAAhEBAxEB/8QA"
+            "HwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUF"
+            "BAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkK"
+            "FhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1"
+            "dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXG"
+            "x8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEB"
+            "AQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAEC"
+            "AxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRom"
+            "JygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOE"
+            "hYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU"
+            "1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDMoooriPqD"
+            "/9k="
+        )
+        _TINY_JPEG_F = base64.b64decode(
+            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA4KCwwLCQ4MCwwQDw4RFSMXFRMT"
+            "FSsfIRojMy02NTItMTA4P1FFODxNPTAxRmBHTVRWW1xbN0RjamNYalFZW1f/"
+            "2wBDAQ8QEBUSFSkXFylXOjE6V1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dX"
+            "V1dXV1dXV1dXV1dXV1dXV1dXV1dXV1f/wAARCAAIAAgDASIAAhEBAxEB/8QA"
+            "HwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUF"
+            "BAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkK"
+            "FhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1"
+            "dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXG"
+            "x8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEB"
+            "AQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAEC"
+            "AxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRom"
+            "JygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOE"
+            "hYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU"
+            "1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwCaiiivEPnT"
+            "/9k="
+        )
+        _TINY_JPEG_G = base64.b64decode(
+            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA4JCgwKCQ4MCwwPDw4QFSIWFRMT"
+            "FSoeIBkiMiw0NDEsMC83Pk9DNzpLOy8wRV5GS1JUWVlZNUJhaGBWZ09XWVX/"
+            "2wBDAQ8PDxUSFSgWFihVOTA5VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV"
+            "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/wAARCAAIAAgDASIAAhEBAxEB/8QA"
+            "HwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUF"
+            "BAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkK"
+            "FhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1"
+            "dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXG"
+            "x8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEB"
+            "AQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAEC"
+            "AxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRom"
+            "JygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOE"
+            "hYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU"
+            "1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDnKKKK+oMT"
+            "/9k="
+        )
+        album_src_dir = tempfile.mkdtemp(prefix="alphavibe-smoke-photos-autoalbum-")
+        try:
+            os.makedirs(os.path.join(album_src_dir, "2026-09-台北旅遊"))
+            os.makedirs(os.path.join(album_src_dir, "2026-09-家庭聚會"))
+            with open(os.path.join(album_src_dir, "2026-09-台北旅遊", "e1.jpg"), "wb") as fh:
+                fh.write(_TINY_JPEG_E)
+            with open(os.path.join(album_src_dir, "2026-09-台北旅遊", "e2.jpg"), "wb") as fh:
+                fh.write(_TINY_JPEG_F)
+            with open(os.path.join(album_src_dir, "2026-09-家庭聚會", "f1.jpg"), "wb") as fh:
+                fh.write(_TINY_JPEG_G)
+            # 一張直接放在來源資料夾最外層、沒有子資料夾歸屬的散落檔案。
+            _TINY_JPEG_LOOSE = base64.b64decode(
+                "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA0JCgwKCA0MCwwPDg0QFCIW"
+                "FBISFCkdHxgiMSszMjArLy42PE1CNjlJOi4vQ1xESVBSV1dXNEFfZl5U"
+                "ZU1VV1P/2wBDAQ4PDxQSFCcWFidTNy83U1NTU1NTU1NTU1NTU1NTU1NT"
+                "U1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1P/wAARCAAIAAgD"
+                "ASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL"
+                "/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKB"
+                "kaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdI"
+                "SUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZ"
+                "mqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl"
+                "5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQF"
+                "BgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdh"
+                "cRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5"
+                "OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImK"
+                "kpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX"
+                "2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDoqKKK+UNz"
+                "/9k="
+            )
+            with open(os.path.join(album_src_dir, "loose.jpg"), "wb") as fh:
+                fh.write(_TINY_JPEG_LOOSE)
+
+            aa_scan_status, aa_scan_raw = _post(
+                "/api/photos/import/scan",
+                json.dumps({
+                    "source_path": album_src_dir, "storage_location": "reference",
+                    "recursive": True, "auto_album": True,
+                }).encode("utf-8"),
+                headers={"Content-Type": "application/json"})
+            aa_scan_body = json.loads(aa_scan_raw.decode("utf-8")) if aa_scan_raw else {}
+            preview = aa_scan_body.get("folder_albums_preview") or {}
+            preview_by_title = {a["title"]: a["count"] for a in preview.get("albums", [])}
+            if (aa_scan_status == 200 and aa_scan_body.get("new_count") == 4
+                    and preview_by_title == {"2026-09-台北旅遊": 2, "2026-09-家庭聚會": 1}
+                    and preview.get("unassigned_count") == 1):
+                print("PASS 自動建相簿掃描預覽正確列出資料匣分組與未歸屬數量")
+            else:
+                print("FAIL 自動建相簿掃描預覽不符：%s %r" % (aa_scan_status, aa_scan_body))
+                failures.append("photos auto-album scan preview mismatch")
+
+            aa_commit_status, aa_commit_raw = _post(
+                "/api/photos/import/commit",
+                json.dumps({"scan_token": aa_scan_body.get("scan_token")}).encode("utf-8"),
+                headers={"Content-Type": "application/json"})
+            aa_commit_body = json.loads(aa_commit_raw.decode("utf-8")) if aa_commit_raw else {}
+            aa_job_id = aa_commit_body.get("job_id") if aa_commit_status == 200 else None
+
+            aa_job_body = {}
+            if aa_job_id:
+                deadline = time.time() + 10
+                while time.time() < deadline:
+                    _, aa_job_body = _get("/api/photos/import/jobs/%s" % aa_job_id)
+                    if aa_job_body.get("status") in ("completed", "failed"):
+                        break
+                    time.sleep(0.2)
+
+            auto_albums = aa_job_body.get("auto_albums", [])
+            auto_albums_by_title = {a["title"]: a["count"] for a in auto_albums}
+            unassigned_ids = aa_job_body.get("unassigned_photo_ids", [])
+            if (aa_job_body.get("status") == "completed"
+                    and auto_albums_by_title == {"2026-09-台北旅遊": 2, "2026-09-家庭聚會": 1}
+                    and len(unassigned_ids) == 1):
+                print("PASS 背景匯入完成，自動建立/加入 2 個相簿、1 張未歸屬")
+            else:
+                print("FAIL 自動建相簿匯入任務結果不符：%r" % aa_job_body)
+                failures.append("photos auto-album import job mismatch")
+
+            taipei_album = next(
+                (a for a in auto_albums if a["title"] == "2026-09-台北旅遊"), None)
+            if taipei_album:
+                _, taipei_photos_body = _get(
+                    "/api/photos/albums/%d/photos" % taipei_album["album_id"])
+                taipei_filenames = {
+                    os.path.basename(p["storage_path"])
+                    for p in taipei_photos_body.get("photos", [])}
+                if taipei_filenames == {"e1.jpg", "e2.jpg"}:
+                    print("PASS 「2026-09-台北旅遊」相簿內容正確（e1.jpg、e2.jpg）")
+                else:
+                    print("FAIL 「2026-09-台北旅遊」相簿內容不符：%r" % taipei_filenames)
+                    failures.append("photos auto-album taipei content mismatch")
+
+                # 同一個資料匣名稱再匯入一次，應該加進同一個既有相簿，
+                # 不會建立第二個同名相簿（見 PhotoStore.get_or_create_album()）。
+                second_dir = tempfile.mkdtemp(prefix="alphavibe-smoke-photos-autoalbum2-")
+                try:
+                    os.makedirs(os.path.join(second_dir, "2026-09-台北旅遊"))
+                    # 內容要跟本測試區塊內其他 fixture 都不同，避免被判成
+                    # 跨批次重複。
+                    with open(os.path.join(second_dir, "2026-09-台北旅遊", "e3.jpg"), "wb") as fh:
+                        fh.write(base64.b64decode(
+                            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAoHBwgHBgoICAgLCgoLDhgQ"
+                            "Dg0NDh0VFhEYIx8lJCIfIiEmKzcvJik0KSEiMEExNDk7Pj4+JS5ESUM8"
+                            "SDc9Pjv/2wBDAQoLCw4NDhwQEBw7KCIoOzs7Ozs7Ozs7Ozs7Ozs7Ozs7"
+                            "Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozv/wAARCAAIAAgD"
+                            "ASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL"
+                            "/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKB"
+                            "kaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdI"
+                            "SUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZ"
+                            "mqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl"
+                            "5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQF"
+                            "BgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdh"
+                            "cRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5"
+                            "OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImK"
+                            "kpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX"
+                            "2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDkKKKK+qOw"
+                            "/9k="
+                        ))
+
+                    second_scan_status, second_scan_raw = _post(
+                        "/api/photos/import/scan",
+                        json.dumps({
+                            "source_path": second_dir, "storage_location": "reference",
+                            "recursive": True, "auto_album": True,
+                        }).encode("utf-8"),
+                        headers={"Content-Type": "application/json"})
+                    second_scan_body = (
+                        json.loads(second_scan_raw.decode("utf-8")) if second_scan_raw else {})
+                    second_commit_status, second_commit_raw = _post(
+                        "/api/photos/import/commit",
+                        json.dumps({
+                            "scan_token": second_scan_body.get("scan_token")}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"})
+                    second_commit_body = (
+                        json.loads(second_commit_raw.decode("utf-8"))
+                        if second_commit_raw else {})
+                    second_job_id = (
+                        second_commit_body.get("job_id")
+                        if second_commit_status == 200 else None)
+                    second_job_body = {}
+                    if second_job_id:
+                        deadline = time.time() + 10
+                        while time.time() < deadline:
+                            _, second_job_body = _get(
+                                "/api/photos/import/jobs/%s" % second_job_id)
+                            if second_job_body.get("status") in ("completed", "failed"):
+                                break
+                            time.sleep(0.2)
+
+                    second_auto_albums = second_job_body.get("auto_albums", [])
+                    reused_album_id = next(
+                        (a["album_id"] for a in second_auto_albums
+                         if a["title"] == "2026-09-台北旅遊"), None)
+                    _, all_albums_body = _get("/api/photos/albums")
+                    matching_albums = [
+                        a for a in all_albums_body.get("albums", [])
+                        if a["title"] == "2026-09-台北旅遊"]
+                    if (reused_album_id == taipei_album["album_id"]
+                            and len(matching_albums) == 1
+                            and matching_albums[0]["photo_count"] == 3):
+                        print("PASS 同名資料匣分批匯入正確加進同一個既有相簿"
+                              "（沒有建立重複相簿，累積成 3 張）")
+                    else:
+                        print("FAIL 同名資料匣分批匯入未正確重用既有相簿：%r / %r"
+                              % (reused_album_id, matching_albums))
+                        failures.append("photos auto-album reuse mismatch")
+                finally:
+                    shutil.rmtree(second_dir, ignore_errors=True)
+        finally:
+            shutil.rmtree(album_src_dir, ignore_errors=True)
+
         # ---- gateway_monitor：對著真實 telegram_gateway/state/ 資料的
         # 深度驗證（2026-08-31 新增，STND「管家」分頁）。跟上面幾組
         # router 不同，這裡刻意不比對「底層函式」（沒有底層函式，資料

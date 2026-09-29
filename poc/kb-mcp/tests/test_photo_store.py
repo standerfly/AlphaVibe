@@ -82,6 +82,18 @@ class AlbumCrudTest(unittest.TestCase):
     def test_update_missing_album_returns_none(self):
         self.assertIsNone(self.store.update_album(999999, title="x"))
 
+    def test_get_or_create_album_reuses_existing_title_case_insensitive(self):
+        first = self.store.get_or_create_album("2026-09-台北旅遊")
+        second = self.store.get_or_create_album("2026-09-台北旅遊")
+        third = self.store.get_or_create_album("  2026-09-台北旅遊  ")
+        self.assertEqual(first["id"], second["id"])
+        self.assertEqual(first["id"], third["id"])
+        self.assertEqual(len(self.store.list_albums()), 1)
+
+    def test_get_or_create_album_empty_title_rejected(self):
+        with self.assertRaises(ValueError):
+            self.store.get_or_create_album("   ")
+
     def test_delete_album_does_not_touch_photo_record(self):
         album = self.store.create_album("相簿A")
         photo = self.store.add_photo(

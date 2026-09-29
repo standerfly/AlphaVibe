@@ -10,7 +10,11 @@ import { UploadIcon } from '../icons.jsx'
    實測下很快就會完成（見 poc/kb-mcp/tests/test_photo_importer.py）。
    2026-09-25：新增「原地索引」模式（不複製）＋搬家偵測＋人工確認
    清單（見 photo_importer.py scan_folder() docstring 的完整設計說明，
-   /api/photos/import/resolve-match 對應的處理函式）。 */
+   /api/photos/import/resolve-match 對應的處理函式）。
+   2026-09-27：新增「依子資料夾自動建立相簿」（見 app/routers/photos.py
+   `_group_by_top_level_folder()` docstring）——沿用來源端已經分好的
+   資料匣結構，省去進 STND 後重新手動分類一次；沒有子資料夾歸屬的
+   照片仍走原本的手動「加入相簿」流程（`unassignedIds`）。 */
 export default function ImportWizard({ albums, onDone, onCancel }) {
   const [step, setStep] = useState(1)
   const [sourcePath, setSourcePath] = useState('')
@@ -26,6 +30,11 @@ export default function ImportWizard({ albums, onDone, onCancel }) {
   // heal_moved_paths() docstring。既有相片庫常見巢狀資料夾（依相機/
   // 年份分類），所以一起加了「包含子資料夾」選項，三種儲存模式共用。
   const [recursive, setRecursive] = useState(false)
+  // 2026-09-27：「依子資料夾自動建立相簿」——沿用使用者已經在來源端
+  // （例如 MacBook Air）分好的資料匣結構，省去進 STND 後重新手動分類
+  // 一次。只在 recursive 打勾時才有意義（沒有子資料夾資訊可以分組），
+  // 見 app/routers/photos.py `_group_by_top_level_folder()` docstring。
+  const [autoAlbum, setAutoAlbum] = useState(true)
   const [scanResult, setScanResult] = useState(null)
   const [job, setJob] = useState(null)
   const [error, setError] = useState(null)
@@ -45,7 +54,7 @@ export default function ImportWizard({ albums, onDone, onCancel }) {
     try {
       const body = {
         source_path: sourcePath.trim(), storage_location: storageLocation,
-        recursive,
+        recursive, auto_album: recursive && autoAlbum,
       }
       if (storageLocation === 'external') body.dest_path = destPath.trim()
       const result = await apiPost('/api/photos/import/scan', body)
@@ -129,7 +138,7 @@ export default function ImportWizard({ albums, onDone, onCancel }) {
         albumId = created.id
       }
       await apiPost('/api/photos/photos/batch', {
-        photo_ids: job.imported_photo_ids, add_album_id: albumId,
+        photo_ids: unassignedIds, add_album_id: albumId,
       })
       setAssignDone(true)
     } catch (err) {
@@ -138,6 +147,12 @@ export default function ImportWizard({ albums, onDone, onCancel }) {
       setBusy(false)
     }
   }
+
+  // job.unassigned_photo_ids 一律存在：auto_album 沒開時等於全部
+  // imported_photo_ids（維持舊行為，整批手動選相簿）；auto_album 開了
+  // 就只剩下沒有子資料夾歸屬的那些（見 app/routers/photos.py
+  // `_run_import_job()` docstring）。
+  const unassignedIds = job?.unassigned_photo_ids ?? []
 
   return (
     <div>
@@ -190,6 +205,13 @@ export default function ImportWizard({ albums, onDone, onCancel }) {
                 onChange={(e) => setRecursive(e.target.checked)} />
               包含子資料夾
             </label>
+            {recursive && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: '.4rem', marginTop: '.4rem' }}>
+                <input type="checkbox" checked={autoAlbum}
+                  onChange={(e) => setAutoAlbum(e.target.checked)} />
+                依子資料夾自動建立相簿（沿用來源端已經分好的資料匣分類）
+              </label>
+            )}
           </>
         )}
 
@@ -212,6 +234,27 @@ export default function ImportWizard({ albums, onDone, onCancel }) {
                 )}
               </tbody>
             </table>
+
+            {scanResult.folder_albums_preview && (
+              <div style={{ marginTop: '1rem', borderTop: '1px solid var(--rule)', paddingTop: '.9rem' }}>
+                <div className="meta" style={{ marginBottom: '.4rem' }}>將依資料匣自動建立/加入相簿：</div>
+                {scanResult.folder_albums_preview.albums.length > 0 ? (
+                  <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '.85rem' }}>
+                    {scanResult.folder_albums_preview.albums.map((a) => (
+                      <li key={a.title}>{a.title}（{a.count} 張）</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="meta" style={{ fontSize: '.8rem' }}>沒有偵測到任何子資料夾</div>
+                )}
+                {scanResult.folder_albums_preview.unassigned_count > 0 && (
+                  <div className="meta" style={{ fontSize: '.8rem', marginTop: '.3rem' }}>
+                    另有 {scanResult.folder_albums_preview.unassigned_count} 張沒有子資料夾歸屬，
+                    匯入後可手動指定相簿
+                  </div>
+                )}
+              </div>
+            )}
 
             {scanResult.possible_matches?.length > 0 && (
               <div style={{ marginTop: '1rem', borderTop: '1px solid var(--rule)', paddingTop: '.9rem' }}>
@@ -264,7 +307,14 @@ export default function ImportWizard({ albums, onDone, onCancel }) {
             )}
             {job?.status === 'failed' && <div className="offline-note">{job.error}</div>}
 
-            {job?.status === 'completed' && job.imported_count > 0 && !assignDone && (
+            {job?.status === 'completed' && job.auto_albums?.length > 0 && (
+              <div className="meta" style={{ marginTop: '.5rem' }}>
+                已自動建立/加入相簿：
+                {job.auto_albums.map((a) => `${a.title}（${a.count}張）`).join('、')}
+              </div>
+            )}
+
+            {job?.status === 'completed' && unassignedIds.length > 0 && !assignDone && (
               <div style={{ marginTop: '1rem', borderTop: '1px solid var(--rule)', paddingTop: '.9rem' }}>
                 <div className="meta" style={{ marginBottom: '.5rem' }}>加入哪個相簿？</div>
                 <div style={{ display: 'flex', gap: '.6rem', flexWrap: 'wrap', alignItems: 'center' }}>

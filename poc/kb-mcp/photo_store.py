@@ -191,6 +191,24 @@ class PhotoStore:
         self.conn.commit()
         return existing
 
+    def get_or_create_album(self, title):
+        """相簿正規化，比照 `get_or_create_tag()` 同一原則（去除前後
+        空白、大小寫不敏感比對既有相簿）——2026-09-27 新增，供「依子
+        資料夾自動建立相簿」匯入功能使用（見 `app/routers/photos.py`
+        `_group_by_top_level_folder()`）：同一個資料夾名稱如果分批
+        搬過來匯入多次，應該持續加進同一個相簿，不能每次都建一個新的
+        同名相簿造成分裂。已存在則回傳既有的 `albums` 那一列，不會
+        建立新的一筆。"""
+        normalized = (title or "").strip()
+        if not normalized:
+            raise ValueError("title 不得為空")
+        row = self.conn.execute(
+            "SELECT * FROM albums WHERE title = ? COLLATE NOCASE",
+            (normalized,)).fetchone()
+        if row:
+            return dict(row)
+        return self.create_album(normalized)
+
     def add_photo_to_album(self, photo_id, album_id):
         self.conn.execute(
             "INSERT OR IGNORE INTO photo_albums (photo_id, album_id)"

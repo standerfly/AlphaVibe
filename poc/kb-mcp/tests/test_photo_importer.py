@@ -215,6 +215,24 @@ class CommitImportTest(unittest.TestCase):
         # docstring 的已知風險：只驗證「沒有 EXIF 時正確回傳 None」）
         self.assertIsNone(row["camera_model"])
         self.assertIsNone(row["lens"])
+        # 2026-09-27 新增：imported 帶回每筆成功匯入的 id 對應的原始
+        # filename，供「依子資料夾自動建立相簿」用來分組。
+        self.assertEqual(result["imported"], [
+            {"id": row["id"], "filename": "a.jpg"}])
+
+    def test_commit_imported_list_excludes_failed_files(self):
+        """failed 的檔案不該出現在 imported 清單裡——否則呼叫端會拿一個
+        不存在的 filename 去分組，錯誤地建立空相簿或分組失真。"""
+        _write_tiny_jpeg(os.path.join(self.source_dir, "good.jpg"))
+        with open(os.path.join(self.source_dir, "bad.jpg"), "wb") as f:
+            f.write(b"not a real jpeg")
+        scan = scan_folder(self.source_dir, self.store)
+        result = commit_import(
+            scan["new_files"], "internal", self.dest_dir, self.thumb_dir,
+            self.store)
+        self.assertEqual(len(result["failed"]), 1)
+        self.assertEqual(len(result["imported"]), 1)
+        self.assertEqual(result["imported"][0]["filename"], "good.jpg")
 
     def test_reimport_same_source_after_commit_is_detected_as_duplicate(self):
         """`research.md` §4 的端到端驗證：即使檔案已經被複製、產生縮圖

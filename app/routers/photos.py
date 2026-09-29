@@ -38,6 +38,13 @@ scan_folder()` docstring「已知限制」）。這裡用檔名比對列出候�
 更新資料庫，避免純檔名比對的誤判風險（例如相機預設檔名撞名）被自動
 套用。`resolve-match` 必須在對應 `scan_token` 被 `import/commit` 用掉
 （`_SCAN_CACHE.pop`）之前呼叫，否則對不到快取。
+
+**依子資料夾自動建立相簿**（2026-09-27 新增，`auto_album` 參數）：
+使用者常見流程是先在別的電腦上把照片依事件/日期分好資料匣，才把整批
+資料匣搬進 STND 索引——`recursive=True` 掃描時，每個第一層子資料夾
+直接對應成一個相簿（`_group_by_top_level_folder()`），省去在 STND 裡
+重新手動分類一次。只在 `auto_album=True` 時生效；沒有子資料夾可歸屬
+的照片（直接在來源資料夾底下）留給既有的手動「加入相簿」流程處理。
 """
 from __future__ import annotations
 
@@ -109,6 +116,27 @@ class ImportScanRequest(BaseModel):
     storage_location: str
     dest_path: Optional[str] = None  # storage_location="external" 時必填
     recursive: bool = False  # 連同子資料夾一起掃，見 photo_importer.py
+    auto_album: bool = False  # 依子資料夾自動建立相簿，2026-09-27 新增
+
+
+def _preview_folder_groups(
+        new_files: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """`import/scan` 回應用的預覽版本，跟 `_group_by_top_level_folder()`
+    同一套規則，但作用在還沒 commit 的 `new_files`（只有 `filename`，
+    沒有照片 `id`）——只算數量，供使用者在確認匯入前先看到「將會建立/
+    加入哪些相簿、各幾張」。"""
+    groups: Dict[str, int] = {}
+    unassigned = 0
+    for entry in new_files:
+        parts = entry["filename"].replace(os.sep, "/").split("/")
+        if len(parts) > 1 and parts[0]:
+            groups[parts[0]] = groups.get(parts[0], 0) + 1
+        else:
+            unassigned += 1
+    return {
+        "albums": [{"title": t, "count": c} for t, c in groups.items()],
+        "unassigned_count": unassigned,
+    }
 
 
 @router.post("/api/photos/import/scan")
@@ -153,7 +181,10 @@ def import_scan(
         "dest_dir": dest_dir,
         "thumbnail_dir": _thumbnail_dir(store.data_dir),
         "data_dir": store.data_dir,
+        "auto_album": body.auto_album,
     }
+    folder_preview = (
+        _preview_folder_groups(scan_result["new_files"]) if body.auto_album else None)
     return {
         "scan_token": scan_token,
         "total": scan_result["total"],
@@ -162,6 +193,7 @@ def import_scan(
         "possible_matches": scan_result["possible_matches"],
         "duplicate_count": scan_result["duplicate_count"],
         "unreadable": scan_result["unreadable"],
+        "folder_albums_preview": folder_preview,
     }
 
 
@@ -211,25 +243,66 @@ def import_resolve_match(
     }
 
 
+def _group_by_top_level_folder(
+        imported: List[Dict[str, Any]]) -> Dict[str, List[int]]:
+    """依 `commit_import()` 回傳的 `imported`（`[{"id","filename"}]`）
+    分組——遞迴掃描（`recursive=True`）時 `filename` 是相對路徑（例如
+    `"2026-09-台北旅遊/day1/IMG001.jpg"`），第一段路徑就是使用者已經在
+    來源端分好的資料匣名稱，直接拿來當相簿標題用（見「依子資料夾自動
+    建立相簿」，2026-09-27 新增）。檔案直接在來源資料夾底下（`filename`
+    不含路徑分隔符，沒有子資料夾）的照片歸進 `"_unassigned"` 這個保留
+    key，代表「沒有子資料夾可以推斷相簿」，不會被當成相簿名稱。"""
+    groups: Dict[str, List[int]] = {}
+    for entry in imported:
+        parts = entry["filename"].replace(os.sep, "/").split("/")
+        key = parts[0] if len(parts) > 1 and parts[0] else "_unassigned"
+        groups.setdefault(key, []).append(entry["id"])
+    return groups
+
+
 def _run_import_job(job_id: str, data_dir: str, new_files: List[Dict[str, Any]],
                      moved_files: List[Dict[str, Any]], storage_location: str,
-                     dest_dir: str, thumbnail_dir: str) -> None:
+                     dest_dir: str, thumbnail_dir: str, auto_album: bool) -> None:
     """背景任務本體。**不使用** request-scoped 的 `PhotoStore`——自行
     開一條獨立連線（見本檔案開頭 docstring）。`moved_files` 是
     `reference` 模式偵測到「檔案搬家了」的既有照片，跟 `new_files`
     一起處理：`heal_moved_paths()` 只更新路徑，不需要複製/縮圖/重新
-    同步（見該函式 docstring）。"""
+    同步（見該函式 docstring）。
+
+    `auto_album`（2026-09-27 新增）：開啟時，把 `commit_import()` 回傳
+    的 `imported` 依 `_group_by_top_level_folder()` 分組，每組用
+    `PhotoStore.get_or_create_album()` 對應成一個相簿並加入——同一個
+    資料匣名稱分批匯入多次會持續加進同一個相簿，不會分裂。沒有子
+    資料夾可歸屬的照片（`_unassigned` 分組）留給前端用既有的手動
+    「加入相簿」流程處理，不會被自動歸進任何相簿。"""
     store = PhotoStore(data_dir)
     try:
         result = commit_import(
             new_files, storage_location, dest_dir, thumbnail_dir, store)
         healed_count = heal_moved_paths(moved_files, store)
+
+        auto_albums: List[Dict[str, Any]] = []
+        unassigned_photo_ids: List[int] = list(result["imported_photo_ids"])
+        if auto_album and result["imported"]:
+            groups = _group_by_top_level_folder(result["imported"])
+            unassigned_photo_ids = groups.pop("_unassigned", [])
+            for title, photo_ids in groups.items():
+                album = store.get_or_create_album(title)
+                for photo_id in photo_ids:
+                    store.add_photo_to_album(photo_id, album["id"])
+                auto_albums.append({
+                    "album_id": album["id"], "title": album["title"],
+                    "count": len(photo_ids),
+                })
+
         _IMPORT_JOBS[job_id].update({
             "status": "completed",
             "imported_count": result["imported_count"],
             "imported_photo_ids": result["imported_photo_ids"],
             "healed_count": healed_count,
             "failed": result["failed"],
+            "auto_albums": auto_albums,
+            "unassigned_photo_ids": unassigned_photo_ids,
         })
     except Exception as exc:  # noqa: BLE001 — 背景任務失敗要記錄，不能讓例外無聲消失
         _IMPORT_JOBS[job_id].update({"status": "failed", "error": str(exc)})
@@ -284,11 +357,12 @@ def import_commit(
     _IMPORT_JOBS[job_id] = {
         "job_id": job_id, "status": "running",
         "imported_count": 0, "total": total, "healed_count": 0, "failed": [],
+        "auto_albums": [], "unassigned_photo_ids": [],
     }
     background_tasks.add_task(
         _run_import_job, job_id, cached["data_dir"], cached["new_files"],
         cached["moved_files"], cached["storage_location"], cached["dest_dir"],
-        cached["thumbnail_dir"])
+        cached["thumbnail_dir"], cached["auto_album"])
     return {"job_id": job_id, "status": "running"}
 
 

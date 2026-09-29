@@ -315,9 +315,12 @@ def commit_import(new_files, storage_location, dest_dir, thumbnail_dir,
     問題，本來就是各自獨立的原始檔案，不需要改名）。
 
     回傳：`{"imported_count": int, "imported_photo_ids": [int,...],
-      "failed": [{"filename", "reason"}]}`——`imported_photo_ids` 供
-    呼叫端（`app/routers/photos.py` 的匯入 job 狀態）知道這批剛匯入的
-    照片是哪幾筆，不用另外查詢。
+      "imported": [{"id", "filename"}], "failed": [{"filename", "reason"}]}`
+    ——`imported_photo_ids` 供呼叫端（`app/routers/photos.py` 的匯入
+    job 狀態）知道這批剛匯入的照片是哪幾筆，不用另外查詢；`imported`
+    額外帶上對應的 `filename`（2026-09-27 新增，供「依子資料夾自動
+    建立相簿」用來把每張照片對回它原本在哪個子資料夾，見
+    `app/routers/photos.py` `_group_by_top_level_folder()`）。
 
     Raises:
         RuntimeError: `storage_location == "external"` 但 `dest_dir`
@@ -335,6 +338,7 @@ def commit_import(new_files, storage_location, dest_dir, thumbnail_dir,
 
     imported_count = 0
     imported_photo_ids = []
+    imported = []
     failed = []
 
     for entry in new_files:
@@ -365,9 +369,11 @@ def commit_import(new_files, storage_location, dest_dir, thumbnail_dir,
             )
             imported_count += 1
             imported_photo_ids.append(photo["id"])
+            imported.append({"id": photo["id"], "filename": filename})
         except Exception as exc:  # noqa: BLE001 — 單張失敗不可中斷整批匯入
             failed.append({"filename": filename, "reason": str(exc)})
             continue
 
     return {"imported_count": imported_count,
-            "imported_photo_ids": imported_photo_ids, "failed": failed}
+            "imported_photo_ids": imported_photo_ids, "imported": imported,
+            "failed": failed}
