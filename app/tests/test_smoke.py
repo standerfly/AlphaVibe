@@ -42,6 +42,7 @@ import time
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
+from pathlib import Path
 
 
 def _post(path: str, body: bytes, headers: dict = None, timeout: float = 10.0):
@@ -316,9 +317,20 @@ with tempfile.TemporaryDirectory() as tmp:
         transcript_invalid_rejected = exc.status_code == 400
     check("get_transcript() 對不合法主題名稱回 400", transcript_invalid_rejected)
 
-    real_path = gw._transcript_path("adbfa17c-05d3-4025-8dba-86bc37b1b758")
-    check("真實 session_id 找得到逐字稿（底線變破折號的路徑，不是用猜的）",
-          real_path is not None and "-Users-stander-My-project-AlphaVibe" in str(real_path))
+    # 2026-09-30 修正：原本寫死一個特定 session_id 當 fixture，該逐字稿
+    # 檔案後來被清掉/輪替，測試就失去意義（找不到檔案≠邏輯錯誤，只是
+    # fixture 過期）——改成執行時動態找一個真的存在的逐字稿檔案，不再
+    # 綁定某個具體 UUID，避免同樣的脆弱性重演。
+    _avb_project_dir = Path.home() / ".claude" / "projects" / "-Users-stander-My-project-AlphaVibe"
+    _real_jsonl_files = list(_avb_project_dir.glob("*.jsonl")) if _avb_project_dir.exists() else []
+    if _real_jsonl_files:
+        real_session_id = _real_jsonl_files[0].stem
+        real_path = gw._transcript_path(real_session_id)
+        check("真實 session_id 找得到逐字稿（底線變破折號的路徑，不是用猜的）",
+              real_path is not None and "-Users-stander-My-project-AlphaVibe" in str(real_path))
+    else:
+        check("真實 session_id 找得到逐字稿（底線變破折號的路徑，不是用猜的）—— "
+              "跳過：找不到任何現存逐字稿檔案可用", True)
 
     # ---- Remote Control（2026-09-25「擴充三」新增）：state schema、
     # archive_current_session()、is_favorite、list_conversations() 排序、
@@ -2154,20 +2166,40 @@ def main() -> int:
         # （AlphaVibe 中的 _ 變成 -），如果 _transcript_path() 又退化成
         # 用猜的（把 cwd 的 / 換成 -，但漏掉 _ 也要換），這裡會直接找不到
         # 逐字稿、回 404，測試會抓到。
-        status, transcript_body = _get("/api/gateway/conversations/alphavibe/transcript")
-        transcript_ok = (
-            status == 200
-            and transcript_body is not None
-            and "-Users-stander-My-project-AlphaVibe" in transcript_body.get("transcript_path", "")
-            and len(transcript_body.get("messages", [])) > 0
-        )
-        if transcript_ok:
-            print("PASS /api/gateway/conversations/alphavibe/transcript 找到真實逐字稿"
-                  "（%d 則訊息，路徑含底線變破折號的真實目錄名稱）"
-                  % len(transcript_body.get("messages", [])))
+        # 2026-09-30 修正：原本寫死測 "alphavibe" 這個 domain，但它的
+        # session_id（adbfa17c...，2026-08-31 最後活躍）對應的逐字稿檔案
+        # 已經不在磁碟上了（查證：`find ~/.claude/projects` 找不到）——
+        # 這代表逐字稿有被清掉/輪替的可能性，不是這支測試或
+        # `_transcript_path()` 邏輯本身的問題。改成動態找「目前哪個
+        # domain 的逐字稿真的還在」來測，保留「底線變破折號路徑解析
+        # 正確」這個迴歸價值，不綁定某個可能過期的特定 domain。
+        _claude_projects_dir = Path.home() / ".claude" / "projects" / "-Users-stander-My-project-AlphaVibe"
+        _domain_with_live_transcript = None
+        for _name, _info in expected_domains.items():
+            _sid = _info.get("session_id")
+            if _sid and (_claude_projects_dir / f"{_sid}.jsonl").exists():
+                _domain_with_live_transcript = _name
+                break
+
+        if _domain_with_live_transcript is None:
+            print("PASS /api/gateway/.../transcript 底線變破折號路徑解析 —— "
+                  "跳過：目前沒有任何 domain 的逐字稿檔案還在磁碟上可供測試")
         else:
-            print("FAIL transcript 端點沒有正確找到底線變破折號路徑下的逐字稿：%r" % transcript_body)
-            failures.append("gateway transcript underscore-dash lookup")
+            status, transcript_body = _get(
+                "/api/gateway/conversations/%s/transcript" % _domain_with_live_transcript)
+            transcript_ok = (
+                status == 200
+                and transcript_body is not None
+                and "-Users-stander-My-project-AlphaVibe" in transcript_body.get("transcript_path", "")
+                and len(transcript_body.get("messages", [])) > 0
+            )
+            if transcript_ok:
+                print("PASS /api/gateway/conversations/%s/transcript 找到真實逐字稿"
+                      "（%d 則訊息，路徑含底線變破折號的真實目錄名稱）"
+                      % (_domain_with_live_transcript, len(transcript_body.get("messages", []))))
+            else:
+                print("FAIL transcript 端點沒有正確找到底線變破折號路徑下的逐字稿：%r" % transcript_body)
+                failures.append("gateway transcript underscore-dash lookup")
 
         status, harness_transcript = _get("/api/gateway/conversations/harness/transcript")
         if status == 404:

@@ -51,12 +51,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fcntl
 import os
 import pty
 import re
 import select
 import signal
+import struct
 import subprocess
+import termios
 import threading
 import time
 import uuid
@@ -101,6 +104,26 @@ _NEW_SESSION_PID_DELAY_S = 1.0
 RC_IDLE_TIMEOUT_MINUTES = float(os.environ.get("STND_GATEWAY_RC_IDLE_TIMEOUT_MINUTES", "30"))
 RC_MAX_LIFETIME_MINUTES = float(os.environ.get("STND_GATEWAY_RC_MAX_LIFETIME_MINUTES", "240"))
 _RC_WATCH_POLL_INTERVAL_S = float(os.environ.get("STND_GATEWAY_RC_WATCH_POLL_INTERVAL_S", "30"))
+
+# 2026-09-30 新增：手機端一則訊息卡在 queue-operation:enqueue 超過一小時
+# 才開始處理，處理到一半本機行程又不明原因消失——除錯時發現完全沒有
+# 任何輸出被留下來（_drain_loop 原本只讀走 master_fd 就丟棄，見下方
+# 說明），無法事後判斷行程到底做了什麼、為什麼死掉。這裡把 drain 讀到
+# 的內容（去除 ANSI 後）順手記錄下來，之後同樣的情況才有真正的證據可查，
+# 不用再靠猜測時間點對照 transcript。單一 rolling log，不分檔案
+# （單人自用、低頻使用，先不做輪替）。
+_RC_LOG_PATH = Path.home() / "Library" / "Logs" / "stnd-gateway-rc.log"
+
+
+def _rc_log(pid: int, text: str) -> None:
+    if not text:
+        return
+    try:
+        with open(_RC_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"\n--- pid={pid} {datetime.now(timezone.utc).isoformat(timespec='seconds')} ---\n")
+            f.write(text)
+    except OSError:
+        pass
 
 # ---------------------------------------------------------------------------
 # 行程內狀態（活物件不能序列化進 gateway_state.json，重啟後必然清空——
@@ -191,11 +214,15 @@ def _force_kill(proc: "subprocess.Popen[bytes]", master_fd: Optional[int]) -> No
             os.close(master_fd)
 
 
-def _drain_loop(master_fd: int, stop_event: threading.Event) -> None:
-    """連線存活期間持續讀走 master_fd 丟棄——PTY 核心緩衝區（通常 64KB）
-    沒人讀走的話，手機端持續互動產生的輸出會讓子行程的 write() 憑空卡
-    住，變相凍結手機端對話。原本規劃階段的驗證腳本只跑了 20 秒沒踩到
-    這個問題，是本次規劃過程中新識別出的必要機制。"""
+def _drain_loop(master_fd: int, stop_event: threading.Event, pid: int) -> None:
+    """連線存活期間持續讀走 master_fd——PTY 核心緩衝區（通常 64KB）沒人
+    讀走的話，手機端持續互動產生的輸出會讓子行程的 write() 憑空卡住，
+    變相凍結手機端對話。原本規劃階段的驗證腳本只跑了 20 秒沒踩到這個
+    問題，是本次規劃過程中新識別出的必要機制。
+
+    2026-09-30 新增：讀到的內容（去除 ANSI 後）順手寫進 `_rc_log()`，
+    不再只是讀走丟棄——見上方 `_RC_LOG_PATH` 的說明，這是排查「行程
+    處理到一半消失」這類問題的唯一證據來源。"""
     while not stop_event.is_set():
         try:
             r, _, _ = select.select([master_fd], [], [], 1.0)
@@ -208,10 +235,11 @@ def _drain_loop(master_fd: int, stop_event: threading.Event) -> None:
                 return
             if not data:
                 return
+            _rc_log(pid, strip_ansi(data.decode("utf-8", errors="replace")))
 
 
-def _start_drain_thread(master_fd: int, stop_event: threading.Event) -> threading.Thread:
-    t = threading.Thread(target=_drain_loop, args=(master_fd, stop_event), daemon=True)
+def _start_drain_thread(master_fd: int, stop_event: threading.Event, pid: int) -> threading.Thread:
+    t = threading.Thread(target=_drain_loop, args=(master_fd, stop_event, pid), daemon=True)
     t.start()
     return t
 
@@ -230,6 +258,14 @@ def _spawn_and_handshake(cmd: List[str], cwd: Path, rc_name: str) -> Dict[str, A
     `RuntimeError`（訊息含去除 ANSI 後的最後 800 字，方便除錯）。
     """
     master_fd, slave_fd = pty.openpty()
+    # 2026-09-30 修正：`pty.openpty()` 建立的 pty 預設視窗大小是 0x0（沒有
+    # controlling terminal 可以繼承）。實測撞見的真實症狀：Remote Control
+    # 交握本身成功、URL 也拿得到，但手機端送的訊息會一直卡在
+    # transcript 的 `queue-operation:enqueue`，永遠不會被消化成真正的
+    # assistant 回覆——懷疑是 TUI 的訊息佇列處理迴圈依賴正常的終端機尺寸
+    # 才會完整跑起來，真正的終端機（Terminal.app／iTerm）啟動時都會送
+    # 這個尺寸，這裡補上模擬一個合理尺寸（120x40），不能省略。
+    fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
     proc = subprocess.Popen(
         cmd, cwd=str(cwd), stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
         env={**os.environ, "TERM": "xterm-256color"},
@@ -563,6 +599,18 @@ async def _watch_rc(rc_id: str) -> None:
 
             pid = entry.get("pid")
             if pid is None or not _pid_alive(pid):
+                # 2026-09-30 新增：行程意外消失時，把已知資訊（returncode，
+                # 若還留在 _LIVE_HANDLES 裡）寫進 rc log，不要悄悄清掉紀錄
+                # 就算了——這正是使用者實測撞見「處理到一半、手機端卻
+                # 顯示永遠 Ruminating」時，唯一能回頭查的地方。
+                returncode = None
+                handle = _LIVE_HANDLES.get(rc_id)
+                if handle is not None:
+                    with contextlib.suppress(Exception):
+                        returncode = handle["proc"].poll()
+                _rc_log(pid or -1,
+                        f"[watcher] 偵測到行程已不存在，returncode={returncode}，"
+                        f"domain={entry.get('domain')} session_id={entry.get('session_id')}\n")
                 await _remove_rc_entry_only(rc_id)
                 return
 
@@ -643,7 +691,7 @@ async def create_new_session(cwd_choice: str, name: Optional[str]) -> Dict[str, 
         gw._set_session_id(domain, session_id)
 
         stop_event = threading.Event()
-        drain_thread = _start_drain_thread(master_fd, stop_event)
+        drain_thread = _start_drain_thread(master_fd, stop_event, pid)
         rc_id = await _register_rc_entry(
             domain, session_id, rc_name, rc_url, pid, cwd, mode="new_session")
         _LIVE_HANDLES[rc_id] = {
@@ -696,7 +744,7 @@ async def attach_remote_control(domain: str, session_id: str, name: Optional[str
         proc, master_fd, pid, rc_url = (
             handshake["proc"], handshake["master_fd"], handshake["pid"], handshake["rc_url"])
         stop_event = threading.Event()
-        drain_thread = _start_drain_thread(master_fd, stop_event)
+        drain_thread = _start_drain_thread(master_fd, stop_event, pid)
         rc_id = await _register_rc_entry(
             domain, session_id, rc_name, rc_url, pid, cwd, mode="resume_existing")
         _LIVE_HANDLES[rc_id] = {
