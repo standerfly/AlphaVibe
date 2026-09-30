@@ -632,5 +632,91 @@ class InPlaceContentChangeTest(unittest.TestCase):
         self.assertEqual(scan["duplicate_count"], 1)
 
 
+class ReadExistingTagsOnImportTest(unittest.TestCase):
+    """2026-09-30 新增（Plan B：MacBook Air 離線整理）：照片檔案本身
+    如果已經帶有標籤/評分（例如在別的地方用另一套 STND 或工具先整理
+    過），匯入全新紀錄時應該直接繼承，不用使用者手動重打一次。見
+    photo_importer.py commit_import() docstring「讀回既有標籤/評分」、
+    photo_metadata_sync.py 檔頭 docstring「唯一的例外」。"""
+
+    def setUp(self):
+        self.source_dir = tempfile.mkdtemp(prefix="photo-readtags-src-")
+        self.store_dir = tempfile.mkdtemp(prefix="photo-readtags-store-")
+        self.thumb_dir = tempfile.mkdtemp(prefix="photo-readtags-thumb-")
+        self.dest_dir = tempfile.mkdtemp(prefix="photo-readtags-dest-")
+        self.store = PhotoStore(self.store_dir)
+
+    def tearDown(self):
+        self.store.close()
+        for d in (self.source_dir, self.store_dir, self.thumb_dir, self.dest_dir):
+            shutil.rmtree(d)
+
+    def test_fresh_untagged_photo_stays_pending(self):
+        """回歸測試：完全沒有既有標籤的原始檔案（記憶卡剛匯出的常見
+        情況），行為要跟這個功能加入之前完全一樣。"""
+        path = os.path.join(self.source_dir, "a.jpg")
+        _write_tiny_jpeg(path)
+        scan = scan_folder(self.source_dir, self.store)
+        commit_import(
+            scan["new_files"], "reference", None, self.thumb_dir, self.store)
+
+        photo = self.store.find_by_hash(scan["new_files"][0]["file_hash"])
+        self.assertEqual(photo["metadata_sync_status"], "pending")
+        self.assertEqual(self.store.get_photo_tags(photo["id"]), [])
+        self.assertEqual(photo["rating"], 0)
+
+    def test_reference_mode_inherits_existing_tags_and_rating(self):
+        path = os.path.join(self.source_dir, "a.jpg")
+        _write_tiny_jpeg(path)
+        write_metadata(path, ["夕陽", "京都"], 4)
+
+        scan = scan_folder(self.source_dir, self.store)
+        commit_import(
+            scan["new_files"], "reference", None, self.thumb_dir, self.store)
+
+        photo = self.store.find_by_hash(scan["new_files"][0]["file_hash"])
+        tags = {t["name"] for t in self.store.get_photo_tags(photo["id"])}
+        self.assertEqual(tags, {"夕陽", "京都"})
+        self.assertEqual(photo["rating"], 4)
+        # 標籤是從檔案讀出來的，不需要再寫回去，直接算已同步。
+        self.assertEqual(photo["metadata_sync_status"], "synced")
+
+    def test_copy_mode_inherits_tags_from_copied_file(self):
+        """複製模式（internal/external）：shutil.copy2() 逐位元組複製，
+        目的地檔案帶著跟來源一樣的 XMP/IPTC，讀回邏輯作用在複製後的
+        dest_path，理論上該一樣生效——這裡實測驗證不是只有 reference
+        模式才有這個行為。"""
+        path = os.path.join(self.source_dir, "a.jpg")
+        _write_tiny_jpeg(path)
+        write_metadata(path, ["夜景"], 5)
+
+        scan = scan_folder(self.source_dir, self.store)
+        commit_import(
+            scan["new_files"], "internal", self.dest_dir, self.thumb_dir,
+            self.store)
+
+        photo = self.store.find_by_hash(scan["new_files"][0]["file_hash"])
+        tags = {t["name"] for t in self.store.get_photo_tags(photo["id"])}
+        self.assertEqual(tags, {"夜景"})
+        self.assertEqual(photo["rating"], 5)
+        self.assertEqual(photo["metadata_sync_status"], "synced")
+
+    def test_only_rating_no_tags_still_marked_synced(self):
+        """只有評分、沒有標籤的既有中繼資料也該正確繼承（不是只處理
+        「兩者都有」的情況）。"""
+        path = os.path.join(self.source_dir, "a.jpg")
+        _write_tiny_jpeg(path)
+        write_metadata(path, [], 3)
+
+        scan = scan_folder(self.source_dir, self.store)
+        commit_import(
+            scan["new_files"], "reference", None, self.thumb_dir, self.store)
+
+        photo = self.store.find_by_hash(scan["new_files"][0]["file_hash"])
+        self.assertEqual(self.store.get_photo_tags(photo["id"]), [])
+        self.assertEqual(photo["rating"], 3)
+        self.assertEqual(photo["metadata_sync_status"], "synced")
+
+
 if __name__ == "__main__":
     unittest.main()

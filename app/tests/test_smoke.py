@@ -1814,6 +1814,80 @@ def main() -> int:
         finally:
             shutil.rmtree(inplace_src_dir, ignore_errors=True)
 
+        # ---- 讀回既有標籤/評分（2026-09-30 新增，Plan B：MacBook Air
+        # 離線整理情境）：模擬照片在被 STND 索引「之前」就已經帶有
+        # 標籤/評分（例如在別的機器上先用另一套 STND、或其他工具打過），
+        # 第一次匯入時應該直接繼承，不需要使用者重打一次。
+        _TINY_JPEG_PRETAGGED = base64.b64decode(
+            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAkGBwgHBgkIBwgKCgkLDRYPDQwM"
+            "DRsUFRAWIB0iIiAdHx8kKDQsJCYxJx8fLT0tMTU3Ojo6Iys/RD84QzQ5Ojf/"
+            "2wBDAQoKCg0MDRoPDxo3JR8lNzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3"
+            "Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzf/wAARCAAIAAgDASIAAhEBAxEB/8QA"
+            "HwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUF"
+            "BAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkK"
+            "FhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1"
+            "dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXG"
+            "x8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEB"
+            "AQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAEC"
+            "AxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRom"
+            "JygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOE"
+            "hYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU"
+            "1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD02iiivyc7"
+            "j//Z"
+        )
+        readtags_src_dir = tempfile.mkdtemp(prefix="alphavibe-smoke-photos-readtags-")
+        try:
+            from photo_metadata_sync import write_metadata as _write_metadata_direct
+
+            readtags_path = os.path.join(readtags_src_dir, "pretagged.jpg")
+            with open(readtags_path, "wb") as fh:
+                fh.write(_TINY_JPEG_PRETAGGED)
+            # 匯入前就先打好標籤/評分——模擬「這張照片來自 MacBook Air，
+            # 已經在那邊被整理過」。
+            _write_metadata_direct(readtags_path, ["MacBook Air整理"], 4)
+
+            rt_scan_status, rt_scan_raw = _post(
+                "/api/photos/import/scan",
+                json.dumps({"source_path": readtags_src_dir,
+                            "storage_location": "reference"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"})
+            rt_scan_body = json.loads(rt_scan_raw.decode("utf-8")) if rt_scan_raw else {}
+            rt_commit_status, rt_commit_raw = _post(
+                "/api/photos/import/commit",
+                json.dumps({"scan_token": rt_scan_body.get("scan_token")}).encode("utf-8"),
+                headers={"Content-Type": "application/json"})
+            rt_commit_body = json.loads(rt_commit_raw.decode("utf-8")) if rt_commit_raw else {}
+            rt_job_id = rt_commit_body.get("job_id") if rt_commit_status == 200 else None
+
+            rt_photo_id = None
+            if rt_job_id:
+                deadline = time.time() + 10
+                rt_job_body = {}
+                while time.time() < deadline:
+                    _, rt_job_body = _get("/api/photos/import/jobs/%s" % rt_job_id)
+                    if rt_job_body.get("status") in ("completed", "failed"):
+                        break
+                    time.sleep(0.2)
+                ids = rt_job_body.get("imported_photo_ids", [])
+                if rt_job_body.get("status") == "completed" and len(ids) == 1:
+                    rt_photo_id = ids[0]
+
+            if rt_photo_id is not None:
+                _, rt_photo = _get("/api/photos/photos/%d" % rt_photo_id)
+                if (rt_photo.get("tags") == ["MacBook Air整理"]
+                        and rt_photo.get("rating") == 4
+                        and rt_photo.get("metadata_sync_status") == "synced"):
+                    print("PASS 匯入前就已經打過標籤的照片，第一次匯入直接繼承"
+                          "標籤/評分並標記 synced（不需要使用者重打）")
+                else:
+                    print("FAIL 讀回既有標籤結果不符：%r" % rt_photo)
+                    failures.append("photos read-existing-tags mismatch")
+            else:
+                print("FAIL 讀回既有標籤情境的匯入未成功完成")
+                failures.append("photos read-existing-tags import failed")
+        finally:
+            shutil.rmtree(readtags_src_dir, ignore_errors=True)
+
         # ---- 依子資料夾自動建立相簿（2026-09-27 新增）：模擬使用者在
         # 別的電腦上已經依事件分好資料匣，搬進 STND 索引時直接沿用這個
         # 分類，不用進 STND 後重新手動分類一次。

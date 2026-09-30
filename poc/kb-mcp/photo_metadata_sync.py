@@ -4,11 +4,23 @@
 **架構原則**（見 `specs/004-photos-albums-search/research.md` §2、
 `docs/spec-intake/alphavibe/supporting-artifacts/
 2026-09-16-travel-photos-design.md`「四、2026-09-17 補充」）：資料庫
-永遠是搜尋與真相來源，這裡的寫入是**單向鏡射**（db → 檔案）——STND
-從不反過來讀檔案中繼資料做搜尋或還原資料。寫入失敗或原始檔所在硬碟
-未掛載都不影響資料庫端的標籤/評分/搜尋，呼叫端據此決定
-`metadata_sync_status` 該標 `pending`（暫時性，見
+永遠是搜尋與真相來源，`write_metadata()` 是**單向鏡射**（db → 檔案）
+——已存在的紀錄，STND 從不反過來讀檔案中繼資料做搜尋或還原資料。
+寫入失敗或原始檔所在硬碟未掛載都不影響資料庫端的標籤/評分/搜尋，
+呼叫端據此決定 `metadata_sync_status` 該標 `pending`（暫時性，見
 `MetadataSyncUnavailable`）還是 `failed`（見 `RuntimeError`）。
+
+**唯一的例外**（2026-09-30 新增 `read_existing_tags()`）：`photo_
+importer.commit_import()` 建立**全新**照片紀錄的那一刻，會呼叫這個
+函式檢查照片檔案本身是否已經帶有標籤/評分（例如使用者在 MacBook Air
+上用另一套 STND 離線整理過、標籤已經寫進檔案，或相機/其他工具本來就
+有評分），有的話直接套用到這筆新紀錄上。這**不是**對上面「單向鏡射」
+原則的違反——那條原則管的是「已存在的紀錄」不會被檔案內容影響；這裡
+只在「紀錄還不存在、剛要誕生」的瞬間讀一次，之後這筆紀錄的搜尋/編輯
+完全回到資料庫為準，不會再讀檔案。跟 `photo_store.py` docstring
+記錄的另外兩個 `file_hash` 例外（人工確認清單／原地內容修正）是
+同一種性質的受限例外，理由也一致：讀取的時機被嚴格限定，不是常態性
+的「檔案內容可以隨時覆蓋資料庫」。
 
 `exiftool` 是系統層外部依賴（非 Python 套件，`brew install exiftool`
 安裝）。MVP 範圍僅處理 JPG（見 `photo_importer.py` 的 `VALID_EXTENSIONS`）。
@@ -34,6 +46,7 @@
   維持原樣不動，不會被清空
 - `-overwrite_original` 確認不會留下 `_original` 備份檔（已實測確認）
 """
+import json
 import os
 import subprocess
 
@@ -42,6 +55,38 @@ class MetadataSyncUnavailable(Exception):
     """原始檔案目前無法存取（例如外接硬碟未掛載）——呼叫端應將
     `metadata_sync_status` 標記為 `pending`（暫時性，之後補寫即可），
     不是 `failed`。"""
+
+
+def read_existing_tags(path):
+    """讀取 `path` 指向的照片檔案裡**已經存在**的標籤（`Subject`）與
+    評分（`Rating`）——只給 `photo_importer.commit_import()` 在建立
+    全新照片紀錄時呼叫一次，見本檔案開頭 docstring「唯一的例外」。
+
+    找不到欄位、檔案不存在、exiftool 執行失敗都回傳 `([], 0)`，**不
+    拋例外**——沒有既有標籤是正常情況（剛從記憶卡出來的原始檔案本來
+    就沒有），呼叫端不需要特別處理任何失敗分支。
+
+    `Subject` 欄位只有一個標籤時 exiftool 回傳字串、多個標籤時回傳
+    陣列，這裡統一轉成清單回傳。"""
+    try:
+        proc = subprocess.run(
+            ["exiftool", "-j", "-charset", "iptc=UTF8", "-Rating", "-Subject", path],
+            capture_output=True, timeout=15)
+        if proc.returncode != 0:
+            return [], 0
+        data = json.loads(proc.stdout.decode("utf-8", "replace"))[0]
+    except (subprocess.SubprocessError, OSError, ValueError, IndexError, KeyError):
+        return [], 0
+
+    rating = data.get("Rating") or 0
+    subject = data.get("Subject")
+    if isinstance(subject, str):
+        tags = [subject]
+    elif isinstance(subject, list):
+        tags = [str(t) for t in subject]
+    else:
+        tags = []
+    return tags, rating
 
 
 def write_metadata(storage_path, tags, rating):

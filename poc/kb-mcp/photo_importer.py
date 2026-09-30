@@ -27,6 +27,8 @@ import plistlib
 import shutil
 import subprocess
 
+from photo_metadata_sync import read_existing_tags
+
 VALID_EXTENSIONS = (".jpg", ".jpeg")
 
 
@@ -356,6 +358,15 @@ def commit_import(new_files, storage_location, dest_dir, thumbnail_dir,
     `storage_path` 可追溯回對應的 `file_hash`（reference 模式沒有這個
     問題，本來就是各自獨立的原始檔案，不需要改名）。
 
+    **讀回既有標籤/評分**（2026-09-30 新增，見
+    `photo_metadata_sync.read_existing_tags()` docstring「唯一的
+    例外」）：每張照片成功建檔後，順便檢查檔案本身是否已經帶有標籤/
+    評分（例如在 MacBook Air 上用另一套 STND 離線整理過、或相機/
+    其他工具本來就有評分）——有的話直接套用到這筆新紀錄並標記
+    `synced`，不需要使用者手動重打一次。這一步只影響剛建立的全新
+    紀錄，不影響任何既有照片；讀取失敗（檔案沒有既有標籤是最常見的
+    情況）純粹跳過，不影響這張照片本身的匯入成敗。
+
     回傳：`{"imported_count": int, "imported_photo_ids": [int,...],
       "imported": [{"id", "filename"}], "failed": [{"filename", "reason"}]}`
     ——`imported_photo_ids` 供呼叫端（`app/routers/photos.py` 的匯入
@@ -412,6 +423,23 @@ def commit_import(new_files, storage_location, dest_dir, thumbnail_dir,
             imported_count += 1
             imported_photo_ids.append(photo["id"])
             imported.append({"id": photo["id"], "filename": filename})
+
+            # 讀回既有標籤/評分（2026-09-30 新增，見
+            # photo_metadata_sync.py docstring「唯一的例外」）：這一步
+            # 刻意跟上面「建立紀錄」分開包一層 try/except——就算檔案裡
+            # 帶著某個奇怪的既有評分值讓 set_photo_rating() 拒絕，也只
+            # 應該跳過「繼承既有標籤」這個錦上添花的動作，不能讓整張
+            # 照片的匯入被判定失敗（照片本身已經成功建檔）。
+            try:
+                existing_tags, existing_rating = read_existing_tags(dest_path)
+                if existing_tags or existing_rating:
+                    if existing_tags:
+                        photo_store.set_photo_tags(photo["id"], existing_tags)
+                    if existing_rating:
+                        photo_store.set_photo_rating(photo["id"], existing_rating)
+                    photo_store.update_metadata_sync_status(photo["id"], "synced")
+            except Exception:  # noqa: BLE001 — 純粹錦上添花，失敗就當作沒有既有標籤
+                pass
         except Exception as exc:  # noqa: BLE001 — 單張失敗不可中斷整批匯入
             failed.append({"filename": filename, "reason": str(exc)})
             continue
