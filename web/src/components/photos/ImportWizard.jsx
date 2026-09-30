@@ -226,6 +226,10 @@ export default function ImportWizard({ albums, onDone, onCancel }) {
                   <tr><td>偵測到搬家（將更新路徑）</td>
                     <td style={{ textAlign: 'right', color: 'var(--green)' }}>{scanResult.moved_count}</td></tr>
                 )}
+                {scanResult.healed_in_place_count > 0 && (
+                  <tr><td>原地內容有更新（將自動修正）</td>
+                    <td style={{ textAlign: 'right', color: 'var(--green)' }}>{scanResult.healed_in_place_count}</td></tr>
+                )}
                 <tr><td>重複檔案（將跳過）</td>
                   <td style={{ textAlign: 'right', color: 'var(--ink-dim)' }}>{scanResult.duplicate_count}</td></tr>
                 {scanResult.unreadable.length > 0 && (
@@ -302,6 +306,7 @@ export default function ImportWizard({ albums, onDone, onCancel }) {
               <div className="meta">
                 已匯入 {job.imported_count} 張
                 {job.healed_count > 0 && `，更新了 ${job.healed_count} 張搬家路徑`}
+                {job.healed_in_place_count > 0 && `，修正了 ${job.healed_in_place_count} 張原地內容`}
                 {job.failed?.length > 0 && `，${job.failed.length} 張失敗`}
               </div>
             )}

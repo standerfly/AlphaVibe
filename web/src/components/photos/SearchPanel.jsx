@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
-import { apiGet } from '../../api/client.js'
-import { ChevronLeftIcon, PhotosIcon } from '../icons.jsx'
+import { apiGet, apiPatch, apiPost } from '../../api/client.js'
+import { ChevronLeftIcon } from '../icons.jsx'
+import PhotoThumbGrid from './PhotoThumbGrid.jsx'
 
 /* 全域搜尋（User Story 2，T031）：跨所有相簿，camera/lens 結構化下拉
    ＋標籤多選組合查詢，互動比照已驗證的流程圖/畫面 Demo。搜尋一律讀
    資料庫（GET /api/photos/search），不受外接硬碟是否掛載影響（見
-   photo_store.py::search_photos() 的設計說明）。 */
+   photo_store.py::search_photos() 的設計說明）。
+   2026-09-30：補上批次整理（多選＋工具列，跟相簿頁 AlbumDetail.jsx
+   同一套模式，用共用元件 PhotoThumbGrid 避免兩邊各自維護一份、日後
+   改一邊忘了同步另一邊）——這是 PO 明確指出的落差：之前只有相簿頁
+   能批次貼標籤/評分，搜尋結果頁完全沒有。 */
 export default function SearchPanel({ onBack, onOpenPhoto }) {
   const [facets, setFacets] = useState({ camera_models: [], lenses: [] })
   const [allTags, setAllTags] = useState([])
@@ -14,6 +19,9 @@ export default function SearchPanel({ onBack, onOpenPhoto }) {
   const [selectedTags, setSelectedTags] = useState(new Set())
   const [results, setResults] = useState(null)
   const [error, setError] = useState(null)
+  const [selected, setSelected] = useState(new Set())
+  const [tagInput, setTagInput] = useState('')
+  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     apiGet('/api/photos/search/facets').then(setFacets).catch((err) => setError(err.message))
@@ -28,6 +36,7 @@ export default function SearchPanel({ onBack, onOpenPhoto }) {
       for (const t of selectedTags) params.append('tags', t)
       const data = await apiGet(`/api/photos/search?${params.toString()}`)
       setResults(data.photos)
+      setSelected(new Set())
     } catch (err) {
       setError(err.message)
     }
@@ -42,6 +51,45 @@ export default function SearchPanel({ onBack, onOpenPhoto }) {
       else next.add(tag)
       return next
     })
+  }
+
+  function toggleSelect(photoId) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(photoId)) next.delete(photoId)
+      else next.add(photoId)
+      return next
+    })
+  }
+
+  async function applyBatch(patch) {
+    if (selected.size === 0) return
+    setBusy(true)
+    try {
+      await apiPost('/api/photos/photos/batch', { photo_ids: [...selected], ...patch })
+      await runSearch()  // runSearch 本身會重置 selected，見上方
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function addTags() {
+    if (!tagInput.trim()) return
+    const tags = tagInput.split(/[,，]/).map((t) => t.trim()).filter(Boolean)
+    await applyBatch({ add_tags: tags })
+    setTagInput('')
+  }
+
+  async function handleQuickRate(photoId, rating) {
+    setResults((prev) => prev.map((p) => (p.id === photoId ? { ...p, rating } : p)))
+    try {
+      await apiPatch(`/api/photos/photos/${photoId}`, { rating })
+    } catch (err) {
+      setError(err.message)
+      runSearch()
+    }
   }
 
   return (
@@ -90,19 +138,26 @@ export default function SearchPanel({ onBack, onOpenPhoto }) {
         {results === null ? '搜尋中…' : `符合條件：${results.length} 張`}
       </div>
 
-      {results && results.length > 0 && (
-        <div className="thumb-grid">
-          {results.map((photo) => (
-            <button key={photo.id} className="thumb" onClick={() => onOpenPhoto(photo.id)}>
-              <img src={`/api/photos/thumbnail/${photo.id}`} alt=""
-                onError={(e) => { e.target.style.display = 'none' }} />
-              <PhotosIcon width={22} height={22}
-                style={{ position: 'absolute', top: '50%', left: '50%',
-                  transform: 'translate(-50%,-50%)', opacity: .35 }} />
-              {photo.rating > 0 && <span className="thumb__rating">★{photo.rating}</span>}
-            </button>
+      {selected.size > 0 && (
+        <div className="photo-toolbar">
+          <span className="meta">已選 {selected.size} 張</span>
+          <input type="text" value={tagInput} onChange={(e) => setTagInput(e.target.value)}
+            placeholder="加標籤，逗號分隔多個" />
+          <button type="button" className="btn" disabled={busy} onClick={addTags}>加標籤</button>
+          {[1, 2, 3, 4, 5].map((n) => (
+            <button key={n} type="button" className="btn-muted" disabled={busy}
+              onClick={() => applyBatch({ set_rating: n })}>{n}★</button>
           ))}
+          <button type="button" className="btn-muted" onClick={() => setSelected(new Set())}>取消選取</button>
         </div>
+      )}
+
+      {results && results.length > 0 && (
+        <PhotoThumbGrid
+          photos={results} selected={selected}
+          onToggleSelect={toggleSelect} onOpenDetail={onOpenPhoto}
+          onQuickRate={handleQuickRate}
+        />
       )}
     </div>
   )

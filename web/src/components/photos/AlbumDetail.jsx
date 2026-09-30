@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
-import { apiGet, apiPost } from '../../api/client.js'
-import { ChevronLeftIcon, PhotosIcon } from '../icons.jsx'
+import { apiGet, apiPatch, apiPost } from '../../api/client.js'
+import { ChevronLeftIcon } from '../icons.jsx'
+import PhotoThumbGrid from './PhotoThumbGrid.jsx'
 
 /* 相簿內縮圖牆＋批次整理（User Story 1，T023）：多選照片後可一次加
-   標籤／設評分。MVP 沒有單張照片詳情頁（那是 User Story 3 才加，見
-   tasks.md T041），標記操作都透過這裡的批次工具列完成，對應
-   contracts/photos-api.md 的 POST /api/photos/photos/batch。 */
+   標籤／設評分，對應 contracts/photos-api.md 的
+   POST /api/photos/photos/batch。
+   2026-09-30：縮圖格改用共用元件 PhotoThumbGrid（見該檔案 docstring）
+   ——每張縮圖直接可點星等單張評分（不用先多選），呼應 PO「像 contact
+   sheet 選片」的速度需求；多選＋批次工具列（下面 photo-toolbar）保留
+   給「一次幫一批加同一組標籤」這種场景。 */
 export default function AlbumDetail({ albumId, onBack, onOpenPhoto }) {
   const [photos, setPhotos] = useState(null)
   const [error, setError] = useState(null)
@@ -53,6 +57,18 @@ export default function AlbumDetail({ albumId, onBack, onOpenPhoto }) {
     setTagInput('')
   }
 
+  async function handleQuickRate(photoId, rating) {
+    // 樂觀更新：先改本地畫面，不等 API 回應才刷新，contact-sheet 選片
+    // 要的是「點了立刻看到變化」的速度感。
+    setPhotos((prev) => prev.map((p) => (p.id === photoId ? { ...p, rating } : p)))
+    try {
+      await apiPatch(`/api/photos/photos/${photoId}`, { rating })
+    } catch (err) {
+      setError(err.message)
+      load()
+    }
+  }
+
   if (error) return <div className="offline-note">{error}</div>
   if (!photos) return <div className="empty">載入中…</div>
 
@@ -82,33 +98,11 @@ export default function AlbumDetail({ albumId, onBack, onOpenPhoto }) {
       {photos.length === 0 ? (
         <div className="empty">這個相簿還沒有照片。</div>
       ) : (
-        <div className="thumb-grid">
-          {photos.map((photo) => (
-            <button
-              key={photo.id}
-              className={`thumb${selected.has(photo.id) ? ' is-selected' : ''}`}
-              onClick={() => toggleSelect(photo.id)}
-              onDoubleClick={() => onOpenPhoto(photo.id)}
-              title="點一下多選；點兩下看詳情"
-            >
-              <img src={`/api/photos/thumbnail/${photo.id}`} alt=""
-                onError={(e) => { e.target.style.display = 'none' }} />
-              <PhotosIcon width={22} height={22}
-                style={{ position: 'absolute', top: '50%', left: '50%',
-                  transform: 'translate(-50%,-50%)', opacity: .35 }} />
-              {photo.rating > 0 && <span className="thumb__rating">★{photo.rating}</span>}
-              <span
-                role="button"
-                onClick={(e) => { e.stopPropagation(); onOpenPhoto(photo.id) }}
-                style={{ position: 'absolute', top: '.25rem', right: '.3rem',
-                  fontSize: '.64rem', fontWeight: 700, background: 'rgba(0,0,0,.55)',
-                  color: '#fff', padding: '.02rem .35rem', borderRadius: 5 }}
-              >
-                詳情
-              </span>
-            </button>
-          ))}
-        </div>
+        <PhotoThumbGrid
+          photos={photos} selected={selected}
+          onToggleSelect={toggleSelect} onOpenDetail={onOpenPhoto}
+          onQuickRate={handleQuickRate}
+        />
       )}
     </div>
   )

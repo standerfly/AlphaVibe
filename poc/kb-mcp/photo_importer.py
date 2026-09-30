@@ -184,17 +184,26 @@ def scan_folder(source_path, photo_store, recursive=False):
     但指向完全不同的照片）——這正是刻意設計成「只建議、人工確認」而
     非自動合併的原因。
 
+    **原地內容變了（2026-09-30 新增）**：跟上面「搬家」相對的情況——
+    路徑完全沒變，但 hash 對不上，代表這個檔案原地被改過內容（通常是
+    在同一個位置打了標籤）。這個判斷比 `possible_matches` 的純檔名
+    比對更確定（路徑完全相同，不是碰巧檔名一樣），所以不需要人工
+    確認，直接列進 `healed_in_place`，交給 `heal_in_place_hashes()`
+    自動修正 `file_hash`（storage_path 不變）。
+
     回傳：
         {"total": int, "new_files": [...], "moved_files": [{"photo_id",
-          "old_path", "new_path", "filename"}], "possible_matches":
-          [{"photo_id", "old_path", "new_path", "filename"}],
-          "duplicate_count": int, "unreadable": [filename,...]}
+          "old_path", "new_path", "filename"}], "healed_in_place":
+          [{"photo_id", "new_path", "new_file_hash", "filename"}],
+          "possible_matches": [{"photo_id", "old_path", "new_path",
+          "filename"}], "duplicate_count": int, "unreadable": [filename,...]}
     """
     if not os.path.isdir(source_path):
         raise ValueError("source_path 不是有效的資料夾：%s" % source_path)
 
     new_files = []
     moved_files = []
+    healed_in_place = []
     duplicate_count = 0
     unreadable = []
     # 同一批掃描內容相同的檔案也要視為重複（例如使用者資料夾裡本來就有
@@ -226,8 +235,22 @@ def scan_folder(source_path, photo_store, recursive=False):
             else:
                 duplicate_count += 1
             continue
-        seen_hashes_this_batch.add(file_hash)
 
+        # hash 沒對上任何既有紀錄，但路徑跟某筆既有 reference 紀錄完全
+        # 一樣——代表這個檔案原地被改過內容（通常是打了標籤），不是
+        # 真的新照片，路徑也沒變不算搬家。這個判斷比 possible_matches
+        # 的純檔名比對更確定（路徑完全相同，不只是檔名剛好一樣），
+        # 直接自動修正 hash，不需要人工確認（見 heal_in_place_hashes()）。
+        same_path_existing = photo_store.find_by_storage_path(full_path)
+        if (same_path_existing is not None
+                and same_path_existing["storage_location"] == "reference"):
+            healed_in_place.append({
+                "photo_id": same_path_existing["id"], "filename": filename,
+                "new_path": full_path, "new_file_hash": file_hash,
+            })
+            continue
+
+        seen_hashes_this_batch.add(file_hash)
         new_files.append({
             "filename": filename, "path": full_path,
             "file_hash": file_hash, "file_size": file_size,
@@ -235,9 +258,11 @@ def scan_folder(source_path, photo_store, recursive=False):
 
     possible_matches = _find_possible_matches(new_files, photo_store)
 
-    total = len(new_files) + len(moved_files) + duplicate_count + len(unreadable)
+    total = (len(new_files) + len(moved_files) + len(healed_in_place)
+              + duplicate_count + len(unreadable))
     return {
         "total": total, "new_files": new_files, "moved_files": moved_files,
+        "healed_in_place": healed_in_place,
         "possible_matches": possible_matches,
         "duplicate_count": duplicate_count, "unreadable": unreadable,
     }
@@ -281,13 +306,30 @@ def heal_moved_paths(moved_files, photo_store):
     return healed
 
 
+def heal_in_place_hashes(healed_in_place, photo_store):
+    """把 `scan_folder()` 偵測到的 `healed_in_place`（原地內容變了、
+    路徑沒變）實際套用到資料庫——只更新 `file_hash`，`storage_path`
+    傳的是同一個路徑（`resolve_possible_match()` 的更新邏輯剛好完全
+    符合這裡的需求，直接重用，不用另外寫一支 store 方法）。跟
+    `resolve_possible_match()` 不同的是這裡**不需要**人工確認：路徑
+    完全相同這個信號本身就已經足夠確定，比純檔名比對更可靠。回傳
+    實際更新成功的筆數。"""
+    healed = 0
+    for entry in healed_in_place:
+        if photo_store.resolve_possible_match(
+                entry["photo_id"], entry["new_path"], entry["new_file_hash"]):
+            healed += 1
+    return healed
+
+
 def resolve_possible_match(match, photo_store):
     """使用者在人工確認清單裡明確指認「這就是同一張照片」後呼叫——
     見 `scan_folder()` docstring「人工確認清單」段落、`PhotoStore.
-    resolve_possible_match()` docstring（**會**更新 `file_hash`，這是
-    唯一允許這麼做的路徑）。`match` 是 `possible_matches`裡的一筆
-    （`{"photo_id", "new_path", "new_file_hash", ...}`）。回傳更新後的
-    照片紀錄，找不到對應照片時回傳 `None`。"""
+    resolve_possible_match()` docstring（**會**更新 `file_hash`；另一條
+    允許更新 `file_hash` 的路徑是 `heal_in_place_hashes()`，那裡靠路徑
+    完全相同自動判定，不需要人工確認）。`match` 是 `possible_matches`
+    裡的一筆（`{"photo_id", "new_path", "new_file_hash", ...}`）。回傳
+    更新後的照片紀錄，找不到對應照片時回傳 `None`。"""
     return photo_store.resolve_possible_match(
         match["photo_id"], match["new_path"], match["new_file_hash"])
 

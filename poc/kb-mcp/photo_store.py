@@ -21,11 +21,16 @@
 改變檔案本身的位元組，但絕不能因此自動重算 `file_hash`，否則同一份
 原始素材重複匯入會被誤判為「新照片」而不是重複。
 
-**唯一的例外**（2026-09-25 新增 `resolve_possible_match()`）：使用者
-在「人工確認清單」UI 明確指認「這份新掃到的檔案就是那張搬家前已經被
-改過內容的舊照片」之後，才允許更新那筆紀錄的 `file_hash`——因為這是
-人親自確認的身份對應，不是程式自動比對，不受上面那條規則保護的風險
-（誤判）不適用。其餘所有方法仍然完全不觸碰既有照片的 `file_hash`。
+**兩個例外**（其餘所有方法仍然完全不觸碰既有照片的 `file_hash`）：
+1. `resolve_possible_match()`（2026-09-25 新增）：使用者在「人工確認
+   清單」UI 明確指認「這份新掃到的檔案就是那張搬家前已經被改過內容的
+   舊照片」之後——因為這是人親自確認的身份對應，不是程式自動比對，
+   不受上面那條規則保護的風險（誤判）不適用。
+2. `photo_importer.heal_in_place_hashes()`（2026-09-30 新增，同樣呼叫
+   這個方法）：`scan_folder()` 掃到路徑跟既有 `reference` 紀錄**完全
+   相同**、但 hash 對不上（原地被改過內容，通常是打了標籤）——路徑
+   完全相同這個信號本身已經足夠確定，比純檔名比對更可靠，所以不需要
+   人工確認就自動套用，跟第 1 點的差別只在「誰確認了身份對應」。
 
 **本次（`specs/004-photos-albums-search`）實作範圍**：Foundational
 （schema／相簿 CRUD／照片基礎方法／標籤方法）＋ User Story 1（匯入、
@@ -244,6 +249,16 @@ class PhotoStore:
         觸發任何 hash 重新計算，純粹查詢既有紀錄。"""
         row = self.conn.execute(
             "SELECT * FROM photos WHERE file_hash=?", (file_hash,)).fetchone()
+        return dict(row) if row else None
+
+    def find_by_storage_path(self, storage_path):
+        """依路徑精確比對（2026-09-30 新增）——`reference` 模式的照片
+        如果原地被打過標籤（內容因此改變、hash 跟著變），路徑完全沒變，
+        用 `find_by_hash()` 找不到對應紀錄；這裡用路徑找回來，供
+        `photo_importer.scan_folder()`「原地內容變了」分支使用（見該
+        函式 docstring）。"""
+        row = self.conn.execute(
+            "SELECT * FROM photos WHERE storage_path=?", (storage_path,)).fetchone()
         return dict(row) if row else None
 
     def add_photo(self, file_hash, storage_path, storage_location,

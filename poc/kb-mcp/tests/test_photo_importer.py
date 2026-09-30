@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 
 from photo_importer import (  # noqa: E402
     scan_folder, commit_import, _compute_md5, external_volume_mounted,
-    heal_moved_paths, resolve_possible_match)
+    heal_moved_paths, resolve_possible_match, heal_in_place_hashes)
 from photo_metadata_sync import write_metadata  # noqa: E402
 from photo_store import PhotoStore  # noqa: E402
 
@@ -555,6 +555,81 @@ class MoveDetectionTest(unittest.TestCase):
             self.assertEqual(second_scan["duplicate_count"], 1)
         finally:
             shutil.rmtree(dest_dir)
+
+
+class InPlaceContentChangeTest(unittest.TestCase):
+    """2026-09-30 新增：跟 MoveDetectionTest 相對的情況——路徑完全沒變，
+    但重新掃描同一個位置時發現 hash 對不上（原地被打過標籤，內容因此
+    改變）。這是實際操作時真的會發生的情況（例如在搜尋結果頁對某張
+    reference 照片評分/加標籤後，又對同一個來源資料夾重新掃描一次），
+    Playwright 手動驗證新功能時撞見：舊版邏輯會把它誤判成一張全新
+    照片，造成兩筆紀錄指向同一個實體檔案。"""
+
+    def setUp(self):
+        self.store_dir = tempfile.mkdtemp(prefix="photo-inplace-store-")
+        self.thumb_dir = tempfile.mkdtemp(prefix="photo-inplace-thumb-")
+        self.src_dir = tempfile.mkdtemp(prefix="photo-inplace-src-")
+        self.store = PhotoStore(self.store_dir)
+
+    def tearDown(self):
+        self.store.close()
+        for d in (self.store_dir, self.thumb_dir, self.src_dir):
+            shutil.rmtree(d)
+
+    def _import_reference_photo(self):
+        path = os.path.join(self.src_dir, "a.jpg")
+        _write_tiny_jpeg(path)
+        scan = scan_folder(self.src_dir, self.store)
+        commit_import(
+            scan["new_files"], "reference", None, self.thumb_dir, self.store)
+        return self.store.find_by_hash(scan["new_files"][0]["file_hash"])
+
+    def test_rescan_same_path_after_tagging_is_healed_not_duplicated(self):
+        photo = self._import_reference_photo()
+        write_metadata(photo["storage_path"], ["夕陽"], 4)
+
+        scan = scan_folder(self.src_dir, self.store)
+
+        # 不該落入 new_files（會造成重複紀錄）、也不該落入需要人工確認
+        # 的 possible_matches（路徑完全相同，比純檔名比對更確定，不需要
+        # 使用者多按一次確認）。
+        self.assertEqual(scan["new_files"], [])
+        self.assertEqual(scan["possible_matches"], [])
+        self.assertEqual(scan["moved_files"], [])
+        self.assertEqual(len(scan["healed_in_place"]), 1)
+        entry = scan["healed_in_place"][0]
+        self.assertEqual(entry["photo_id"], photo["id"])
+        self.assertEqual(entry["new_path"], photo["storage_path"])
+        self.assertNotEqual(entry["new_file_hash"], photo["file_hash"])
+
+    def test_heal_in_place_hashes_updates_hash_keeps_path(self):
+        photo = self._import_reference_photo()
+        write_metadata(photo["storage_path"], ["夕陽"], 4)
+        scan = scan_folder(self.src_dir, self.store)
+
+        healed_count = heal_in_place_hashes(scan["healed_in_place"], self.store)
+        self.assertEqual(healed_count, 1)
+
+        reloaded = self.store.get_photo(photo["id"])
+        self.assertEqual(reloaded["storage_path"], photo["storage_path"])
+        self.assertNotEqual(reloaded["file_hash"], photo["file_hash"])
+
+        # 修好之後再掃一次同一個位置，這次該正常判成普通重複——不再
+        # 跑出任何候選、也不會再生出第二筆紀錄。
+        rescan = scan_folder(self.src_dir, self.store)
+        self.assertEqual(rescan["new_files"], [])
+        self.assertEqual(rescan["healed_in_place"], [])
+        self.assertEqual(rescan["duplicate_count"], 1)
+
+    def test_untagged_rescan_of_same_path_is_plain_duplicate(self):
+        """沒打過標籤、單純重新掃描同一個位置——hash 沒變，回歸普通
+        重複，不該誤觸這條新邏輯（確認新邏輯只在 hash 真的對不上時
+        才啟動，不會影響既有的正常重複判斷）。"""
+        self._import_reference_photo()
+        scan = scan_folder(self.src_dir, self.store)
+        self.assertEqual(scan["new_files"], [])
+        self.assertEqual(scan["healed_in_place"], [])
+        self.assertEqual(scan["duplicate_count"], 1)
 
 
 if __name__ == "__main__":

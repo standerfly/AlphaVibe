@@ -453,7 +453,11 @@ details.collapse summary::marker { color: var(--accent); }
   background: var(--paper-sunken); }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .thumb.is-selected { outline: 3px solid var(--accent); outline-offset: -3px; }
-.thumb__rating { position: absolute; bottom: .25rem; left: .3rem; font-size: .64rem;
+.thumb__quickrate { position: absolute; bottom: .2rem; left: .25rem; right: .25rem;
+  display: flex; gap: .06rem; background: rgba(0,0,0,.55); border-radius: 5px;
+  padding: .05rem .25rem; line-height: 1; }
+.thumb__quickrate span { color: #fdd35b; font-size: .72rem; cursor: pointer; }
+.thumb__detail-link { position: absolute; top: .25rem; right: .3rem; font-size: .64rem;
   font-weight: 700; background: rgba(0,0,0,.55); color: #fff; padding: .02rem .35rem;
   border-radius: 5px; }
 .photo-toolbar { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;

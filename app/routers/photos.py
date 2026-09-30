@@ -67,7 +67,7 @@ if str(_PHOTO_KB_MCP_DIR) not in sys.path:
 
 from photo_importer import (  # noqa: E402
     scan_folder, commit_import, external_volume_mounted, heal_moved_paths,
-    resolve_possible_match)
+    resolve_possible_match, heal_in_place_hashes)
 from photo_metadata_sync import (  # noqa: E402
     MetadataSyncUnavailable, write_metadata)
 
@@ -176,6 +176,7 @@ def import_scan(
     _SCAN_CACHE[scan_token] = {
         "new_files": scan_result["new_files"],
         "moved_files": scan_result["moved_files"],
+        "healed_in_place": scan_result["healed_in_place"],
         "possible_matches": scan_result["possible_matches"],
         "storage_location": body.storage_location,
         "dest_dir": dest_dir,
@@ -190,6 +191,7 @@ def import_scan(
         "total": scan_result["total"],
         "new_count": len(scan_result["new_files"]),
         "moved_count": len(scan_result["moved_files"]),
+        "healed_in_place_count": len(scan_result["healed_in_place"]),
         "possible_matches": scan_result["possible_matches"],
         "duplicate_count": scan_result["duplicate_count"],
         "unreadable": scan_result["unreadable"],
@@ -261,13 +263,16 @@ def _group_by_top_level_folder(
 
 
 def _run_import_job(job_id: str, data_dir: str, new_files: List[Dict[str, Any]],
-                     moved_files: List[Dict[str, Any]], storage_location: str,
+                     moved_files: List[Dict[str, Any]],
+                     healed_in_place: List[Dict[str, Any]], storage_location: str,
                      dest_dir: str, thumbnail_dir: str, auto_album: bool) -> None:
     """背景任務本體。**不使用** request-scoped 的 `PhotoStore`——自行
     開一條獨立連線（見本檔案開頭 docstring）。`moved_files` 是
     `reference` 模式偵測到「檔案搬家了」的既有照片，跟 `new_files`
     一起處理：`heal_moved_paths()` 只更新路徑，不需要複製/縮圖/重新
-    同步（見該函式 docstring）。
+    同步（見該函式 docstring）。`healed_in_place`（2026-09-30 新增）是
+    路徑沒變、但內容原地被改過（通常是打了標籤）的既有照片，
+    `heal_in_place_hashes()` 只更新 `file_hash`，理由同上。
 
     `auto_album`（2026-09-27 新增）：開啟時，把 `commit_import()` 回傳
     的 `imported` 依 `_group_by_top_level_folder()` 分組，每組用
@@ -280,6 +285,7 @@ def _run_import_job(job_id: str, data_dir: str, new_files: List[Dict[str, Any]],
         result = commit_import(
             new_files, storage_location, dest_dir, thumbnail_dir, store)
         healed_count = heal_moved_paths(moved_files, store)
+        healed_in_place_count = heal_in_place_hashes(healed_in_place, store)
 
         auto_albums: List[Dict[str, Any]] = []
         unassigned_photo_ids: List[int] = list(result["imported_photo_ids"])
@@ -300,6 +306,7 @@ def _run_import_job(job_id: str, data_dir: str, new_files: List[Dict[str, Any]],
             "imported_count": result["imported_count"],
             "imported_photo_ids": result["imported_photo_ids"],
             "healed_count": healed_count,
+            "healed_in_place_count": healed_in_place_count,
             "failed": result["failed"],
             "auto_albums": auto_albums,
             "unassigned_photo_ids": unassigned_photo_ids,
@@ -356,13 +363,14 @@ def import_commit(
     total = len(cached["new_files"])
     _IMPORT_JOBS[job_id] = {
         "job_id": job_id, "status": "running",
-        "imported_count": 0, "total": total, "healed_count": 0, "failed": [],
+        "imported_count": 0, "total": total, "healed_count": 0,
+        "healed_in_place_count": 0, "failed": [],
         "auto_albums": [], "unassigned_photo_ids": [],
     }
     background_tasks.add_task(
         _run_import_job, job_id, cached["data_dir"], cached["new_files"],
-        cached["moved_files"], cached["storage_location"], cached["dest_dir"],
-        cached["thumbnail_dir"], cached["auto_album"])
+        cached["moved_files"], cached["healed_in_place"], cached["storage_location"],
+        cached["dest_dir"], cached["thumbnail_dir"], cached["auto_album"])
     return {"job_id": job_id, "status": "running"}
 
 

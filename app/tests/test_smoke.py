@@ -1683,6 +1683,137 @@ def main() -> int:
             shutil.rmtree(match_src_dir, ignore_errors=True)
             shutil.rmtree(match_new_dir, ignore_errors=True)
 
+        # ---- 原地內容變了（2026-09-30 新增，Playwright 手動驗證新
+        # 功能時撞見的真實案例）：跟上面的「搬家」相對——路徑完全沒
+        # 動，只是內容被改過（打了標籤），重新掃描同一個位置應該自動
+        # 修正 hash，不能誤判成新照片（否則會出現兩筆紀錄指向同一個
+        # 實體檔案）。
+        _TINY_JPEG_H = base64.b64decode(
+            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAsICAoIBwsKCQoNDAsNERwSEQ8P"
+            "ESIZGhQcKSQrKigkJyctMkA3LTA9MCcnOEw5PUNFSElIKzZPVU5GVEBHSEX/"
+            "2wBDAQwNDREPESESEiFFLicuRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVF"
+            "RUVFRUVFRUVFRUVFRUVFRUVFRUVFRUX/wAARCAAIAAgDASIAAhEBAxEB/8QA"
+            "HwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUF"
+            "BAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkK"
+            "FhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1"
+            "dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXG"
+            "x8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEB"
+            "AQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAEC"
+            "AxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRom"
+            "JygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOE"
+            "hYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU"
+            "1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwClRRRXgn0J"
+            "/9k="
+        )
+        inplace_src_dir = tempfile.mkdtemp(prefix="alphavibe-smoke-photos-inplace-")
+        try:
+            inplace_path = os.path.join(inplace_src_dir, "h.jpg")
+            with open(inplace_path, "wb") as fh:
+                fh.write(_TINY_JPEG_H)
+
+            ip_scan1_status, ip_scan1_raw = _post(
+                "/api/photos/import/scan",
+                json.dumps({"source_path": inplace_src_dir,
+                            "storage_location": "reference"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"})
+            ip_scan1_body = json.loads(ip_scan1_raw.decode("utf-8")) if ip_scan1_raw else {}
+            ip_commit1_status, ip_commit1_raw = _post(
+                "/api/photos/import/commit",
+                json.dumps({"scan_token": ip_scan1_body.get("scan_token")}).encode("utf-8"),
+                headers={"Content-Type": "application/json"})
+            ip_commit1_body = (
+                json.loads(ip_commit1_raw.decode("utf-8")) if ip_commit1_raw else {})
+            ip_job1_id = ip_commit1_body.get("job_id") if ip_commit1_status == 200 else None
+
+            inplace_photo_id = None
+            if ip_job1_id:
+                deadline = time.time() + 10
+                ip_job1_body = {}
+                while time.time() < deadline:
+                    _, ip_job1_body = _get("/api/photos/import/jobs/%s" % ip_job1_id)
+                    if ip_job1_body.get("status") in ("completed", "failed"):
+                        break
+                    time.sleep(0.2)
+                ids = ip_job1_body.get("imported_photo_ids", [])
+                if ip_job1_body.get("status") == "completed" and len(ids) == 1:
+                    inplace_photo_id = ids[0]
+
+            if inplace_photo_id is not None:
+                _, before_photo = _get("/api/photos/photos/%d" % inplace_photo_id)
+                original_hash = before_photo.get("file_hash")
+
+                # 原地打標籤（觸發背景寫回，改寫檔案位元組），檔案位置
+                # 完全不動。
+                _post(
+                    "/api/photos/photos/batch",
+                    json.dumps({
+                        "photo_ids": [inplace_photo_id], "add_tags": ["秋色"],
+                        "set_rating": 5,
+                    }).encode("utf-8"),
+                    headers={"Content-Type": "application/json"})
+                sync_deadline = time.time() + 10
+                while time.time() < sync_deadline:
+                    _, tagged = _get("/api/photos/photos/%d" % inplace_photo_id)
+                    if tagged.get("metadata_sync_status") in ("synced", "failed"):
+                        break
+                    time.sleep(0.3)
+
+                # 重新掃描同一個、完全沒動過的來源資料夾。
+                ip_scan2_status, ip_scan2_raw = _post(
+                    "/api/photos/import/scan",
+                    json.dumps({"source_path": inplace_src_dir,
+                                "storage_location": "reference"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"})
+                ip_scan2_body = json.loads(ip_scan2_raw.decode("utf-8")) if ip_scan2_raw else {}
+                if (ip_scan2_status == 200 and ip_scan2_body.get("new_count") == 0
+                        and ip_scan2_body.get("healed_in_place_count") == 1
+                        and ip_scan2_body.get("possible_matches") == []):
+                    print("PASS 原地內容變了：重新掃描同位置正確判成 healed_in_place"
+                          "（不是新照片、不需要人工確認）")
+                else:
+                    print("FAIL 原地內容變了掃描結果不符：%s %r"
+                          % (ip_scan2_status, ip_scan2_body))
+                    failures.append("photos healed-in-place scan mismatch")
+
+                ip_commit2_status, ip_commit2_raw = _post(
+                    "/api/photos/import/commit",
+                    json.dumps({
+                        "scan_token": ip_scan2_body.get("scan_token")}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"})
+                ip_commit2_body = (
+                    json.loads(ip_commit2_raw.decode("utf-8")) if ip_commit2_raw else {})
+                ip_job2_id = (
+                    ip_commit2_body.get("job_id") if ip_commit2_status == 200 else None)
+                ip_job2_body = {}
+                if ip_job2_id:
+                    deadline = time.time() + 10
+                    while time.time() < deadline:
+                        _, ip_job2_body = _get("/api/photos/import/jobs/%s" % ip_job2_id)
+                        if ip_job2_body.get("status") in ("completed", "failed"):
+                            break
+                        time.sleep(0.2)
+                if (ip_job2_body.get("status") == "completed"
+                        and ip_job2_body.get("healed_in_place_count") == 1
+                        and ip_job2_body.get("imported_count") == 0):
+                    print("PASS 原地內容變了：背景任務完成，healed_in_place_count=1"
+                          "（沒有多出一筆重複紀錄）")
+                else:
+                    print("FAIL 原地內容變了任務結果不符：%r" % ip_job2_body)
+                    failures.append("photos healed-in-place job mismatch")
+
+                _, all_photos_check = _get(
+                    "/api/photos/search?tags=%E7%A7%8B%E8%89%B2")  # tags=秋色
+                matching = all_photos_check.get("photos", [])
+                if (len(matching) == 1 and matching[0]["id"] == inplace_photo_id
+                        and matching[0]["file_hash"] != original_hash):
+                    print("PASS 原地內容變了：資料庫只有 1 筆紀錄、hash 已更新為目前真實內容"
+                          "（沒有變成兩筆指向同一個檔案的紀錄）")
+                else:
+                    print("FAIL 原地內容變了後資料庫紀錄不符：%r" % matching)
+                    failures.append("photos healed-in-place no-duplicate-record mismatch")
+        finally:
+            shutil.rmtree(inplace_src_dir, ignore_errors=True)
+
         # ---- 依子資料夾自動建立相簿（2026-09-27 新增）：模擬使用者在
         # 別的電腦上已經依事件分好資料匣，搬進 STND 索引時直接沿用這個
         # 分類，不用進 STND 後重新手動分類一次。
