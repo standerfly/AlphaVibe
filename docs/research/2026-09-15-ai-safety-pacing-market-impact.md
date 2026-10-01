@@ -68,3 +68,13 @@ Anthropic執行長Dario Amodei於2026-09-12發表長文，主張前沿AI實驗�
 ## 六、操作結論（2026-09-15當下）
 
 不需要因這篇文章調整現有台美股部位（AVGO、世芯-KY、及台股半導體矽含量族群的邏輯不變）。CRWD/PANW資安變現題材列入觀察名單，等財報實際拆分ARR數字再決定是否建倉。最需要提高警覺的訊號不是再一篇論述文章，而是：雲端資本支出指引第一次轉向下修，或出口管制/國際協議出現具體立法動作。
+
+## 追蹤更新（2026-10-01）
+
+本次定期掃描針對「五、後續追蹤指標」7項逐一查證，以下2項出現與原文內容不同的實質新進展，其餘5項（四大雲端capex guidance方向、客製ASIC出貨比重、世芯-KY產能鎖定量、BIS對中AI晶片出口管制、METR常駐存取權與公開評估結果）查無材料變化，維持原文記錄現況。
+
+- **指標5（CRWD/PANW agent security產品線ARR拆分）——PANW財報已首次揭露具體數字**：Palo Alto Networks於2026-09-01公布FY2026 Q4財報（法說會2026-09-08），首次揭露Prisma AIRS（agent security產品線）單獨ARR突破US$1億，為公司史上GA後4個季度內成長最快的產品，客戶數逾800家；同一份財報RPO首度突破US$200億（年增34%）。這是原文第三節「資安變現題材真實但尚未兌現……需等財報單獨拆分agent security產品線的續約率/採用率」所設定的觀察條件首次被滿足，但僅限PANW——CrowdStrike截至2026-09財報/Fal.Con發布的Falcon Guardian，查無獨立拆分的ARR數字，仍是整體ARR/Falcon Flex ARR層級的揭露，尚未滿足同一條件。
+  來源：[Palo Alto Networks Q4 FY2026 Earnings Call Transcript（The Motley Fool，2026-09-08）](https://www.fool.com/earnings/call-transcripts/2026/09/08/palo-alto-networks-panw-q4-2026-earnings-call-transcript/)、[Prisma AIRS' $100M ARR Milestone（Yahoo Finance）](https://au.finance.yahoo.com/news/prisma-airs-100m-arr-milestone-144400534.html)
+
+- **指標7（Level 3 SALT式協議談判進展）——Trump-Xi峰會後建立專屬對話機制**：2026-09-24 Trump-Xi峰會後，美中宣布建立常設的「美中超級智慧（Super Intelligence, SI）對話」機制，以及一條雙邊「SI事件」溝通管道，下一輪對話排定2026年11月進行。目前僅止於建立溝通機制與排定時程，白宮公告未明訂「事件」定義、未指定雙邊負責單位，雙方均未承諾任何能力紅線、遞歸自我提升速度限制或前沿模型減速的具體條款——換言之尚非原文定義的Level 3協議本身，但屬於該議題首次出現具體、可查證、有時間表的雙邊談判機制，與原文當下「尚無進展」的記錄不同，值得繼續追蹤11月那一輪對話是否產出實質內容。
+  來源：[US, China Launch 'Super Intelligence' Dialogue and AI Hotline（AI Weekly）](https://aiweekly.co/alerts/us-china-launch-super-intelligence-dialogue-and-ai-hotline)、[U.S. and China agree to "super intelligence" dialogue amid AI tensions（Axios，2026-09-26）](https://www.axios.com/2026/09/26/us-china-ai-si-deal)
