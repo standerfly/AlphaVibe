@@ -22,10 +22,13 @@ import { apiGet, apiPost, apiPatch, apiDelete } from '../api/client.js'
 
    2026-09-30：原本 15 秒一次，長時間開著這個分頁（例如整天掛在手機
    瀏覽器背景）會持續消耗對外 tunnel（ngrok）的請求額度，撞過一次
-   免費方案的請求數上限（ERR_NGROK_727）。調成 60 秒——背景任務多半
-   需要幾分鐘才會完成，60 秒的反應延遲可接受，換來請求量降到 1/4。 */
+   免費方案的請求數上限（ERR_NGROK_727）。先調成 60 秒，同日再改成
+   600 秒（使用者明確選擇，接受「畫面最多可能慢 10 分鐘」的代價換取
+   請求量降到 1/60），並新增手動重新整理按鈕補足即時性——需要馬上看到
+   最新狀態時用按鈕，不用等輪詢或重新整理整個瀏覽器分頁（後者會丟掉
+   尚未送出的聊天輸入內容）。 */
 
-const POLL_INTERVAL_MS = 60000
+const POLL_INTERVAL_MS = 600000
 
 // 2026-08-31「擴充：任意命名主題」：只有已知專案捷徑（cwd 指到真實
 // 專案路徑）需要顯示名稱對照，其餘任意命名的主題直接顯示原始名稱
@@ -170,6 +173,19 @@ export default function Gateway() {
     refreshTasks()
     refreshUsage()
   }, [refreshConversations, refreshTasks, refreshUsage])
+
+  // 2026-10-01 新增：輪詢間隔拉長到 600 秒後，手動重新整理按鈕補足
+  // 即時性——比整頁重新整理好，不會丟掉 inputText／chatLog 這些
+  // 尚未送出或還沒存到後端的本地狀態。
+  const [manualRefreshing, setManualRefreshing] = useState(false)
+  async function handleManualRefresh() {
+    setManualRefreshing(true)
+    try {
+      await Promise.all([refreshConversations(), refreshTasks(), refreshUsage()])
+    } finally {
+      setManualRefreshing(false)
+    }
+  }
 
   // 主題選單的選項來源：GET /api/gateway/conversations 修好後會回傳
   // 完整清單（含 Telegram 建立的任意新主題），依上次活躍時間排序，
@@ -415,7 +431,18 @@ export default function Gateway() {
 
   return (
     <div>
-      <div className="page-title"><h1>管家</h1></div>
+      <div className="page-title">
+        <h1>管家</h1>
+        <button
+          type="button"
+          className="btn-muted btn-sm"
+          disabled={manualRefreshing}
+          onClick={handleManualRefresh}
+          title="立即重新整理，不用等 600 秒自動輪詢"
+        >
+          {manualRefreshing ? '更新中…' : '重新整理'}
+        </button>
+      </div>
 
       {isLocked && (
         <div className="gateway-lockdown-banner">
