@@ -332,6 +332,85 @@ def rebuild_thumbnails(data_dir):
 
 # ---------- CLI ----------
 
+def summarize_plan(plan, max_dates=12):
+    """把搬移計畫整理成人看的文字（命令列與確認視窗共用）。"""
+    moves = plan["moves"]
+    by_date = {}
+    for mv in moves:
+        by_date.setdefault(mv["date"], []).append(mv)
+    lines = ["將搬移 %d 個檔案到 %d 個日期資料夾：" % (len(moves), len(by_date))]
+    for date in sorted(by_date)[:max_dates]:
+        lines.append("  %s  ← %d 個檔案" % (date, len(by_date[date])))
+    if len(by_date) > max_dates:
+        lines.append("  …還有 %d 個日期" % (len(by_date) - max_dates))
+    if plan["in_place"]:
+        lines.append("已在正確日期資料夾（略過）：%d 組" % plan["in_place"])
+    if plan["duplicates"]:
+        lines.append("內容相同的重複檔（保留原位不搬）：%d 個" % len(plan["duplicates"]))
+    if plan["no_exif"]:
+        lines.append("無 EXIF 拍攝日期（改用檔案建立時間）：%d 組" % len(plan["no_exif"]))
+    return "\n".join(lines)
+
+
+def _dialog(message, ok_label, title="相片整理"):
+    """顯示確認視窗；使用者按確認回傳 True，取消回傳 False。"""
+    proc = subprocess.run(
+        ["osascript",
+         "-e", "on run argv",
+         "-e", 'display dialog (item 1 of argv) with title (item 2 of argv) '
+               'buttons {"取消", (item 3 of argv)} default button 2 '
+               'cancel button 1 with icon note',
+         "-e", "end run", message, title, ok_label],
+        capture_output=True)
+    return proc.returncode == 0
+
+
+def _notify(message, title="相片整理"):
+    subprocess.run(
+        ["osascript", "-e", "on run argv",
+         "-e", "display notification (item 1 of argv) with title (item 2 of argv)",
+         "-e", "end run", message, title], capture_output=True)
+
+
+def organize_gui(folder, ask=_dialog, notify=_notify):
+    """Finder 右鍵流程：預覽 → 確認視窗 → 搬移 → 通知。回傳 True 表示有搬。"""
+    if not os.path.isdir(folder):
+        notify("不是資料夾：%s" % folder)
+        return False
+    plan = plan_organize(folder)
+    if not plan["moves"]:
+        notify("沒有需要整理的照片（%s）" % os.path.basename(folder))
+        return False
+    msg = "資料夾：%s\n\n%s\n\n確認後才會搬移，之後可用「復原上次整理」還原。" % (
+        folder, summarize_plan(plan))
+    if not ask(msg, "執行整理"):
+        return False
+    apply_organize(plan)
+    notify("完成：已搬移 %d 個檔案。可用「復原上次整理」還原。" % len(plan["moves"]))
+    return True
+
+
+def undo_gui(ask=_dialog, notify=_notify):
+    """Finder 右鍵流程：確認後復原最近一次整理。"""
+    if not os.path.isdir(HISTORY_DIR):
+        notify("沒有可復原的整理紀錄")
+        return False
+    logs = sorted(f for f in os.listdir(HISTORY_DIR) if f.endswith("-organize.json"))
+    if not logs:
+        notify("沒有可復原的整理紀錄")
+        return False
+    with open(os.path.join(HISTORY_DIR, logs[-1]), encoding="utf-8") as f:
+        log = json.load(f)
+    if not ask("要復原最近一次整理嗎？\n\n資料夾：%s\n將把 %d 個檔案搬回原位置。" % (
+            log["root"], len(log["moves"])), "復原"):
+        return False
+    restored, skipped = undo()
+    notify("已復原 %d 個檔案%s" % (
+        restored, "，略過 %d 個（原位置已有同名檔案或檔案不見了）" % len(skipped)
+        if skipped else ""))
+    return True
+
+
 def _print_plan(plan, apply):
     moves = plan["moves"]
     by_date = {}
@@ -360,6 +439,11 @@ def main(argv=None):
     p.add_argument("folder")
     p.add_argument("--recursive", action="store_true")
     p.add_argument("--apply", action="store_true", help="真的搬移（預設只預覽）")
+
+    p = sub.add_parser("organize-gui", help="Finder 右鍵用：預覽視窗確認後整理")
+    p.add_argument("folder")
+
+    sub.add_parser("undo-gui", help="Finder 右鍵用：確認後復原最近一次整理")
 
     p = sub.add_parser("undo", help="復原最近一次（或指定紀錄）的整理")
     p.add_argument("log", nargs="?")
@@ -400,6 +484,14 @@ def main(argv=None):
             print("完成。復原指令：python3 photo_tool.py undo   （紀錄：%s）" % log)
         else:
             print("這只是預覽，沒有搬動任何檔案。確認後加 --apply 執行。")
+        return 0
+
+    if args.cmd == "organize-gui":
+        organize_gui(args.folder)
+        return 0
+
+    if args.cmd == "undo-gui":
+        undo_gui()
         return 0
 
     if args.cmd == "undo":

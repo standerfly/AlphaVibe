@@ -143,6 +143,47 @@ class OrganizeTest(unittest.TestCase):
 
 
 @unittest.skipUnless(EXIFTOOL, "需要 exiftool")
+class OrganizeGuiTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="photo-gui-")
+        self.hist = tempfile.mkdtemp(prefix="photo-hist-")
+        self._old = photo_tool.HISTORY_DIR
+        photo_tool.HISTORY_DIR = self.hist
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.addCleanup(shutil.rmtree, self.hist, True)
+        self.addCleanup(setattr, photo_tool, "HISTORY_DIR", self._old)
+        _write_jpeg(os.path.join(self.tmp, "A.jpg"), "2026:08:15 10:00:00")
+        self.notes = []
+
+    def test_cancel_moves_nothing(self):
+        moved = photo_tool.organize_gui(
+            self.tmp, ask=lambda m, ok: False, notify=self.notes.append)
+        self.assertFalse(moved)
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "A.jpg")))
+        self.assertEqual(os.listdir(self.hist), [])
+
+    def test_confirm_moves_and_undo_gui_restores(self):
+        asked = []
+        moved = photo_tool.organize_gui(
+            self.tmp, ask=lambda m, ok: asked.append(m) or True,
+            notify=self.notes.append)
+        self.assertTrue(moved)
+        self.assertIn("2026-08-15", asked[0])  # 確認視窗有列出日期
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "2026-08-15", "A.jpg")))
+        self.assertTrue(photo_tool.undo_gui(
+            ask=lambda m, ok: True, notify=self.notes.append))
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "A.jpg")))
+
+    def test_nothing_to_do_and_no_history(self):
+        empty = tempfile.mkdtemp(prefix="photo-empty-")
+        self.addCleanup(shutil.rmtree, empty, True)
+        self.assertFalse(photo_tool.organize_gui(
+            empty, ask=lambda m, ok: True, notify=self.notes.append))
+        self.assertFalse(photo_tool.undo_gui(
+            ask=lambda m, ok: True, notify=self.notes.append))
+
+
+@unittest.skipUnless(EXIFTOOL, "需要 exiftool")
 class RateTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="photo-rate-")
