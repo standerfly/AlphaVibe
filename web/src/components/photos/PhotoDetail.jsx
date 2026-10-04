@@ -10,6 +10,7 @@ import SyncStatusCard from './SyncStatusCard.jsx'
    屬性，批次工具列不適合呈現。*/
 export default function PhotoDetail({ photoId, onBack }) {
   const [photo, setPhoto] = useState(null)
+  const [full, setFull] = useState(false)
   const [tagInput, setTagInput] = useState('')
   const [error, setError] = useState(null)
 
@@ -68,8 +69,19 @@ export default function PhotoDetail({ photoId, onBack }) {
 
       <div className="photo-detail">
         <div className="photo-detail__hero">
-          <img src={`/api/photos/thumbnail/${photo.id}`} alt=""
-            onError={(e) => { e.target.replaceWith(document.createElement('div')) }} />
+          <img src={`/api/photos/preview/${photo.id}?size=${full ? 'full' : 'large'}`} alt=""
+            title={full ? '點一下縮回符合視窗' : '點一下看 100% 原始像素（檢查對焦）'}
+            onClick={() => setFull((v) => !v)}
+            style={full ? { width: 'auto', maxWidth: 'none', cursor: 'zoom-out' } : { cursor: 'zoom-in' }}
+            onError={(e) => {
+              // 預覽失敗退回縮圖；縮圖也失敗才降級成空白佔位
+              if (!e.target.dataset.fallback) {
+                e.target.dataset.fallback = '1'
+                e.target.src = `/api/photos/thumbnail/${photo.id}`
+              } else {
+                e.target.replaceWith(document.createElement('div'))
+              }
+            }} />
         </div>
         <div>
           <div className="info-card">

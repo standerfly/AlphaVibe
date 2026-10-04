@@ -65,6 +65,7 @@ _PHOTO_KB_MCP_DIR = Path(__file__).resolve().parent.parent.parent / "poc" / "kb-
 if str(_PHOTO_KB_MCP_DIR) not in sys.path:
     sys.path.insert(0, str(_PHOTO_KB_MCP_DIR))
 
+from photo_formats import full_size_jpeg, make_jpeg  # noqa: E402
 from photo_importer import (  # noqa: E402
     scan_folder, commit_import, external_volume_mounted, heal_moved_paths,
     resolve_possible_match, heal_in_place_hashes)
@@ -88,6 +89,10 @@ def _internal_dest_dir(data_dir: str) -> str:
 
 def _thumbnail_dir(data_dir: str) -> str:
     return os.path.join(data_dir, "photos", "thumbnails")
+
+
+def _preview_dir(data_dir: str) -> str:
+    return os.path.join(data_dir, "photos", "previews")
 
 
 @router.get("/api/photos/browse-folders")
@@ -464,6 +469,48 @@ def get_thumbnail(
     if not os.path.exists(photo["thumbnail_path"]):
         raise HTTPException(status_code=404, detail="thumbnail file missing on disk")
     return FileResponse(photo["thumbnail_path"])
+
+
+PREVIEW_SIZES = {"large": 2048}
+
+
+@router.get("/api/photos/preview/{photo_id}")
+def get_preview(
+    photo_id: int,
+    size: str = Query("large", description="large=長邊2048；full=原始解析度（100%放大看對焦）"),
+    store: PhotoStore = Depends(get_photo_store),
+) -> FileResponse:
+    """單張檢視用的高解析預覽圖，**按需產生並快取**（不在匯入時預先產生，
+    省空間）。格狀頁的 256/512 縮圖放大後太糊，使用者曾因此誤以為照片
+    沒拍好，所以單張檢視不再用縮圖。
+
+    - `size=large`：長邊 2048（來源較小則維持原尺寸，不放大）
+    - `size=full`：原始解析度 JPEG（JPG 直接回原檔；HEIC 轉 JPEG；RAW 回
+      內嵌的最大 JPEG，X3F 為 2640x1760）
+    原始檔暫時無法存取（例如外接硬碟未掛載）時，退回縮圖而不是 404。"""
+    photo = store.get_photo(photo_id)
+    if photo is None:
+        raise HTTPException(status_code=404, detail="photo not found")
+    if size not in ("large", "full"):
+        raise HTTPException(status_code=400, detail="size 必須是 large 或 full")
+    src = photo["storage_path"]
+    if not os.path.exists(src):
+        if os.path.exists(photo["thumbnail_path"]):
+            return FileResponse(photo["thumbnail_path"])
+        raise HTTPException(status_code=404, detail="original and thumbnail missing")
+    cache_dir = _preview_dir(store.data_dir)
+    os.makedirs(cache_dir, exist_ok=True)
+    cached = os.path.join(cache_dir, "%s_%s.jpg" % (photo["file_hash"], size))
+    try:
+        if size == "full":
+            return FileResponse(full_size_jpeg(src, cached))
+        if not os.path.exists(cached):
+            make_jpeg(src, cached, PREVIEW_SIZES["large"])
+        return FileResponse(cached)
+    except Exception as exc:  # noqa: BLE001 — 預覽失敗退回縮圖，不讓畫面全黑
+        if os.path.exists(photo["thumbnail_path"]):
+            return FileResponse(photo["thumbnail_path"])
+        raise HTTPException(status_code=500, detail="preview failed: %s" % exc)
 
 
 @router.get("/api/photos/photos/{photo_id}")

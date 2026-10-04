@@ -27,9 +27,18 @@ import plistlib
 import shutil
 import subprocess
 
+from photo_formats import (
+    ALL_PHOTO_EXTS, is_raw, make_jpeg, read_basic_exif_exiftool,
+    sidecar_path, uses_sidecar)
 from photo_metadata_sync import read_existing_tags
 
-VALID_EXTENSIONS = (".jpg", ".jpeg")
+# 2026-10：從只收 JPG 擴充為 JPG／HEIC／RAW（含 Sigma X3F），見
+# `photo_formats.py`。RAW 的評分/標籤在旁邊的 .xmp sidecar。
+VALID_EXTENSIONS = ALL_PHOTO_EXTS
+
+# 縮圖長邊像素。256 在單張檢視放大後明顯模糊（使用者曾誤以為照片沒拍好），
+# 格狀頁改 512；單張檢視另走 `/api/photos/preview`，不用縮圖。
+THUMBNAIL_MAX_DIM = 512
 
 
 def _compute_md5(path):
@@ -50,6 +59,9 @@ def _read_basic_exif(path):
         "camera_model": None, "lens": None, "iso": None,
         "shutter_speed": None, "aperture": None, "photo_date": None,
     }
+    if is_raw(path):
+        # macOS 的 sips 解不開 RAW（含 X3F），直接用 exiftool 讀
+        return read_basic_exif_exiftool(path)
     try:
         proc = subprocess.run(
             ["sips", "-g", "allxml", path],
@@ -77,18 +89,21 @@ def _read_basic_exif(path):
     if shutter is not None:
         result["shutter_speed"] = str(shutter)
     result["photo_date"] = exif.get("DateTimeOriginal") or tiff.get("DateTime")
+    # sips 的 EXIF 鍵名對不上真實相機檔案時（實測 Sigma DP2 的 JPG 就是
+    # 全部讀不到），用 exiftool 備援補齊缺的欄位。
+    if any(v is None for v in result.values()):
+        fallback = read_basic_exif_exiftool(path)
+        for key, value in result.items():
+            if value is None:
+                result[key] = fallback.get(key)
     return result
 
 
-def _make_thumbnail(src_path, dest_path, max_dim=256):
-    """用 `sips -Z` 產生等比例縮圖（長邊縮到 `max_dim`）。失敗時拋例外，
-    由呼叫端（`commit_import`）捕捉並記入該張照片的失敗原因。"""
-    proc = subprocess.run(
-        ["sips", "-Z", str(max_dim), src_path, "--out", dest_path],
-        capture_output=True, timeout=30)
-    if proc.returncode != 0:
-        raise RuntimeError(
-            "sips 縮圖失敗：%s" % proc.stderr.decode("utf-8", "replace"))
+def _make_thumbnail(src_path, dest_path, max_dim=THUMBNAIL_MAX_DIM):
+    """產生等比例縮圖（長邊縮到 `max_dim`，來源較小時不放大）。JPG／HEIC
+    用 `sips`，RAW 先抽內嵌 JPEG 再縮（見 `photo_formats.make_jpeg()`）。
+    失敗時拋例外，由呼叫端（`commit_import`）捕捉並記入該張照片的失敗原因。"""
+    make_jpeg(src_path, dest_path, max_dim)
 
 
 def external_volume_mounted(path):
@@ -405,6 +420,12 @@ def commit_import(new_files, storage_location, dest_dir, thumbnail_dir,
                 ext = os.path.splitext(filename)[1].lower()
                 dest_path = os.path.join(dest_dir, file_hash + ext)
                 shutil.copy2(entry["path"], dest_path)
+                # RAW 的評分/標籤在 sidecar，複製時一起帶過去（檔名跟著
+                # 改成 <hash>.xmp，才找得到）
+                if uses_sidecar(entry["path"]) and os.path.exists(
+                        sidecar_path(entry["path"])):
+                    shutil.copy2(sidecar_path(entry["path"]),
+                                 sidecar_path(dest_path))
             _make_thumbnail(dest_path, thumb_path)
             exif = _read_basic_exif(dest_path)
             photo = photo_store.add_photo(

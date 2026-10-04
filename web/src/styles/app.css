@@ -475,7 +475,7 @@ details.collapse summary::marker { color: var(--accent); }
 /* ---------- 相簿：單張照片詳情（User Story 3，T041） ---------- */
 .photo-detail { display: grid; grid-template-columns: 1.3fr 1fr; gap: 1.5rem; }
 @media (max-width: 720px) { .photo-detail { grid-template-columns: 1fr; } }
-.photo-detail__hero { border-radius: 12px; overflow: hidden; border: 1px solid var(--rule);
+.photo-detail__hero { border-radius: 12px; overflow: auto; border: 1px solid var(--rule);
   background: var(--paper-sunken); display: flex; align-items: center; justify-content: center; }
 .photo-detail__hero img { width: 100%; height: auto; display: block; }
 .info-card + .info-card { margin-top: .9rem; }

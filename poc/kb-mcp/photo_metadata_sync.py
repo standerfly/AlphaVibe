@@ -50,6 +50,17 @@ import json
 import os
 import subprocess
 
+from photo_formats import (
+    find_exiftool, read_finder_tags, sidecar_path, uses_sidecar,
+    write_finder_tags)
+
+_EMPTY_XMP = (
+    '<?xpacket begin="\ufeff" id="W5M0MpCehiHzreSzNTczkc9d"?>\n'
+    '<x:xmpmeta xmlns:x="adobe:ns:meta/">'
+    '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+    '<rdf:Description rdf:about=""/></rdf:RDF></x:xmpmeta>\n'
+    '<?xpacket end="w"?>\n')
+
 
 class MetadataSyncUnavailable(Exception):
     """原始檔案目前無法存取（例如外接硬碟未掛載）——呼叫端應將
@@ -68,9 +79,15 @@ def read_existing_tags(path):
 
     `Subject` 欄位只有一個標籤時 exiftool 回傳字串、多個標籤時回傳
     陣列，這裡統一轉成清單回傳。"""
+    if uses_sidecar(path):
+        # RAW（X3F 等）本體不可寫，評分/標籤在旁邊的 .xmp
+        path = sidecar_path(path)
+        if not os.path.exists(path):
+            return [], 0
     try:
         proc = subprocess.run(
-            ["exiftool", "-j", "-charset", "iptc=UTF8", "-Rating", "-Subject", path],
+            [find_exiftool() or "exiftool", "-j", "-charset", "iptc=UTF8",
+             "-Rating", "-Subject", path],
             capture_output=True, timeout=15)
         if proc.returncode != 0:
             return [], 0
@@ -104,8 +121,25 @@ def write_metadata(storage_path, tags, rating):
         raise MetadataSyncUnavailable(
             "原始檔案目前無法存取（可能是外接硬碟未掛載）：%s" % storage_path)
 
+    exiftool = find_exiftool() or "exiftool"
+    if uses_sidecar(storage_path):
+        # RAW 本體 exiftool 不能寫（例如 X3F）→ 寫旁邊的 .xmp sidecar，
+        # 原始檔位元組不動；sidecar 只有 XMP，沒有 IPTC。
+        target = sidecar_path(storage_path)
+        if not os.path.exists(target):
+            with open(target, "w", encoding="utf-8") as f:
+                f.write(_EMPTY_XMP)
+        cmd = [exiftool, "-charset", "iptc=UTF8", "-overwrite_original",
+               "-XMP:Rating=%d" % rating]
+        for tag in tags or []:
+            cmd.append("-XMP:Subject=%s" % tag)
+        if not tags:
+            cmd.append("-XMP:Subject=")
+        cmd.append(target)
+        return _run_write(cmd)
+
     cmd = [
-        "exiftool", "-charset", "iptc=UTF8", "-overwrite_original",
+        exiftool, "-charset", "iptc=UTF8", "-overwrite_original",
         "-IPTC:CodedCharacterSet=UTF8",
         "-XMP:Rating=%d" % rating,
     ]
@@ -119,7 +153,17 @@ def write_metadata(storage_path, tags, rating):
         cmd.append("-IPTC:Keywords=")
         cmd.append("-XMP:Subject=")
     cmd.append(storage_path)
+    # exiftool -overwrite_original 以新檔取代原檔，會丟掉檔案上的 Finder
+    # 標籤（xattr，包含 photo_tool 寫的 ★N）——實測確認，寫前讀出、寫後補回。
+    saved_tags = read_finder_tags(storage_path)
+    try:
+        _run_write(cmd)
+    finally:
+        if saved_tags:
+            write_finder_tags(storage_path, saved_tags)
 
+
+def _run_write(cmd):
     try:
         proc = subprocess.run(cmd, capture_output=True, timeout=30)
     except (subprocess.SubprocessError, OSError) as exc:
