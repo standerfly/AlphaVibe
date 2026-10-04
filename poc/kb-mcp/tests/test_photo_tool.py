@@ -174,6 +174,32 @@ class OrganizeGuiTest(unittest.TestCase):
             ask=lambda m, ok: True, notify=self.notes.append))
         self.assertTrue(os.path.exists(os.path.join(self.tmp, "A.jpg")))
 
+    def test_selected_files_only_with_companions_across_dirs(self):
+        sub = os.path.join(self.tmp, "sub")
+        os.makedirs(sub)
+        _write_jpeg(os.path.join(self.tmp, "B.jpg"), "2026:08:16 10:00:00")  # 不選
+        with open(os.path.join(self.tmp, "A.xmp"), "w") as f:
+            f.write("<x/>")
+        _write_jpeg(os.path.join(sub, "C.jpg"), "2026:08:17 10:00:00")
+        sel = [os.path.join(self.tmp, "A.jpg"), os.path.join(sub, "C.jpg"),
+               self.tmp]  # 選到資料夾會被忽略
+        self.assertTrue(photo_tool.organize_files_gui(
+            sel, ask=lambda m, ok: True, notify=self.notes.append))
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "2026-08-15", "A.jpg")))
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "2026-08-15", "A.xmp")))
+        self.assertTrue(os.path.exists(os.path.join(sub, "2026-08-17", "C.jpg")))
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "B.jpg")))  # 沒選的沒動
+        # 一次 undo 全部還原
+        photo_tool.undo_gui(ask=lambda m, ok: True, notify=self.notes.append)
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "A.jpg")))
+        self.assertTrue(os.path.exists(os.path.join(sub, "C.jpg")))
+
+    def test_selected_non_photos_do_nothing(self):
+        txt = os.path.join(self.tmp, "note.txt")
+        open(txt, "w").close()
+        self.assertFalse(photo_tool.organize_files_gui(
+            [txt], ask=lambda m, ok: True, notify=self.notes.append))
+
     def test_nothing_to_do_and_no_history(self):
         empty = tempfile.mkdtemp(prefix="photo-empty-")
         self.addCleanup(shutil.rmtree, empty, True)

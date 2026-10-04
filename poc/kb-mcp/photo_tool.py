@@ -76,7 +76,7 @@ def primary_of(members):
 
 # ---------- organize ----------
 
-def plan_organize(root, recursive=False):
+def plan_organize(root, recursive=False, only_keys=None):
     """建立搬移計畫（不動任何檔案）。回傳 dict：
     moves=[{src,dst,date,source}], skipped_in_place, no_exif=[group 主檔],
     duplicates=[{src,existing}]"""
@@ -84,6 +84,8 @@ def plan_organize(root, recursive=False):
     moves, in_place, no_exif, duplicates = [], 0, [], []
     claimed = set()  # 本次計畫已佔用的目的路徑，避免兩組搬到同名
     for _key, members in sorted(collect_groups(root, recursive).items()):
+        if only_keys is not None and _key not in only_keys:
+            continue
         primary = primary_of(members)
         when, source = read_capture_date(primary)
         date_str = when.strftime("%Y-%m-%d")
@@ -390,6 +392,42 @@ def organize_gui(folder, ask=_dialog, notify=_notify):
     return True
 
 
+def plan_organize_files(paths):
+    """只整理選取的檔案（連同同名的 RAW/JPG/xmp 一起搬）。選取的檔案可以
+    分布在不同資料夾，各自整理到所在資料夾底下的日期資料夾，合併成同一份
+    計畫與同一筆歷史紀錄（一次 undo 全部還原）。"""
+    files = [os.path.abspath(p) for p in paths if os.path.isfile(p)]
+    by_dir = {}
+    for f in files:
+        if is_photo(f) or ext_of(f) == ".xmp":
+            by_dir.setdefault(os.path.dirname(f), set()).add(_group_key(f))
+    merged = {"root": os.path.commonpath(list(by_dir)) if by_dir else "",
+              "moves": [], "in_place": 0, "no_exif": [], "duplicates": []}
+    for d, keys in sorted(by_dir.items()):
+        plan = plan_organize(d, only_keys=keys)
+        merged["moves"].extend(plan["moves"])
+        merged["in_place"] += plan["in_place"]
+        merged["no_exif"].extend(plan["no_exif"])
+        merged["duplicates"].extend(plan["duplicates"])
+    return merged
+
+
+def organize_files_gui(paths, ask=_dialog, notify=_notify):
+    """Finder 右鍵流程（選取檔案版）：預覽 → 確認視窗 → 搬移 → 通知。"""
+    plan = plan_organize_files(paths)
+    if not plan["moves"]:
+        notify("選取的檔案不需要整理（不是照片，或已在正確日期資料夾）")
+        return False
+    n_groups = len({_group_key(m["src"]) for m in plan["moves"]})
+    msg = "選取 %d 組照片\n\n%s\n\n確認後才會搬移，之後可用「復原上次整理」還原。" % (
+        n_groups, summarize_plan(plan))
+    if not ask(msg, "執行整理"):
+        return False
+    apply_organize(plan)
+    notify("完成：已搬移 %d 個檔案。可用「復原上次整理」還原。" % len(plan["moves"]))
+    return True
+
+
 def undo_gui(ask=_dialog, notify=_notify):
     """Finder 右鍵流程：確認後復原最近一次整理。"""
     if not os.path.isdir(HISTORY_DIR):
@@ -443,6 +481,9 @@ def main(argv=None):
     p = sub.add_parser("organize-gui", help="Finder 右鍵用：預覽視窗確認後整理")
     p.add_argument("folder")
 
+    p = sub.add_parser("organize-files-gui", help="Finder 右鍵用：只整理選取的檔案")
+    p.add_argument("files", nargs="+")
+
     sub.add_parser("undo-gui", help="Finder 右鍵用：確認後復原最近一次整理")
 
     p = sub.add_parser("undo", help="復原最近一次（或指定紀錄）的整理")
@@ -488,6 +529,10 @@ def main(argv=None):
 
     if args.cmd == "organize-gui":
         organize_gui(args.folder)
+        return 0
+
+    if args.cmd == "organize-files-gui":
+        organize_files_gui(args.files)
         return 0
 
     if args.cmd == "undo-gui":
