@@ -306,12 +306,26 @@ class ServicesTest(TagTestBase):
     def test_install_generates_workflows_and_reinstall_cleans_stale(self):
         svc = os.path.join(self.tmp, "Services")
         os.makedirs(svc)
-        keep = os.path.join(svc, "相片評分 3 星.workflow")      # 別人的，不能被清掉
+        keep = os.path.join(svc, "別人的動作.workflow")           # 不是我們的，不能被清掉
         os.makedirs(keep)
         names = photo_services.install(pt.load_vocab(), services_dir=svc, bind=False)
         self.assertEqual(names[:3], ["相片標籤 1 街拍", "相片標籤 2 光影", "相片標籤 3 家人"])
         self.assertIn("相片貼標籤…", names)
         self.assertIn("相片管理標籤…", names)
+        for expect in ("相片評分 0 星", "相片評分 5 星", "相片依日期整理",
+                       "相片整理選取的檔案", "相片復原上次整理"):
+            self.assertIn(expect, names)
+        rate = plistlib.load(open(os.path.join(
+            svc, "相片評分 4 星.workflow", "Contents", "document.wflow"), "rb"))
+        self.assertTrue(rate["actions"][0]["action"]["ActionParameters"]["COMMAND_STRING"]
+                        .endswith('rate 4 "$@"'))
+        folder = plistlib.load(open(os.path.join(
+            svc, "相片依日期整理.workflow", "Contents", "document.wflow"), "rb"))
+        self.assertEqual(folder["workflowMetaData"]["serviceInputTypeIdentifier"],
+                         photo_services.FOLDER_INPUT)
+        info = plistlib.load(open(os.path.join(
+            svc, "相片依日期整理.workflow", "Contents", "Info.plist"), "rb"))
+        self.assertEqual(info["NSServices"][0]["NSSendFileTypes"], ["public.folder"])
         wf = os.path.join(svc, "相片標籤 1 街拍.workflow", "Contents")
         info = plistlib.load(open(os.path.join(wf, "Info.plist"), "rb"))
         self.assertEqual(info["NSServices"][0]["NSMenuItem"]["default"], "相片標籤 1 街拍")

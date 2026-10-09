@@ -112,7 +112,10 @@ def write_wrapper(repo_kb_mcp_dir):
     return path
 
 
-def write_service(services_dir, name, command, file_type="public.item"):
+FOLDER_INPUT = "com.apple.Automator.fileSystemObject.folder"
+
+
+def write_service(services_dir, name, command, file_type="public.item", input_type=None):
     """建立一個 Finder 右鍵動作 `<name>.workflow`。"""
     contents = os.path.join(services_dir, name + ".workflow", "Contents")
     os.makedirs(contents, exist_ok=True)
@@ -126,29 +129,49 @@ def write_service(services_dir, name, command, file_type="public.item"):
     wf = copy.deepcopy(WORKFLOW_TEMPLATE)
     action = wf["actions"][0]["action"]
     action["ActionParameters"]["COMMAND_STRING"] = command
+    if input_type:
+        for meta_key in ("inputTypeIdentifier", "serviceInputTypeIdentifier"):
+            wf["workflowMetaData"][meta_key] = input_type
     for key in ("InputUUID", "OutputUUID", "UUID"):
         action[key] = str(uuid.uuid4()).upper()
     with open(os.path.join(contents, "document.wflow"), "wb") as f:
         plistlib.dump(wf, f)
 
 
+CTRL_CMD = "^@"   # pbs 的 key_equivalent：^ = Control、@ = Command、~ = Option
+CTRL_OPT = "^~"
+BASE_NAMES = (["相片評分 %d 星" % n for n in range(6)]
+              + ["相片依日期整理", "相片整理選取的檔案", "相片復原上次整理"])
+
+
 def service_specs(vocab):
-    """依標籤清單算出要建立的動作：[(名稱, 指令, 快速鍵)]。"""
+    """依標籤清單算出要建立的動作：[(名稱, 指令, 快速鍵, 修飾鍵, 檔案類型, 輸入類型)]。
+    包含標籤動作、評分 0-5 星（⌃⌥0-5）與整理/復原動作。"""
     cmd = '"' + wrapper_script_path() + '"'
     specs = []
     for t in vocab["tags"]:
         key = t.get("key")
         if key:
             specs.append(("相片標籤 " + key.upper() + " " + t["name"],
-                          cmd + " tag-slot " + key + ' "$@"', key))
-    specs.append(("相片貼標籤…", cmd + ' tag-picker "$@"', "t"))
-    specs.append(("相片標籤速查表", cmd + ' tag-cheatsheet "$@"', "/"))
-    specs.append(("相片管理標籤…", cmd + " tag-manager", "m"))
+                          cmd + " tag-slot " + key + ' "$@"', key, CTRL_CMD,
+                          "public.item", None))
+    specs.append(("相片貼標籤…", cmd + ' tag-picker "$@"', "t", CTRL_CMD, "public.item", None))
+    specs.append(("相片標籤速查表", cmd + ' tag-cheatsheet "$@"', "/", CTRL_CMD, "public.item", None))
+    specs.append(("相片管理標籤…", cmd + " tag-manager", "m", CTRL_CMD, "public.item", None))
+    for n in range(6):
+        specs.append(("相片評分 %d 星" % n, cmd + " rate %d \"$@\"" % n, str(n), CTRL_OPT,
+                      "public.item", None))
+    specs.append(("相片依日期整理", cmd + ' organize-gui "$1"', None, None,
+                  "public.folder", FOLDER_INPUT))
+    specs.append(("相片整理選取的檔案", cmd + ' organize-files-gui "$@"', None, None,
+                  "public.item", None))
+    specs.append(("相片復原上次整理", cmd + " undo-gui", None, None, "public.item", None))
     return specs
 
 
 def _is_ours(entry_name):
-    return entry_name.startswith("相片標籤 ") or entry_name in ("相片貼標籤…", "相片標籤速查表", "相片管理標籤…")
+    return (entry_name.startswith("相片標籤 ") or entry_name in BASE_NAMES
+            or entry_name in ("相片貼標籤…", "相片標籤速查表", "相片管理標籤…"))
 
 
 def install(vocab, services_dir=None, bind=True):
@@ -160,11 +183,11 @@ def install(vocab, services_dir=None, bind=True):
         if entry.endswith(".workflow") and _is_ours(entry[:-len(".workflow")]):
             shutil.rmtree(os.path.join(services_dir, entry), ignore_errors=True)
     specs = service_specs(vocab)
-    for name, command, _key in specs:
-        write_service(services_dir, name, command)
+    for name, command, _key, _mod, file_type, input_type in specs:
+        write_service(services_dir, name, command, file_type, input_type)
     if bind:
-        _bind_keys([(n, k) for n, _c, k in specs])
-    return [n for n, _c, _k in specs]
+        _bind_keys([(n, k, m) for n, _c, k, m, _f, _i in specs])
+    return [sp[0] for sp in specs]
 
 
 def _bind_keys(name_keys):
@@ -181,13 +204,14 @@ def _bind_keys(name_keys):
         if len(parts) >= 3 and _is_ours(parts[1]):
             subprocess.run([buddy, "-c", "Delete :NSServicesStatus:'" + key + "'", pbs],
                            capture_output=True)
-    for name, key in name_keys:
+    for name, key, modifier in name_keys:
         k = "(null) - " + name + " - runWorkflowAsService"
         base = "Add :NSServicesStatus:'" + k + "':"
-        for c in (base + "key_equivalent string '^@" + key + "'",   # ^=Control @=Command
+        cmds = ([base + "key_equivalent string '" + modifier + key + "'"] if key else [])
+        for c in (cmds + [
                   base + "presentation_modes:ContextMenu bool true",
                   base + "presentation_modes:ServicesMenu bool true",
-                  base + "presentation_modes:FinderPreview bool true"):
+                  base + "presentation_modes:FinderPreview bool true"]):
             subprocess.run([buddy, "-c", c, pbs], capture_output=True)
     subprocess.run(["killall", "cfprefsd"], capture_output=True)
     subprocess.run(["/System/Library/CoreServices/pbs", "-flush"], capture_output=True)
