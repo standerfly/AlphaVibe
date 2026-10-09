@@ -417,6 +417,72 @@ class PhotoStore:
         rows = self.conn.execute("SELECT * FROM tags ORDER BY name").fetchall()
         return [dict(r) for r in rows]
 
+    def list_tags_with_counts(self):
+        """標籤管理頁用：每個標籤貼了幾張照片（0 張的也列出來）。"""
+        rows = self.conn.execute(
+            "SELECT t.id, t.name, COUNT(pt.photo_id) AS count FROM tags t"
+            " LEFT JOIN photo_tags pt ON pt.tag_id = t.id"
+            " GROUP BY t.id ORDER BY t.name").fetchall()
+        return [dict(r) for r in rows]
+
+    def _photo_ids_of_tag(self, tag_id):
+        return [r["photo_id"] for r in self.conn.execute(
+            "SELECT photo_id FROM photo_tags WHERE tag_id=?", (tag_id,)).fetchall()]
+
+    def rename_tag(self, old_name, new_name):
+        """改名；新名稱已存在（大小寫不敏感）就**合併**進那個標籤。回傳
+        `{"photo_ids": [受影響的照片], "merged": bool}`；找不到舊標籤回傳 None。
+        受影響照片的檔案中繼資料需要重新寫回（由呼叫端排程）。"""
+        new_name = (new_name or "").strip()
+        if not new_name:
+            raise ValueError("標籤名稱不得為空")
+        old = self.conn.execute(
+            "SELECT * FROM tags WHERE name = ? COLLATE NOCASE",
+            ((old_name or "").strip(),)).fetchone()
+        if old is None:
+            return None
+        photo_ids = self._photo_ids_of_tag(old["id"])
+        existing = self.conn.execute(
+            "SELECT * FROM tags WHERE name = ? COLLATE NOCASE", (new_name,)).fetchone()
+        if existing is None or existing["id"] == old["id"]:
+            self.conn.execute("UPDATE tags SET name=? WHERE id=?", (new_name, old["id"]))
+            self.conn.commit()
+            return {"photo_ids": photo_ids, "merged": False}
+        self.conn.execute(
+            "INSERT OR IGNORE INTO photo_tags (photo_id, tag_id)"
+            " SELECT photo_id, ? FROM photo_tags WHERE tag_id=?",
+            (existing["id"], old["id"]))
+        self.conn.execute("DELETE FROM photo_tags WHERE tag_id=?", (old["id"],))
+        self.conn.execute("DELETE FROM tags WHERE id=?", (old["id"],))
+        self.conn.commit()
+        return {"photo_ids": photo_ids, "merged": True}
+
+    def merge_tags(self, source_names, target_name):
+        """把 `source_names` 全部併進 `target_name`（不存在就建立）。"""
+        target = self.get_or_create_tag(target_name)
+        photo_ids = set()
+        for name in source_names:
+            if name.strip().lower() == target["name"].lower():
+                continue
+            result = self.rename_tag(name, target["name"])
+            if result:
+                photo_ids.update(result["photo_ids"])
+        return sorted(photo_ids)
+
+    def delete_tag(self, name):
+        """刪除標籤並從所有照片移除（不碰照片檔案本身；中繼資料由呼叫端
+        重新寫回）。回傳受影響照片 id；找不到回傳 None。"""
+        row = self.conn.execute(
+            "SELECT * FROM tags WHERE name = ? COLLATE NOCASE",
+            ((name or "").strip(),)).fetchone()
+        if row is None:
+            return None
+        photo_ids = self._photo_ids_of_tag(row["id"])
+        self.conn.execute("DELETE FROM photo_tags WHERE tag_id=?", (row["id"],))
+        self.conn.execute("DELETE FROM tags WHERE id=?", (row["id"],))
+        self.conn.commit()
+        return photo_ids
+
     def suggest_tags(self, prefix, limit=10):
         """標籤自動完成（spec.md FR-006）：依名稱包含比對（不只前綴，
         方便打中間字也能找到既有標籤），大小寫不敏感。"""

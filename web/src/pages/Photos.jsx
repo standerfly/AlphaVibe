@@ -6,6 +6,7 @@ import AlbumDetail from '../components/photos/AlbumDetail.jsx'
 import ImportWizard from '../components/photos/ImportWizard.jsx'
 import SearchPanel from '../components/photos/SearchPanel.jsx'
 import PhotoDetail from '../components/photos/PhotoDetail.jsx'
+import TagManager from '../components/photos/TagManager.jsx'
 
 /* 相簿分頁（specs/004-photos-albums-search）：相簿列表／相簿詳情／
    匯入／全域搜尋四個子畫面的切換殼，取代原本 MVP 空白佔位頁（見
@@ -13,7 +14,7 @@ import PhotoDetail from '../components/photos/PhotoDetail.jsx'
    （匯入/整理/瀏覽）與 User Story 2（全域搜尋）已完成；照片詳情的
    中繼資料同步狀態卡（User Story 3）留待該 Story 完成後再接上。 */
 export default function Photos() {
-  const [view, setView] = useState('grid') // 'grid' | 'album' | 'import' | 'search' | 'detail'
+  const [view, setView] = useState('grid') // 'grid' | 'album' | 'import' | 'search' | 'detail' | 'tags'
   const [albums, setAlbums] = useState(null)
   const [activeAlbumId, setActiveAlbumId] = useState(null)
   const [activePhotoId, setActivePhotoId] = useState(null)
@@ -65,6 +66,10 @@ export default function Photos() {
     )
   }
 
+  if (view === 'tags') {
+    return <TagManager onBack={() => setView('grid')} />
+  }
+
   if (view === 'detail' && activePhotoId) {
     return <PhotoDetail photoId={activePhotoId} onBack={() => setView(detailReturnView)} />
   }
@@ -88,6 +93,9 @@ export default function Photos() {
           <button type="button" className="btn" onClick={() => setView('search')}>
             <SearchIcon width={16} height={16} style={{ verticalAlign: '-3px', marginRight: '.35rem' }} />
             搜尋照片
+          </button>
+          <button type="button" className="btn-muted" onClick={() => setView('tags')}>
+            標籤管理
           </button>
           <button type="button" className="btn-muted" onClick={() => setView('import')}>
             <UploadIcon width={16} height={16} style={{ verticalAlign: '-3px', marginRight: '.35rem' }} />

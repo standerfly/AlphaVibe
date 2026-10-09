@@ -143,11 +143,12 @@ def service_specs(vocab):
                           cmd + " tag-slot " + key + ' "$@"', key))
     specs.append(("相片貼標籤…", cmd + ' tag-picker "$@"', "t"))
     specs.append(("相片標籤速查表", cmd + ' tag-cheatsheet "$@"', "/"))
+    specs.append(("相片管理標籤…", cmd + " tag-manager", "m"))
     return specs
 
 
 def _is_ours(entry_name):
-    return entry_name.startswith("相片標籤 ") or entry_name in ("相片貼標籤…", "相片標籤速查表")
+    return entry_name.startswith("相片標籤 ") or entry_name in ("相片貼標籤…", "相片標籤速查表", "相片管理標籤…")
 
 
 def install(vocab, services_dir=None, bind=True):

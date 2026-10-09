@@ -454,6 +454,13 @@ def _print_plan(plan, apply):
             print("  - %s" % p)
 
 
+def _reinstall_tag_services():
+    import photo_services
+    import photo_tags as pt
+    photo_services.install(pt.load_vocab())
+    print("已更新 Finder 右鍵動作與快速鍵")
+
+
 def _run_tag_command(args):
     import photo_tags as pt
     try:
@@ -465,6 +472,9 @@ def _run_tag_command(args):
             return 0
         if args.cmd == "tag-cheatsheet":
             pt.show_cheatsheet(args.files)
+            return 0
+        if args.cmd == "tag-manager":
+            pt.manager()
             return 0
         if args.cmd == "tag":
             if args.action == "clear":
@@ -508,6 +518,59 @@ def _run_tag_command(args):
             key = None if args.key.lower() in ("none", "-", "") else args.key
             pt.set_key(args.name, key)
             print("已更新。請執行 tags install 讓快速鍵生效。")
+        elif args.tags_cmd == "sync-db":
+            store = _open_store(args.data_dir, write=not args.pull)
+            try:
+                data = pt.load_vocab()
+                if args.pull:
+                    known = {t["name"] for t in data["tags"]}
+                    added = []
+                    for row in store.list_tags():
+                        if row["name"] not in known:
+                            try:
+                                pt.add_tag(row["name"])
+                                added.append(row["name"])
+                            except ValueError as exc:
+                                print("  略過 %s：%s" % (row["name"], exc))
+                    print("已從資料庫加入 %d 個標籤到清單：%s" % (len(added), "、".join(added)))
+                else:
+                    for t in data["tags"]:
+                        store.get_or_create_tag(t["name"])
+                    print("已把 %d 個標籤寫進資料庫" % len(data["tags"]))
+            finally:
+                store.close()
+        elif args.tags_cmd == "undo":
+            restored, skipped = pt.undo_last_change()
+            print("已復原 %d 個檔案" % restored)
+            for path, why in skipped:
+                print("  略過 %s：%s" % (path, why))
+            _reinstall_tag_services()
+        elif args.tags_cmd in ("rename", "merge", "delete"):
+            if args.tags_cmd == "rename":
+                sources, target = [args.old], args.new
+            elif args.tags_cmd == "merge":
+                sources, target = args.sources, args.into
+            else:
+                sources, target = [args.name], None
+            plan = pt.plan_change(sources, target, args.folder)
+            print("%s：%s → %s" % (
+                "預覽" if not args.apply else "執行",
+                "、".join(plan["sources"]), plan["target"] or "（刪除）"))
+            print("找到 %d 張照片（%d 個檔案）；範圍：%s" % (
+                plan["groups"], len(plan["files"]), args.folder or "整台 Mac（Spotlight）"))
+            for f in plan["files"][:10]:
+                print("  " + f)
+            if len(plan["files"]) > 10:
+                print("  …還有 %d 個" % (len(plan["files"]) - 10))
+            if not args.apply:
+                print("這只是預覽，沒有改任何檔案。確認後加 --apply 執行。")
+                return 0
+            result = pt.apply_change(plan)
+            print("完成：改了 %d 個檔案；復原指令：photo_tool.py tags undo" % result["changed_files"])
+            for path, why in result["failed"]:
+                print("  失敗 %s：%s" % (path, why))
+            _reinstall_tag_services()
+            return 1 if result["failed"] else 0
         elif args.tags_cmd == "install":
             import photo_services
             photo_services.write_wrapper(HERE)
@@ -543,6 +606,8 @@ def main(argv=None):
     p = sub.add_parser("tag-picker", help="Finder 右鍵用：勾選視窗貼/移除標籤")
     p.add_argument("files", nargs="*")
 
+    sub.add_parser("tag-manager", help="Finder 快速鍵用：管理標籤視窗（改名/合併/刪除…）")
+
     p = sub.add_parser("tag-cheatsheet", help="Finder 快速鍵用：顯示快速鍵速查表")
     p.add_argument("files", nargs="*")
 
@@ -559,6 +624,24 @@ def main(argv=None):
     q.add_argument("name")
     q.add_argument("key")
     tsub.add_parser("install", help="（重新）建立 Finder 右鍵動作與 ⌃⌘ 快速鍵")
+    for cmd_name, helptext in (("rename", "改名（跨檔案改寫，預設只預覽）"),
+                               ("merge", "合併多個標籤成一個"),
+                               ("delete", "從所有照片移除並從清單刪除")):
+        q = tsub.add_parser(cmd_name, help=helptext)
+        if cmd_name == "rename":
+            q.add_argument("old")
+            q.add_argument("new")
+        elif cmd_name == "merge":
+            q.add_argument("sources", nargs="+")
+            q.add_argument("--into", required=True)
+        else:
+            q.add_argument("name")
+        q.add_argument("--folder", help="只掃描這個資料夾（最準確）；省略＝用 Spotlight 找整台 Mac")
+        q.add_argument("--apply", action="store_true", help="真的執行（預設只預覽）")
+    tsub.add_parser("undo", help="復原最近一次標籤的改名/合併/刪除")
+    q = tsub.add_parser("sync-db", help="把標籤清單寫進 AlphaVibe 資料庫（讓網頁的標籤管理看得到）")
+    q.add_argument("--data-dir")
+    q.add_argument("--pull", action="store_true", help="反向：把資料庫裡有、清單沒有的標籤加進清單")
 
     p = sub.add_parser("organize-gui", help="Finder 右鍵用：預覽視窗確認後整理")
     p.add_argument("folder")

@@ -10,22 +10,25 @@
 Finder 標籤不會被動到（只增減指定名稱的標籤）。
 
 快速鍵（⌃⌘＋鍵）：數字 1-9 或字母；`q`（鎖定螢幕）、`f`（全螢幕）、`d`
-（查字典）是 macOS 保留組合，`t` 留給「貼標籤…」視窗，皆不可指派。
+（查字典）是 macOS 保留組合，`t` 留給「貼標籤…」視窗、`m` 留給「管理標籤…」視窗，皆不可指派。
 """
 import json
 import os
 import re
 import subprocess
 
+import datetime
+
 from photo_formats import (
-    expand_group, find_exiftool, group_key, read_finder_tags, sidecar_path,
-    uses_sidecar, write_finder_tags)
+    HEIC_EXTS, JPEG_EXTS, WRITABLE_RAW_EXTS, expand_group, find_exiftool,
+    group_key, is_photo, read_finder_tags, sidecar_path, uses_sidecar,
+    write_finder_tags)
 from photo_metadata_sync import read_existing_tags, write_metadata
 
 CONFIG_DIR = os.environ.get("PHOTO_TOOL_HOME") or os.path.expanduser("~/.photo-tool")
 FORBIDDEN_CHARS = set(',;"\n\r\t/:\\')
 STAR_RE = re.compile(r"^★[1-5]$")
-RESERVED_KEYS = {"q", "f", "d", "t"}
+RESERVED_KEYS = {"q", "f", "d", "t", "m"}
 VALID_KEYS = (set("123456789") | set("abcdefghijklmnopqrstuvwxyz")) - RESERVED_KEYS
 MAX_RECENT = 12
 STARTER_TAGS = [
@@ -287,15 +290,16 @@ def notify(message, title="相片標籤"):
     _osascript('display notification "%s" with title "%s"' % (_esc(message), _esc(title)))
 
 
-def choose_from_list(items, preselected, prompt, title="相片標籤"):
-    """多選清單視窗。回傳選取的項目清單；取消回傳 None。"""
+def choose_from_list(items, preselected, prompt, title="相片標籤", multiple=True):
+    """清單視窗（預設多選）。回傳選取的項目清單；取消回傳 None。"""
     def lit(xs):
         return "{" + ", ".join('"%s"' % _esc(x) for x in xs) + "}"
     script = ('choose from list %s with title "%s" with prompt "%s" '
-              'default items %s with multiple selections allowed '
-              'and empty selection allowed OK button name "套用" '
+              'default items %s %sOK button name "%s" '
               'cancel button name "取消"') % (
-        lit(items), _esc(title), _esc(prompt), lit(preselected))
+        lit(items), _esc(title), _esc(prompt), lit(preselected),
+        "with multiple selections allowed and empty selection allowed "
+        if multiple else "", "套用" if multiple else "選擇")
     proc = _osascript(script)
     out = proc.stdout.strip()
     if proc.returncode != 0 or out == "false":
@@ -418,3 +422,272 @@ def cheatsheet_text(paths=()):
 
 def show_cheatsheet(paths):
     show_message(cheatsheet_text(paths), title="相片標籤速查表")
+
+
+# ====================================================================
+# 第二階段：跨檔案改名／合併／刪除標籤（先預覽、確認才執行、可復原）
+# ====================================================================
+
+def history_dir():
+    return os.path.join(CONFIG_DIR, "history")
+
+
+def find_tagged_files(names, folder=None):
+    """找出目前貼了 `names` 任一標籤的照片檔。
+
+    - 指定 `folder`：用 exiftool 遞迴掃描檔案內/sidecar 的標籤（最可靠）。
+    - 沒指定：用 Spotlight 查 Finder 標籤（快，但只涵蓋有被索引的位置）。
+    回傳排序、去重的照片檔路徑清單（sidecar 會對應回它的 RAW）。"""
+    names = set(names)
+    found = set()
+    if folder:
+        exiftool = find_exiftool() or "exiftool"
+        in_file_exts = [e.lstrip(".") for e in JPEG_EXTS + HEIC_EXTS + WRITABLE_RAW_EXTS]
+        cmd = [exiftool, "-r", "-j", "-charset", "iptc=UTF8", "-Subject", "-Keywords"]
+        for e in in_file_exts + ["xmp"]:
+            cmd += ["-ext", e]
+        cmd.append(folder)
+        proc = subprocess.run(cmd, capture_output=True, timeout=600)
+        try:
+            rows = json.loads(proc.stdout.decode("utf-8", "replace") or "[]")
+        except ValueError:
+            rows = []
+        for row in rows:
+            tags = set(_as_list(row.get("Subject")) + _as_list(row.get("Keywords")))
+            if not tags & names:
+                continue
+            path = row["SourceFile"]
+            if path.lower().endswith(".xmp"):
+                d, stem = group_key(path)
+                for fn in os.listdir(d):
+                    full = os.path.join(d, fn)
+                    if (uses_sidecar(full) and is_photo(full)
+                            and os.path.splitext(fn)[0].lower() == stem):
+                        found.add(full)
+            elif is_photo(path):
+                found.add(os.path.abspath(path))
+    else:
+        for name in names:
+            proc = subprocess.run(
+                ["mdfind", "kMDItemUserTags == '%s'" % name.replace("'", "\\'")],
+                capture_output=True, timeout=60)
+            for line in proc.stdout.decode("utf-8", "replace").splitlines():
+                if line and is_photo(line):
+                    found.add(line)
+    return sorted(found)
+
+
+def plan_change(sources, target, folder=None):
+    """預覽：`sources` 全部換成 `target`（改名/合併）；`target` 為 None 表示
+    刪除。回傳 {"sources","target","files","groups"}。"""
+    sources = [validate_name(n) for n in sources]
+    if target is not None:
+        target = validate_name(target)
+    files = find_tagged_files(sources, folder)
+    return {"sources": sources, "target": target, "files": files,
+            "groups": len({group_key(f) for f in files}), "folder": folder}
+
+
+def apply_change(plan, update_vocab=True):
+    """執行 `plan_change()` 的結果，寫歷史紀錄供復原。回傳
+    {"changed_files","failed","log"}。"""
+    sources, target = plan["sources"], plan["target"]
+    os.makedirs(history_dir(), exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_path = os.path.join(history_dir(), "%s-tags.json" % stamp)
+    entries, failed = [], []
+    for path in plan["files"]:
+        try:
+            before = read_file_tags(path)
+            apply_delta(path, add=(target,) if target else (),
+                        remove=[n for n in sources if n != target])
+            after = read_file_tags(path)
+            added = [t for t in after if t not in before]
+            removed = [t for t in before if t not in after]
+            if added or removed:
+                entries.append({"path": path, "added": added, "removed": removed})
+        except Exception as exc:  # noqa: BLE001
+            failed.append((path, str(exc)))
+    with open(log_path, "w", encoding="utf-8") as f:
+        json.dump({"sources": sources, "target": target, "entries": entries,
+                   "vocab_before": load_vocab() if update_vocab else None},
+                  f, ensure_ascii=False, indent=1)
+    if update_vocab:
+        _update_vocab_for_change(sources, target)
+    return {"changed_files": len(entries), "failed": failed, "log": log_path}
+
+
+def _update_vocab_for_change(sources, target):
+    data = load_vocab()
+    by_name = {t["name"]: t for t in data["tags"]}
+    moved_key, moved_group = "", ""
+    for n in sources:
+        if n in by_name and n != target:
+            moved_key = moved_key or by_name[n].get("key", "")
+            moved_group = moved_group or by_name[n].get("group", "")
+    data["tags"] = [t for t in data["tags"] if t["name"] not in sources or t["name"] == target]
+    if target:
+        entry = find_tag(data, target)
+        if entry is None:   # 改名：新名稱繼承舊名稱的快速鍵與分組
+            data["tags"].append({"name": target, "key": moved_key, "group": moved_group})
+        else:               # 合併進既有標籤：它沒有快速鍵就繼承
+            entry["key"] = entry.get("key") or moved_key
+            entry["group"] = entry.get("group") or moved_group
+        data["recent"] = [target if n in sources else n for n in data["recent"]]
+    else:
+        data["recent"] = [n for n in data["recent"] if n not in sources]
+    seen, recent = set(), []
+    for n in data["recent"]:
+        if n not in seen:
+            seen.add(n)
+            recent.append(n)
+    data["recent"] = recent
+    save_vocab(data)
+
+
+def undo_last_change():
+    """復原最近一次跨檔案標籤變更（含標籤清單）。回傳 (還原檔案數, 略過[(路徑, 原因)])。"""
+    d = history_dir()
+    logs = sorted(f for f in os.listdir(d) if f.endswith("-tags.json")) if os.path.isdir(d) else []
+    if not logs:
+        raise ValueError("沒有可復原的標籤變更紀錄")
+    log_path = os.path.join(d, logs[-1])
+    with open(log_path, encoding="utf-8") as f:
+        log = json.load(f)
+    restored, skipped = 0, []
+    for e in log["entries"]:
+        if not os.path.exists(e["path"]):
+            skipped.append((e["path"], "檔案已不在原位置"))
+            continue
+        apply_delta(e["path"], add=e["removed"], remove=e["added"])
+        restored += 1
+    if log.get("vocab_before") is not None:
+        save_vocab(log["vocab_before"])
+    os.rename(log_path, log_path + ".undone")
+    return restored, skipped
+
+
+# ---------- 「管理標籤…」視窗 ----------
+
+def choose_folder(prompt="選擇要處理的資料夾"):
+    proc = _osascript('POSIX path of (choose folder with prompt "%s")' % _esc(prompt))
+    return proc.stdout.strip().rstrip("/") or None if proc.returncode == 0 else None
+
+
+def confirm(message, ok_label="執行", title="相片標籤"):
+    proc = subprocess.run(
+        ["osascript",
+         "-e", "on run argv",
+         "-e", 'display dialog (item 1 of argv) with title (item 2 of argv) '
+               'buttons {"取消", (item 3 of argv)} default button 2 '
+               'cancel button 1 with icon note',
+         "-e", "end run", message, title, ok_label], capture_output=True)
+    return proc.returncode == 0
+
+
+def _reinstall_services():
+    import photo_services
+    photo_services.install(load_vocab())
+
+
+_ACTIONS = ("新增標籤", "改名", "合併標籤", "刪除標籤", "指派/更換快速鍵", "復原上次標籤變更")
+_SCOPE_MAC = "整台 Mac（用 Spotlight，只含已索引的位置）"
+_SCOPE_FOLDER = "選擇資料夾…（掃描檔案內的標籤，最準確）"
+
+
+def _pick_one(choose, items, prompt):
+    got = choose(items, [], prompt, multiple=False)
+    return got[0] if got else None
+
+
+def _pick_scope(choose, pick_folder):
+    """回傳 (確認選了範圍, 資料夾或 None)。"""
+    scope = _pick_one(choose, [_SCOPE_FOLDER, _SCOPE_MAC], "要在哪裡尋找貼了這些標籤的照片？")
+    if scope is None:
+        return False, None
+    if scope == _SCOPE_FOLDER:
+        folder = pick_folder()
+        return (folder is not None), folder
+    return True, None
+
+
+def manager(choose=choose_from_list, ask=ask_text, confirm_fn=confirm,
+            pick_folder=choose_folder, notify_fn=notify, reinstall=_reinstall_services):
+    """「管理標籤…」：新增、改名、合併、刪除、指派快速鍵、復原。
+    改名/合併/刪除會先找出受影響的照片、顯示數量，你確認才改檔案。"""
+    action = _pick_one(choose, list(_ACTIONS), "要做什麼？")
+    if action is None:
+        return None
+    names = [t["name"] for t in load_vocab()["tags"]]
+    try:
+        if action == "新增標籤":
+            name = ask("新標籤名稱：")
+            if not name:
+                return None
+            key = ask("快速鍵（1-9 或字母，可留空）：") or None
+            add_tag(name, key=key)
+            reinstall()
+            notify_fn("已新增「%s」" % name.strip())
+            return action
+        if action == "復原上次標籤變更":
+            if not confirm_fn("要復原最近一次標籤的改名/合併/刪除嗎？", "復原"):
+                return None
+            restored, skipped = undo_last_change()
+            reinstall()
+            notify_fn("已復原 %d 個檔案%s" % (
+                restored, "，略過 %d 個" % len(skipped) if skipped else ""))
+            return action
+        if not names:
+            notify_fn("標籤清單是空的")
+            return None
+        if action == "指派/更換快速鍵":
+            name = _pick_one(choose, names, "要設定哪個標籤的快速鍵？")
+            if name is None:
+                return None
+            key = ask("「%s」的快速鍵（1-9 或字母；輸入 none 清除）：" % name)
+            if key is None:
+                return None
+            set_key(name, None if key.strip().lower() in ("none", "") else key)
+            reinstall()
+            notify_fn("已更新「%s」的快速鍵" % name)
+            return action
+        if action == "改名":
+            old = _pick_one(choose, names, "要改名的標籤：")
+            if old is None:
+                return None
+            new = ask("「%s」的新名稱：" % old)
+            if not new:
+                return None
+            sources, target, verb = [old], validate_name(new), "改名成「%s」" % new.strip()
+        elif action == "合併標籤":
+            picked = choose(names, [], "選兩個以上要合併的標籤：")
+            if not picked or len(picked) < 2:
+                notify_fn("合併至少要選兩個標籤")
+                return None
+            target = _pick_one(choose, picked, "合併後要保留哪個名稱？")
+            if target is None:
+                return None
+            sources, verb = picked, "合併成「%s」" % target
+        else:  # 刪除標籤
+            old = _pick_one(choose, names, "要刪除的標籤：")
+            if old is None:
+                return None
+            sources, target, verb = [old], None, "從所有照片移除並刪除"
+        ok, folder = _pick_scope(choose, pick_folder)
+        if not ok:
+            return None
+        plan = plan_change(sources, target, folder)
+        msg = "把「%s」%s\n\n範圍：%s\n找到 %d 張照片（%d 個檔案）。\n確認後才會改檔案，之後可用「復原上次標籤變更」還原。" % (
+            "、".join(sources), verb, folder or "整台 Mac（Spotlight）",
+            plan["groups"], len(plan["files"]))
+        if not confirm_fn(msg, "執行"):
+            return None
+        result = apply_change(plan)
+        reinstall()
+        notify_fn("完成：改了 %d 個檔案%s" % (
+            result["changed_files"],
+            "，%d 個失敗" % len(result["failed"]) if result["failed"] else ""))
+        return action
+    except ValueError as exc:
+        notify_fn(str(exc))
+        return None

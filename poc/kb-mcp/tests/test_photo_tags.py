@@ -201,6 +201,107 @@ class GuiFlowTest(TagTestBase):
             self.assertIn(expect, text)
 
 
+class BulkChangeTest(TagTestBase):
+    def _library(self):
+        """3 組照片：a.jpg(街拍)、b.jpg(街拍+家人)、RAW+sidecar(街拍)、c.jpg(家人)"""
+        sub = os.path.join(self.tmp, "sub")
+        os.makedirs(sub)
+        a = self.jpg("a.jpg")
+        b = os.path.join(sub, "b.jpg")
+        _write_jpeg(b)
+        c = self.jpg("c.jpg")
+        raw = self.raw()
+        pt.apply_to_selection([a, b, raw], add=("街拍",))
+        pt.apply_to_selection([b, c], add=("家人",))
+        return a, b, c, raw
+
+    def test_rename_rewrites_files_sidecar_keeps_key_and_other_tags_then_undo(self):
+        a, b, c, raw = self._library()
+        plan = pt.plan_change(["街拍"], "街頭", folder=self.tmp)
+        self.assertEqual((plan["groups"], len(plan["files"])), (3, 3))
+        self.assertEqual(pt.read_file_tags(a), ["街拍"])      # 預覽不動檔案
+        result = pt.apply_change(plan)
+        self.assertEqual((result["changed_files"], result["failed"]), (3, []))
+        self.assertEqual(pt.read_file_tags(a), ["街頭"])
+        self.assertEqual(sorted(pt.read_file_tags(b)), sorted(["街頭", "家人"]))
+        self.assertEqual(pt.read_file_tags(raw), ["街頭"])     # sidecar 也改了
+        self.assertIn("街頭", _finder_names(a))
+        self.assertNotIn("街拍", _finder_names(a))
+        data = pt.load_vocab()
+        self.assertIsNone(pt.find_tag(data, "街拍"))
+        self.assertEqual(pt.tag_for_key("1"), "街頭")         # 快速鍵跟著走
+        restored, skipped = pt.undo_last_change()
+        self.assertEqual((restored, skipped), (3, []))
+        self.assertEqual(pt.read_file_tags(a), ["街拍"])
+        self.assertEqual(pt.tag_for_key("1"), "街拍")
+        with self.assertRaises(ValueError):                    # 已復原，沒有更多紀錄
+            pt.undo_last_change()
+
+    def test_merge_and_delete(self):
+        a, b, c, raw = self._library()
+        pt.apply_change(pt.plan_change(["街拍", "家人"], "生活", folder=self.tmp))
+        self.assertEqual(pt.read_file_tags(b), ["生活"])       # 兩個標籤併成一個
+        self.assertEqual(sorted(pt.read_file_tags(c)), ["生活"])
+        names = [t["name"] for t in pt.load_vocab()["tags"]]
+        self.assertIn("生活", names)
+        self.assertNotIn("街拍", names)
+        self.assertEqual(pt.tag_for_key("1"), "生活")         # 繼承第一個有快速鍵的
+        pt.apply_change(pt.plan_change(["生活"], None, folder=self.tmp))
+        for f in (a, b, c, raw):
+            self.assertEqual(pt.read_file_tags(f), [])
+        self.assertIsNone(pt.find_tag(pt.load_vocab(), "生活"))
+
+    def test_rating_and_star_tag_untouched_by_bulk_change(self):
+        a, b, c, raw = self._library()
+        photo_tool.rate_files([a], 5)
+        pt.apply_change(pt.plan_change(["街拍"], "街頭", folder=self.tmp))
+        self.assertEqual(read_existing_tags(a)[1], 5)
+        self.assertIn("★5", _finder_names(a))
+
+    def test_manager_rename_flow_and_cancel(self):
+        a, b, c, raw = self._library()
+        script = iter([["改名"], ["街拍"], ["選擇資料夾…（掃描檔案內的標籤，最準確）"]])
+        seen = {}
+
+        def confirm_fn(msg, ok):
+            seen["msg"] = msg
+            return True
+
+        reinstalled = []
+        result = pt.manager(
+            choose=lambda items, pre, prompt, multiple=True: next(script),
+            ask=lambda prompt: "街頭", confirm_fn=confirm_fn,
+            pick_folder=lambda: self.tmp, notify_fn=self.notes.append,
+            reinstall=lambda: reinstalled.append(1))
+        self.assertEqual(result, "改名")
+        self.assertIn("3 張照片", seen["msg"])
+        self.assertEqual(pt.read_file_tags(a), ["街頭"])
+        self.assertEqual(reinstalled, [1])
+        # 取消確認 → 不動
+        script2 = iter([["刪除標籤"], ["家人"], ["選擇資料夾…（掃描檔案內的標籤，最準確）"]])
+        self.assertIsNone(pt.manager(
+            choose=lambda items, pre, prompt, multiple=True: next(script2),
+            ask=lambda p: None, confirm_fn=lambda m, o: False,
+            pick_folder=lambda: self.tmp, notify_fn=self.notes.append,
+            reinstall=lambda: None))
+        self.assertEqual(sorted(pt.read_file_tags(b)), sorted(["街頭", "家人"]))
+
+    def test_manager_add_and_key(self):
+        pt.manager(choose=lambda i, p, pr, multiple=True: ["新增標籤"],
+                   ask=lambda prompt: "人像" if "名稱" in prompt else "s",
+                   notify_fn=self.notes.append, reinstall=lambda: None)
+        self.assertEqual(pt.tag_for_key("s"), "人像")
+        script = iter([["指派/更換快速鍵"], ["人像"]])
+        pt.manager(choose=lambda i, p, pr, multiple=True: next(script),
+                   ask=lambda prompt: "none", notify_fn=self.notes.append,
+                   reinstall=lambda: None)
+        self.assertIsNone(pt.tag_for_key("s"))
+
+    def test_invalid_names_rejected_in_plan(self):
+        with self.assertRaises(ValueError):
+            pt.plan_change(["街拍"], "a,b", folder=self.tmp)
+
+
 class ServicesTest(TagTestBase):
     def test_install_generates_workflows_and_reinstall_cleans_stale(self):
         svc = os.path.join(self.tmp, "Services")
@@ -210,6 +311,7 @@ class ServicesTest(TagTestBase):
         names = photo_services.install(pt.load_vocab(), services_dir=svc, bind=False)
         self.assertEqual(names[:3], ["相片標籤 1 街拍", "相片標籤 2 光影", "相片標籤 3 家人"])
         self.assertIn("相片貼標籤…", names)
+        self.assertIn("相片管理標籤…", names)
         wf = os.path.join(svc, "相片標籤 1 街拍.workflow", "Contents")
         info = plistlib.load(open(os.path.join(wf, "Info.plist"), "rb"))
         self.assertEqual(info["NSServices"][0]["NSMenuItem"]["default"], "相片標籤 1 街拍")

@@ -66,6 +66,7 @@ if str(_PHOTO_KB_MCP_DIR) not in sys.path:
     sys.path.insert(0, str(_PHOTO_KB_MCP_DIR))
 
 from photo_formats import full_size_jpeg, make_jpeg  # noqa: E402
+from photo_tags import validate_name as validate_tag_name  # noqa: E402
 from photo_importer import (  # noqa: E402
     scan_folder, commit_import, external_volume_mounted, heal_moved_paths,
     resolve_possible_match, heal_in_place_hashes)
@@ -664,3 +665,85 @@ def suggest_tags(
     if not q:
         return {"tags": [t["name"] for t in store.list_tags()]}
     return {"tags": [t["name"] for t in store.suggest_tags(q)]}
+
+
+# ---------- 標籤管理（改名／合併／刪除） ----------
+# 對應 Finder 端 photo_tool 的 `tags rename|merge|delete`：資料庫改完後，受影響
+# 照片的檔案中繼資料（XMP/IPTC／RAW sidecar）由背景任務重新寫回，維持「檔案
+# 跟著資料庫走」。
+
+def _run_bulk_metadata_sync(photo_ids: List[int], data_dir: str) -> None:
+    for photo_id in photo_ids:
+        _run_metadata_sync(photo_id, data_dir)
+
+
+def _schedule_sync(photo_ids, background_tasks, store: PhotoStore) -> None:
+    for photo_id in photo_ids:
+        store.mark_metadata_pending(photo_id)
+    if photo_ids:
+        background_tasks.add_task(_run_bulk_metadata_sync, list(photo_ids), store.data_dir)
+
+
+def _clean_tag_name(name: str) -> str:
+    try:
+        return validate_tag_name(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/api/photos/tags/stats")
+def tag_stats(store: PhotoStore = Depends(get_photo_store)) -> Dict[str, Any]:
+    return {"tags": [{"name": t["name"], "count": t["count"]}
+                     for t in store.list_tags_with_counts()]}
+
+
+class TagCreate(BaseModel):
+    name: str
+
+
+@router.post("/api/photos/tags")
+def create_tag(body: TagCreate, store: PhotoStore = Depends(get_photo_store)) -> Dict[str, Any]:
+    tag = store.get_or_create_tag(_clean_tag_name(body.name))
+    return {"tag": tag["name"]}
+
+
+class TagRename(BaseModel):
+    old: str
+    new: str
+
+
+@router.post("/api/photos/tags/rename")
+def rename_tag(body: TagRename, background_tasks: BackgroundTasks,
+               store: PhotoStore = Depends(get_photo_store)) -> Dict[str, Any]:
+    new = _clean_tag_name(body.new)
+    result = store.rename_tag(body.old, new)
+    if result is None:
+        raise HTTPException(status_code=404, detail="tag not found")
+    _schedule_sync(result["photo_ids"], background_tasks, store)
+    return {"affected": len(result["photo_ids"]), "merged": result["merged"]}
+
+
+class TagMerge(BaseModel):
+    sources: List[str]
+    into: str
+
+
+@router.post("/api/photos/tags/merge")
+def merge_tags(body: TagMerge, background_tasks: BackgroundTasks,
+               store: PhotoStore = Depends(get_photo_store)) -> Dict[str, Any]:
+    into = _clean_tag_name(body.into)
+    if len(body.sources) < 1:
+        raise HTTPException(status_code=400, detail="sources 至少要一個")
+    photo_ids = store.merge_tags(body.sources, into)
+    _schedule_sync(photo_ids, background_tasks, store)
+    return {"affected": len(photo_ids)}
+
+
+@router.delete("/api/photos/tags")
+def delete_tag(background_tasks: BackgroundTasks, name: str = Query(...),
+               store: PhotoStore = Depends(get_photo_store)) -> Dict[str, Any]:
+    photo_ids = store.delete_tag(name)
+    if photo_ids is None:
+        raise HTTPException(status_code=404, detail="tag not found")
+    _schedule_sync(photo_ids, background_tasks, store)
+    return {"affected": len(photo_ids)}
