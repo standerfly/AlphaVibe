@@ -228,3 +228,31 @@ def write_finder_tags(path, tags):
             subprocess.run(["xattr", "-d", USER_TAGS_ATTR, path], capture_output=True)
     except (subprocess.SubprocessError, OSError):
         pass
+
+
+def group_key(path):
+    """同目錄、同主檔名（不分大小寫）視為同一組（SDIM0071.X3F／.jpg／.xmp）。"""
+    return (os.path.dirname(path),
+            os.path.splitext(os.path.basename(path))[0].lower())
+
+
+def expand_group(paths):
+    """把選取的檔案展開成「同組的所有照片檔」（不含 .xmp sidecar）。
+    非檔案、非照片的項目忽略；回傳去重後的絕對路徑清單。"""
+    targets, seen = [], set()
+    for p in paths:
+        p = os.path.abspath(p)
+        if not os.path.isfile(p) or not is_photo(p):
+            continue
+        d, stem = group_key(p)
+        members = [p]
+        for name in sorted(os.listdir(d)):
+            full = os.path.join(d, name)
+            if (full != p and is_photo(full)
+                    and os.path.splitext(name)[0].lower() == stem):
+                members.append(full)
+        for m in members:
+            if m not in seen:
+                seen.add(m)
+                targets.append(m)
+    return targets

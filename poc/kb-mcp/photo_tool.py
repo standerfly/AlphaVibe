@@ -35,7 +35,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from photo_formats import (  # noqa: E402
-    USER_TAGS_ATTR, ext_of, find_exiftool, is_photo, make_jpeg,
+    USER_TAGS_ATTR, expand_group, ext_of, find_exiftool, is_photo, make_jpeg,
     primary_rank, read_capture_date, read_finder_tags, sidecar_path,
     uses_sidecar, write_finder_tags)
 
@@ -221,22 +221,7 @@ def rate_file(path, n):
 def rate_files(paths, n):
     """對選取的檔案評分；同組（同目錄同主檔名）的其他照片檔一併評分。
     回傳 (成功清單, 失敗[(路徑, 原因)])。"""
-    targets, seen = [], set()
-    for p in paths:
-        p = os.path.abspath(p)
-        if not os.path.isfile(p):
-            continue
-        siblings = [p]
-        d, stem = _group_key(p)
-        for name in os.listdir(d):
-            full = os.path.join(d, name)
-            if (full != p and is_photo(full)
-                    and os.path.splitext(name)[0].lower() == stem):
-                siblings.append(full)
-        for s in siblings:
-            if is_photo(s) and s not in seen:
-                seen.add(s)
-                targets.append(s)
+    targets = expand_group(paths)
     ok, failed = [], []
     for t in targets:
         try:
@@ -469,6 +454,74 @@ def _print_plan(plan, apply):
             print("  - %s" % p)
 
 
+def _run_tag_command(args):
+    import photo_tags as pt
+    try:
+        if args.cmd == "tag-slot":
+            pt.slot_toggle(args.key, args.files)
+            return 0
+        if args.cmd == "tag-picker":
+            pt.picker(args.files)
+            return 0
+        if args.cmd == "tag-cheatsheet":
+            pt.show_cheatsheet(args.files)
+            return 0
+        if args.cmd == "tag":
+            if args.action == "clear":
+                groups, failed = pt.clear_all(args.args)
+                print("已清除 %d 張的標籤" % groups)
+            else:
+                name, files = pt.validate_name(args.args[0]), args.args[1:]
+                if not files:
+                    print("請指定檔案")
+                    return 2
+                if args.action == "toggle":
+                    r = pt.toggle(files, name)
+                    print("%s「%s」：%d 張" % (
+                        {"add": "已貼上", "remove": "已移除", "none": "沒有照片"}[r["action"]],
+                        name, r["groups"]))
+                    failed = r["failed"]
+                else:
+                    groups, failed = pt.apply_to_selection(
+                        files, add=(name,) if args.action == "add" else (),
+                        remove=(name,) if args.action == "remove" else ())
+                    print("%s「%s」：%d 張" % (
+                        "已貼上" if args.action == "add" else "已移除", name, groups))
+            for path, why in failed:
+                print("  失敗 %s：%s" % (path, why))
+            return 1 if failed else 0
+        # tags 子命令
+        if args.tags_cmd == "list":
+            data = pt.load_vocab()
+            for t in data["tags"]:
+                print("%-4s %-12s %s" % (
+                    ("⌃⌘" + t["key"].upper()) if t.get("key") else "—",
+                    t["name"], ("[%s]" % t["group"]) if t.get("group") else ""))
+            print("共 %d 個標籤；清單檔：%s" % (len(data["tags"]), pt.vocab_path()))
+        elif args.tags_cmd == "add":
+            pt.add_tag(args.name, key=args.key, group=args.group)
+            print("已新增「%s」。有指派快速鍵的話，請執行 tags install 讓右鍵動作生效。" % args.name)
+        elif args.tags_cmd == "remove":
+            pt.remove_tag(args.name)
+            print("已從清單移除「%s」（檔案上已貼的標籤沒動）。請執行 tags install。" % args.name)
+        elif args.tags_cmd == "key":
+            key = None if args.key.lower() in ("none", "-", "") else args.key
+            pt.set_key(args.name, key)
+            print("已更新。請執行 tags install 讓快速鍵生效。")
+        elif args.tags_cmd == "install":
+            import photo_services
+            photo_services.write_wrapper(HERE)
+            names = photo_services.install(pt.load_vocab())
+            print("已建立 %d 個右鍵動作：" % len(names))
+            for n in names:
+                print("  " + n)
+            print("若 Finder 右鍵沒有出現，執行 killall Finder。")
+        return 0
+    except ValueError as exc:
+        print("錯誤：%s" % exc)
+        return 2
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="相片整理工具")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -477,6 +530,35 @@ def main(argv=None):
     p.add_argument("folder")
     p.add_argument("--recursive", action="store_true")
     p.add_argument("--apply", action="store_true", help="真的搬移（預設只預覽）")
+
+    # ----- 標籤 -----
+    p = sub.add_parser("tag", help="對檔案批次增減標籤（toggle=切換）")
+    p.add_argument("action", choices=("toggle", "add", "remove", "clear"))
+    p.add_argument("args", nargs="+", help="toggle/add/remove：標籤名稱 檔案...；clear：檔案...")
+
+    p = sub.add_parser("tag-slot", help="Finder 快速鍵用：切換某個快速鍵格對應的標籤")
+    p.add_argument("key")
+    p.add_argument("files", nargs="*")
+
+    p = sub.add_parser("tag-picker", help="Finder 右鍵用：勾選視窗貼/移除標籤")
+    p.add_argument("files", nargs="*")
+
+    p = sub.add_parser("tag-cheatsheet", help="Finder 快速鍵用：顯示快速鍵速查表")
+    p.add_argument("files", nargs="*")
+
+    p = sub.add_parser("tags", help="管理標籤清單與快速鍵")
+    tsub = p.add_subparsers(dest="tags_cmd", required=True)
+    tsub.add_parser("list")
+    q = tsub.add_parser("add")
+    q.add_argument("name")
+    q.add_argument("--key")
+    q.add_argument("--group", default="")
+    q = tsub.add_parser("remove", help="只從清單移除，不動已貼在檔案上的標籤")
+    q.add_argument("name")
+    q = tsub.add_parser("key", help="指派快速鍵（none 清除）")
+    q.add_argument("name")
+    q.add_argument("key")
+    tsub.add_parser("install", help="（重新）建立 Finder 右鍵動作與 ⌃⌘ 快速鍵")
 
     p = sub.add_parser("organize-gui", help="Finder 右鍵用：預覽視窗確認後整理")
     p.add_argument("folder")
@@ -526,6 +608,9 @@ def main(argv=None):
         else:
             print("這只是預覽，沒有搬動任何檔案。確認後加 --apply 執行。")
         return 0
+
+    if args.cmd in ("tag", "tag-slot", "tag-picker", "tag-cheatsheet", "tags"):
+        return _run_tag_command(args)
 
     if args.cmd == "organize-gui":
         organize_gui(args.folder)

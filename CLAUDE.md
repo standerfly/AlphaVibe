@@ -361,4 +361,5 @@ MacBook 上的相片整理命令列工具，核心在 `poc/kb-mcp/photo_tool.py`
 - **Finder 評分**：`~/.local/bin/photo-rate.sh <0-5> 檔案...` 呼叫 `photo_tool.py rate`；Finder 快速動作「評分 N 星」（捷徑）與 ⌃⌥0~5 呼叫它。Spotlight 不會把 JPG 的 XMP:Rating 索引成 `kMDItemStarRating`（實測），所以同時寫 Finder 標籤 `★N` 供 Finder 搜尋/篩選。
 - **安全**：`organize` 預設只預覽、`--apply` 才搬，從不覆蓋、可 `undo`（紀錄在 `~/.photo-tool/history/`）；`clean` 只列「AlphaVibe 端副本存在且雜湊一致」的來源，`--delete` 需互動輸入 yes 並移到垃圾桶。已匯入的照片請在 AlphaVibe 介面評分、不要再用 `organize` 搬（資料庫記路徑；reference 模式靠 `scan_folder()` 的搬家偵測修復）。
 - 測試：`poc/kb-mcp/tests/test_photo_tool.py`、`app/tests/test_photo_preview.py`。
+- **標籤（2026-10）**：`poc/kb-mcp/photo_tags.py`（清單 `~/.photo-tool/tags.json`、批次貼/移除/切換）＋`photo_services.py`（產生 Finder 右鍵動作與 ⌃⌘＋鍵快速鍵）。標籤同時寫 XMP:Subject＋IPTC:Keywords（RAW 寫 sidecar，匯入時 `read_existing_tags()` 帶進資料庫）與純名稱 Finder 標籤；不動 `★N` 評分標籤與使用者其他 Finder 標籤；一張照片可有任意多個標籤，按同一快速鍵切換移除。快速鍵 1-9 或字母（q/f/d 為系統保留、t 留給「貼標籤…」視窗）。改清單後執行 `python3 poc/kb-mcp/photo_tool.py tags install` 重建右鍵動作；換電腦 clone 後也是 `brew install exiftool` + 這個指令。右鍵動作用 Automator「服務」而非「捷徑」（捷徑的 Run Shell Script 每換一批檔案就跳確認視窗，實測）。測試：`poc/kb-mcp/tests/test_photo_tags.py`。
 
