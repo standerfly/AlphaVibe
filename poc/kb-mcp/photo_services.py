@@ -140,25 +140,21 @@ def write_service(services_dir, name, command, file_type="public.item", input_ty
 
 # pbs 的 key_equivalent：^ = Control、@ = Command、~ = Option
 CTRL_OPT = "^~"
-CTRL_OPT_CMD = "^~@"   # 標籤格與視窗類動作：⌃⌘T 被 Finder「加入側邊欄」佔用、⌃⌘+數字實測無反應
+CTRL_OPT_CMD = "^~@"   # 視窗類動作：⌃⌘T 被 Finder「加入側邊欄」佔用，⌘＋數字實測不觸發
 BASE_NAMES = (["相片評分 %d 星" % n for n in range(6)]
               + ["相片依日期整理", "相片整理選取的檔案", "相片復原上次整理"])
 
 
-def service_specs(vocab):
-    """依標籤清單算出要建立的動作：[(名稱, 指令, 快速鍵, 修飾鍵, 檔案類型, 輸入類型)]。
-    包含標籤動作、評分 0-5 星（⌃⌥0-5）與整理/復原動作。"""
+def service_specs(vocab=None):
+    """要建立的動作，數量固定（不隨標籤數增加）：
+    [(名稱, 指令, 快速鍵, 修飾鍵, 檔案類型, 輸入類型)]。
+    標籤只有三個入口：⌃⌥⌘T 視窗（標籤前有自動編號）、⌃⌥⌘R 重複上次、⌃⌥⌘M 管理。"""
     cmd = '"' + wrapper_script_path() + '"'
-    specs = []
-    for t in vocab["tags"]:
-        key = t.get("key")
-        if key:
-            specs.append(("相片標籤 " + key.upper() + " " + t["name"],
-                          cmd + " tag-slot " + key + ' "$@"', key, CTRL_OPT_CMD,
-                          "public.item", None))
-    specs.append(("相片貼標籤…", cmd + ' tag-picker "$@"', "t", CTRL_OPT_CMD, "public.item", None))
-    specs.append(("相片標籤速查表", cmd + ' tag-cheatsheet "$@"', "/", CTRL_OPT_CMD, "public.item", None))
-    specs.append(("相片管理標籤…", cmd + " tag-manager", "m", CTRL_OPT_CMD, "public.item", None))
+    specs = [
+        ("相片貼標籤…", cmd + ' tag-picker "$@"', "t", CTRL_OPT_CMD, "public.item", None),
+        ("相片重複上次標籤", cmd + ' tag-repeat "$@"', "r", CTRL_OPT_CMD, "public.item", None),
+        ("相片管理標籤…", cmd + " tag-manager", "m", CTRL_OPT_CMD, "public.item", None),
+    ]
     for n in range(6):
         specs.append(("相片評分 %d 星" % n, cmd + " rate %d \"$@\"" % n, str(n), CTRL_OPT,
                       "public.item", None))
@@ -171,8 +167,10 @@ def service_specs(vocab):
 
 
 def _is_ours(entry_name):
+    # 「相片標籤 N 名稱」「相片標籤速查表」是舊版（每個標籤各一個動作）的殘留，
+    # 重新安裝時一併清掉。
     return (entry_name.startswith("相片標籤 ") or entry_name in BASE_NAMES
-            or entry_name in ("相片貼標籤…", "相片標籤速查表", "相片管理標籤…"))
+            or entry_name in ("相片貼標籤…", "相片重複上次標籤", "相片管理標籤…", "相片標籤速查表"))
 
 
 def install(vocab, services_dir=None, bind=True):

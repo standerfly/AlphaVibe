@@ -4,13 +4,14 @@
 - 檔案的 XMP:Subject＋IPTC:Keywords（RAW 如 X3F 寫旁邊的 `.xmp` sidecar）
   ——AlphaVibe 匯入時由 `photo_metadata_sync.read_existing_tags()` 讀進資料庫
 - Finder 標籤（純名稱，不帶顏色）——Finder 搜尋/篩選/智慧型檔案夾
-- `~/.photo-tool/tags.json`——你的標籤清單與快速鍵對應
+- `~/.photo-tool/tags.json`——你的標籤清單（含使用次數、最近使用，用來排編號）
 
 一張照片可以有任意多個標籤。評分用的 `★N` Finder 標籤與使用者自己加的其他
 Finder 標籤不會被動到（只增減指定名稱的標籤）。
 
-快速鍵（⌃⌥⌘＋鍵）：數字 1-9 或字母；`q`（鎖定螢幕）、`f`（全螢幕）、`d`
-（查字典）是 macOS 保留組合，`t` 留給「貼標籤…」視窗（⌃⌥⌘T）、`m` 留給「管理標籤…」視窗（⌃⌥⌘M），皆不可指派。
+貼標籤的方式：⌃⌥⌘T 開視窗，清單每個標籤前有自動編號（依最近與常用排序），
+在清單裡按數字鍵就會跳到那一項；⌃⌥⌘R 把上一次貼的標籤套用到目前選取的照片。
+不再替每個標籤各綁一組系統快速鍵（實測 ⌘＋數字類組合在 Finder 服務裡不會觸發）。
 """
 import json
 import os
@@ -28,13 +29,11 @@ from photo_metadata_sync import read_existing_tags, write_metadata
 CONFIG_DIR = os.environ.get("PHOTO_TOOL_HOME") or os.path.expanduser("~/.photo-tool")
 FORBIDDEN_CHARS = set(',;"\n\r\t/:\\')
 STAR_RE = re.compile(r"^★[1-5]$")
-RESERVED_KEYS = {"q", "f", "d", "t", "m"}
-VALID_KEYS = (set("123456789") | set("abcdefghijklmnopqrstuvwxyz")) - RESERVED_KEYS
 MAX_RECENT = 12
 STARTER_TAGS = [
-    {"name": "街拍", "key": "1", "group": ""},
-    {"name": "光影", "key": "2", "group": ""},
-    {"name": "家人", "key": "3", "group": ""},
+    {"name": "街拍", "group": "", "uses": 0},
+    {"name": "光影", "group": "", "uses": 0},
+    {"name": "家人", "group": "", "uses": 0},
 ]
 
 
@@ -58,13 +57,6 @@ def validate_name(name):
     return name
 
 
-def validate_key(key):
-    key = (key or "").strip().lower()
-    if key not in VALID_KEYS:
-        raise ValueError(
-            "快速鍵必須是 1-9 或字母（q、f、d、t 是系統保留，不能用）：%r" % key)
-    return key
-
 
 def load_vocab():
     """讀取清單；第一次使用時建立起始清單（街拍、光影、家人）。"""
@@ -77,6 +69,7 @@ def load_vocab():
         data = json.load(f)
     data.setdefault("tags", [])
     data.setdefault("recent", [])
+    data.setdefault("last", [])
     return data
 
 
@@ -95,14 +88,12 @@ def find_tag(data, name):
     return None
 
 
-def add_tag(name, key=None, group=""):
+def add_tag(name, group=""):
     data = load_vocab()
     name = validate_name(name)
     if find_tag(data, name):
         raise ValueError("標籤已存在：%s" % name)
-    entry = {"name": name, "key": "", "group": (group or "").strip()}
-    if key:
-        _assign_key(data, entry, key)
+    entry = {"name": name, "group": (group or "").strip(), "uses": 0}
     data["tags"].append(entry)
     save_vocab(data)
     return entry
@@ -119,44 +110,29 @@ def remove_tag(name):
     save_vocab(data)
 
 
-def _assign_key(data, entry, key):
-    key = validate_key(key)
-    for t in data["tags"]:
-        if t is not entry and t.get("key") == key:
-            raise ValueError("快速鍵 %s 已被「%s」使用" % (key.upper(), t["name"]))
-    entry["key"] = key
 
-
-def set_key(name, key):
-    """指派/更換快速鍵；`key` 為 None 或空字串表示清除。"""
-    data = load_vocab()
-    entry = find_tag(data, name)
-    if entry is None:
-        raise ValueError("清單裡沒有這個標籤：%s" % name)
-    if key:
-        _assign_key(data, entry, key)
-    else:
-        entry["key"] = ""
-    save_vocab(data)
-    return entry
-
-
-def tag_for_key(key):
-    key = (key or "").strip().lower()
-    for t in load_vocab()["tags"]:
-        if t.get("key") == key:
-            return t["name"]
-    return None
 
 
 def touch_recent(names):
+    """記錄最近使用（排編號用）並累計使用次數。"""
     data = load_vocab()
     recent = [n for n in data["recent"] if n not in names]
     data["recent"] = (list(names) + recent)[:MAX_RECENT]
+    for n in names:
+        entry = find_tag(data, n)
+        if entry is not None:
+            entry["uses"] = entry.get("uses", 0) + 1
     save_vocab(data)
 
 
-# ---------- 讀寫檔案標籤 ----------
+def ordered_names(data):
+    """視窗裡的編號順序：最近用過的在前，其餘依累計使用次數，再依清單順序。"""
+    by_name = {t["name"]: t for t in data["tags"]}
+    names = [n for n in data["recent"] if n in by_name]
+    rest = [t for t in data["tags"] if t["name"] not in names]
+    rest.sort(key=lambda t: -t.get("uses", 0))   # sort 穩定：同次數維持清單順序
+    return names + [t["name"] for t in rest]
+
 
 def _as_list(value):
     if value is None:
@@ -322,24 +298,6 @@ def show_message(message, title="相片標籤"):
 
 # ---------- 右鍵流程 ----------
 
-def slot_toggle(key, paths, notify_fn=notify):
-    """快速鍵流程：⌃⌥⌘＋鍵 → 切換該格對應的標籤，通知結果。"""
-    name = tag_for_key(key)
-    if name is None:
-        notify_fn("快速鍵 %s 還沒有對應的標籤（用 tags key 指派）" % key.upper())
-        return None
-    result = toggle(paths, name)
-    if result["action"] == "none":
-        notify_fn("選取的項目裡沒有照片")
-    elif result["failed"]:
-        notify_fn("「%s」有 %d 個檔案失敗：%s" % (
-            name, len(result["failed"]), result["failed"][0][1][:80]))
-    elif result["action"] == "add":
-        notify_fn("已貼上「%s」到 %d 張" % (name, result["groups"]))
-    else:
-        notify_fn("已移除「%s」（%d 張）" % (name, result["groups"]))
-    return result
-
 
 _NEW_LABEL = "＋ 新增標籤…"
 _OUTSIDE = "（不在清單）"
@@ -349,26 +307,32 @@ def _label(tag):
     return "%s ▸ %s" % (tag["group"], tag["name"]) if tag.get("group") else tag["name"]
 
 
+def numbered_labels(data, extra_names=()):
+    """回傳 {視窗上顯示的文字: 標籤名稱}，依 `ordered_names()` 加上 1、2、3… 編號。
+    在清單視窗按數字鍵會跳到對應項目（macOS 清單的輸入即選取）。"""
+    by_name = {t["name"]: t for t in data["tags"]}
+    labels = {}
+    for i, name in enumerate(ordered_names(data), 1):
+        labels["%d　%s" % (i, _label(by_name[name]))] = name
+    for name in extra_names:   # 檔案上有、清單裡沒有：也列出來才有辦法移除
+        if name not in by_name:
+            labels[name + _OUTSIDE] = name
+    return labels
+
+
 def picker(paths, choose=choose_from_list, ask=ask_text, notify_fn=notify):
-    """「貼標籤…」視窗：最近用過的排最前、目前選取照片都有的預先勾選；
-    取消勾選＝移除、新勾選＝貼上；可當場新增標籤。"""
+    """「貼標籤…」視窗（⌃⌥⌘T）：標籤前有自動編號（最近與常用排前面），按數字鍵
+    跳到該項；目前選取照片都有的預先勾選，取消勾選＝移除、新勾選＝貼上；可當場
+    新增標籤。這次貼上的標籤會記起來，⌃⌥⌘R 可套用到別批照片。"""
     if not expand_group(paths):
         notify_fn("選取的項目裡沒有照片")
         return None
     data = load_vocab()
     common, union = selection_tags(paths)
-    by_name = {t["name"]: t for t in data["tags"]}
-    ordered = [n for n in data["recent"] if n in by_name]
-    ordered += [t["name"] for t in data["tags"] if t["name"] not in ordered]
-    labels = {}
-    for n in ordered:
-        labels[_label(by_name[n])] = n
-    for n in union:
-        if n not in by_name:  # 檔案上有、清單裡沒有：也列出來才有辦法移除
-            labels[n + _OUTSIDE] = n
+    labels = numbered_labels(data, union)
     items = list(labels) + [_NEW_LABEL]
     pre = [lbl for lbl, n in labels.items() if n in common]
-    chosen = choose(items, pre, "勾選要貼上的標籤；取消勾選會移除。")
+    chosen = choose(items, pre, "按數字鍵跳到標籤，勾選＝貼上、取消勾選＝移除。")
     if chosen is None:
         return None
     selected = [labels[c] for c in chosen if c in labels]
@@ -388,6 +352,9 @@ def picker(paths, choose=choose_from_list, ask=ask_text, notify_fn=notify):
     groups, failed = apply_to_selection(paths, add=add, remove=remove)
     if add:
         touch_recent(add)
+        data = load_vocab()
+        data["last"] = list(add)
+        save_vocab(data)
     parts = []
     if add:
         parts.append("貼上 " + "、".join(add))
@@ -398,34 +365,23 @@ def picker(paths, choose=choose_from_list, ask=ask_text, notify_fn=notify):
     return {"add": add, "remove": remove, "failed": failed}
 
 
-def cheatsheet_text(paths=()):
-    data = load_vocab()
-    lines = ["快速鍵（⌃⌥⌘＋鍵）　按一次貼上、再按一次移除", ""]
-    keyed = [t for t in data["tags"] if t.get("key")]
-    for t in sorted(keyed, key=lambda t: (not t["key"].isdigit(), t["key"])):
-        lines.append("⌃⌥⌘%s　%s" % (t["key"].upper(), _label(t)))
-    if not keyed:
-        lines.append("（還沒有指派快速鍵）")
-    lines += ["", "⌃⌥⌘T　開啟「貼標籤…」視窗（可勾選全部標籤、新增標籤）"]
-    unkeyed = [t["name"] for t in data["tags"] if not t.get("key")]
-    if unkeyed:
-        lines += ["", "只能從視窗貼的標籤：" + "、".join(unkeyed)]
-    if paths:
-        common, union = selection_tags(paths)
-        lines += ["", "目前選取的照片："]
-        lines.append("　全部都有：" + ("、".join(common) if common else "（無）"))
-        partial = [t for t in union if t not in common]
-        if partial:
-            lines.append("　部分有：" + "、".join(partial))
-    return "\n".join(lines)
+def repeat_last(paths, notify_fn=notify):
+    """「重複上次標籤」（⌃⌥⌘R）：把上一次在視窗貼上的標籤套用到目前選取的照片
+    （只新增，不移除；已經有的不受影響）。"""
+    last = load_vocab().get("last") or []
+    if not last:
+        notify_fn("還沒有「上一次貼的標籤」，先用 ⌃⌥⌘T 貼一次")
+        return None
+    if not expand_group(paths):
+        notify_fn("選取的項目裡沒有照片")
+        return None
+    groups, failed = apply_to_selection(paths, add=last)
+    touch_recent(last)
+    notify_fn("已貼上 %s（%d 張）%s" % ("、".join(last), groups,
+                                       "，%d 個失敗" % len(failed) if failed else ""))
+    return {"added": last, "groups": groups, "failed": failed}
 
 
-def show_cheatsheet(paths):
-    show_message(cheatsheet_text(paths), title="相片標籤速查表")
-
-
-# ====================================================================
-# 第二階段：跨檔案改名／合併／刪除標籤（先預覽、確認才執行、可復原）
 # ====================================================================
 
 def history_dir():
@@ -520,28 +476,31 @@ def apply_change(plan, update_vocab=True):
 def _update_vocab_for_change(sources, target):
     data = load_vocab()
     by_name = {t["name"]: t for t in data["tags"]}
-    moved_key, moved_group = "", ""
+    moved_group, moved_uses = "", 0
     for n in sources:
         if n in by_name and n != target:
-            moved_key = moved_key or by_name[n].get("key", "")
             moved_group = moved_group or by_name[n].get("group", "")
+            moved_uses += by_name[n].get("uses", 0)
     data["tags"] = [t for t in data["tags"] if t["name"] not in sources or t["name"] == target]
     if target:
         entry = find_tag(data, target)
-        if entry is None:   # 改名：新名稱繼承舊名稱的快速鍵與分組
-            data["tags"].append({"name": target, "key": moved_key, "group": moved_group})
-        else:               # 合併進既有標籤：它沒有快速鍵就繼承
-            entry["key"] = entry.get("key") or moved_key
+        if entry is None:   # 改名：新名稱繼承舊名稱的分組與使用次數
+            data["tags"].append({"name": target, "group": moved_group, "uses": moved_uses})
+        else:               # 合併進既有標籤：次數相加，沒有分組就繼承
+            entry["uses"] = entry.get("uses", 0) + moved_uses
             entry["group"] = entry.get("group") or moved_group
         data["recent"] = [target if n in sources else n for n in data["recent"]]
+        data["last"] = [target if n in sources else n for n in data.get("last", [])]
     else:
         data["recent"] = [n for n in data["recent"] if n not in sources]
-    seen, recent = set(), []
-    for n in data["recent"]:
-        if n not in seen:
-            seen.add(n)
-            recent.append(n)
-    data["recent"] = recent
+        data["last"] = [n for n in data.get("last", []) if n not in sources]
+    for key in ("recent", "last"):
+        seen, out = set(), []
+        for n in data[key]:
+            if n not in seen:
+                seen.add(n)
+                out.append(n)
+        data[key] = out
     save_vocab(data)
 
 
@@ -590,7 +549,7 @@ def _reinstall_services():
     photo_services.install(load_vocab())
 
 
-_ACTIONS = ("新增標籤", "改名", "合併標籤", "刪除標籤", "指派/更換快速鍵", "復原上次標籤變更")
+_ACTIONS = ("新增標籤", "改名", "合併標籤", "刪除標籤", "復原上次標籤變更")
 _SCOPE_MAC = "整台 Mac（用 Spotlight，只含已索引的位置）"
 _SCOPE_FOLDER = "選擇資料夾…（掃描檔案內的標籤，最準確）"
 
@@ -624,8 +583,7 @@ def manager(choose=choose_from_list, ask=ask_text, confirm_fn=confirm,
             name = ask("新標籤名稱：")
             if not name:
                 return None
-            key = ask("快速鍵（1-9 或字母，可留空）：") or None
-            add_tag(name, key=key)
+            add_tag(name)
             reinstall()
             notify_fn("已新增「%s」" % name.strip())
             return action
@@ -640,17 +598,6 @@ def manager(choose=choose_from_list, ask=ask_text, confirm_fn=confirm,
         if not names:
             notify_fn("標籤清單是空的")
             return None
-        if action == "指派/更換快速鍵":
-            name = _pick_one(choose, names, "要設定哪個標籤的快速鍵？")
-            if name is None:
-                return None
-            key = ask("「%s」的快速鍵（1-9 或字母；輸入 none 清除）：" % name)
-            if key is None:
-                return None
-            set_key(name, None if key.strip().lower() in ("none", "") else key)
-            reinstall()
-            notify_fn("已更新「%s」的快速鍵" % name)
-            return action
         if action == "改名":
             old = _pick_one(choose, names, "要改名的標籤：")
             if old is None:

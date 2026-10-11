@@ -464,14 +464,11 @@ def _reinstall_tag_services():
 def _run_tag_command(args):
     import photo_tags as pt
     try:
-        if args.cmd == "tag-slot":
-            pt.slot_toggle(args.key, args.files)
-            return 0
         if args.cmd == "tag-picker":
             pt.picker(args.files)
             return 0
-        if args.cmd == "tag-cheatsheet":
-            pt.show_cheatsheet(args.files)
+        if args.cmd == "tag-repeat":
+            pt.repeat_last(args.files)
             return 0
         if args.cmd == "tag-manager":
             pt.manager()
@@ -503,21 +500,19 @@ def _run_tag_command(args):
         # tags 子命令
         if args.tags_cmd == "list":
             data = pt.load_vocab()
-            for t in data["tags"]:
-                print("%-5s %-12s %s" % (
-                    ("⌃⌥⌘" + t["key"].upper()) if t.get("key") else "—",
-                    t["name"], ("[%s]" % t["group"]) if t.get("group") else ""))
-            print("共 %d 個標籤；清單檔：%s" % (len(data["tags"]), pt.vocab_path()))
+            order = {n: i for i, n in enumerate(pt.ordered_names(data), 1)}
+            for t in sorted(data["tags"], key=lambda t: order[t["name"]]):
+                print("%-3d %-12s 用過 %d 次 %s" % (
+                    order[t["name"]], t["name"], t.get("uses", 0),
+                    ("[%s]" % t["group"]) if t.get("group") else ""))
+            print("共 %d 個標籤（編號＝⌃⌥⌘T 視窗裡的順序）；清單檔：%s" % (
+                len(data["tags"]), pt.vocab_path()))
         elif args.tags_cmd == "add":
-            pt.add_tag(args.name, key=args.key, group=args.group)
-            print("已新增「%s」。有指派快速鍵的話，請執行 tags install 讓右鍵動作生效。" % args.name)
+            pt.add_tag(args.name, group=args.group)
+            print("已新增「%s」。" % args.name)
         elif args.tags_cmd == "remove":
             pt.remove_tag(args.name)
-            print("已從清單移除「%s」（檔案上已貼的標籤沒動）。請執行 tags install。" % args.name)
-        elif args.tags_cmd == "key":
-            key = None if args.key.lower() in ("none", "-", "") else args.key
-            pt.set_key(args.name, key)
-            print("已更新。請執行 tags install 讓快速鍵生效。")
+            print("已從清單移除「%s」（檔案上已貼的標籤沒動）。" % args.name)
         elif args.tags_cmd == "sync-db":
             store = _open_store(args.data_dir, write=not args.pull)
             try:
@@ -599,16 +594,12 @@ def main(argv=None):
     p.add_argument("action", choices=("toggle", "add", "remove", "clear"))
     p.add_argument("args", nargs="+", help="toggle/add/remove：標籤名稱 檔案...；clear：檔案...")
 
-    p = sub.add_parser("tag-slot", help="Finder 快速鍵用：切換某個快速鍵格對應的標籤")
-    p.add_argument("key")
-    p.add_argument("files", nargs="*")
-
     p = sub.add_parser("tag-picker", help="Finder 右鍵用：勾選視窗貼/移除標籤")
     p.add_argument("files", nargs="*")
 
     sub.add_parser("tag-manager", help="Finder 快速鍵用：管理標籤視窗（改名/合併/刪除…）")
 
-    p = sub.add_parser("tag-cheatsheet", help="Finder 快速鍵用：顯示快速鍵速查表")
+    p = sub.add_parser("tag-repeat", help="Finder 快速鍵用：把上一次貼的標籤套用到選取的照片")
     p.add_argument("files", nargs="*")
 
     p = sub.add_parser("tags", help="管理標籤清單與快速鍵")
@@ -616,14 +607,10 @@ def main(argv=None):
     tsub.add_parser("list")
     q = tsub.add_parser("add")
     q.add_argument("name")
-    q.add_argument("--key")
     q.add_argument("--group", default="")
     q = tsub.add_parser("remove", help="只從清單移除，不動已貼在檔案上的標籤")
     q.add_argument("name")
-    q = tsub.add_parser("key", help="指派快速鍵（none 清除）")
-    q.add_argument("name")
-    q.add_argument("key")
-    tsub.add_parser("install", help="（重新）建立 Finder 右鍵動作與 ⌃⌥⌘ 快速鍵")
+    tsub.add_parser("install", help="（重新）建立 Finder 右鍵動作與快速鍵")
     for cmd_name, helptext in (("rename", "改名（跨檔案改寫，預設只預覽）"),
                                ("merge", "合併多個標籤成一個"),
                                ("delete", "從所有照片移除並從清單刪除")):
@@ -692,7 +679,7 @@ def main(argv=None):
             print("這只是預覽，沒有搬動任何檔案。確認後加 --apply 執行。")
         return 0
 
-    if args.cmd in ("tag", "tag-slot", "tag-picker", "tag-cheatsheet", "tags"):
+    if args.cmd in ("tag", "tag-picker", "tag-repeat", "tag-manager", "tags"):
         return _run_tag_command(args)
 
     if args.cmd == "organize-gui":

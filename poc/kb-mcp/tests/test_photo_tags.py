@@ -57,28 +57,36 @@ class VocabTest(TagTestBase):
     def test_starter_vocab_and_validation(self):
         data = pt.load_vocab()
         self.assertEqual([t["name"] for t in data["tags"]], ["街拍", "光影", "家人"])
-        self.assertEqual(pt.tag_for_key("2"), "光影")
         for bad in ("", "a,b", "a/b", "a:b", '含"引號', "★3", "x" * 41):
             with self.assertRaises(ValueError, msg=repr(bad)):
                 pt.validate_name(bad)
-        for key in ("q", "f", "d", "t", "10", "!", ""):
-            with self.assertRaises(ValueError, msg=repr(key)):
-                pt.validate_key(key)
-        self.assertEqual(pt.validate_key("S"), "s")
 
-    def test_add_remove_key_conflicts(self):
-        pt.add_tag("人像", key="s", group="題材")
+    def test_add_remove_and_old_vocab_with_keys_still_loads(self):
+        pt.add_tag("人像", group="題材")
         with self.assertRaises(ValueError):
             pt.add_tag("人像")                       # 重複
-        with self.assertRaises(ValueError):
-            pt.add_tag("風景", key="s")              # 快速鍵被佔用
-        pt.set_key("人像", None)
-        pt.add_tag("風景", key="s")
-        self.assertEqual(pt.tag_for_key("s"), "風景")
-        pt.remove_tag("風景")
-        self.assertIsNone(pt.tag_for_key("s"))
+        pt.remove_tag("人像")
         with self.assertRaises(ValueError):
             pt.remove_tag("不存在")
+        # 舊版 tags.json（有 key 欄位、沒有 uses/last）仍可讀
+        pt.save_vocab({"tags": [{"name": "舊", "key": "1", "group": ""}], "recent": []})
+        data = pt.load_vocab()
+        self.assertEqual(pt.ordered_names(data), ["舊"])
+        self.assertEqual(data["last"], [])
+
+    def test_ordering_recent_then_uses_then_vocab_order(self):
+        for n in ("A", "B", "C"):
+            pt.add_tag(n)
+        pt.touch_recent(["C"])
+        pt.touch_recent(["B"])
+        pt.touch_recent(["B"])          # B 用兩次、最近；C 一次
+        data = pt.load_vocab()
+        self.assertEqual(pt.ordered_names(data)[:3], ["B", "C", "街拍"])
+        self.assertEqual(find_uses(data, "B"), 2)
+
+
+def find_uses(data, name):
+    return pt.find_tag(data, name).get("uses", 0)
 
 
 class ApplyTagsTest(TagTestBase):
@@ -144,14 +152,25 @@ class ApplyTagsTest(TagTestBase):
 
 
 class GuiFlowTest(TagTestBase):
-    def test_slot_toggle_notifies(self):
+    def test_repeat_last_applies_last_picked_tags(self):
+        a, b = self.jpg("a.jpg"), self.jpg("b.jpg")
+        self.assertIsNone(pt.repeat_last([a], notify_fn=self.notes.append))   # 還沒貼過
+        self.assertIn("還沒有", self.notes[-1])
+        pt.picker([a], choose=lambda items, pre, prompt: [i for i in items if "街拍" in i or "光影" in i],
+                  notify_fn=self.notes.append)
+        r = pt.repeat_last([b], notify_fn=self.notes.append)
+        self.assertEqual(sorted(r["added"]), sorted(["街拍", "光影"]))
+        self.assertEqual(sorted(pt.read_file_tags(b)), sorted(["街拍", "光影"]))
+        pt.repeat_last([b], notify_fn=self.notes.append)       # 再按一次：只新增，不會移除
+        self.assertEqual(sorted(pt.read_file_tags(b)), sorted(["街拍", "光影"]))
+
+    def test_picker_numbers_labels(self):
         p = self.jpg()
-        pt.slot_toggle("1", [p], notify_fn=self.notes.append)
-        pt.slot_toggle("1", [p], notify_fn=self.notes.append)
-        pt.slot_toggle("9", [p], notify_fn=self.notes.append)
-        self.assertIn("已貼上「街拍」到 1 張", self.notes[0])
-        self.assertIn("已移除「街拍」", self.notes[1])
-        self.assertIn("還沒有對應", self.notes[2])
+        seen = {}
+        pt.picker([p], choose=lambda items, pre, prompt: seen.setdefault("i", items) and None,
+                  notify_fn=self.notes.append)
+        self.assertEqual(seen["i"][:3], ["1　街拍", "2　光影", "3　家人"])
+        self.assertEqual(seen["i"][-1], "＋ 新增標籤…")
 
     def test_picker_prechecks_common_and_applies_delta(self):
         a, b = self.jpg("a.jpg"), self.jpg("b.jpg")
@@ -161,11 +180,11 @@ class GuiFlowTest(TagTestBase):
 
         def choose(items, pre, prompt):
             seen["items"], seen["pre"] = items, pre
-            return ["光影", "＋ 新增標籤…"]           # 取消街拍、勾光影、新增一個
+            return [i for i in items if i.endswith("光影")] + ["＋ 新增標籤…"]  # 取消街拍、勾光影、新增一個
 
         pt.picker([a, b], choose=choose, ask=lambda p: "夜景",
                   notify_fn=self.notes.append)
-        self.assertEqual(seen["pre"], ["街拍"])      # 兩張都有的才預先勾選
+        self.assertEqual(seen["pre"], ["1　街拍"])    # 兩張都有的才預先勾選（標籤前有編號）
         self.assertIn("孤兒（不在清單）", seen["items"])
         for f in (a, b):
             self.assertEqual(sorted(t for t in pt.read_file_tags(f) if t != "孤兒"),
@@ -188,17 +207,8 @@ class GuiFlowTest(TagTestBase):
         seen = {}
         pt.picker([p], choose=lambda items, pre, prompt: seen.setdefault("i", items) and None,
                   notify_fn=self.notes.append)
-        self.assertEqual(seen["i"][0], "家人")
+        self.assertEqual(seen["i"][0], "1　家人")
 
-    def test_cheatsheet_lists_keys_and_selection(self):
-        p = self.jpg()
-        pt.add_tag("人像", key="s", group="題材")
-        pt.add_tag("備忘")                            # 沒有快速鍵
-        pt.toggle([p], "光影")
-        text = pt.cheatsheet_text([p])
-        for expect in ("⌃⌥⌘1　街拍", "⌃⌥⌘S　題材 ▸ 人像", "⌃⌥⌘T", "只能從視窗貼的標籤：備忘",
-                       "全部都有：光影"):
-            self.assertIn(expect, text)
 
 
 class BulkChangeTest(TagTestBase):
@@ -229,11 +239,10 @@ class BulkChangeTest(TagTestBase):
         self.assertNotIn("街拍", _finder_names(a))
         data = pt.load_vocab()
         self.assertIsNone(pt.find_tag(data, "街拍"))
-        self.assertEqual(pt.tag_for_key("1"), "街頭")         # 快速鍵跟著走
         restored, skipped = pt.undo_last_change()
         self.assertEqual((restored, skipped), (3, []))
         self.assertEqual(pt.read_file_tags(a), ["街拍"])
-        self.assertEqual(pt.tag_for_key("1"), "街拍")
+        self.assertIsNotNone(pt.find_tag(pt.load_vocab(), "街拍"))   # 標籤清單也復原
         with self.assertRaises(ValueError):                    # 已復原，沒有更多紀錄
             pt.undo_last_change()
 
@@ -245,7 +254,7 @@ class BulkChangeTest(TagTestBase):
         names = [t["name"] for t in pt.load_vocab()["tags"]]
         self.assertIn("生活", names)
         self.assertNotIn("街拍", names)
-        self.assertEqual(pt.tag_for_key("1"), "生活")         # 繼承第一個有快速鍵的
+        self.assertEqual(find_uses(pt.load_vocab(), "生活"), 0)
         pt.apply_change(pt.plan_change(["生活"], None, folder=self.tmp))
         for f in (a, b, c, raw):
             self.assertEqual(pt.read_file_tags(f), [])
@@ -286,16 +295,20 @@ class BulkChangeTest(TagTestBase):
             reinstall=lambda: None))
         self.assertEqual(sorted(pt.read_file_tags(b)), sorted(["街頭", "家人"]))
 
-    def test_manager_add_and_key(self):
+    def test_manager_add(self):
         pt.manager(choose=lambda i, p, pr, multiple=True: ["新增標籤"],
-                   ask=lambda prompt: "人像" if "名稱" in prompt else "s",
-                   notify_fn=self.notes.append, reinstall=lambda: None)
-        self.assertEqual(pt.tag_for_key("s"), "人像")
-        script = iter([["指派/更換快速鍵"], ["人像"]])
-        pt.manager(choose=lambda i, p, pr, multiple=True: next(script),
-                   ask=lambda prompt: "none", notify_fn=self.notes.append,
+                   ask=lambda prompt: "人像", notify_fn=self.notes.append,
                    reinstall=lambda: None)
-        self.assertIsNone(pt.tag_for_key("s"))
+        self.assertIsNotNone(pt.find_tag(pt.load_vocab(), "人像"))
+        self.assertNotIn("指派/更換快速鍵", pt._ACTIONS)
+
+    def test_rename_carries_uses_over(self):
+        a, b, c, raw = self._library()
+        pt.touch_recent(["街拍"])
+        pt.touch_recent(["街拍"])
+        pt.apply_change(pt.plan_change(["街拍"], "街頭", folder=self.tmp))
+        self.assertEqual(find_uses(pt.load_vocab(), "街頭"), 2)
+        self.assertEqual(pt.load_vocab()["recent"][0], "街頭")
 
     def test_invalid_names_rejected_in_plan(self):
         with self.assertRaises(ValueError):
@@ -308,17 +321,30 @@ class ServicesTest(TagTestBase):
         os.makedirs(svc)
         keep = os.path.join(svc, "別人的動作.workflow")           # 不是我們的，不能被清掉
         os.makedirs(keep)
+        # 舊版殘留（每個標籤一個動作、速查表）重新安裝時要被清掉
+        for legacy in ("相片標籤 1 街拍", "相片標籤速查表"):
+            os.makedirs(os.path.join(svc, legacy + ".workflow"))
         names = photo_services.install(pt.load_vocab(), services_dir=svc, bind=False)
-        self.assertEqual(names[:3], ["相片標籤 1 街拍", "相片標籤 2 光影", "相片標籤 3 家人"])
-        self.assertIn("相片貼標籤…", names)
-        self.assertIn("相片管理標籤…", names)
-        for expect in ("相片評分 0 星", "相片評分 5 星", "相片依日期整理",
+        self.assertEqual(len(names), 12)                       # 固定 12 個，不隨標籤數增加
+        pt.add_tag("人像")
+        pt.add_tag("風景")
+        self.assertEqual(len(photo_services.install(
+            pt.load_vocab(), services_dir=svc, bind=False)), 12)
+        for expect in ("相片貼標籤…", "相片重複上次標籤", "相片管理標籤…",
+                       "相片評分 0 星", "相片評分 5 星", "相片依日期整理",
                        "相片整理選取的檔案", "相片復原上次整理"):
             self.assertIn(expect, names)
+        left = sorted(os.listdir(svc))
+        self.assertNotIn("相片標籤 1 街拍.workflow", left)
+        self.assertNotIn("相片標籤速查表.workflow", left)
         rate = plistlib.load(open(os.path.join(
             svc, "相片評分 4 星.workflow", "Contents", "document.wflow"), "rb"))
         self.assertTrue(rate["actions"][0]["action"]["ActionParameters"]["COMMAND_STRING"]
                         .endswith('rate 4 "$@"'))
+        rep = plistlib.load(open(os.path.join(
+            svc, "相片重複上次標籤.workflow", "Contents", "document.wflow"), "rb"))
+        self.assertTrue(rep["actions"][0]["action"]["ActionParameters"]["COMMAND_STRING"]
+                        .endswith('tag-repeat "$@"'))
         folder = plistlib.load(open(os.path.join(
             svc, "相片依日期整理.workflow", "Contents", "document.wflow"), "rb"))
         self.assertEqual(folder["workflowMetaData"]["serviceInputTypeIdentifier"],
@@ -326,19 +352,6 @@ class ServicesTest(TagTestBase):
         info = plistlib.load(open(os.path.join(
             svc, "相片依日期整理.workflow", "Contents", "Info.plist"), "rb"))
         self.assertEqual(info["NSServices"][0]["NSSendFileTypes"], ["public.folder"])
-        wf = os.path.join(svc, "相片標籤 1 街拍.workflow", "Contents")
-        info = plistlib.load(open(os.path.join(wf, "Info.plist"), "rb"))
-        self.assertEqual(info["NSServices"][0]["NSMenuItem"]["default"], "相片標籤 1 街拍")
-        doc = plistlib.load(open(os.path.join(wf, "document.wflow"), "rb"))
-        cmd = doc["actions"][0]["action"]["ActionParameters"]["COMMAND_STRING"]
-        self.assertTrue(cmd.endswith('tag-slot 1 "$@"'))
-        # 改名＋換鍵後重新安裝：舊的消失
-        pt.remove_tag("街拍")
-        pt.add_tag("街頭", key="s")
-        photo_services.install(pt.load_vocab(), services_dir=svc, bind=False)
-        left = sorted(os.listdir(svc))
-        self.assertNotIn("相片標籤 1 街拍.workflow", left)
-        self.assertIn("相片標籤 S 街頭.workflow", left)
         self.assertTrue(os.path.exists(keep))
 
 
