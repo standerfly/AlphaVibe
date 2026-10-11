@@ -10,7 +10,7 @@
 Finder 標籤不會被動到（只增減指定名稱的標籤）。
 
 快速鍵（⌃⌘＋鍵）：數字 1-9 或字母；`q`（鎖定螢幕）、`f`（全螢幕）、`d`
-（查字典）是 macOS 保留組合，`t` 留給「貼標籤…」視窗、`m` 留給「管理標籤…」視窗，皆不可指派。
+（查字典）是 macOS 保留組合，`t` 留給「貼標籤…」視窗（⌃⌥⌘T）、`m` 留給「管理標籤…」視窗（⌃⌥⌘M），皆不可指派。
 """
 import json
 import os
@@ -406,7 +406,7 @@ def cheatsheet_text(paths=()):
         lines.append("⌃⌘%s　%s" % (t["key"].upper(), _label(t)))
     if not keyed:
         lines.append("（還沒有指派快速鍵）")
-    lines += ["", "⌃⌘T　開啟「貼標籤…」視窗（可勾選全部標籤、新增標籤）"]
+    lines += ["", "⌃⌥⌘T　開啟「貼標籤…」視窗（可勾選全部標籤、新增標籤）"]
     unkeyed = [t["name"] for t in data["tags"] if not t.get("key")]
     if unkeyed:
         lines += ["", "只能從視窗貼的標籤：" + "、".join(unkeyed)]

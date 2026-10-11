@@ -140,6 +140,7 @@ def write_service(services_dir, name, command, file_type="public.item", input_ty
 
 CTRL_CMD = "^@"   # pbs 的 key_equivalent：^ = Control、@ = Command、~ = Option
 CTRL_OPT = "^~"
+CTRL_OPT_CMD = "^~@"   # 視窗類動作用：避開 Finder 自己的 ⌃⌘T（加入側邊欄）等
 BASE_NAMES = (["相片評分 %d 星" % n for n in range(6)]
               + ["相片依日期整理", "相片整理選取的檔案", "相片復原上次整理"])
 
@@ -155,9 +156,9 @@ def service_specs(vocab):
             specs.append(("相片標籤 " + key.upper() + " " + t["name"],
                           cmd + " tag-slot " + key + ' "$@"', key, CTRL_CMD,
                           "public.item", None))
-    specs.append(("相片貼標籤…", cmd + ' tag-picker "$@"', "t", CTRL_CMD, "public.item", None))
-    specs.append(("相片標籤速查表", cmd + ' tag-cheatsheet "$@"', "/", CTRL_CMD, "public.item", None))
-    specs.append(("相片管理標籤…", cmd + " tag-manager", "m", CTRL_CMD, "public.item", None))
+    specs.append(("相片貼標籤…", cmd + ' tag-picker "$@"', "t", CTRL_OPT_CMD, "public.item", None))
+    specs.append(("相片標籤速查表", cmd + ' tag-cheatsheet "$@"', "/", CTRL_OPT_CMD, "public.item", None))
+    specs.append(("相片管理標籤…", cmd + " tag-manager", "m", CTRL_OPT_CMD, "public.item", None))
     for n in range(6):
         specs.append(("相片評分 %d 星" % n, cmd + " rate %d \"$@\"" % n, str(n), CTRL_OPT,
                       "public.item", None))
