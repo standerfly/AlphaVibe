@@ -196,7 +196,7 @@ class GuiFlowTest(TagTestBase):
         pt.add_tag("備忘")                            # 沒有快速鍵
         pt.toggle([p], "光影")
         text = pt.cheatsheet_text([p])
-        for expect in ("⌃⌘1　街拍", "⌃⌘S　題材 ▸ 人像", "⌃⌥⌘T", "只能從視窗貼的標籤：備忘",
+        for expect in ("⌃⌥⌘1　街拍", "⌃⌥⌘S　題材 ▸ 人像", "⌃⌥⌘T", "只能從視窗貼的標籤：備忘",
                        "全部都有：光影"):
             self.assertIn(expect, text)
 

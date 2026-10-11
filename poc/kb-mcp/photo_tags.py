@@ -9,7 +9,7 @@
 一張照片可以有任意多個標籤。評分用的 `★N` Finder 標籤與使用者自己加的其他
 Finder 標籤不會被動到（只增減指定名稱的標籤）。
 
-快速鍵（⌃⌘＋鍵）：數字 1-9 或字母；`q`（鎖定螢幕）、`f`（全螢幕）、`d`
+快速鍵（⌃⌥⌘＋鍵）：數字 1-9 或字母；`q`（鎖定螢幕）、`f`（全螢幕）、`d`
 （查字典）是 macOS 保留組合，`t` 留給「貼標籤…」視窗（⌃⌥⌘T）、`m` 留給「管理標籤…」視窗（⌃⌥⌘M），皆不可指派。
 """
 import json
@@ -323,7 +323,7 @@ def show_message(message, title="相片標籤"):
 # ---------- 右鍵流程 ----------
 
 def slot_toggle(key, paths, notify_fn=notify):
-    """快速鍵流程：⌃⌘＋鍵 → 切換該格對應的標籤，通知結果。"""
+    """快速鍵流程：⌃⌥⌘＋鍵 → 切換該格對應的標籤，通知結果。"""
     name = tag_for_key(key)
     if name is None:
         notify_fn("快速鍵 %s 還沒有對應的標籤（用 tags key 指派）" % key.upper())
@@ -400,10 +400,10 @@ def picker(paths, choose=choose_from_list, ask=ask_text, notify_fn=notify):
 
 def cheatsheet_text(paths=()):
     data = load_vocab()
-    lines = ["快速鍵（⌃⌘＋鍵）　按一次貼上、再按一次移除", ""]
+    lines = ["快速鍵（⌃⌥⌘＋鍵）　按一次貼上、再按一次移除", ""]
     keyed = [t for t in data["tags"] if t.get("key")]
     for t in sorted(keyed, key=lambda t: (not t["key"].isdigit(), t["key"])):
-        lines.append("⌃⌘%s　%s" % (t["key"].upper(), _label(t)))
+        lines.append("⌃⌥⌘%s　%s" % (t["key"].upper(), _label(t)))
     if not keyed:
         lines.append("（還沒有指派快速鍵）")
     lines += ["", "⌃⌥⌘T　開啟「貼標籤…」視窗（可勾選全部標籤、新增標籤）"]

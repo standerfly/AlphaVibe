@@ -504,8 +504,8 @@ def _run_tag_command(args):
         if args.tags_cmd == "list":
             data = pt.load_vocab()
             for t in data["tags"]:
-                print("%-4s %-12s %s" % (
-                    ("⌃⌘" + t["key"].upper()) if t.get("key") else "—",
+                print("%-5s %-12s %s" % (
+                    ("⌃⌥⌘" + t["key"].upper()) if t.get("key") else "—",
                     t["name"], ("[%s]" % t["group"]) if t.get("group") else ""))
             print("共 %d 個標籤；清單檔：%s" % (len(data["tags"]), pt.vocab_path()))
         elif args.tags_cmd == "add":
@@ -623,7 +623,7 @@ def main(argv=None):
     q = tsub.add_parser("key", help="指派快速鍵（none 清除）")
     q.add_argument("name")
     q.add_argument("key")
-    tsub.add_parser("install", help="（重新）建立 Finder 右鍵動作與 ⌃⌘ 快速鍵")
+    tsub.add_parser("install", help="（重新）建立 Finder 右鍵動作與 ⌃⌥⌘ 快速鍵")
     for cmd_name, helptext in (("rename", "改名（跨檔案改寫，預設只預覽）"),
                                ("merge", "合併多個標籤成一個"),
                                ("delete", "從所有照片移除並從清單刪除")):

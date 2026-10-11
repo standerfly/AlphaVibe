@@ -1,5 +1,5 @@
 """Finder 快速動作（Automator「服務」）產生器：把 photo_tool 的功能包成右鍵
-動作與 ⌃⌘ 快速鍵。用 Automator 而不是「捷徑」，是因為「捷徑」的「執行 Shell
+動作與 ⌃⌥⌘ 快速鍵。用 Automator 而不是「捷徑」，是因為「捷徑」的「執行 Shell
 指令碼」每換一批檔案就會跳確認視窗（實測）。
 
 文件結構照本機既有的 Automator 服務複製（`document.wflow` 範本）。
@@ -138,9 +138,9 @@ def write_service(services_dir, name, command, file_type="public.item", input_ty
         plistlib.dump(wf, f)
 
 
-CTRL_CMD = "^@"   # pbs 的 key_equivalent：^ = Control、@ = Command、~ = Option
+# pbs 的 key_equivalent：^ = Control、@ = Command、~ = Option
 CTRL_OPT = "^~"
-CTRL_OPT_CMD = "^~@"   # 視窗類動作用：避開 Finder 自己的 ⌃⌘T（加入側邊欄）等
+CTRL_OPT_CMD = "^~@"   # 標籤格與視窗類動作：⌃⌘T 被 Finder「加入側邊欄」佔用、⌃⌘+數字實測無反應
 BASE_NAMES = (["相片評分 %d 星" % n for n in range(6)]
               + ["相片依日期整理", "相片整理選取的檔案", "相片復原上次整理"])
 
@@ -154,7 +154,7 @@ def service_specs(vocab):
         key = t.get("key")
         if key:
             specs.append(("相片標籤 " + key.upper() + " " + t["name"],
-                          cmd + " tag-slot " + key + ' "$@"', key, CTRL_CMD,
+                          cmd + " tag-slot " + key + ' "$@"', key, CTRL_OPT_CMD,
                           "public.item", None))
     specs.append(("相片貼標籤…", cmd + ' tag-picker "$@"', "t", CTRL_OPT_CMD, "public.item", None))
     specs.append(("相片標籤速查表", cmd + ' tag-cheatsheet "$@"', "/", CTRL_OPT_CMD, "public.item", None))
