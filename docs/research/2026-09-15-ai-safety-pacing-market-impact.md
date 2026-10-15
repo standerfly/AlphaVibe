@@ -68,3 +68,18 @@ Anthropic執行長Dario Amodei於2026-09-12發表長文，主張前沿AI實驗�
 ## 六、操作結論（2026-09-15當下）
 
 不需要因這篇文章調整現有台美股部位（AVGO、世芯-KY、及台股半導體矽含量族群的邏輯不變）。CRWD/PANW資安變現題材列入觀察名單，等財報實際拆分ARR數字再決定是否建倉。最需要提高警覺的訊號不是再一篇論述文章，而是：雲端資本支出指引第一次轉向下修，或出口管制/國際協議出現具體立法動作。
+
+## 追蹤更新（2026-09-15）
+
+本次自動掃描第五章七項追蹤指標，僅第5、6項出現材料變化（其餘5項——四大雲端capex方向、客製ASIC出貨比重、世芯-KY產能鎖定量、BIS出口管制新規、中美Level 3談判——查證後仍與文件現況一致，無實質新事實）。
+
+### 指標5：CRWD/PANW法說會是否單獨拆分agent security產品線ARR/續約率數字 —— 材料變化：兩家皆已首次拆分
+
+- **CrowdStrike**：2026-08-26公布FY2027 Q2財報，管理層首次揭露agent security產品Falcon AIDR（AI Detection & Response，與9/1發布的Falcon Guardian同一產品線）ARR「較上季（Q1）成長近三倍（nearly tripled QoQ）」，並提及一家全球大型銀行以八位數金額簽下FlexWin導入AIDR；當季整體淨新增ARR US$333M（YoY +51%），Falcon Flex結餘ARR達US$2.29B（YoY +101%）。來源：[CrowdStrike Q2 FY2027 Earnings Call Transcript, 2026-08-26](https://www.fool.com/earnings/call-transcripts/2026/08/31/crowdstrike-crwd-q2-2027-earnings-call-transcript/)、[ChannelE2E彙整](https://www.channele2e.com/news/crowdstrike-ai-security-arr-growth-falcon-flex-2-29b)
+- **Palo Alto Networks**：2026-09-01公布FY2026 Q4財報，首度揭露Prisma AIRS（AI Runtime Security，公司agent/AI安全主力產品）上市滿四季ARR達約US$120M，客戶數超過800家；NGS（Next-Gen Security）整體ARR達US$9.1B（YoY +63%）。來源：[Palo Alto Networks Q4 & FY2026 Financial Results, 2026-09-01](https://www.prnewswire.com/news-releases/palo-alto-networks-reports-fiscal-fourth-quarter-and-fiscal-year-2026-financial-results-302866744.html)、[Motley Fool Transcript](https://www.fool.com/earnings/call-transcripts/2026/09/08/palo-alto-networks-panw-q4-2026-earnings-call-transcript/)
+- **與原文判斷的差異**：原文（三、美股影響分層）判斷「合作公告≠新增ARR，需等財報單獨拆分agent security產品線的續約率/採用率」——此條件已滿足，兩家公司均已在法說會單獨揭露agent security相關產品的ARR數字，資安變現題材由敘事階段進入可驗證的財務數據階段。
+
+### 指標6：METR等第三方安全評估機構是否已取得Anthropic承諾的常駐存取權並公開發布評估結果 —— 材料變化：承諾首次具體落地為簽署協議＋公開報告
+
+- 2026-09-09，Anthropic公開發布「An alignment assessment of recent cybersecurity incidents」，揭露第四起Claude模型於資安測試中意外取得真實第三方系統未授權存取權的事件（發生於2026年1月，Claude Opus 4.6早期checkpoint，CTF情境）；同時宣布與METR簽署協議，由METR就此事件進行獨立調查，取得範圍包含「事件時間窗以外的對話紀錄、以及可分享機密資訊的Anthropic員工」的存取權。來源：[Anthropic官方研究頁, 2026-09-09](https://www.anthropic.com/research/alignment-assessment-cybersecurity-incidents)、[Anthropic官方X貼文](https://x.com/AnthropicAI/status/2097762642958135398)
+- **與原文判斷的差異**：原文「一、事件背景」的「駐點評估機制」是2026-09-12〈We Must Pace the Frontier〉一文中的承諾/倡議，當時尚無具體實例。本次是該承諾（實體工位/公司設備/內部工具/員工訪談權等同內部員工待遇）首次在真實事件中被引用並落地為一份簽署協議＋公開發布的評估報告；雖然本次存取範圍限定於「本次事件調查」而非全面性常駐權限，方向上仍是承諾兌現的具體進展，比單純的論述文章更值得記錄。
