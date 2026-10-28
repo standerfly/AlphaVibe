@@ -40,6 +40,11 @@ server 範圍：landing 頁改由 `app/routers/us_stocks.py` 直接組合
 **這次也不整合進正式 MCP 啟動流程**——不會被 `server.py`／
 `server_readonly.py`／任何 launchd/ngrok 常駐設定引用，純粹是可以獨立
 執行的檔案，供之後接上其餘工具、要正式對外開放時再串接。
+
+**2026-10-28 更新：已正式對外開放**——`app/routers/mcp.py` 新增
+`POST /mcp/us/<ALPHAVIBE_MCP_TOKEN>`，透過 `mcp_http_gateway.handle_mcp_post
+(server_module=us_stock_mcp_server)` 轉接到本檔的 `Server`，供 claude.ai
+加成第二個獨立連接器（不併入台股 `/mcp` 的工具清單，維持台美獨立）。
 """
 import json
 import os

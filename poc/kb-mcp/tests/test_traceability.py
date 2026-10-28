@@ -249,15 +249,16 @@ class ServerToolsTest(unittest.TestCase):
         self.server.store.close()
         shutil.rmtree(self.tmp)
 
-    def test_tools_list_has_forty_seven(self):
+    def test_tools_list_has_forty_eight(self):
         """2026-08-19：40→43。save_position_plan／get_position_plan（加碼
         計畫總額度）＋check_auto_score（Score自動化四項評分）。
         2026-09-02：43→45。get_position_pnl／get_price_position
         （001-entry-exit-foundation 階段A，FR-001~FR-012）。
         2026-09-03：45→47。save_exit_threshold／get_exit_threshold
-        （002-entry-exit-signals 階段B，FR-001~FR-004）。"""
+        （002-entry-exit-signals 階段B，FR-001~FR-004）。
+        2026-10-28：47→48。get_today_highlights（claude.ai 連接器讀今日重點）。"""
         names = [t["name"] for t in server.TOOLS]
-        self.assertEqual(len(names), 47)
+        self.assertEqual(len(names), 48)
         for expected in ("save_snapshot", "get_snapshots",
                          "save_holdings", "get_holdings",
                          "save_stock_alias", "get_stock_alias",

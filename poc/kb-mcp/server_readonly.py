@@ -29,6 +29,7 @@ READONLY_TOOLS = {
     "check_position_control", "get_emerging_stock_valuation",
     "check_auto_score",
     "parse_holdings_report", "screen_stocks", "get_market_scan",
+    "get_today_highlights",
     "get_position_pnl", "get_price_position",
     # get_exit_threshold 是唯讀查詢，可以進白名單；
     # save_exit_threshold 是**寫入**工具，刻意不加——FR-004 明文規定

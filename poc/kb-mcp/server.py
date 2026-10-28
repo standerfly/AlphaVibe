@@ -765,6 +765,22 @@ TOOLS = [
         },
     },
     {
+        "name": "get_today_highlights",
+        "description": ("查 STND「今日重點」（唯讀，速度快）：讀每日模組D排程已存好的"
+                        "檢視結果，只回有建議動作（suggested_action）的項目，"
+                        "排序為持有中優先、立場衝突次之，每筆附 type（存股／觀察中）。"
+                        "跟網頁首頁／投資頁的今日重點是同一份資料。不會重新檢視、不寫入"
+                        "——要對單一標的即時重跑檢視才用 run_module_d_check。"
+                        "回傳空清單代表當天沒有需要動作的項目，或排程尚未跑完。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "date": {"type": "string",
+                         "description": "日期 YYYY-MM-DD；省略＝今天"},
+            },
+        },
+    },
+    {
         "name": "parse_and_save_laoyutou_trades",
         "description": ("貼入固定格式的老芋頭（PO信任的資深投資朋友／導師）進出"
                         "批次文字，自動解析並批次寫入laoyutou_trades，不需要逐行"
@@ -1165,6 +1181,11 @@ class Server:
                         "meets_only=false, limit=0, verbose=true)。"
                         % (saved["run_id"], framework_id)),
             }
+        if name == "get_today_highlights":
+            date = args.get("date") or None
+            highlights = self.store.get_today_highlights(date=date)
+            return {"date": date or datetime.date.today().isoformat(),
+                    "count": len(highlights), "highlights": highlights}
         if name == "get_market_scan":
             meets_only = bool(args.get("meets_only", True))
             limit = args.get("limit", 50)

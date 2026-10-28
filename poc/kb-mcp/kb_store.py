@@ -1374,6 +1374,22 @@ class KBStore:
         return {"code": None, "date": date, "count": len(rows),
                 "results": [dict(r) for r in rows]}
 
+    def get_today_highlights(self, date=None):
+        """儀表板「今日重點」：當天（或指定date）模組D檢視結果中有
+        suggested_action 的項目，排序為「持有中優先、立場衝突次之」，
+        每筆附 `type`（存股／觀察中）衍生欄位。
+
+        2026-10-28 從 app/routers/dashboard.py::_today_highlights() 抽出，
+        讓網頁（GET /api/dashboard）與 MCP 工具 get_today_highlights
+        （claude.ai 連接器用）共用同一段邏輯，避免兩邊各寫一份日後不一致。"""
+        results = self.get_module_d_results(date=date)["results"]
+        highlights = [r for r in results if r.get("suggested_action") is not None]
+        held_codes = {h["code"] for h in self.get_holdings()["holdings"]}
+        highlights.sort(key=lambda r: (r["code"] not in held_codes,
+                                       not r.get("conflict_flag")))
+        return [dict(r, type="存股" if r["code"] in held_codes else "觀察中")
+                for r in highlights]
+
     def get_associated_frameworks(self, code):
         """FR-052 策略關聯判斷用：這支代碼在全市場批次篩選歷史中，曾經
         符合門檻（meets_framework=1）過的框架代號清單（不重複、跨所有

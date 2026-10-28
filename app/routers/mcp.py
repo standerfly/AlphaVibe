@@ -39,8 +39,10 @@ if str(_KB_MCP_DIR) not in sys.path:
     sys.path.insert(0, str(_KB_MCP_DIR))
 
 import mcp_http_gateway  # noqa: E402  (需先插入 sys.path 才能 import)
+import us_stock_mcp_server  # noqa: E402
 
 from app.deps import _resolve_data_dir, mcp_auth_ok  # noqa: E402
+from app.us_stock_deps import _resolve_us_stock_data_dir  # noqa: E402
 
 router = APIRouter()
 
@@ -105,6 +107,39 @@ async def mcp_post_with_token(token: str, request: Request) -> Response:
         headers["Authorization"] = "Bearer " + token
         status, content_type, body = mcp_http_gateway.handle_mcp_post(
             headers, body_bytes, data_dir=_resolve_data_dir())
+        return Response(content=body, status_code=status, media_type=content_type)
+    return Response(
+        content=_UNKNOWN_PATH_404,
+        status_code=404,
+        media_type="text/plain; charset=utf-8",
+    )
+
+
+@router.post("/mcp/us/{token}")
+async def mcp_us_post_with_token(token: str, request: Request) -> Response:
+    """美股 MCP 連接器（2026-10-28 新增）：讓 claude.ai 也能用美股的 8 個
+    工具。在此之前 `us_stock_mcp_server.py` 只有 stdio，只登記在 Claude
+    Code 的 `.mcp.json`，claude.ai 完全看不到美股工具，而美股匯入的第一步
+    （截圖交給 Claude 讀）又設計成只在對話裡做，等於只能在 Mac 上的
+    Claude Code 匯入。
+
+    刻意做成**第二個獨立連接器**，不把美股工具併進 `/mcp/{token}` 的工具
+    清單：美股與台股要完全獨立是產品硬性要求（見 CLAUDE.md 分頁表），
+    兩個 server、兩個資料庫、兩條路由，閘道只是把同一套 HTTP 轉接邏輯
+    （`handle_mcp_post(server_module=...)`）套到美股 server 上。
+
+    驗證機制與 `/mcp/{token}` 完全相同（同一個 ALPHAVIBE_MCP_TOKEN、
+    密鑰錯誤回通用 404）；路徑在 `/mcp/` 底下，所以 app.deps 的
+    `_is_mcp_path()` 白名單已涵蓋，不需要另外放行。`/mcp/{token}` 的
+    `{token}` 不含斜線，不會吃到 `/mcp/us/<token>`。
+    """
+    body_bytes = await request.body()
+    if mcp_http_gateway.path_token_matches(token):
+        headers = dict(request.headers.items())
+        headers["Authorization"] = "Bearer " + token
+        status, content_type, body = mcp_http_gateway.handle_mcp_post(
+            headers, body_bytes, data_dir=_resolve_us_stock_data_dir(),
+            server_module=us_stock_mcp_server)
         return Response(content=body, status_code=status, media_type=content_type)
     return Response(
         content=_UNKNOWN_PATH_404,

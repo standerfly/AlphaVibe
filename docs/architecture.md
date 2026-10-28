@@ -84,6 +84,12 @@
   `~/Library/LaunchAgents/com.alphavibe.reportserver.plist` 常駐。
 - **對外網址**：`https://chancefully-erosive-lilian.ngrok-free.dev`
   （固定網址，`ngrok` 常駐服務轉發 8080；MCP 連接器走 `/mcp/<ALPHAVIBE_MCP_TOKEN>`）。
+- **claude.ai 連接器（2026-10-28 起兩個）**：台股 `/mcp/<ALPHAVIBE_MCP_TOKEN>`
+  （`server.py`，48 個工具）、美股 `/mcp/us/<ALPHAVIBE_MCP_TOKEN>`
+  （`us_stock_mcp_server.py`，8 個工具）。刻意分成兩個連接器、不合併工具
+  清單，維持台美完全獨立；兩者共用同一個密鑰。分工：claude.ai 負責即時的
+  匯入（截圖交給 Claude 讀）、詢問與一次性分析，網頁負責常用畫面與排程結果
+  呈現。claude.ai 專案指示範本見 `docs/runbooks/claude-ai-project-instructions.md`。
 - **同源部署**：`web/` build 出的 `web/dist/` 由 `app/main.py` 用 `StaticFiles`
   掛載＋SPA fallback，前後端跑在同一個 uvicorn process、同一個 port，不需要
   CORS 設定。
