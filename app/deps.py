@@ -147,7 +147,7 @@ def _no_auth_explicitly_allowed() -> bool:
 
     原本的設計是 fail-open：讀不到 token 就放行。問題不在於當下有沒有
     設 token，而在於**失效模式是靜默全開**——plist 一次編輯失誤，公開
-    ngrok 網址上的儀表板與 47 個 MCP 工具（含全部寫入工具）就全部無
+    ngrok 網址上的儀表板與全部 MCP 工具（台股 48＋美股 8，含全部寫入工具）就全部無
     認證，而且沒有任何跡象，服務照樣回 200。
 
     改成：沒 token 就拒絕，除非有人明確在環境變數裡說「我知道我在做
@@ -166,7 +166,7 @@ def mcp_auth_ok() -> bool:
     /mcp 與 /mcp/<token> 被 DashboardAuthMiddleware 豁免（見
     _is_mcp_path 的說明：手機 Claude App 連接器處理不了 Basic Auth
     彈窗），所以它們的安全完全靠 ALPHAVIBE_MCP_TOKEN 這一道。這道沒
-    設定時 mcp_http_gateway._auth_ok() 會放行——那等於把 47 個 MCP
+    設定時 mcp_http_gateway._auth_ok() 會放行——那等於把全部 MCP
     工具（含全部寫入工具）無認證掛在公開網址上。
 
     這裡不改 mcp_http_gateway 自己的邏輯（那支模組還被已退役的

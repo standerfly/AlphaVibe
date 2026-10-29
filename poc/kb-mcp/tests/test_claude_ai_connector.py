@@ -11,6 +11,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
@@ -115,9 +116,83 @@ class TodayHighlightsTest(unittest.TestCase):
         self.assertEqual(out["highlights"],
                          self.store.get_today_highlights(date=self.DATE))
 
+    def test_more_than_50_rows_does_not_drop_early_items(self):
+        # 原本先取當天最新 50 筆才篩選，較早檢視的標的會被擠掉。
+        for i in range(60):
+            self.store.save_module_d_result(
+                "9%03d" % i, "通用層", "正常", checked_at=self.DATE + "T18:%02d:00" % (i % 60))
+        codes = [r["code"] for r in self.store.get_today_highlights(date=self.DATE)]
+        self.assertEqual(codes, ["2330", "2222", "1111"])
+
+    def test_rerun_keeps_only_latest_batch_per_code(self):
+        save = self.store.save_module_d_result
+        # 1111 晚上重跑後沒有建議動作 → 17:00 的「減碼」不應再出現
+        save("1111", "通用層", "重跑正常", checked_at=self.DATE + "T20:00:00")
+        # 2222 重跑兩次都有建議 → 只出現一次（最新那批）
+        save("2222", "通用層", "重跑仍有衝突", suggested_action="減碼",
+             conflict_flag=True, checked_at=self.DATE + "T20:00:00")
+        rows = self.store.get_today_highlights(date=self.DATE)
+        self.assertEqual([r["code"] for r in rows], ["2330", "2222"])
+        self.assertEqual(rows[1]["finding"], "重跑仍有衝突")
+
+    def test_invalid_date_raises_instead_of_empty(self):
+        for bad in ("2026/10/28", "2026-10", "%", "今天", 20261028, "2026-13-45"):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                self.store.get_today_highlights(date=bad)
+
+    def test_mcp_tool_reports_invalid_date_as_error(self):
+        srv = kb_server.Server(data_dir=self.tmp)
+        try:
+            resp = srv.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                               "params": {"name": "get_today_highlights",
+                                          "arguments": {"date": "2026/10/28"}}})
+        finally:
+            srv.store.close()
+        self.assertTrue(resp["result"]["isError"])
+
     def test_tool_is_readonly_whitelisted(self):
         import server_readonly
         self.assertIn("get_today_highlights", server_readonly.READONLY_TOOLS)
+
+
+
+class USServerInputTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="alphavibe-us-input-test-")
+        self.srv = us_stock_mcp_server.Server(data_dir=self.tmp)
+
+    def tearDown(self):
+        self.srv.store.close()
+        shutil.rmtree(self.tmp)
+
+    def test_lowercase_ticker_is_normalized(self):
+        self.srv.call_tool("save_us_stance", {
+            "ticker": "net", "direction": "bullish", "summary": "s", "full_note": "n"})
+        out = self.srv.call_tool("get_us_stance", {"ticker": "NET"})
+        self.assertIsNotNone(out["stance"])
+        self.assertEqual(out["ticker"], "NET")
+
+    def test_non_numeric_threshold_rejected(self):
+        for bad in ("about 250", None, True, [250]):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                self.srv.call_tool("save_us_watch_condition", {
+                    "ticker": "NET", "metric_type": "price",
+                    "comparator": "lt", "threshold": bad})
+
+    def test_numeric_string_threshold_stored_as_float(self):
+        self.srv.call_tool("save_us_watch_condition", {
+            "ticker": "net", "metric_type": "price", "comparator": "lt",
+            "threshold": "250"})
+        conds = self.srv.call_tool("get_us_watch_conditions", {"ticker": "NET"})["conditions"]
+        self.assertEqual(len(conds), 1)
+        self.assertEqual(conds[0]["threshold"], 250.0)
+
+
+class PathTokenTest(unittest.TestCase):
+    def test_non_ascii_candidate_is_false_not_typeerror(self):
+        with unittest.mock.patch.dict(os.environ, {"ALPHAVIBE_MCP_TOKEN": "secret"}):
+            self.assertFalse(mcp_http_gateway.path_token_matches("密"))
+            self.assertTrue(mcp_http_gateway.path_token_matches("secret"))
 
 
 if __name__ == "__main__":

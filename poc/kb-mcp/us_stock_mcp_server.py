@@ -37,9 +37,9 @@ server 範圍：landing 頁改由 `app/routers/us_stocks.py` 直接組合
 `USStockStore` 既有方法完成（`GET /api/us-stocks/watchlist`），避免同一份
 彙整邏輯要在 MCP 工具與 REST 端點各寫一次、日後改一邊忘了改另一邊。
 
-**這次也不整合進正式 MCP 啟動流程**——不會被 `server.py`／
-`server_readonly.py`／任何 launchd/ngrok 常駐設定引用，純粹是可以獨立
-執行的檔案，供之後接上其餘工具、要正式對外開放時再串接。
+~~**這次也不整合進正式 MCP 啟動流程**~~（已過時，見下方 2026-10-28 更新）
+——原本不被 `server.py`／`server_readonly.py`／任何 launchd/ngrok 常駐設定
+引用，純粹是可以獨立執行的檔案。
 
 **2026-10-28 更新：已正式對外開放**——`app/routers/mcp.py` 新增
 `POST /mcp/us/<ALPHAVIBE_MCP_TOKEN>`，透過 `mcp_http_gateway.handle_mcp_post
@@ -225,6 +225,11 @@ class Server:
     # ---- 工具實作（Phase 3/US1 已完成4個，其餘見本檔案開頭 docstring） ----
 
     def call_tool(self, name, args):
+        # 代號一律大寫（2026-10-28）：parse_and_save_us_trade 本來就會轉大寫，
+        # 其他工具沒轉，claude.ai 傳 "net" 會跟既有 "NET" 分成兩檔、查詢也查不到。
+        ticker_arg = args.get("ticker")
+        if isinstance(ticker_arg, str):
+            args = dict(args, ticker=ticker_arg.strip().upper() or None)
         if name == "parse_and_save_us_trade":
             text = args.get("text")
             if not text:
@@ -278,6 +283,15 @@ class Server:
                 raise ValueError(
                     "save_us_watch_condition 需要 ticker/metric_type/"
                     "comparator/threshold 參數")
+            # 門檻必須是數字（2026-10-28）：REST 端點有 Pydantic float 驗證，
+            # MCP 這條原本沒有；存進文字會讓每日 us_stock_scan 比較時
+            # TypeError，整批掃描中斷。
+            if isinstance(threshold, bool):
+                raise ValueError("threshold 必須是數字：%r" % (threshold,))
+            try:
+                threshold = float(threshold)
+            except (TypeError, ValueError):
+                raise ValueError("threshold 必須是數字：%r" % (threshold,))
             return self.store.save_watch_condition(
                 ticker, metric_type, comparator, threshold)
         if name == "get_us_watch_conditions":

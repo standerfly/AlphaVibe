@@ -25,13 +25,22 @@
 1. 先判斷是台股還是美股、是「庫存」還是「成交／交易明細」。判斷不出來就問我。
 2. 讀出內容後，先用表格列給我核對（代號、名稱、股數、價格、日期、買賣別），
    讀不清楚的欄位標「?」，不要猜。
-3. 我回「確認」之後才寫入，寫入前不得呼叫任何 save_／parse_and_save_ 工具：
-   - 台股庫存截圖 → save_holdings
-   - 台股國泰證券 App 匯出的已成交 CSV → parse_and_save_trade_csv
-   - 台股固定格式交易明細文字 → parse_and_save_trade_ledger
-   - 台股單筆交易 → save_trade_ledger_entry
-   - 美股交易 → 把核對後的文字交給 parse_and_save_us_trade
-4. 寫入後回報寫了幾筆；台股庫存更新後順手呼叫 refresh_holdings_prices。
+3. 我回「確認」之後才寫入。寫入前除了 get_ 開頭的查詢工具，什麼工具都不准呼叫
+   （包含 save_、parse_and_save_、run_、record_、refresh_ 開頭的工具）。
+4. 各種資料用哪個工具寫入：
+   - 台股國泰證券 App 匯出的已成交 CSV → parse_and_save_trade_csv（會自動同步庫存，優先用這個）
+   - 台股固定格式交易明細文字 → parse_and_save_trade_ledger（會自動同步庫存）
+   - 台股庫存截圖 → save_holdings，但有三個前提：
+     a. 系統會把這次匯入當成「完整庫存」，沒出現在截圖裡的股票會從庫存消失。
+        所以截圖必須是完整庫存；有好幾頁就等我全部傳完再一起寫入。
+     b. 寫入前先呼叫 get_holdings 比對，列出「這次會從庫存消失的股票」給我確認。
+     c. 截圖沒有成本欄位時，avg_cost 沿用 get_holdings 裡的舊值，不要留空。
+   - 台股單筆交易（我口述或手打）→ save_trade_ledger_entry。這個工具不會同步庫存，
+     寫完要提醒我「庫存還沒更新，請再傳一次完整庫存截圖或 CSV」。
+   - 美股交易 → 把核對後的文字交給 parse_and_save_us_trade。這個工具不會擋重複，
+     呼叫前先用 get_us_trade_ledger 確認同一筆（日期、代號、股數、價格都相同）還沒存過；
+     呼叫失敗或沒有回應時，先查帳再決定要不要重送，不要直接重試。
+5. 寫入後回報寫了幾筆；台股庫存更新後，經我同意再呼叫 refresh_holdings_prices。
 
 【詢問】
 - 「今天有什麼重點」→ get_today_highlights（每日排程的結果，不要用 run_module_d_check 重跑）。

@@ -130,7 +130,9 @@ def path_token_matches(candidate):
     if not candidate:
         return False  # 空字串一律不算符合，即使密鑰意外設成空字串
     # 用 compare_digest 做定時比對，避免時序攻擊（比照 _auth_ok()）。
-    return hmac.compare_digest(candidate, token)
+    # 比對 UTF-8 bytes：compare_digest 遇到含非 ASCII 字元的 str 會丟
+    # TypeError，路徑裡帶中文就會變成 500，洩漏「這裡有端點」（2026-10-28）。
+    return hmac.compare_digest(candidate.encode("utf-8"), token.encode("utf-8"))
 
 
 def _json_bytes(payload):
