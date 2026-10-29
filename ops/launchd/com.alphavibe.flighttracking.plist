@@ -7,12 +7,12 @@
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>
-        <string>/Users/stander/My_project/AlphaVibe/poc/kb-mcp/flight_tracking_job.py</string>
+        <string>/Users/stander/My_project/AlphaVibe-prod/poc/kb-mcp/flight_tracking_job.py</string>
         <string>--data-dir</string>
-        <string>/Users/stander/My_project/AlphaVibe/poc/data</string>
+        <string>/Users/stander/My_project/AlphaVibe-prod/poc/data</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/stander/My_project/AlphaVibe</string>
+    <string>/Users/stander/My_project/AlphaVibe-prod</string>
     <!-- launchd 的預設 PATH 只有 /usr/bin:/bin:/usr/sbin:/sbin，
          不含 Homebrew 的 /opt/homebrew/bin——查價用的 node 在那裡。
          少了這行，排程每天都會「跑完但什麼都沒查到」。

@@ -82,6 +82,19 @@
 
 - **正式服務**：`uvicorn app.main:app`，port 8080，由
   `~/Library/LaunchAgents/com.alphavibe.reportserver.plist` 常駐。
+- **正式環境與開發資料夾分離（2026-10-29 起）**：
+
+  | | 開發 `/Users/stander/My_project/AlphaVibe` | 正式 `/Users/stander/My_project/AlphaVibe-prod` |
+  |---|---|---|
+  | 是什麼 | 主要 git clone，分支隨意切 | 同一 repo 的 `git worktree`，detached 在 `origin/function/alphavibe` |
+  | 誰在跑 | Claude Code session、本機 stdio MCP、相片工具 | reportserver＋marketscan／dbbackup／logrotate／healthcheck／usstockscan／flighttracking／moduled 8 個 launchd 排程 |
+  | Python 環境 | `.venv` | 自己的 `.venv` |
+  | 前端 `web/dist`、scraper `node_modules` | 開發用 | 自己建置（`ops/deploy.sh` 視變動重建） |
+  | 資料庫 `poc/data` | 實體資料 | symlink 指向開發資料夾的 `poc/data`（同一份資料） |
+
+  部署：合併 PR 後執行
+  `cd /Users/stander/My_project/AlphaVibe-prod && git fetch origin function/alphavibe && bash <(git show origin/function/alphavibe:ops/deploy.sh)`。
+  ngrok／devtunnel 兩個 plist 只負責轉發，不執行專案程式，未切換。
 - **對外網址**：`https://chancefully-erosive-lilian.ngrok-free.dev`
   （固定網址，`ngrok` 常駐服務轉發 8080；MCP 連接器走 `/mcp/<ALPHAVIBE_MCP_TOKEN>`）。
 - **claude.ai 連接器（2026-10-28 起兩個）**：台股 `/mcp/<ALPHAVIBE_MCP_TOKEN>`
