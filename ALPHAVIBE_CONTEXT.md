@@ -33,6 +33,8 @@
 
 ## 詢問
 - 「今天有什麼重點」→ get_today_highlights（每日排程的結果；不要用 run_module_d_check 重跑）
+  - 每日排程傍晚才跑。回傳 is_fallback=true 時，代表今天還沒有結果、給的是 date 那天的，回答要講明「今天的排程還沒跑，以下是某月某日的結果」。
+  - checked_count＞0 而且清單是空的，才代表「沒有需要動作的項目」；checked_count 是 0 或很少，代表排程可能還沒跑，不要說成「沒有重點」。
 - 「新候選」→ get_market_scan
 - 庫存與損益 → 台股 get_holdings／get_position_pnl；美股 get_us_holdings
 

@@ -21,6 +21,17 @@
 3. **驗證**：在專案裡開**新對話**（指示只在新對話開始時套用），問「STND 今天有什麼重點？」，
    回答上方應出現 `get_today_highlights` 的工具呼叫紀錄；問「我的美股庫存？」應呼叫 `get_us_holdings`。
 
+## 新增或修改 MCP 工具之後
+
+claude.ai 會暫存連接器的**工具清單與工具說明**，伺服器更新後不會自動重抓
+（2026-10-29 實測：新增 `get_today_highlights` 後，claude.ai 仍回報找不到）。
+部署後要在「設定 → 連接器」重新連線該連接器；沒有重新連線選項時，移除後
+以同一網址重新新增。只改工具內部邏輯、說明與參數都沒變時不需要。
+
+工具的使用方式不要只寫在工具說明裡：重要的解讀規則（例如今日重點的
+`is_fallback`／`checked_count`）同時寫進 `ALPHAVIBE_CONTEXT.md`，就算
+claude.ai 還沒重抓說明也不會讀錯。
+
 ## 規則的來由（改指示前先讀）
 
 | 規則 | 為什麼 |
@@ -31,4 +42,5 @@
 | 單筆交易要提醒庫存未同步 | `save_trade_ledger_entry` 不呼叫 `holdings_sync`；CSV／交易明細兩個 parse 工具才會同步 |
 | 美股寫入前先查帳 | `parse_and_save_us_trade` 依 `specs/003-us-stocks` 定案不去重；經 ngrok 的公開連線重試時可能重複記帳 |
 | 今日重點用 `get_today_highlights`，不用 `run_module_d_check` | 後者會重算並寫入、耗 FinMind 額度 |
+| 今日重點要看 `is_fallback`／`checked_count` | 排程傍晚才跑；2026-10-29 下午實測，空清單被誤讀成「今天沒有重點」（工具改版見 PR #39） |
 | 台美不混用、不加總 | 台美完全獨立是產品硬性要求，且幣別不同 |
