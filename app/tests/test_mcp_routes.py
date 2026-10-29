@@ -72,6 +72,21 @@ class MCPPathTokenRoutesTest(unittest.TestCase):
                                  headers={"MCP-Protocol-Version": "1999-01-01"})
             self.assertEqual(r.status_code, 400, path)
 
+    def test_initialize_with_newer_client_version_is_accepted(self):
+        # 2026-10-29：claude.ai 新增連接器時 initialize 帶它最新的版本
+        # header，曾被擋成 400（「找不到伺服器」）。版本在 initialize body
+        # 協商，這一步不能擋。
+        init = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                           "params": {"protocolVersion": "2025-11-25",
+                                      "capabilities": {},
+                                      "clientInfo": {"name": "t", "version": "1"}}})
+        for path in ("/mcp/us/" + TOKEN, "/mcp/" + TOKEN):
+            r = self.client.post(path, content=init,
+                                 headers={"MCP-Protocol-Version": "2025-11-25"})
+            self.assertEqual(r.status_code, 200, path)
+            self.assertIn(r.json()["result"]["protocolVersion"],
+                          ("2024-11-05", "2025-03-26", "2025-06-18"))
+
     def test_us_route_writes_us_db_only(self):
         r = self.client.post("/mcp/us/" + TOKEN, content=_rpc(
             "tools/call", {"name": "get_us_holdings", "arguments": {}}))

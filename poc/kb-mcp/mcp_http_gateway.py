@@ -172,19 +172,14 @@ def handle_mcp_post(headers, body_bytes, data_dir=None, server_module=None):
     if not _origin_allowed(headers.get("Origin")):
         return 403, "application/json", _json_bytes({"error": "Origin not allowed"})
 
-    # 2) MCP-Protocol-Version 檢查（有帶才擋）。
     server_module = server_module or kb_server
-    version_error = _protocol_version_error(
-        headers.get("MCP-Protocol-Version"), server_module)
-    if version_error is not None:
-        return 400, "application/json", _json_bytes(version_error)
 
-    # 3) Token 驗證（依環境變數是否設定決定要不要驗）。
+    # 2) Token 驗證（依環境變數是否設定決定要不要驗）。
     if not _auth_ok(headers):
         return 401, "application/json", _json_bytes(
             {"error": "未授權：缺少或錯誤的 Authorization"})
 
-    # 4) 解析 JSON-RPC 訊息。壞掉的 JSON 不可讓常駐服務掛掉。
+    # 3) 解析 JSON-RPC 訊息。壞掉的 JSON 不可讓常駐服務掛掉。
     try:
         msg = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
     except ValueError:
@@ -192,6 +187,20 @@ def handle_mcp_post(headers, body_bytes, data_dir=None, server_module=None):
             "jsonrpc": "2.0", "id": None,
             "error": {"code": -32700, "message": "Parse error：body 不是合法的 JSON"},
         })
+
+    # 4) MCP-Protocol-Version 檢查（有帶才擋），但 initialize 不擋
+    # （2026-10-29）：版本是在 initialize 的 body 裡協商的——客戶端提出它
+    # 最新的版本，伺服器回一個自己支援的版本，之後的請求才用協商好的版本
+    # 帶 header。claude.ai 新增連接器時，initialize 就帶著它最新的版本
+    # header（例如 2025-11-25），在這裡擋掉會讓連接器「找不到伺服器」
+    # （400）。先前這道檢查在路徑密鑰路由上因 header 大小寫問題從未生效，
+    # 所以舊的台股連接器一直沒撞到；修好大小寫後才暴露出來。
+    is_initialize = isinstance(msg, dict) and msg.get("method") == "initialize"
+    if not is_initialize:
+        version_error = _protocol_version_error(
+            headers.get("MCP-Protocol-Version"), server_module)
+        if version_error is not None:
+            return 400, "application/json", _json_bytes(version_error)
 
     # 5) 呼叫既有 Server.handle()——單一請求處理失敗（包含非預期例外）
     # 不可讓常駐服務掛掉，比照專案既有的 try/except-per-request 防護風格。
