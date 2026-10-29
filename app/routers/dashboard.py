@@ -104,14 +104,9 @@ def _today_highlights(store: KBStore, today: str) -> List[Dict[str, Any]]:
     外加一個 `type` 計算欄位（`存股`／`觀察中`，對應 report.py 同一段的
     `type_text`，本來就是呈現用的衍生欄位，不是資料表欄位）。
     """
-    results = store.get_module_d_results(date=today)["results"]
-    highlights = [r for r in results if r.get("suggested_action") is not None]
-    held_codes = {h["code"] for h in store.get_holdings()["holdings"]}
-    highlights.sort(key=lambda r: (r["code"] not in held_codes, not r.get("conflict_flag")))
-    return [
-        {**r, "type": "存股" if r["code"] in held_codes else "觀察中"}
-        for r in highlights
-    ]
+    # 2026-10-28：邏輯移到 KBStore.get_today_highlights()，與 MCP 工具
+    # get_today_highlights 共用同一份實作。
+    return store.get_today_highlights(date=today)
 
 
 def _today_new_candidates(store: KBStore) -> List[Dict[str, Any]]:

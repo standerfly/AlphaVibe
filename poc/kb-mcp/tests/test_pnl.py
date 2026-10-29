@@ -242,11 +242,12 @@ class ToolRegistrationTest(unittest.TestCase):
         self.assertIn("get_exit_threshold", server_readonly.READONLY_TOOLS)
 
     def test_tool_counts(self):
-        """工具數守門：45→47（002 階段新增 2 個）、唯讀 27→28（只加 get_）。"""
+        """工具數守門：45→47（002 階段新增 2 個）、唯讀 27→28（只加 get_）；
+        2026-10-28 新增 get_today_highlights（唯讀）→ 48／29。"""
         import server
         import server_readonly
-        self.assertEqual(len(server.TOOLS), 47)
-        self.assertEqual(len(server_readonly.READONLY_TOOLS), 28)
+        self.assertEqual(len(server.TOOLS), 48)
+        self.assertEqual(len(server_readonly.READONLY_TOOLS), 29)
 
     def test_new_tools_registered_in_all_three_places(self):
         import server

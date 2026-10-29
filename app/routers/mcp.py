@@ -1,4 +1,11 @@
-"""MCP 連接器路由：POST /mcp、POST /mcp/{token}。
+"""MCP 連接器路由：POST /mcp、POST /mcp/{token}（台股）、
+POST /mcp/us/{token}（美股，2026-10-28 新增）。
+
+> **2026-10-28 更新**：下方「不改 mcp_http_gateway.py 的任何一行」已不成立——
+> 為了美股連接器，`handle_mcp_post()` 新增 `server_module` 參數、
+> `path_token_matches()` 改比對 bytes；兩條路徑密鑰路由改走共用的
+> `_path_token_post()`，並補上 GET（密鑰正確回 405、錯誤回 404），
+> 不再掉進 SPA catch-all 回 HTML。
 
 規劃文件第5節「逐一遷移既有功能」的第一項（見
 docs/spec-intake/alphavibe/roadmap.md Q-046）：從
@@ -29,6 +36,7 @@ import sys
 from pathlib import Path
 
 from fastapi import APIRouter, Request, Response
+from starlette.concurrency import run_in_threadpool
 
 # app/routers/mcp.py 在 AlphaVibe/app/routers/ 底下，往上兩層是 AlphaVibe/，
 # 再進 poc/kb-mcp/ 才是 mcp_http_gateway.py 所在目錄。獨立做一次
@@ -39,8 +47,10 @@ if str(_KB_MCP_DIR) not in sys.path:
     sys.path.insert(0, str(_KB_MCP_DIR))
 
 import mcp_http_gateway  # noqa: E402  (需先插入 sys.path 才能 import)
+import us_stock_mcp_server  # noqa: E402
 
 from app.deps import _resolve_data_dir, mcp_auth_ok  # noqa: E402
+from app.us_stock_deps import _resolve_us_stock_data_dir  # noqa: E402
 
 router = APIRouter()
 
@@ -99,15 +109,71 @@ async def mcp_post_with_token(token: str, request: Request) -> Response:
     BaseHTTPRequestHandler 需要手動讀完避免殘留 byte，但仍照抄既有作法
     先讀出 body_bytes 保持行為一致）。
     """
+    return await _path_token_post(
+        token, request, server_module=mcp_http_gateway.kb_server,
+        resolve_data_dir=_resolve_data_dir)
+
+
+@router.post("/mcp/us/{token}")
+async def mcp_us_post_with_token(token: str, request: Request) -> Response:
+    """美股 MCP 連接器（2026-10-28 新增）：讓 claude.ai 也能用美股的 8 個
+    工具。在此之前 `us_stock_mcp_server.py` 只有 stdio，只登記在 Claude
+    Code 的 `.mcp.json`，claude.ai 完全看不到美股工具，而美股匯入的第一步
+    （截圖交給 Claude 讀）又設計成只在對話裡做，等於只能在 Mac 上的
+    Claude Code 匯入。
+
+    刻意做成**第二個獨立連接器**，不把美股工具併進 `/mcp/{token}` 的工具
+    清單：美股與台股要完全獨立是產品硬性要求（見 CLAUDE.md 分頁表），
+    兩個 server、兩個資料庫、兩條路由，閘道只是把同一套 HTTP 轉接邏輯
+    （`handle_mcp_post(server_module=...)`）套到美股 server 上。
+
+    驗證機制與 `/mcp/{token}` 完全相同（同一個 ALPHAVIBE_MCP_TOKEN、
+    密鑰錯誤回通用 404）；路徑在 `/mcp/` 底下，所以 app.deps 的
+    `_is_mcp_path()` 白名單已涵蓋，不需要另外放行。`/mcp/{token}` 的
+    `{token}` 不含斜線，不會吃到 `/mcp/us/<token>`。
+    """
+    return await _path_token_post(
+        token, request, server_module=us_stock_mcp_server,
+        resolve_data_dir=_resolve_us_stock_data_dir)
+
+
+async def _path_token_post(token, request, *, server_module, resolve_data_dir):
+    """兩條 URL 路徑密鑰路由（台股 /mcp/{token}、美股 /mcp/us/{token}）的
+    共用實作（2026-10-28 code review 後抽出）。`server_module` 為必填，
+    不給預設值——漏傳時直接 TypeError，不會悄悄退回台股工具。
+
+    - 先驗密鑰、通過才讀 body：密鑰錯誤的公開請求不必把整個 body 讀進記憶體。
+    - headers 用 `request.headers.mutablecopy()`（大小寫不敏感），不轉成
+      dict——原本 `dict(request.headers.items())` 的 key 全是小寫，
+      handle_mcp_post() 裡 `.get("MCP-Protocol-Version")`／`.get("Origin")`
+      永遠拿到 None，等於這兩道檢查在路徑密鑰路由上從來沒生效過。
+    - handle_mcp_post() 是同步的 SQLite 操作，丟到 thread pool 跑，避免
+      卡住 event loop 讓整個 STND 網站跟著停頓。
+    """
+    if not mcp_http_gateway.path_token_matches(token):
+        return Response(
+            content=_UNKNOWN_PATH_404,
+            status_code=404,
+            media_type="text/plain; charset=utf-8",
+        )
     body_bytes = await request.body()
+    headers = request.headers.mutablecopy()
+    headers["Authorization"] = "Bearer " + token
+    status, content_type, body = await run_in_threadpool(
+        mcp_http_gateway.handle_mcp_post, headers, body_bytes,
+        data_dir=resolve_data_dir(), server_module=server_module)
+    return Response(content=body, status_code=status, media_type=content_type)
+
+
+@router.get("/mcp/{token}")
+@router.get("/mcp/us/{token}")
+async def mcp_path_token_get(token: str) -> Response:
+    """GET 路徑密鑰路由（2026-10-28 新增）：MCP Streamable HTTP 不提供
+    SSE 時規定回 405；沒有這條的話，GET 會掉進 app/main.py 的 SPA
+    catch-all 回 200 HTML。密鑰錯誤仍回通用 404，維持「不知道密鑰就看不出
+    這裡有端點」的既有行為。"""
     if mcp_http_gateway.path_token_matches(token):
-        headers = dict(request.headers.items())
-        headers["Authorization"] = "Bearer " + token
-        status, content_type, body = mcp_http_gateway.handle_mcp_post(
-            headers, body_bytes, data_dir=_resolve_data_dir())
+        status, content_type, body = mcp_http_gateway.mcp_method_not_allowed()
         return Response(content=body, status_code=status, media_type=content_type)
-    return Response(
-        content=_UNKNOWN_PATH_404,
-        status_code=404,
-        media_type="text/plain; charset=utf-8",
-    )
+    return Response(content=_UNKNOWN_PATH_404, status_code=404,
+                    media_type="text/plain; charset=utf-8")

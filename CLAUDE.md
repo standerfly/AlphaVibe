@@ -133,6 +133,13 @@ roundtrip-search 來源）。
 
 ## 常用查證點
 
+- **claude.ai 連接器（2026-10-28 起台美各一）**：台股 `/mcp/<密鑰>`、美股
+  `/mcp/us/<密鑰>`（`app/routers/mcp.py`），刻意分開不合併工具清單（台美獨立）。
+  claude.ai 負責即時匯入/詢問/一次性分析，網頁負責常用畫面與排程結果；
+  專案指示範本 `docs/runbooks/claude-ai-project-instructions.md`。新增 MCP
+  工具時要同步：`server.py` TOOLS、唯讀工具另加 `server_readonly.py`
+  白名單、`test_pnl.py`／`test_traceability.py` 的工具數守門，以及 Mac 上
+  `~/.claude` 的 stock-researcher 白名單（不在 repo）。
 - **STND 架構與使用方式總覽（2026-08-24 新增）**：`docs/architecture.md`
   （分頁地圖、前後端架構、資料層/防呆機制、部署方式、開新 session 該去哪個
   資料夾——比本檔案的「STND 分頁與程式碼位置」節更完整，含視覺化 diagram 連結）

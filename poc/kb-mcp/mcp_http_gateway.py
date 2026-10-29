@@ -77,17 +77,18 @@ def _origin_allowed(origin):
     return origin in ALLOWED_ORIGINS
 
 
-def _protocol_version_error(version):
+def _protocol_version_error(version, server_module=kb_server):
     """有帶 MCP-Protocol-Version header 時檢查是否在支援清單內；沒帶就
     略過不擋（規格是 SHOULD 不是 MUST）。"""
-    if version and version not in kb_server.SUPPORTED_PROTOCOL_VERSIONS:
+    supported = server_module.SUPPORTED_PROTOCOL_VERSIONS
+    if version and version not in supported:
         return {
             "jsonrpc": "2.0",
             "id": None,
             "error": {
                 "code": -32600,
                 "message": ("不支援的 MCP-Protocol-Version：%s；支援版本：%s"
-                            % (version, ", ".join(kb_server.SUPPORTED_PROTOCOL_VERSIONS))),
+                            % (version, ", ".join(supported))),
             },
         }
     return None
@@ -129,7 +130,9 @@ def path_token_matches(candidate):
     if not candidate:
         return False  # 空字串一律不算符合，即使密鑰意外設成空字串
     # 用 compare_digest 做定時比對，避免時序攻擊（比照 _auth_ok()）。
-    return hmac.compare_digest(candidate, token)
+    # 比對 UTF-8 bytes：compare_digest 遇到含非 ASCII 字元的 str 會丟
+    # TypeError，路徑裡帶中文就會變成 500，洩漏「這裡有端點」（2026-10-28）。
+    return hmac.compare_digest(candidate.encode("utf-8"), token.encode("utf-8"))
 
 
 def _json_bytes(payload):
@@ -143,7 +146,7 @@ def mcp_method_not_allowed():
     return 405, "text/plain; charset=utf-8", "405：/mcp 僅支援 POST".encode("utf-8")
 
 
-def handle_mcp_post(headers, body_bytes, data_dir=None):
+def handle_mcp_post(headers, body_bytes, data_dir=None, server_module=None):
     """處理一次 `POST /mcp` 請求的完整邏輯（Origin 檢查、
     MCP-Protocol-Version 檢查、token 驗證、JSON-RPC 解析與 dispatch），
     不依賴任何 `http.server` 的 class，方便被其他 HTTP handler
@@ -155,6 +158,11 @@ def handle_mcp_post(headers, body_bytes, data_dir=None):
       皆可）。
     - body_bytes：原始 request body（bytes，未解析）。
     - data_dir：knowledge base 資料目錄，轉傳給 `kb_server.Server`。
+    - server_module：提供 `Server` class 與 `SUPPORTED_PROTOCOL_VERSIONS`
+      的模組，省略＝台股 `server.py`。2026-10-28 新增，給美股連接器傳
+      `us_stock_mcp_server`——兩個 server 介面相同（`Server(data_dir)`／
+      `.handle(msg)`／`.store.close()`），閘道只轉接、不混用兩邊工具，
+      維持台美完全獨立的要求。
 
     回傳：`(status_code, content_type, response_body_bytes)`，呼叫端只
     需要用自己既有的送出邏輯（如 `self._send(status, content_type,
@@ -165,7 +173,9 @@ def handle_mcp_post(headers, body_bytes, data_dir=None):
         return 403, "application/json", _json_bytes({"error": "Origin not allowed"})
 
     # 2) MCP-Protocol-Version 檢查（有帶才擋）。
-    version_error = _protocol_version_error(headers.get("MCP-Protocol-Version"))
+    server_module = server_module or kb_server
+    version_error = _protocol_version_error(
+        headers.get("MCP-Protocol-Version"), server_module)
     if version_error is not None:
         return 400, "application/json", _json_bytes(version_error)
 
@@ -186,7 +196,7 @@ def handle_mcp_post(headers, body_bytes, data_dir=None):
     # 5) 呼叫既有 Server.handle()——單一請求處理失敗（包含非預期例外）
     # 不可讓常駐服務掛掉，比照專案既有的 try/except-per-request 防護風格。
     msg_id = msg.get("id") if isinstance(msg, dict) else None
-    server_instance = kb_server.Server(data_dir=data_dir)
+    server_instance = server_module.Server(data_dir=data_dir)
     try:
         response = server_instance.handle(msg)
     except Exception as exc:

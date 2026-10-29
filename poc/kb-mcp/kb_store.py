@@ -1374,6 +1374,47 @@ class KBStore:
         return {"code": None, "date": date, "count": len(rows),
                 "results": [dict(r) for r in rows]}
 
+    def get_today_highlights(self, date=None):
+        """儀表板「今日重點」：當天（或指定date）模組D檢視結果中有
+        suggested_action 的項目，排序為「持有中優先、立場衝突次之」，
+        每筆附 `type`（存股／觀察中）衍生欄位。
+
+        2026-10-28 從 app/routers/dashboard.py::_today_highlights() 抽出，
+        讓網頁（GET /api/dashboard）與 MCP 工具 get_today_highlights
+        （claude.ai 連接器用）共用同一段邏輯，避免兩邊各寫一份日後不一致。
+
+        同日修正兩個原本就有的問題（code review 抓到）：
+        - 原本借用 get_module_d_results(date=...)，它預設 LIMIT 50 且先截斷
+          才篩 suggested_action——每檔一次檢視寫 4~6 列，追蹤十幾檔以上時，
+          較早檢視的標的會被擠出 50 筆而整個漏掉。改成整天範圍查詢、不設上限。
+        - 同一檔當天重跑檢視（run_module_d_check／個股頁刷新）會留下多批
+          結果：舊批次的建議會重複或殘留。改成每檔只看當天最新一批（同一個
+          checked_at），比照個股頁 report._latest_module_d_batch() 的判準。
+
+        `type`（存股／觀察中）依**目前**持股判斷，不是 date 當天的持股。
+        date 格式錯誤（非 YYYY-MM-DD）丟 ValueError，不回空清單——空清單的
+        語意是「當天沒有需要動作的項目」，不能被格式錯誤混淆。"""
+        date = date or _today()
+        if not isinstance(date, str) or not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+            raise ValueError("date 格式須為 YYYY-MM-DD：%r" % (date,))
+        day = datetime.date.fromisoformat(date)
+        next_day = (day + datetime.timedelta(days=1)).isoformat()
+        rows = self.conn.execute(
+            "SELECT * FROM module_d_results WHERE checked_at >= ? AND checked_at < ?"
+            " ORDER BY checked_at DESC, id DESC", (date, next_day),
+        ).fetchall()
+        latest_at = {}
+        for r in rows:
+            latest_at.setdefault(r["code"], r["checked_at"])
+        highlights = [dict(r) for r in rows
+                      if r["checked_at"] == latest_at[r["code"]]
+                      and r["suggested_action"] is not None]
+        held_codes = {h["code"] for h in self.get_holdings()["holdings"]}
+        highlights.sort(key=lambda r: (r["code"] not in held_codes,
+                                       not r.get("conflict_flag")))
+        return [dict(r, type="存股" if r["code"] in held_codes else "觀察中")
+                for r in highlights]
+
     def get_associated_frameworks(self, code):
         """FR-052 策略關聯判斷用：這支代碼在全市場批次篩選歷史中，曾經
         符合門檻（meets_framework=1）過的框架代號清單（不重複、跨所有
