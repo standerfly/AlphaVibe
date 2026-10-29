@@ -1374,6 +1374,33 @@ class KBStore:
         return {"code": None, "date": date, "count": len(rows),
                 "results": [dict(r) for r in rows]}
 
+    def get_module_d_day_summary(self, date):
+        """某一天模組D檢視的概況：檢視了幾檔（不重複代碼）、最後一次檢視
+        時間。給 MCP 工具 get_today_highlights 用（2026-10-29），讓呼叫端
+        分得出「當天沒有需要動作的項目」（有檢視、沒建議）與「當天還沒有
+        檢視結果」（排程還沒跑）——兩者原本都只回空清單。"""
+        day = datetime.date.fromisoformat(date)
+        next_day = (day + datetime.timedelta(days=1)).isoformat()
+        row = self.conn.execute(
+            "SELECT COUNT(DISTINCT code) AS checked_count,"
+            " MAX(checked_at) AS last_checked_at FROM module_d_results"
+            " WHERE checked_at >= ? AND checked_at < ?", (date, next_day),
+        ).fetchone()
+        return {"checked_count": row["checked_count"],
+                "last_checked_at": row["last_checked_at"]}
+
+    def get_latest_module_d_date(self, before=None):
+        """最近一個有模組D檢視結果的日期（YYYY-MM-DD）；給 before 時只找
+        早於該日期的。都沒有則回 None。"""
+        if before:
+            row = self.conn.execute(
+                "SELECT MAX(checked_at) AS m FROM module_d_results"
+                " WHERE checked_at < ?", (before,)).fetchone()
+        else:
+            row = self.conn.execute(
+                "SELECT MAX(checked_at) AS m FROM module_d_results").fetchone()
+        return row["m"][:10] if row and row["m"] else None
+
     def get_today_highlights(self, date=None):
         """儀表板「今日重點」：當天（或指定date）模組D檢視結果中有
         suggested_action 的項目，排序為「持有中優先、立場衝突次之」，

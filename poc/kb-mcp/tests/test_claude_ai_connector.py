@@ -156,6 +156,68 @@ class TodayHighlightsTest(unittest.TestCase):
 
 
 
+class TodayHighlightsFallbackTest(unittest.TestCase):
+    """2026-10-29：每日模組D排程傍晚才跑，傍晚前問今日重點永遠是空清單，
+    claude.ai 會誤讀成「今天沒有需要動作的項目」。"""
+
+    def setUp(self):
+        import datetime
+        self.tmp = tempfile.mkdtemp(prefix="alphavibe-highlights-fb-test-")
+        self.store = KBStore(self.tmp)
+        self.today = datetime.date.today()
+        self.yday = (self.today - datetime.timedelta(days=1)).isoformat()
+        self.old = (self.today - datetime.timedelta(days=5)).isoformat()
+        save = self.store.save_module_d_result
+        save("1111", "通用層", "昨天", suggested_action="減碼", checked_at=self.yday + "T17:00:00")
+        save("2222", "通用層", "昨天正常", checked_at=self.yday + "T17:05:00")
+        save("3333", "通用層", "更早", suggested_action="減碼", checked_at=self.old + "T17:00:00")
+        self.srv = kb_server.Server(data_dir=self.tmp)
+
+    def tearDown(self):
+        self.srv.store.close()
+        self.store.close()
+        shutil.rmtree(self.tmp)
+
+    def _call(self, args=None):
+        return self.srv.call_tool("get_today_highlights", args or {})
+
+    def test_falls_back_to_latest_day_when_today_empty(self):
+        out = self._call()
+        self.assertTrue(out["is_fallback"])
+        self.assertEqual(out["requested_date"], self.today.isoformat())
+        self.assertEqual(out["date"], self.yday)
+        self.assertEqual(out["checked_count"], 2)
+        self.assertEqual(out["last_checked_at"], self.yday + "T17:05:00")
+        self.assertEqual([h["code"] for h in out["highlights"]], ["1111"])
+
+    def test_no_fallback_once_today_has_results(self):
+        self.store.save_module_d_result("4444", "通用層", "今天正常",
+                                        checked_at=self.today.isoformat() + "T17:00:00")
+        out = self._call()
+        self.assertFalse(out["is_fallback"])
+        self.assertEqual(out["date"], self.today.isoformat())
+        self.assertEqual(out["checked_count"], 1)
+        self.assertEqual(out["highlights"], [])  # 有檢視、沒建議＝真的沒重點
+
+    def test_explicit_date_never_falls_back(self):
+        out = self._call({"date": self.today.isoformat()})
+        self.assertFalse(out["is_fallback"])
+        self.assertEqual(out["checked_count"], 0)
+        self.assertEqual(out["highlights"], [])
+
+    def test_empty_database_returns_empty_without_fallback(self):
+        empty = tempfile.mkdtemp(prefix="alphavibe-highlights-empty-")
+        srv = kb_server.Server(data_dir=empty)
+        try:
+            out = srv.call_tool("get_today_highlights", {})
+        finally:
+            srv.store.close()
+            shutil.rmtree(empty)
+        self.assertFalse(out["is_fallback"])
+        self.assertEqual(out["checked_count"], 0)
+        self.assertIsNone(out["last_checked_at"])
+
+
 class USServerInputTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="alphavibe-us-input-test-")
