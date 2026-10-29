@@ -771,13 +771,19 @@ TOOLS = [
                         "同一檔當天重跑過只看最新一次結果。排序為持有中優先、立場衝突"
                         "次之，每筆附 type（存股／觀察中，依目前持股判斷）。跟網頁首頁"
                         "的今日重點是同一份資料。不會重新檢視、不寫入——要對單一標的"
-                        "即時重跑檢視才用 run_module_d_check。回傳空清單代表當天沒有"
-                        "需要動作的項目，或排程尚未跑完；日期格式錯誤會回報錯誤。"),
+                        "即時重跑檢視才用 run_module_d_check。每日排程通常傍晚才跑："
+                        "省略 date 且今天還沒有任何檢視結果時，自動改回最近一次有結果"
+                        "那天，is_fallback=true、date 為實際資料日期（回答時要講明是"
+                        "哪一天的結果、今天的排程還沒跑）。checked_count＝那天檢視了"
+                        "幾檔、last_checked_at＝最後檢視時間：checked_count>0 且"
+                        "highlights 為空才代表「沒有需要動作的項目」；checked_count"
+                        "很少（例如只有手動重跑的 1 檔）代表當天排程可能還沒跑。"
+                        "日期格式錯誤會回報錯誤。"),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "date": {"type": "string",
-                         "description": "日期 YYYY-MM-DD；省略＝今天"},
+                         "description": "日期 YYYY-MM-DD；省略＝今天（今天沒資料時自動改用最近一次）"},
             },
         },
     },
@@ -1184,9 +1190,24 @@ class Server:
             }
         if name == "get_today_highlights":
             # 日期只算一次再傳進 store，避免跨午夜時回報的日期跟實際查詢的不同。
-            date = args.get("date") or datetime.date.today().isoformat()
-            highlights = self.store.get_today_highlights(date=date)
-            return {"date": date, "count": len(highlights), "highlights": highlights}
+            requested = args.get("date")
+            date = requested or datetime.date.today().isoformat()
+            highlights = self.store.get_today_highlights(date=date)  # 也負責驗證日期格式
+            summary = self.store.get_module_d_day_summary(date)
+            result = {"requested_date": date, "date": date, "is_fallback": False}
+            # 沒指定日期、今天還沒有任何檢視結果（排程通常傍晚才跑）時，
+            # 改給最近一次有結果的那天，避免傍晚前問永遠拿到空清單
+            # （2026-10-29，claude.ai 實測：下午問被誤讀成「今天沒有重點」）。
+            if not requested and summary["checked_count"] == 0:
+                latest = self.store.get_latest_module_d_date(before=date)
+                if latest:
+                    highlights = self.store.get_today_highlights(date=latest)
+                    summary = self.store.get_module_d_day_summary(latest)
+                    result.update(date=latest, is_fallback=True)
+            result.update(checked_count=summary["checked_count"],
+                          last_checked_at=summary["last_checked_at"],
+                          count=len(highlights), highlights=highlights)
+            return result
         if name == "get_market_scan":
             meets_only = bool(args.get("meets_only", True))
             limit = args.get("limit", 50)
