@@ -127,7 +127,7 @@ roundtrip-search 來源）。
   10 個（缺全部 5 個 `speckit-git-*`）——三份本來就不齊，不要假設一致。
   修改 skill 時：改 `.claude/skills/`，再同步到另兩份既有的同名 skill；
   要不要把缺的 skill 補進 `.agents/`，問使用者，不要自行決定。
-- `ALPHAVIBE_CONTEXT.md` 是手動貼到 claude.ai Projects 用的摘要，
+- `ALPHAVIBE_CONTEXT.md` 是整份貼進 claude.ai AlphaVibe 專案「專案指示」的內容（2026-10-29 改版，設定步驟見 `docs/runbooks/claude-ai-project-instructions.md`），
   會過時；與 repo 內文件衝突時，以 `docs/` 下的文件為準。
 - 文件一律繁體中文，表格與 kebab-case slug 沿用既有格式。
 
@@ -136,7 +136,7 @@ roundtrip-search 來源）。
 - **claude.ai 連接器（2026-10-28 起台美各一）**：台股 `/mcp/<密鑰>`、美股
   `/mcp/us/<密鑰>`（`app/routers/mcp.py`），刻意分開不合併工具清單（台美獨立）。
   claude.ai 負責即時匯入/詢問/一次性分析，網頁負責常用畫面與排程結果；
-  專案指示範本 `docs/runbooks/claude-ai-project-instructions.md`。新增 MCP
+  專案指示本文 `ALPHAVIBE_CONTEXT.md`（設定步驟 `docs/runbooks/claude-ai-project-instructions.md`）。新增 MCP
   工具時要同步：`server.py` TOOLS、唯讀工具另加 `server_readonly.py`
   白名單、`test_pnl.py`／`test_traceability.py` 的工具數守門，以及 Mac 上
   `~/.claude` 的 stock-researcher 白名單（不在 repo）。

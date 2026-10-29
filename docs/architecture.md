@@ -89,7 +89,7 @@
   （`us_stock_mcp_server.py`，8 個工具）。刻意分成兩個連接器、不合併工具
   清單，維持台美完全獨立；兩者共用同一個密鑰。分工：claude.ai 負責即時的
   匯入（截圖交給 Claude 讀）、詢問與一次性分析，網頁負責常用畫面與排程結果
-  呈現。claude.ai 專案指示範本見 `docs/runbooks/claude-ai-project-instructions.md`。
+  呈現。claude.ai 專案指示本文見 `ALPHAVIBE_CONTEXT.md`，設定步驟見 `docs/runbooks/claude-ai-project-instructions.md`。
 - **同源部署**：`web/` build 出的 `web/dist/` 由 `app/main.py` 用 `StaticFiles`
   掛載＋SPA fallback，前後端跑在同一個 uvicorn process、同一個 port，不需要
   CORS 設定。
