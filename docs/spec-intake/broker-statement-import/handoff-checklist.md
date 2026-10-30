@@ -40,4 +40,4 @@
 
 ## Notes
 
-- 2026-10-30：Blocked——Q-002～Q-005 待 PO 決定（皆附建議答案）；定案後補齊整合／資料／安全說明並建立 cathay-tw-statement-import 輸入包。
+- 2026-10-30：Blocked——Q-002、Q-005 已定案；剩 Q-003（通知）、Q-004（敏感資料保管）待 PO 決定，定案後補齊說明並建立 cathay-tw-statement-import 輸入包。
