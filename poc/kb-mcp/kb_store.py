@@ -1388,10 +1388,7 @@ class KBStore:
                      t["shares"], t["price"], t["date"], t.get("source_ref"),
                      t.get("order_ref"), t.get("fee"), t.get("tax"), now))
             if write_holdings:
-                previous = self.conn.execute(
-                    "SELECT DISTINCT code, name FROM holdings WHERE snapshot_date ="
-                    " (SELECT max(snapshot_date) FROM holdings WHERE snapshot_date < ?)"
-                    " AND shares > 0", (snapshot_date,)).fetchall()
+                previous = self.get_holdings_before(snapshot_date)
                 self.conn.execute("DELETE FROM holdings WHERE snapshot_date=?",
                                   (snapshot_date,))
                 listed = set()
@@ -1445,6 +1442,21 @@ class KBStore:
         rows = self.conn.execute(
             "SELECT * FROM statement_imports WHERE statement_date=? ORDER BY id",
             (statement_date,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_holdings_before(self, snapshot_date):
+        """`snapshot_date` 之前最新一天的持股（同 get_holdings() 的取列規則：同日同代碼
+        取 max(id)、排除 shares<=0）。日對帳單以它當「今天成交之前」的基準算成本。"""
+        latest = self.conn.execute(
+            "SELECT max(snapshot_date) AS d FROM holdings WHERE snapshot_date < ?",
+            (snapshot_date,)).fetchone()["d"]
+        if latest is None:
+            return []
+        rows = self.conn.execute(
+            "SELECT h.* FROM holdings h"
+            " INNER JOIN (SELECT code, max(id) AS max_id FROM holdings"
+            "             WHERE snapshot_date=? GROUP BY code) t ON h.id = t.max_id"
+            " WHERE h.shares > 0 ORDER BY h.code", (latest,)).fetchall()
         return [dict(r) for r in rows]
 
     def latest_holdings_date(self):

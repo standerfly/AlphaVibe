@@ -19,7 +19,7 @@ def _trade(**kw):
 
 
 def _import_row(**kw):
-    r = {"message_id": "msg-1", "statement_date": "2026-10-30", "status": "done",
+    r = {"message_id": "msg-1", "statement_date": "2026-10-30", "status": "processed",
          "trades_written": 1, "trades_skipped_duplicate": 0, "holdings_count": 1,
          "holdings_written": 1, "detail_json": None, "error": None,
          "holdings_source_ref": "statement:msg-1"}
@@ -48,7 +48,7 @@ class StatementStoreTest(unittest.TestCase):
         h = self.store.get_holdings()
         self.assertEqual(h["snapshot_date"], "2026-10-30")
         self.assertEqual(h["holdings"][0]["avg_cost"], 1001.4)
-        self.assertEqual(self.store.statement_import_status("msg-1")["status"], "done")
+        self.assertEqual(self.store.statement_import_status("msg-1")["status"], "processed")
 
     def test_sell_never_gets_add_sequence(self):
         self.store.apply_statement_import(
@@ -78,11 +78,11 @@ class StatementStoreTest(unittest.TestCase):
             _import_row(status="partial"))
         self.store.apply_statement_import(
             [], [{"code": "2330", "shares": 20, "avg_cost": 1000}], "2026-10-30", True,
-            _import_row(status="done"))
+            _import_row(status="processed"))
         rows = self.store.get_holdings("2330")["history"]
         self.assertEqual([r["shares"] for r in rows], [20])
         self.assertEqual(self._count("statement_imports"), 1)
-        self.assertEqual(self.store.statement_import_status("msg-1")["status"], "done")
+        self.assertEqual(self.store.statement_import_status("msg-1")["status"], "processed")
         self.assertEqual(len(self.store.find_statement_imports_by_date("2026-10-30")), 1)
 
     def test_unlisted_previous_codes_get_zero_rows(self):
