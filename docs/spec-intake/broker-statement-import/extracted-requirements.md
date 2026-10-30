@@ -57,6 +57,6 @@
 |----|------------|------|-----------|--------|-------|
 | GAP-001 | SRC-001 | Conflict | 「直接寫入、事後通知」與既有產品規則「未經確認不寫入」（alphavibe product-spec 場景 3）衝突 | Resolved | PO 明確決定本功能為例外：來源為券商官方對帳單（SRC-001 決策 4），記為 Q-001 |
 | GAP-002 | SRC-002 | Unclear | 庫存明細與買賣紀錄推算的庫存不一致時，以哪個為準；平均成本從何而來 | Resolved | Q-002：對帳單是標準 |
-| GAP-003 | SRC-001 | Unclear | 通知管道與內容 | Open | Q-003 |
-| GAP-004 | SRC-002 | Unclear | 信箱存取與 PDF 密碼的保管方式是否可接受 | Open | Q-004 |
+| GAP-003 | SRC-001 | Unclear | 通知管道與內容 | Resolved | Q-003：Telegram 摘要 |
+| GAP-004 | SRC-002 | Unclear | 信箱存取與 PDF 密碼的保管方式是否可接受 | Resolved | Q-004：只存 Mac 鑰匙圈 |
 | GAP-005 | SRC-001 | Unclear | 驗證期多久、何時算通過 | Resolved | Q-005：連續 3 次比對一致；之後不定期抽查 |

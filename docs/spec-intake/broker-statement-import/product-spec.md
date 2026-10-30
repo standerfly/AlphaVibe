@@ -1,6 +1,6 @@
 # Product Spec: 券商對帳單 Email 自動匯入
 
-**Status:** Draft
+**Status:** In Review
 **Feature Slug:** broker-statement-import
 **Function Branch:** function/broker-statement-import
 **Product Owner:** Stander
@@ -71,8 +71,9 @@ Gmail 的電子日對帳單。
   來留空並在通知標示。（SRC-001、SRC-002、Q-002）
 - **FR-007 庫存差異檢查**：比對「買賣紀錄推算的庫存」與「對帳單庫存」；不一致時仍以對帳單
   寫入，差異股票列入通知。（SRC-001、Q-002）
-- **FR-008 事後通知**：每份對帳單處理完通知 PO 結果；管道與內容依 Q-003。寫入前不需 PO
-  確認（Q-001）。
+- **FR-008 事後通知**：寫入前不需 PO 確認（Q-001）。每份對帳單處理完，以 Telegram 傳一則
+  摘要：對帳單日期、寫入幾筆成交、庫存幾檔、有沒有差異或錯誤；處理失敗一定通知；沒有新
+  對帳單時不通知。（Q-003）
 - **FR-009 全有或全無**：PDF 打不開或格式無法辨識時，整份對帳單不寫入任何資料，並通知 PO。
   （workflow-and-states.md）
 - **FR-010 處理紀錄**：保存每份對帳單的處理結果（日期、狀態、寫入筆數、差異、錯誤），自動
@@ -80,8 +81,9 @@ Gmail 的電子日對帳單。
 - **FR-011 驗證期與抽查**：上線初期，PO 手動申請對帳單交給 Claude 與資料庫逐筆比對；連續
   **3 次**全部一致即結束驗證期，任何一次不一致則修正原因後重新起算。驗證期後 PO 不定期請
   Claude 抽查，比對方式相同。（SRC-001 決策 5、Q-005）
-- **FR-012 敏感資料保管**：身分證字號與信箱存取憑證依 Q-004 保管，不得出現在 repo、
-  設定檔明文、對話或通知中；對帳單上的個資不寫入資料庫。（SRC-002）
+- **FR-012 敏感資料保管**：身分證字號與 Gmail 應用程式密碼只存在 PO 的 Mac「鑰匙圈」，不得
+  出現在 repo、設定檔、對話或通知中；只讀國泰寄來的對帳單，其他信件不讀；對帳單上的個資
+  （姓名、帳號、地址）不寫入資料庫。（SRC-002、Q-004）
 
 ## Acceptance Scenarios
 
@@ -117,7 +119,7 @@ Gmail 的電子日對帳單。
 ## Dependencies
 
 - PO 已在國泰雲端訂閱中心訂閱台股日對帳單（已完成，SRC-002）。
-- PO 的 Gmail 允許程式讀取（方式依 Q-004）。
+- PO 在 Gmail 建立應用程式密碼（需開啟兩步驟驗證），存入 Mac 鑰匙圈（Q-004）。
 - 既有能力：國泰交易明細表的類別判讀、委託書號防重複、名稱→代號解析、買賣紀錄同步庫存、
   通知模組（SRC-001）。
 
@@ -137,9 +139,9 @@ Gmail 的電子日對帳單。
 
 | Artifact | Required | Status | Link | Rationale |
 |----------|----------|--------|------|-----------|
-| Readiness Checks | Yes | Draft | supporting-artifacts/readiness-checks.md | Required by ADR-0027 |
+| Readiness Checks | Yes | Complete | supporting-artifacts/readiness-checks.md | Required by ADR-0027 |
 | 流程與狀態 | Yes | Complete | supporting-artifacts/workflow-and-states.md | 多系統多步驟流程、排程與處理狀態 |
-| 整合、資料與安全說明 | Yes | Draft | supporting-artifacts/integration-data-security-note.md | 第三方整合、資料對應、冪等、敏感資料、監控；待 Q-002～Q-004 |
+| 整合、資料與安全說明 | Yes | Complete | supporting-artifacts/integration-data-security-note.md | 第三方整合、資料對應、冪等、敏感資料、監控 |
 | API 設計說明 | No | N/A | — | MVP 不新增 API／MCP 工具 |
 | 權限矩陣 | No | N/A | — | 單一使用者，無角色 |
 
@@ -150,5 +152,6 @@ Gmail 的電子日對帳單。
 - Q-001（Answered）：直接寫入、事後通知。
 - Q-002（Answered）：對帳單是標準。
 - Q-005（Answered）：驗證期 3 次比對，之後不定期抽查。
-- Q-003、Q-004（Blocking）：通知管道、敏感資料保管。
+- Q-003（Answered）：Telegram 摘要通知。
+- Q-004（Answered）：敏感資料只存 Mac 鑰匙圈。
 - Q-006～Q-008（Non-blocking）、Q-009（Deferred）。

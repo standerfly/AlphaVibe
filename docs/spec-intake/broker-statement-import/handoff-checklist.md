@@ -3,7 +3,7 @@
 **Feature Slug:** broker-statement-import
 **Product Spec:** product-spec.md
 **Spec Kit Inputs Index:** spec-kit-inputs/index.md
-**Status:** Blocked
+**Status:** Draft
 
 ## Product Baseline
 
@@ -11,7 +11,7 @@
 - [ ] `product-spec.md` status is `Accepted`
 - [ ] PO and TPM approval are recorded in `product-spec.md`
 - [x] All raw source material for this feature is listed in `intake-index.md`
-- [ ] Blocking questions in `clarification-log.md` are resolved
+- [x] Blocking questions in `clarification-log.md` are resolved
 - [x] In-scope and out-of-scope decisions are recorded in `scope-decision.md`
 - [x] `product-spec.md` includes the required supporting-artifact summary
 - [x] Relevant failure behavior is defined, or explicitly marked not applicable
@@ -20,7 +20,7 @@
 
 - [x] `supporting-artifacts/readiness-checks.md` has been generated
 - [x] Feature traits and required supporting artifacts are recorded
-- [ ] Every required supporting artifact is complete and linked from `product-spec.md`
+- [x] Every required supporting artifact is complete and linked from `product-spec.md`
 - [x] Every not-applicable artifact has an explicit rationale
 - [x] Error-handling matrix or equivalent section is complete when required
 
@@ -40,4 +40,4 @@
 
 ## Notes
 
-- 2026-10-30：Blocked——Q-002、Q-005 已定案；剩 Q-003（通知）、Q-004（敏感資料保管）待 PO 決定，定案後補齊說明並建立 cathay-tw-statement-import 輸入包。
+- 2026-10-30：Q-001～Q-005 全部定案，product-spec 改為 In Review，待 PO 驗收；輸入包 cathay-tw-statement-import 已建 Draft。驗收時請 PO 一併確認 Q-002 的平均成本規則（沿用既有成本）。
