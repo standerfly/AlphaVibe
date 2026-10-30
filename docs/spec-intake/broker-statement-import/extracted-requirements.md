@@ -1,7 +1,7 @@
 # Extracted Requirements: 券商對帳單 Email 自動匯入
 
 **Feature Slug:** broker-statement-import
-**Last Updated:** 2026-10-30
+**Last Updated:** 2026-10-31
 
 ## Candidate Functional Requirements
 

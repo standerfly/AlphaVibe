@@ -3,7 +3,7 @@
 **Feature Slug:** broker-statement-import
 **Product Spec:** product-spec.md
 **Spec Kit Inputs Index:** spec-kit-inputs/index.md
-**Status:** Draft
+**Status:** Blocked
 
 ## Product Baseline
 
@@ -11,7 +11,7 @@
 - [ ] `product-spec.md` status is `Accepted`
 - [ ] PO and TPM approval are recorded in `product-spec.md`
 - [x] All raw source material for this feature is listed in `intake-index.md`
-- [x] Blocking questions in `clarification-log.md` are resolved
+- [ ] Blocking questions in `clarification-log.md` are resolved
 - [x] In-scope and out-of-scope decisions are recorded in `scope-decision.md`
 - [x] `product-spec.md` includes the required supporting-artifact summary
 - [x] Relevant failure behavior is defined, or explicitly marked not applicable
@@ -40,4 +40,4 @@
 
 ## Notes
 
-- 2026-10-30：Q-001～Q-005 全部定案，product-spec 改為 In Review，待 PO 驗收；輸入包 cathay-tw-statement-import 已建 Draft。驗收時請 PO 一併確認 Q-002 的平均成本規則（沿用既有成本）。
+- 2026-10-31：code review 後補 FR-013（依日期順序）、FR-014（重跑）、FR-009 擴及寫入失敗、通知規則統一；查證資料庫發現既有重複成交（SRC-004）。新增 Q-013、Q-014 待 PO 決定。Q-002 平均成本規則 PO 已於 2026-10-31 確認。
