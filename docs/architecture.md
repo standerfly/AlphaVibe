@@ -90,6 +90,11 @@
   清單，維持台美完全獨立；兩者共用同一個密鑰。分工：claude.ai 負責即時的
   匯入（截圖交給 Claude 讀）、詢問與一次性分析，網頁負責常用畫面與排程結果
   呈現。claude.ai 專案指示本文見 `ALPHAVIBE_CONTEXT.md`，設定步驟見 `docs/runbooks/claude-ai-project-instructions.md`。
+- **國泰日對帳單自動匯入（009，開發中）**：`ops/launchd/com.alphavibe.statementimport.plist`
+  每日 20:15／23:15／07:45 執行 `poc/kb-mcp/statement_import.py`（Gmail 唯讀取信→解密 PDF→
+  寫入 `trade_ledger`＋`holdings`→Telegram 摘要），`check_scheduled_jobs.py` 監看心跳。
+  新增系統依賴 `qpdf`、`poppler`（`brew install qpdf poppler`）；密碼只放 macOS 鑰匙圈
+  （service `stnd-statement-import`）。規格見 `specs/009-cathay-tw-statement-import/`。
 - **同源部署**：`web/` build 出的 `web/dist/` 由 `app/main.py` 用 `StaticFiles`
   掛載＋SPA fallback，前後端跑在同一個 uvicorn process、同一個 port，不需要
   CORS 設定。

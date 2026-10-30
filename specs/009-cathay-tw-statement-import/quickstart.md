@@ -22,6 +22,8 @@
 cd /Users/stander/My_project/AlphaVibe-prod
 # 1) 日對帳單：從 Gmail 抓、只解析不寫入
 /usr/bin/python3 poc/kb-mcp/statement_import.py --dry-run
+# 1b) 或指定一份本機日對帳單 PDF（不連 Gmail）
+/usr/bin/python3 poc/kb-mcp/statement_import.py --from-file ~/STND-對帳單/<日對帳單>.pdf --dry-run
 # 2) 交易明細表比對（讀 /Users/stander/STND-對帳單/ 最新一份）
 /usr/bin/python3 poc/kb-mcp/statement_reconcile.py
 ```

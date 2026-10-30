@@ -87,7 +87,7 @@ class ExtractTextIntegrationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.mkdtemp(prefix="stnd-pdf-test-")
-        cls.enc = _make_encrypted_pdf(cls.tmp, "交易明細\n旺矽 集買 4 4800 19,200 7 0 kAbCd00\n",
+        cls.enc = _make_encrypted_pdf(cls.tmp, "交易明細\n範例股 集買 3 5000 15,000 7 0 kAbCd00\n",
                                       "TestPw123")
 
     @classmethod
@@ -99,7 +99,7 @@ class ExtractTextIntegrationTest(unittest.TestCase):
             self.skipTest("需要 soffice、qpdf、pdftotext")
 
     def test_correct_password_from_path_and_bytes(self):
-        self.assertIn("旺矽", statement_pdf.extract_text(self.enc, "TestPw123"))
+        self.assertIn("範例股", statement_pdf.extract_text(self.enc, "TestPw123"))
         with open(self.enc, "rb") as f:
             data = f.read()
         before = set(os.listdir(tempfile.gettempdir()))

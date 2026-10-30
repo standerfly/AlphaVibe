@@ -151,6 +151,29 @@ gui/501/com.alphavibe.moduled`。log 在 `~/Library/Logs/alphavibe-module-d.log`
 
 查詢失敗一律不寫快取，避免把錯誤結果鎖住整個 TTL。
 
+## 國泰日對帳單自動匯入（specs/009）
+
+每天從 Gmail 唯讀取國泰台股日對帳單、解密 PDF、寫入成交與庫存，Telegram 通知摘要。
+
+| 檔案 | 用途 |
+|---|---|
+| `statement_import.py` | 主程式（排程 `ops/launchd/com.alphavibe.statementimport.plist`，20:15／23:15／07:45） |
+| `statement_mailbox.py` | Gmail IMAP 唯讀取信（EXAMINE＋寄件人／主旨嚴格驗證） |
+| `statement_pdf.py` | `qpdf` 解密接 `pdftotext` 擷取文字，密碼走 stdin、解密內容不落地 |
+| `cathay_statement_parser.py` | 日對帳單文字解析（交割金額／交易明細／庫存明細） |
+| `order_ref.py` | 委託書號正規化（`k-ABCD-00`＝`kABCD`＝`kABCD00`），防重複 |
+| `keychain_secrets.py` | 從鑰匙圈 `stnd-statement-import` 讀密碼 |
+| `statement_reconcile.py` | 交易明細表與資料庫唯讀比對（重複／缺漏／不一致） |
+
+系統依賴：`brew install qpdf poppler`。密碼只放鑰匙圈（設定步驟見
+`specs/009-cathay-tw-statement-import/quickstart.md`）。
+
+```bash
+python3 poc/kb-mcp/statement_import.py --from-file <PDF> --dry-run   # 只解析、不寫入
+python3 poc/kb-mcp/statement_import.py --rerun 2026-11-03            # 立即重跑某天
+python3 poc/kb-mcp/statement_reconcile.py                            # 比對 ~/STND-對帳單 最新一份
+```
+
 ## FinMind token（可選）
 
 匿名呼叫已實測可用（2026-07-08），額度較低。頻繁使用時到

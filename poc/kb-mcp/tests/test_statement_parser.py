@@ -10,20 +10,20 @@ from cathay_statement_parser import StatementFormatError, parse_daily_statement 
 HEAD = """國泰綜合證券 日對帳單
 交割金額
    成交日期      交割日期      預收款   留置款   客戶淨收(+)/付(-)金額
-   2026/10/29    2026/11/02       0        0          -19,207
+   2026/10/29    2026/11/02       0        0          -15,006
 """
 
 TRADES_ONE = """交易明細
  商品名稱  類別  成交股數  單價   成交金額  手續費  交易稅  客戶應收付額  委託書號
- 旺矽      集買      4    4800    19,200       7       0       -19,207    0 0 0 0   kAbCd00
- 總合計                           19,200       7       0       -19,207
+ 範例股      集買      3    5000    15,000       6       0       -15,006    0 0 0 0   kAbCd00
+ 總合計                           15,000       6       0       -15,006
 """
 
 HOLDINGS = """庫存明細
  代號   股票名稱   當日收盤價   集保股數   集保市值   融資股數  融券股數  理財資訊
  2308   台達電     ▲1,905.00        10     19,050        0         0   停損/停利通知 個股分析 我要下單
- 6223   旺矽       ▼4800             4     19,200        0         0
- 集保市值總計                                38,250
+ 6223   範例股     ▼5000             3     15,000        0         0
+ 集保市值總計                                34,050
 """
 
 
@@ -35,10 +35,10 @@ class ParseDailyStatementTest(unittest.TestCase):
         t = r["trades"][0]
         self.assertEqual((t["name"], t["market"], t["action"], t["shares"], t["price"],
                           t["amount"], t["fee"], t["tax"], t["order_ref"], t["date"]),
-                         ("旺矽", "集", "買", 4, 4800.0, 19200.0, 7.0, 0.0, "kAbCd00",
+                         ("範例股", "集", "買", 3, 5000.0, 15000.0, 6.0, 0.0, "kAbCd00",
                           "2026-10-29"))
         self.assertEqual([(h["code"], h["name"], h["shares"]) for h in r["holdings"]],
-                         [("2308", "台達電", 10), ("6223", "旺矽", 4)])
+                         [("2308", "台達電", 10), ("6223", "範例股", 3)])
 
     def test_multiple_trades_with_ot_xing_and_tax_star(self):
         trades = """交易明細
@@ -88,7 +88,7 @@ class ParseDailyStatementTest(unittest.TestCase):
             parse_daily_statement(TRADES_ONE + HOLDINGS)
 
     def test_unparseable_trade_row(self):
-        bad = "交易明細\n 旺矽 集買 4 4800 19,200\n"
+        bad = "交易明細\n 範例股 集買 3 5000 15,000\n"
         with self.assertRaises(StatementFormatError):
             parse_daily_statement(HEAD + bad + HOLDINGS)
 
