@@ -45,6 +45,8 @@ SCAN_STALE_HOURS = 30
 SCAN_COVERAGE_MIN_RATIO = 0.8
 # 備份每天 03:30 跑
 BACKUP_STALE_HOURS = 30
+# 日對帳單匯入每天 20:15、23:15、07:45 跑（009），每次都寫心跳
+STATEMENT_STALE_HOURS = 30
 
 
 def _now():
@@ -192,8 +194,51 @@ def check_web_service(url=DEFAULT_SERVICE_URL, attempts=3, gap_seconds=5):
              % (attempts, last_error))]
 
 
+def check_statement_import(data_dir):
+    """國泰日對帳單自動匯入（specs/009）：排程有沒有跑、最近一份有沒有失敗、通知有沒有送出。
+
+    資料表不存在或從未執行過＝尚未上線（PO 還沒安裝排程），視為正常，避免上線前天天誤報。
+    """
+    db_path = os.path.join(data_dir, "alphavibe.db")
+    if not os.path.exists(db_path):
+        return [("ok", "statement_import", "尚未上線（找不到資料庫）")]
+    conn = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        run = conn.execute(
+            "SELECT * FROM statement_import_runs ORDER BY started_at DESC LIMIT 1").fetchone()
+        latest = conn.execute(
+            "SELECT * FROM statement_imports ORDER BY processed_at DESC LIMIT 1").fetchone()
+    except sqlite3.OperationalError:
+        return [("ok", "statement_import", "尚未上線（沒有匯入資料表）")]
+    finally:
+        conn.close()
+    if run is None:
+        return [("ok", "statement_import", "尚未有執行紀錄（排程未安裝？）")]
+
+    findings = []
+    started = _parse_iso(run["started_at"])
+    if started is None or _hours_since(started) > STATEMENT_STALE_HOURS:
+        findings.append(("critical", "statement_import",
+                         "日對帳單匯入超過 %d 小時沒有執行（最後一次：%s）"
+                         % (STATEMENT_STALE_HOURS, run["started_at"])))
+    elif run["outcome"] not in ("ok", None):
+        findings.append(("warning", "statement_import",
+                         "最近一次執行失敗（%s）：%s" % (run["outcome"], run["error"] or "")))
+    if run["notify_failed"]:
+        findings.append(("warning", "statement_import", "最近一次 Telegram 通知送出失敗"))
+    if latest is not None and latest["status"] in ("failed", "partial"):
+        findings.append(("warning", "statement_import",
+                         "最近一份對帳單（%s）狀態 %s：%s"
+                         % (latest["statement_date"], latest["status"],
+                            latest["error"] or "有成交名稱對不到代號")))
+    return findings or [("ok", "statement_import",
+                         "正常（最後執行 %s）" % run["started_at"])]
+
+
 CHECKS = (
     ("market_scan", check_market_scan, True),   # True = 需要 data_dir
+    ("statement_import", check_statement_import, True),
     ("backup", check_backups, False),
     ("web_service", check_web_service, False),
 )

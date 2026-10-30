@@ -313,5 +313,58 @@ class MessageFormatTest(unittest.TestCase):
         self.assertIn("全部排程正常", checker.notify.format_health_message(state))
 
 
+class StatementImportCheckTest(unittest.TestCase):
+    """009 T018：日對帳單匯入心跳／失敗／通知失敗。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="alphavibe-health-stmt-")
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+        from kb_store import KBStore
+        self.store = KBStore(self.tmp)
+
+    def tearDown(self):
+        self.store.conn.close()
+        shutil.rmtree(self.tmp)
+
+    def _run(self, hours_ago, outcome="ok", notify_failed=0):
+        self.store.conn.execute(
+            "INSERT INTO statement_import_runs (started_at, finished_at, outcome,"
+            " statements_found, notify_failed) VALUES (?,?,?,0,?)",
+            (_iso(hours_ago), _iso(hours_ago), outcome, notify_failed))
+        self.store.conn.commit()
+
+    def _sev(self):
+        return [f[0] for f in checker.check_statement_import(self.tmp)]
+
+    def test_not_launched_is_ok(self):
+        self.assertEqual(self._sev(), ["ok"])
+        empty = tempfile.mkdtemp(prefix="alphavibe-health-empty-")
+        try:
+            sqlite3.connect(os.path.join(empty, "alphavibe.db")).close()
+            self.assertEqual([f[0] for f in checker.check_statement_import(empty)], ["ok"])
+        finally:
+            shutil.rmtree(empty)
+
+    def test_recent_heartbeat_ok(self):
+        self._run(5)
+        self.assertEqual(self._sev(), ["ok"])
+
+    def test_stale_heartbeat_critical(self):
+        self._run(31)
+        self.assertEqual(self._sev(), ["critical"])
+
+    def test_latest_failed_statement_warning(self):
+        self._run(1)
+        self.store.record_statement_failure({"message_id": "m", "statement_date": "2026-10-29",
+                                             "status": "failed", "error": "PDF 密碼錯誤"})
+        findings = checker.check_statement_import(self.tmp)
+        self.assertEqual([f[0] for f in findings], ["warning"])
+        self.assertIn("PDF 密碼錯誤", findings[0][2])
+
+    def test_notify_failed_and_mailbox_error_warning(self):
+        self._run(1, outcome="mailbox_error", notify_failed=1)
+        self.assertEqual(self._sev(), ["warning", "warning"])
+
+
 if __name__ == "__main__":
     unittest.main()
