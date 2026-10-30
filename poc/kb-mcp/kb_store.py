@@ -16,6 +16,8 @@ import os
 import re
 import sqlite3
 
+from order_ref import normalize_order_ref
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS stances (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -289,6 +291,34 @@ CREATE TABLE IF NOT EXISTS asset_contribution_events (
     note TEXT,
     created_at TEXT DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS statement_imports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id TEXT UNIQUE NOT NULL,
+    statement_date TEXT NOT NULL,
+    status TEXT NOT NULL,
+    trades_written INTEGER,
+    trades_skipped_duplicate INTEGER,
+    holdings_count INTEGER,
+    holdings_written INTEGER,
+    detail_json TEXT,
+    error TEXT,
+    processed_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS statement_import_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    outcome TEXT,
+    statements_found INTEGER,
+    notify_failed INTEGER DEFAULT 0,
+    error TEXT
+);
+CREATE TABLE IF NOT EXISTS statement_alerts (
+    kind TEXT NOT NULL,
+    key TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (kind, key)
+);
 """
 
 # FR-057 模組D檢視結果表：trigger_type 只允許這三個值（對應通用檢視層／
@@ -313,6 +343,9 @@ _MIGRATIONS = {
     ],
     "trade_ledger": [
         ("order_ref", "TEXT"),
+        # 009-cathay-tw-statement-import FR-003：日對帳單帶手續費與交易稅，一併保留。
+        ("fee", "REAL"),
+        ("tax", "REAL"),
     ],
     "stock_prices": [
         ("prev_close", "REAL"),
@@ -1305,17 +1338,139 @@ class KBStore:
         return [dict(r) for r in rows]
 
     def trade_ledger_order_ref_exists(self, order_ref):
-        """委託書號防重複查詢：trade_ledger 裡是否已存在相同 order_ref 的
-        既有列（非 NULL 比對，SQLite `=` 對 NULL 一律不成立，不需要額外
-        排除 NULL 條件）。order_ref 為空值（None／空字串）時，呼叫端本來就
-        不該呼叫（見 resolve_and_save_trade_ledger()：沒有 order_ref 的
-        交易不做防重複檢查），這裡仍防禦性回傳 False，避免誤擋合法交易。"""
-        if not order_ref:
+        """委託書號防重複查詢：trade_ledger 裡是否已存在**同一張委託同一序號**的
+        既有列。2026-10-31（009 FR-005）起比對 `order_ref.normalize_order_ref()`
+        正規化後的值——同一委託書號在交易明細表（`k-ABCD-00`）、舊解析
+        （`kABCD`）、日對帳單（`kABCD00`）寫法不同，字串完全比對曾讓正式庫出現
+        重複成交。order_ref 為空值時回傳 False，避免誤擋合法交易。"""
+        key = normalize_order_ref(order_ref)
+        if not key:
             return False
+        return key in self.existing_normalized_order_refs()
+
+    def existing_normalized_order_refs(self):
+        """全部既有成交的正規化委託書號集合（成交僅數百筆，全量讀出即可）。"""
+        rows = self.conn.execute(
+            "SELECT order_ref FROM trade_ledger WHERE order_ref IS NOT NULL"
+        ).fetchall()
+        return {k for k in (normalize_order_ref(r["order_ref"]) for r in rows) if k}
+
+    # ---------- 國泰日對帳單自動匯入（009-cathay-tw-statement-import） ----------
+
+    def apply_statement_import(self, trades, holdings_rows, snapshot_date,
+                               write_holdings, import_row):
+        """在**單一交易**內寫入一份日對帳單的成交、庫存快照與處理紀錄（FR-009）。
+
+        既有 save_trade_ledger_entry()／save_holdings() 每筆各自 commit，無法做到
+        「寫一半失敗整份還原」，所以這裡直接下 SQL、最後只 commit 一次；任何例外
+        rollback 後原樣拋出。
+
+        trades：已解析代號、已算好 add_sequence、已排除重複的成交清單，每筆含
+            code/name/action/shares/price/date/add_sequence/fee/tax/order_ref/source_ref。
+        holdings_rows：對帳單完整持股（code/name/shares/avg_cost）；write_holdings=False
+            時不寫（對帳單比資料庫最新快照還舊，FR-013）。
+        寫庫存時先刪除同一 snapshot_date 的既有列（對帳單是標準，Q-002；重跑同一天
+            不會殘留上一次的列），並為「上一份快照有、這份對帳單沒有」的代碼寫入
+            shares=0 列，讓 get_holdings() 的最新日期確實落在本對帳單（全部出清時亦然）。
+        import_row：statement_imports 欄位 dict（message_id 已存在則覆寫該列）。
+        """
+        now = _now()
+        try:
+            for t in trades:
+                if t.get("action") not in ("買", "賣"):
+                    raise ValueError("action 必須是「買」或「賣」：%r" % t.get("action"))
+                self.conn.execute(
+                    "INSERT INTO trade_ledger (code, name, action, add_sequence, shares,"
+                    " price, date, source_ref, order_ref, fee, tax, created_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (t["code"], t.get("name"), t["action"],
+                     t.get("add_sequence") if t["action"] == "買" else None,
+                     t["shares"], t["price"], t["date"], t.get("source_ref"),
+                     t.get("order_ref"), t.get("fee"), t.get("tax"), now))
+            if write_holdings:
+                previous = self.conn.execute(
+                    "SELECT DISTINCT code, name FROM holdings WHERE snapshot_date ="
+                    " (SELECT max(snapshot_date) FROM holdings WHERE snapshot_date < ?)"
+                    " AND shares > 0", (snapshot_date,)).fetchall()
+                self.conn.execute("DELETE FROM holdings WHERE snapshot_date=?",
+                                  (snapshot_date,))
+                listed = set()
+                source_ref = import_row.get("holdings_source_ref")
+                for h in holdings_rows:
+                    listed.add(h["code"])
+                    self.conn.execute(
+                        "INSERT INTO holdings (code, name, shares, avg_cost, snapshot_date,"
+                        " source_ref, created_at) VALUES (?,?,?,?,?,?,?)",
+                        (h["code"], h.get("name"), h["shares"], h.get("avg_cost"),
+                         snapshot_date, source_ref, now))
+                for row in previous:
+                    if row["code"] not in listed:
+                        self.conn.execute(
+                            "INSERT INTO holdings (code, name, shares, avg_cost, snapshot_date,"
+                            " source_ref, created_at) VALUES (?,?,0,NULL,?,?,?)",
+                            (row["code"], row["name"], snapshot_date, source_ref, now))
+            self._upsert_statement_import(import_row, now)
+        except Exception:
+            self.conn.rollback()
+            raise
+        self.conn.commit()
+
+    def record_statement_failure(self, import_row):
+        """只寫處理紀錄（status=failed），不碰成交與庫存。"""
+        try:
+            self._upsert_statement_import(import_row, _now())
+        except Exception:
+            self.conn.rollback()
+            raise
+        self.conn.commit()
+
+    def _upsert_statement_import(self, row, now):
+        cols = ("message_id", "statement_date", "status", "trades_written",
+                "trades_skipped_duplicate", "holdings_count", "holdings_written",
+                "detail_json", "error")
+        values = [row.get(c) for c in cols]
+        self.conn.execute(
+            "INSERT INTO statement_imports (%s, processed_at) VALUES (%s)"
+            " ON CONFLICT(message_id) DO UPDATE SET %s, processed_at=excluded.processed_at"
+            % (", ".join(cols), ", ".join("?" * (len(cols) + 1)),
+               ", ".join("%s=excluded.%s" % (c, c) for c in cols[1:])),
+            values + [now])
+
+    def statement_import_status(self, message_id):
         row = self.conn.execute(
-            "SELECT 1 FROM trade_ledger WHERE order_ref=? LIMIT 1", (order_ref,)
-        ).fetchone()
-        return row is not None
+            "SELECT * FROM statement_imports WHERE message_id=?", (message_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find_statement_imports_by_date(self, statement_date):
+        rows = self.conn.execute(
+            "SELECT * FROM statement_imports WHERE statement_date=? ORDER BY id",
+            (statement_date,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def latest_holdings_date(self):
+        return self.conn.execute("SELECT max(snapshot_date) AS d FROM holdings").fetchone()["d"]
+
+    def start_import_run(self):
+        cur = self.conn.execute(
+            "INSERT INTO statement_import_runs (started_at) VALUES (?)", (_now(),))
+        self.conn.commit()
+        return cur.lastrowid
+
+    def finish_import_run(self, run_id, outcome, statements_found=0,
+                          notify_failed=False, error=None):
+        self.conn.execute(
+            "UPDATE statement_import_runs SET finished_at=?, outcome=?, statements_found=?,"
+            " notify_failed=?, error=? WHERE id=?",
+            (_now(), outcome, statements_found, 1 if notify_failed else 0, error, run_id))
+        self.conn.commit()
+
+    def alert_once(self, kind, key):
+        """第一次登記 (kind, key) 回傳 True（該通知）；已登記過回傳 False（不再通知）。"""
+        cur = self.conn.execute(
+            "INSERT OR IGNORE INTO statement_alerts (kind, key, created_at) VALUES (?,?,?)",
+            (kind, key, _now()))
+        self.conn.commit()
+        return cur.rowcount == 1
 
     # ---------- 模組D檢視結果表（FR-051~055/057）：模組E排程整合跑完
     # 模組D後，結果持久化在這裡，供模組F（報告呈現，下一輪）直接讀取，
