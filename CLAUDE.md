@@ -56,6 +56,12 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 決策依據：`docs/adr/0027-prespec-workflow.md`。
 
 <!-- SPECKIT START -->
+`specs/009-cathay-tw-statement-import/plan.md`（國泰台股日對帳單 Email 自動匯入：
+Gmail IMAP 唯讀取信、qpdf＋pdftotext 解密擷取、委託書號正規化防重複、單一交易寫入成交與
+庫存、Telegram 摘要、唯讀比對工具 `statement_reconcile.py`；需求基線
+`docs/spec-intake/broker-statement-import/`，2026-10-31 Accepted）**開發中**。接手前先讀
+`specs/009-cathay-tw-statement-import/quickstart.md`。
+
 `specs/007-trip-day-range/plan.md`（四段票天數區間化：`trip_days` 從
 單一固定整數升級為區間、id=9 遷移、組合數上限守衛，`docs/spec-intake/
 flight-roundtrip-search/` 拆包的第一包）**2026-09-24 已完成並正式
