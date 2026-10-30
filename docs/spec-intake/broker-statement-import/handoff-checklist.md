@@ -3,13 +3,13 @@
 **Feature Slug:** broker-statement-import
 **Product Spec:** product-spec.md
 **Spec Kit Inputs Index:** spec-kit-inputs/index.md
-**Status:** Draft
+**Status:** Ready
 
 ## Product Baseline
 
 - [x] `docs/spec-intake/index.md` lists this feature workspace
-- [ ] `product-spec.md` status is `Accepted`
-- [ ] PO and TPM approval are recorded in `product-spec.md`
+- [x] `product-spec.md` status is `Accepted`
+- [x] PO and TPM approval are recorded in `product-spec.md`
 - [x] All raw source material for this feature is listed in `intake-index.md`
 - [x] Blocking questions in `clarification-log.md` are resolved
 - [x] In-scope and out-of-scope decisions are recorded in `scope-decision.md`
@@ -26,18 +26,19 @@
 
 ## Spec Kit Input Packages
 
-- [ ] `spec-kit-inputs/index.md` lists every generated input package
-- [ ] Each input package has exactly one Spec Kit feature boundary
-- [ ] Each accepted `speckit-input.md` has `Status: Accepted`
-- [ ] Each accepted `speckit-input.md` links back to source decisions
-- [ ] Handoff order is recorded for accepted input packages
+- [x] `spec-kit-inputs/index.md` lists every generated input package
+- [x] Each input package has exactly one Spec Kit feature boundary
+- [x] Each accepted `speckit-input.md` has `Status: Accepted`
+- [x] Each accepted `speckit-input.md` links back to source decisions
+- [x] Handoff order is recorded for accepted input packages
 
 ## Handoff Approval
 
-- [ ] TPM confirms accepted input packages are ready for `speckit-specify`
-- [ ] PO confirms the split from product spec to Spec Kit inputs is acceptable
-- [ ] No accepted input contains unresolved contradictions or meeting-note noise
+- [x] TPM confirms accepted input packages are ready for `speckit-specify`
+- [x] PO confirms the split from product spec to Spec Kit inputs is acceptable
+- [x] No accepted input contains unresolved contradictions or meeting-note noise
 
 ## Notes
 
 - 2026-10-31：code review 後補 FR-013（依日期順序）、FR-014（重跑）、FR-009 擴及寫入失敗、通知規則統一；查證資料庫發現既有重複成交（SRC-004）。Q-013（全部在國泰）、Q-014（上線前以今年度交易明細表比對）已定案；Q-015 照建議做唯讀比對工具（FR-015）。全部問題定案，product-spec 改回 In Review，待 PO 最終驗收。Q-002 平均成本規則 PO 已於 2026-10-31 確認。
+- 2026-10-31：PO/TPM 回覆「驗收通過」，product-spec 與 cathay-tw-statement-import 輸入包皆 Accepted，可交給 speckit-specify。美股輸入包（cathay-us-statement-import）維持 Deferred。

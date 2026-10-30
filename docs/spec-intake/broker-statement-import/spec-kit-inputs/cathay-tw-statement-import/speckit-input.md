@@ -1,6 +1,6 @@
 # Spec Kit Input: 國泰台股日對帳單 Email 自動匯入
 
-**Status:** Draft
+**Status:** Accepted
 **Source Product Spec:** ../../product-spec.md
 **Source Scope Decision:** ../../scope-decision.md
 **Spec Feature Slug:** cathay-tw-statement-import

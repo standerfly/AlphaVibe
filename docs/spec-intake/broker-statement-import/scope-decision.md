@@ -34,7 +34,7 @@
 
 | Spec Feature Slug | Scope Summary | Dependencies | Handoff Order | Status |
 |-------------------|---------------|--------------|---------------|--------|
-| cathay-tw-statement-import | 國泰台股日對帳單 Email 自動匯入（交易＋庫存＋通知＋驗證期） | 無 | 1 | Draft |
+| cathay-tw-statement-import | 國泰台股日對帳單 Email 自動匯入（交易＋庫存＋通知＋驗證期） | 無 | 1 | Accepted |
 | cathay-us-statement-import | 國泰複委託（美股）日對帳單自動匯入 | cathay-tw-statement-import；PO 提供樣本 | 2 | Deferred |
 
 ## Decision Rationale

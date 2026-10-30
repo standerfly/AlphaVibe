@@ -1,12 +1,12 @@
 # Product Spec: 券商對帳單 Email 自動匯入
 
-**Status:** In Review
+**Status:** Accepted
 **Feature Slug:** broker-statement-import
 **Function Branch:** function/broker-statement-import
 **Product Owner:** Stander
 **TPM:** Stander
-**Accepted At:** N/A
-**Acceptance Evidence:** N/A
+**Accepted At:** 2026-10-31
+**Acceptance Evidence:** PO/TPM Stander 於 2026-10-31 Claude Code session（session_017cx5dkCE3v3LKrufmYXAwn）中，在 Q-001～Q-016 全部定案（Q-006／Q-007／Q-008 為 non-blocking、Q-009／Q-012 為 Deferred）、Claude 列出最終版重點並請 PO 回覆「驗收通過」後，回覆「驗收通過」完成驗收；同一回覆即同意進入 Spec Kit 技術規劃（handoff 核准）。
 
 ## Problem And Goal
 
