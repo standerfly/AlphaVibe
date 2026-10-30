@@ -147,10 +147,16 @@ class US2ScenarioTest(_Base):
         self.assertEqual([e["add_sequence"] for e in
                           self.store.get_trade_ledger("2330")["entries"]], [1, 2])
 
-    def test_same_ref_twice_in_one_statement_both_written(self):
-        s = self.process(_stmt("2026-10-29", [_buy("台積電", 4, 100.0, "kAAAA00"),
-                                              _buy("台積電", 6, 101.0, "kAAAA00")], self.HOLD))
-        self.assertEqual((s["written"], s["duplicates"]), (2, 0))
+    def test_same_ref_twice_in_one_statement_written_once_and_flagged(self):
+        stmt = _stmt("2026-10-29", [_buy("台積電", 10, 100.0, "kAAAA00"),
+                                    _buy("台積電", 10, 100.0, "kAAAA00")], self.HOLD)
+        s = self.process(stmt)
+        self.assertEqual((s["written"], s["repeated_refs"], self.ledger_count()),
+                         (1, ["kAAAA00"], 1))
+        self.assertEqual(s["diffs"], [])  # 成本模擬也只算一筆
+        self.assertIn("委託書號重複，只寫入第一筆", statement_import.format_summary(s))
+        s2 = self.process(stmt)  # 重跑同一份：仍然只有一筆
+        self.assertEqual((s2["written"], self.ledger_count()), (0, 1))
 
     def test_newer_manual_sync_snapshot_does_not_block_statement_holdings(self):
         # 手動匯入交易同步出的 10-30 快照不擋 10-29 對帳單寫入庫存（FR-013 只比對帳單）
@@ -365,7 +371,8 @@ class RunTest(_Base):
                 "pdf_bytes": STATEMENT_TEXT.encode()}
         self.run_job([item])
         detail = json.loads(self.store.statement_import_status("<a@x>")["detail_json"])
-        self.assertEqual(set(detail), {"unresolved_names", "diffs", "cost_unknown"})
+        self.assertEqual(set(detail), {"unresolved_names", "diffs", "cost_unknown",
+                                       "repeated_refs"})
 
 
 if __name__ == "__main__":

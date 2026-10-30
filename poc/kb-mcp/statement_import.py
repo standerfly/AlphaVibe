@@ -92,19 +92,26 @@ def process_statement(store, statement, message_id, resolver, dry_run=False):
     missing = [t["name"] for t in statement["trades"] if t["name"] not in name_to_code]
     resolved = resolver(sorted(set(missing))) if missing else {}
 
-    # 防重複只比對「資料庫既有」成交：同一份對帳單的每一列都是一筆成交（對帳單是標準），
-    # 不在份內互相去重，避免把同號的兩筆成交靜默吃掉。
+    # 防重複：比對資料庫既有成交（重跑、交易明細表已匯入過的都會跳過）。同一份對帳單內
+    # 委託書號（含序號）相同的列——同委託分次成交會有不同序號，完全同號較可能是 PDF 轉文字
+    # 時同一列被讀兩次——只寫第一筆，並列入通知請 PO 確認，不靜默處理。
     existing_refs = store.existing_normalized_order_refs()
-    day_trades, to_write, unresolved = [], [], []
+    day_trades, to_write, unresolved, repeated_refs = [], [], [], []
+    seen = set()
     duplicates = 0
     for t in statement["trades"]:
         code = name_to_code.get(t["name"]) or resolved.get(t["name"])
         if not code:
             unresolved.append(t["name"])
             continue
+        key = normalize_order_ref(t["order_ref"])
+        if key in seen:
+            repeated_refs.append(t["order_ref"])
+            continue
+        seen.add(key)
         trade = dict(t, code=code)
         day_trades.append(trade)
-        if normalize_order_ref(t["order_ref"]) in existing_refs:
+        if key in existing_refs:
             duplicates += 1
             continue
         to_write.append(trade)
@@ -159,7 +166,8 @@ def process_statement(store, statement, message_id, resolver, dry_run=False):
                     diffs.append({"code": code, "expected": expected, "actual": actual})
 
     status = PARTIAL if unresolved else PROCESSED
-    detail = {"unresolved_names": unresolved, "diffs": diffs, "cost_unknown": cost_unknown}
+    detail = {"unresolved_names": unresolved, "diffs": diffs, "cost_unknown": cost_unknown,
+              "repeated_refs": repeated_refs}
     import_row = {
         "message_id": message_id, "statement_date": date, "status": status,
         "trades_written": len(rows_to_write), "trades_skipped_duplicate": duplicates,
@@ -178,7 +186,8 @@ def process_statement(store, statement, message_id, resolver, dry_run=False):
             "duplicates": duplicates, "holdings_count": len(holdings),
             "holdings_written": write_holdings, "diffs": diffs,
             "cost_unknown": cost_unknown, "cost_alerts": cost_alerts,
-            "unresolved": unresolved, "trades": rows_to_write, "holdings": holdings_rows}
+            "unresolved": unresolved, "repeated_refs": repeated_refs,
+            "trades": rows_to_write, "holdings": holdings_rows}
 
 
 # ---------- 通知文字（contracts §3） ----------
@@ -199,6 +208,9 @@ def format_summary(s):
                                        _fmt_shares(d["actual"])) for d in s["diffs"]))
     if s["cost_alerts"]:
         lines.append("⚠️ 平均成本算不出來：" + "、".join(s["cost_alerts"]))
+    if s.get("repeated_refs"):
+        lines.append("⚠️ 對帳單內委託書號重複，只寫入第一筆（請用比對工具確認）："
+                     + "、".join(s["repeated_refs"]))
     return "\n".join(lines)
 
 
