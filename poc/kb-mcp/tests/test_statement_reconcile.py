@@ -62,12 +62,14 @@ class ReconcileTest(unittest.TestCase):
         self.store.save_trade_ledger_entry(code, None, action, shares, price, date, order_ref=ref)
 
     def _run(self, *args):
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+        # stdout／stderr 分開收：其他測試殘留物件被回收時的 ResourceWarning 會寫到 stderr，
+        # 混進來會讓 --json 輸出解析失敗（曾偶發）。
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             rc = statement_reconcile.main(list(args) + ["--data-dir", self.data, "--folder",
                                                         self.folder],
                                           get_secret=_secret, extract=_extract)
-        return rc, out.getvalue()
+        return rc, out.getvalue() + err.getvalue() if rc else out.getvalue()
 
     def _snapshot(self):
         h = {}

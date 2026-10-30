@@ -47,6 +47,8 @@ SCAN_COVERAGE_MIN_RATIO = 0.8
 BACKUP_STALE_HOURS = 30
 # 日對帳單匯入每天 20:15、23:15、07:45 跑（009），每次都寫心跳
 STATEMENT_STALE_HOURS = 30
+# 單次執行正常幾分鐘內結束；開始超過 1 小時仍沒有結果＝被中斷或卡住
+STATEMENT_UNFINISHED_HOURS = 1
 
 
 def _now():
@@ -222,7 +224,12 @@ def check_statement_import(data_dir):
         findings.append(("critical", "statement_import",
                          "日對帳單匯入超過 %d 小時沒有執行（最後一次：%s）"
                          % (STATEMENT_STALE_HOURS, run["started_at"])))
-    elif run["outcome"] not in ("ok", None):
+    elif run["outcome"] is None:
+        if _hours_since(started) > STATEMENT_UNFINISHED_HOURS:
+            findings.append(("warning", "statement_import",
+                             "最近一次執行（%s）沒有正常結束（可能被中斷或卡住）"
+                             % run["started_at"]))
+    elif run["outcome"] != "ok":
         findings.append(("warning", "statement_import",
                          "最近一次執行失敗（%s）：%s" % (run["outcome"], run["error"] or "")))
     if run["notify_failed"]:

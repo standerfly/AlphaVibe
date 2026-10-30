@@ -92,8 +92,9 @@ def process_statement(store, statement, message_id, resolver, dry_run=False):
     missing = [t["name"] for t in statement["trades"] if t["name"] not in name_to_code]
     resolved = resolver(sorted(set(missing))) if missing else {}
 
+    # 防重複只比對「資料庫既有」成交：同一份對帳單的每一列都是一筆成交（對帳單是標準），
+    # 不在份內互相去重，避免把同號的兩筆成交靜默吃掉。
     existing_refs = store.existing_normalized_order_refs()
-    seen = set()
     day_trades, to_write, unresolved = [], [], []
     duplicates = 0
     for t in statement["trades"]:
@@ -103,32 +104,32 @@ def process_statement(store, statement, message_id, resolver, dry_run=False):
             continue
         trade = dict(t, code=code)
         day_trades.append(trade)
-        key = normalize_order_ref(t["order_ref"])
-        if key in existing_refs or key in seen:
+        if normalize_order_ref(t["order_ref"]) in existing_refs:
             duplicates += 1
             continue
-        seen.add(key)
         to_write.append(trade)
 
     # add_sequence：沿用 resolve_and_save_trade_ledger 規則（既有有序號的買進筆數＋1 起算）。
+    all_entries = store.get_all_trade_entries()
     next_seq = {}
+    for e in all_entries:
+        if e["action"] == "買" and e["add_sequence"] is not None:
+            next_seq[e["code"]] = next_seq.get(e["code"], 1) + 1
     rows_to_write = []
     for t in to_write:
         seq = None
         if t["action"] == "買":
-            if t["code"] not in next_seq:
-                entries = store.get_trade_ledger(t["code"])["entries"]
-                next_seq[t["code"]] = 1 + sum(
-                    1 for e in entries if e["action"] == "買" and e["add_sequence"] is not None)
-            seq = next_seq[t["code"]]
-            next_seq[t["code"]] += 1
+            seq = next_seq.get(t["code"], 1)
+            next_seq[t["code"]] = seq + 1
         rows_to_write.append({
             "code": t["code"], "name": t["name"], "action": t["action"],
             "shares": t["shares"], "price": t["price"], "date": date, "add_sequence": seq,
             "fee": t["fee"], "tax": t["tax"], "order_ref": t["order_ref"],
             "source_ref": source_ref})
 
-    latest = store.latest_holdings_date()
+    # FR-013：只有「已處理過的對帳單」比本份新時才不寫庫存；手動匯入交易同步出的較新快照
+    # 不擋（對帳單是標準），否則晚一天補跑的對帳單會永遠無法更新庫存。
+    latest = store.latest_statement_holdings_date()
     write_holdings = latest is None or date >= latest
 
     holdings_rows, diffs, cost_unknown = [], [], []
@@ -139,7 +140,7 @@ def process_statement(store, statement, message_id, resolver, dry_run=False):
                   holdings_sync.apply_trades_to_positions(baseline, day_trades)["rows"]}
         bought = {t["code"] for t in day_trades if t["action"] == "買"}
         ledger_by = {}
-        for e in store.get_all_trade_entries() + rows_to_write:
+        for e in all_entries + rows_to_write:
             ledger_by.setdefault(e["code"], []).append(e)
         for h in holdings:
             cost = _resolve_avg_cost(h["code"], h["shares"], sim_by.get(h["code"]),
@@ -222,9 +223,15 @@ class _Run:
             self.messages.append(text)
 
 
-def _process_item(run, item, pdf_password, resolver):
+def _process_item(run, item, pdf_password, resolver, cache_resolver):
     store, msg_id = run.store, item["message_id"]
     date = item.get("date_hint")
+    previous = store.statement_import_status(msg_id)
+    if previous and previous["status"] == PARTIAL and \
+            (previous["processed_at"] or "")[:10] == run.today:
+        # 部分完成的自動重試一天只問一次 FinMind（匿名額度全域共用）；之後只查本機快取，
+        # PO 手動補上的名稱對應（stock_aliases）照樣生效。
+        resolver = cache_resolver
 
     def fail(category, reason):
         if not run.dry_run:
@@ -307,9 +314,10 @@ def run(data_dir, days=14, dry_run=False, rerun=None, from_file=None,
             return 1
         items = items if from_file else _select_items(store, items, rerun)
         found = len(items)
+        cache_resolver = make_resolver(store, data_dir, dry_run=True)
         resolver = resolver or make_resolver(store, data_dir, dry_run)
         for item in items:
-            print(_process_item(r, item, pdf_password, resolver))
+            print(_process_item(r, item, pdf_password, resolver, cache_resolver))
         if not items:
             print("沒有需要處理的新對帳單")
         return 0

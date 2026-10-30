@@ -147,6 +147,19 @@ class US2ScenarioTest(_Base):
         self.assertEqual([e["add_sequence"] for e in
                           self.store.get_trade_ledger("2330")["entries"]], [1, 2])
 
+    def test_same_ref_twice_in_one_statement_both_written(self):
+        s = self.process(_stmt("2026-10-29", [_buy("台積電", 4, 100.0, "kAAAA00"),
+                                              _buy("台積電", 6, 101.0, "kAAAA00")], self.HOLD))
+        self.assertEqual((s["written"], s["duplicates"]), (2, 0))
+
+    def test_newer_manual_sync_snapshot_does_not_block_statement_holdings(self):
+        # 手動匯入交易同步出的 10-30 快照不擋 10-29 對帳單寫入庫存（FR-013 只比對帳單）
+        self.store.save_holdings([{"code": "2330", "shares": 99}], snapshot_date="2026-10-30")
+        s = self.process(_stmt("2026-10-29", [], self.HOLD))
+        self.assertTrue(s["holdings_written"])
+        self.assertEqual(self.store.get_holdings("2330")["history"][-1]["snapshot_date"],
+                         "2026-10-29")
+
     def test_unresolved_name_partial_then_auto_retry(self):
         stmt = _stmt("2026-10-29", [_buy("台積電", 10, 100.0, "kAAAA00"),
                                     _buy("神秘股", 5, 20.0, "kBBBB00")], self.HOLD)
@@ -294,6 +307,28 @@ class RunTest(_Base):
         self.run_job(items)
         self.assertEqual(self.store.latest_holdings_date(), "2026-10-30")
         self.assertEqual(self.holding("2330")["shares"], 20)
+        self.assertEqual(self.ledger_count(), 2)
+
+    def test_partial_retry_same_day_does_not_call_finmind_again(self):
+        text = STATEMENT_TEXT.replace(
+            "庫存明細", " 神秘股  集買  5  20  100  1  0  -101  0 0 0 0  kBBBB00\n庫存明細")
+        item = {"message_id": "<p@x>", "date_hint": "2026-10-29", "pdf_bytes": text.encode()}
+        calls = []
+
+        def counting(names):
+            calls.append(list(names))
+            return {}
+        out = io.StringIO()
+        for _ in range(2):
+            with contextlib.redirect_stdout(out):
+                statement_import.run(self.tmp, get_secret=self._secret,
+                                     fetch=lambda a, p, d: [item], notifier=self._notifier,
+                                     resolver=counting, today="2026-10-30")
+        self.assertEqual(calls, [["神秘股"]])
+        self.assertEqual(self.store.statement_import_status("<p@x>")["status"], "partial")
+        self.store.save_stock_alias("神秘股", "9999")  # PO 補上對應 → 下一次只查快取即可補寫
+        self.run_job([item])
+        self.assertEqual(self.store.statement_import_status("<p@x>")["status"], "processed")
         self.assertEqual(self.ledger_count(), 2)
 
     def test_notify_failure_recorded(self):

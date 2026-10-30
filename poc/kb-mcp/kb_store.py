@@ -1459,6 +1459,12 @@ class KBStore:
             " WHERE h.shares > 0 ORDER BY h.code", (latest,)).fetchall()
         return [dict(r) for r in rows]
 
+    def latest_statement_holdings_date(self):
+        """已寫入庫存的日對帳單中最新的對帳單日期（FR-013 的比較基準）。"""
+        return self.conn.execute(
+            "SELECT max(statement_date) AS d FROM statement_imports"
+            " WHERE holdings_written=1").fetchone()["d"]
+
     def latest_holdings_date(self):
         return self.conn.execute("SELECT max(snapshot_date) AS d FROM holdings").fetchone()["d"]
 

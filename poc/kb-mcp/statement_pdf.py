@@ -71,28 +71,32 @@ def _extract_from_bytes(qpdf, pdftotext, data, password):
 
 
 def _run_pipeline(qpdf, pdftotext, src, password):
-    p1 = subprocess.Popen(
-        [qpdf, "--password-file=-", "--decrypt", src, "-"],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    p2 = subprocess.Popen(
-        [pdftotext, "-layout", "-enc", "UTF-8", "-", "-"],
-        stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    p1.stdout.close()  # 讓 p2 能在 p1 結束時收到 EOF
-    try:
-        p1.stdin.write(password.encode("utf-8"))
-        p1.stdin.close()
-    except BrokenPipeError:
-        pass
-    try:
-        out, err2 = p2.communicate(timeout=_TIMEOUT_S)
-        err1 = p1.stderr.read()
-        p1.wait(timeout=_TIMEOUT_S)
-    except subprocess.TimeoutExpired:
-        p1.kill()
-        p2.kill()
-        raise PdfUnreadable("PDF 處理逾時")
-    finally:
-        p1.stderr.close()
+    # 兩個行程的 stderr 都導到暫存檔而非 pipe：沒人讀的 pipe 塞滿（qpdf 對怪 PDF 會大量
+    # 警告）會讓 qpdf 卡住、被誤判為逾時。stderr 只有工具訊息，不含解密內容。
+    with tempfile.TemporaryFile() as err1_f, tempfile.TemporaryFile() as err2_f:
+        p1 = subprocess.Popen(
+            [qpdf, "--password-file=-", "--decrypt", src, "-"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err1_f)
+        p2 = subprocess.Popen(
+            [pdftotext, "-layout", "-enc", "UTF-8", "-", "-"],
+            stdin=p1.stdout, stdout=subprocess.PIPE, stderr=err2_f)
+        p1.stdout.close()  # 讓 p2 能在 p1 結束時收到 EOF
+        try:
+            p1.stdin.write(password.encode("utf-8"))
+            p1.stdin.close()
+        except BrokenPipeError:
+            pass
+        try:
+            out, _ = p2.communicate(timeout=_TIMEOUT_S)
+            p1.wait(timeout=_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            p1.kill()
+            p2.kill()
+            p1.wait()
+            p2.wait()
+            raise PdfUnreadable("PDF 處理逾時")
+        err1_f.seek(0)
+        err1 = err1_f.read()
     err1_text = err1.decode("utf-8", "replace")
     if p1.returncode != 0:
         if "invalid password" in err1_text:

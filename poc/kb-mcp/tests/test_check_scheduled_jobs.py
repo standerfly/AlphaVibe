@@ -361,6 +361,15 @@ class StatementImportCheckTest(unittest.TestCase):
         self.assertEqual([f[0] for f in findings], ["warning"])
         self.assertIn("PDF 密碼錯誤", findings[0][2])
 
+    def test_unfinished_run_warning_after_one_hour(self):
+        self.store.conn.execute(
+            "INSERT INTO statement_import_runs (started_at) VALUES (?)", (_iso(0.1),))
+        self.store.conn.commit()
+        self.assertEqual(self._sev(), ["ok"])  # 可能還在跑
+        self.store.conn.execute("UPDATE statement_import_runs SET started_at=?", (_iso(2),))
+        self.store.conn.commit()
+        self.assertEqual(self._sev(), ["warning"])
+
     def test_notify_failed_and_mailbox_error_warning(self):
         self._run(1, outcome="mailbox_error", notify_failed=1)
         self.assertEqual(self._sev(), ["warning", "warning"])

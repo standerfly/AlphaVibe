@@ -53,6 +53,15 @@ class ParseDailyStatementTest(unittest.TestCase):
                                ("世芯-KY", "集", "買", 100, 0.0, "V00on01"),
                                ("某興櫃", "興", "買", 1000, 0.0, "kZz9900")])
 
+    def test_name_with_digits(self):
+        trades = """交易明細
+ 元大台灣50  集買  1,000  150.00  150,000  213  0  -150,213  0 0 0 0  kEtF5000
+ 台灣50反1   集賣     10    5.00       50    1  0       49  0 0 0 0  kEtF5100
+"""
+        r = parse_daily_statement(HEAD + trades + HOLDINGS)
+        self.assertEqual([(t["name"], t["action"], t["shares"]) for t in r["trades"]],
+                         [("元大台灣50", "買", 1000), ("台灣50反1", "賣", 10)])
+
     def test_odd_lot_and_zero_close_and_page_break(self):
         holdings = """庫存明細
  代號   股票名稱   當日收盤價   集保股數   集保市值
