@@ -232,8 +232,20 @@ def check_statement_import(data_dir):
     elif run["outcome"] != "ok":
         findings.append(("warning", "statement_import",
                          "最近一次執行失敗（%s）：%s" % (run["outcome"], run["error"] or "")))
-    if run["notify_failed"]:
-        findings.append(("warning", "statement_import", "最近一次 Telegram 通知送出失敗"))
+    # 看 30 小時內所有執行，不只最近一次：20:15 送失敗、23:15 沒新信成功，失敗那則仍要回報
+    since = (_now() - datetime.timedelta(hours=STATEMENT_STALE_HOURS)).isoformat(
+        timespec="seconds")
+    conn = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True)
+    try:
+        notify_failed = conn.execute(
+            "SELECT count(*) FROM statement_import_runs WHERE notify_failed=1"
+            " AND started_at >= ?", (since,)).fetchone()[0]
+    finally:
+        conn.close()
+    if notify_failed:
+        findings.append(("warning", "statement_import",
+                         "%d 小時內有 %d 次 Telegram 通知送出失敗（匯入結果可能沒人看到）"
+                         % (STATEMENT_STALE_HOURS, notify_failed)))
     if latest is not None and latest["status"] in ("failed", "partial"):
         findings.append(("warning", "statement_import",
                          "最近一份對帳單（%s）狀態 %s：%s"

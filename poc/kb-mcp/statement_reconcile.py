@@ -10,10 +10,11 @@
 - 解析沿用 `trade_ledger_parser.parse_trade_ledger_text()`；委託書號依 `normalize_order_ref()` 比對。
 
 比對範圍：交易明細表第一筆～最後一筆成交日之間的資料庫成交。輸出三類：
-  資料庫重複——同一委託書號（正規化後）多筆，或期間內資料庫有、明細表沒有的成交；
+  資料庫重複——同一委託書號（正規化後）多筆；
+  資料庫多出——期間內資料庫有、明細表沒有（需逐筆確認，另列不混入重複）；
   資料庫缺漏——明細表有、資料庫沒有；
   數值不一致——同一委託書號兩邊的日期、代號、買賣別、股數或價格不同。
-結束碼：0＝比對完成（不論有無差異）；2＝PDF 打不開或格式無法辨識。僅標準庫，Python 3.9 相容。
+結束碼：0＝比對完成（不論有無差異）；2＝PDF 打不開或格式無法辨識（含部分成交列無法解析）。僅標準庫，Python 3.9 相容。
 """
 import argparse
 import glob
@@ -132,14 +133,13 @@ def reconcile(statement_trades, conn):
         missing.append({k: s.get(k) for k in ("date", "code", "name", "action", "shares",
                                               "price", "order_ref")})
 
-    for r in period_rows:
-        if r["id"] not in matched_ids:
-            duplicates.append({"normalized_ref": normalize_order_ref(r.get("order_ref")),
-                               "reason": "交易明細表沒有這筆", "rows": [_brief(r)]})
+    # 期間內資料庫有、明細表沒有：獨立列出，不混進「重複」——它可能是重複，也可能是明細表
+    # 期間外誤標日期等情況，需 PO 逐筆確認，不能當成可直接刪除的重複。
+    extra = [_brief(r) for r in period_rows if r["id"] not in matched_ids]
 
     return {"period": [start, end], "statement_trades_count": len(stmt),
             "db_trades_count": len(period_rows), "duplicates_in_db": duplicates,
-            "missing_in_db": missing, "mismatched": mismatched}
+            "extra_in_db": extra, "missing_in_db": missing, "mismatched": mismatched}
 
 
 def format_report(rep, pdf_name):
@@ -147,7 +147,8 @@ def format_report(rep, pdf_name):
              "期間 %s ～ %s：明細表 %d 筆、資料庫 %d 筆"
              % (rep["period"][0], rep["period"][1], rep["statement_trades_count"],
                 rep["db_trades_count"])]
-    if not (rep["duplicates_in_db"] or rep["missing_in_db"] or rep["mismatched"]):
+    if not (rep["duplicates_in_db"] or rep["extra_in_db"] or rep["missing_in_db"]
+            or rep["mismatched"]):
         lines.append("✅ 全部一致")
         return "\n".join(lines)
     if rep["duplicates_in_db"]:
@@ -155,6 +156,11 @@ def format_report(rep, pdf_name):
         for d in rep["duplicates_in_db"]:
             lines.append("- %s（%s）：%s" % (d["normalized_ref"] or "無委託書號", d["reason"],
                                            "；".join(_row_text(r) for r in d["rows"])))
+    if rep["extra_in_db"]:
+        lines.append("\n【資料庫多出（明細表沒有，需逐筆確認，不一定是重複）】%d 筆"
+                     % len(rep["extra_in_db"]))
+        for r in rep["extra_in_db"]:
+            lines.append("- " + _row_text(r))
     if rep["missing_in_db"]:
         lines.append("\n【資料庫缺漏】%d 筆" % len(rep["missing_in_db"]))
         for m in rep["missing_in_db"]:
@@ -185,6 +191,11 @@ def main(argv=None, get_secret=keychain_secrets.get_secret, extract=None):
         pdf = args.pdf or latest_pdf(args.folder)
         text = extract(pdf, get_secret("pdf-password"))
         parsed = trade_ledger_parser.parse_trade_ledger_text(text)
+        if parsed.get("unparsed_lines"):
+            # 有成交列解析不出來時不輸出半套結果（US3-4）：少了的那幾筆會讓正確的資料庫成交
+            # 被誤列為多出、比對期間也會被縮短
+            raise ReconcileError("交易明細表有 %d 行成交無法辨識（格式可能改版）"
+                                 % len(parsed["unparsed_lines"]))
         conn = _open_ro(os.path.abspath(args.data_dir))
         try:
             rep = reconcile(parsed["trades"], conn)
@@ -193,13 +204,10 @@ def main(argv=None, get_secret=keychain_secrets.get_secret, extract=None):
     except (ReconcileError, statement_pdf.PdfError, keychain_secrets.SecretNotFound) as e:
         print("無法比對：%s" % e, file=sys.stderr)
         return 2
-    rep["unparsed_lines"] = len(parsed.get("unparsed_lines") or [])
     if args.json:
         print(json.dumps(rep, ensure_ascii=False, indent=1))
     else:
         print(format_report(rep, os.path.basename(pdf)))
-        if rep["unparsed_lines"]:
-            print("\n（另有 %d 行無法解析，請人工確認）" % rep["unparsed_lines"])
     return 0
 
 

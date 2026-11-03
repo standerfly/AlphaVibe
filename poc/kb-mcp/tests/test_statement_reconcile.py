@@ -111,7 +111,10 @@ class ReconcileTest(unittest.TestCase):
         self._add("2330", "買", 3, 990.0, "2026-10-02", None)           # 明細表沒有
         rc, out = self._run(self.pdf, "--json")
         rep = json.loads(out)
-        self.assertEqual([d["reason"] for d in rep["duplicates_in_db"]], ["交易明細表沒有這筆"])
+        self.assertEqual(rep["duplicates_in_db"], [])
+        self.assertEqual([(r["shares"], r["price"]) for r in rep["extra_in_db"]], [(3, 990.0)])
+        rc, text = self._run(self.pdf)
+        self.assertIn("資料庫多出", text)
 
     def test_refless_db_row_matches_by_fields(self):
         self._add("2330", "買", 10, 1000.0, "2026-10-01", None)
@@ -138,6 +141,14 @@ class ReconcileTest(unittest.TestCase):
         rc, out = self._run(bad)
         self.assertEqual(rc, 2)
         self.assertIn("無法比對", out)
+
+    def test_partially_unrecognized_rows_exit_2_no_half_result(self):
+        # F6：有成交列解析不出來時不輸出半套比對結果
+        bad = DETAIL.replace("合 計", "115/10/05 集買 某股 abc\n合 計")
+        rc, out = self._run(self._pdf("partial.pdf", bad), "--json")
+        self.assertEqual(rc, 2)
+        self.assertIn("無法辨識", out)
+        self.assertNotIn("duplicates_in_db", out)
 
     def test_unrecognized_format_exit_2(self):
         rc, _ = self._run(self._pdf("other.pdf", "這不是交易明細表"))

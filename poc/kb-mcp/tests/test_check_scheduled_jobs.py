@@ -370,6 +370,14 @@ class StatementImportCheckTest(unittest.TestCase):
         self.store.conn.commit()
         self.assertEqual(self._sev(), ["warning"])
 
+    def test_earlier_notify_failure_not_hidden_by_later_quiet_run(self):
+        # F5：20:15 送失敗、23:15 沒新信成功 → 仍要回報
+        self._run(3, notify_failed=1)
+        self._run(0.1)
+        findings = checker.check_statement_import(self.tmp)
+        self.assertEqual([f[0] for f in findings], ["warning"])
+        self.assertIn("Telegram", findings[0][2])
+
     def test_notify_failed_and_mailbox_error_warning(self):
         self._run(1, outcome="mailbox_error", notify_failed=1)
         self.assertEqual(self._sev(), ["warning", "warning"])

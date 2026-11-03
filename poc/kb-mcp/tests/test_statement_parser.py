@@ -88,6 +88,19 @@ class ParseDailyStatementTest(unittest.TestCase):
         r = parse_daily_statement(HEAD + TRADES_ONE + "庫存明細\n 集保市值總計 0\n")
         self.assertEqual(r["holdings"], [])
 
+    def test_unknown_category_fails_whole_statement(self):
+        # F2：類別不在已知清單（例如定期定額）不得靜默略過
+        bad = "交易明細\n 台積電  定買  5  310.00  1,550  1  0  -1,551  0 0 0 0  kDdDd00\n"
+        with self.assertRaises(StatementFormatError):
+            parse_daily_statement(HEAD + bad + HOLDINGS)
+
+    def test_trade_row_under_repeated_settlement_title_fails(self):
+        # 跨頁頁首重複「交割金額」把成交列切進交割金額區塊：不得靜默略過
+        text = (HEAD + TRADES_ONE + "交割金額  第 2 頁\n"
+                " 台積電  集買  5  310.00  1,550  1  0  -1,551  0 0 0 0  kDdDd00\n" + HOLDINGS)
+        with self.assertRaises(StatementFormatError):
+            parse_daily_statement(text)
+
     def test_missing_holdings_section(self):
         with self.assertRaises(StatementFormatError):
             parse_daily_statement(HEAD + TRADES_ONE)

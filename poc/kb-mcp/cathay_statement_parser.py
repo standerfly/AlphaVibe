@@ -36,7 +36,11 @@ _TRADE_RE = re.compile(
     r"(?P<fee>%s)\s+"
     r"\*?(?P<tax>%s)\*?\s+"
     r".*?(?P<ref>[A-Za-z][0-9A-Za-z\-]{4,10})$" % (_NUM, _NUM, _NUM, _NUM))
-_LOOKS_LIKE_TRADE_RE = re.compile(r"(?:集|OT|興)[^\s\d]{0,2}?[買賣]\s*\d")
+# 「看起來像成交列」放寬判斷：任何「買/賣緊接數字」或「有數字且行尾是委託書號樣式」的列。
+# 類別不在已知清單（例如定期定額、未見過的市場別）時 _TRADE_RE 不會吻合，靠這裡讓整份
+# 判定格式錯誤，而不是靜默略過一筆成交（FR-009「不猜欄位」）。
+_LOOKS_LIKE_TRADE_RE = re.compile(
+    r"[買賣]\s*\d|\d[\d,.]*\s.*\s[A-Za-z][0-9A-Za-z\-]{4,10}$")
 _HOLDING_RE = re.compile(
     r"^(?P<code>\d{4}[0-9A-Z]{0,2})\s+"
     r"(?P<name>\S+?)\s+"
@@ -141,8 +145,10 @@ def parse_daily_statement(text, fallback_date=None):
         raise StatementFormatError("找不到庫存明細區塊")
     statement_date = _statement_date(sections, fallback_date)
     trades = _parse_trades(sections.get(SECTION_TRADES, []), statement_date)
-    if SECTION_TRADES not in sections and any(
-            _LOOKS_LIKE_TRADE_RE.search(l) for l in sections.get(SECTION_SETTLEMENT, [])):
-        raise StatementFormatError("有成交資料但找不到交易明細區塊")
+    # 交割金額區塊不該有成交列：出現代表缺交易明細標題，或跨頁頁首重複了「交割金額」把
+    # 後面的成交列切走——兩者都不能靜默略過。
+    if any(_LOOKS_LIKE_TRADE_RE.search(l) for l in sections.get(SECTION_SETTLEMENT, [])
+           if not any(k in l for k in _SUMMARY_MARKERS)):
+        raise StatementFormatError("交割金額區塊出現成交列（可能缺交易明細標題或跨頁頁首）")
     holdings = _parse_holdings(sections[SECTION_HOLDINGS])
     return {"statement_date": statement_date, "trades": trades, "holdings": holdings}

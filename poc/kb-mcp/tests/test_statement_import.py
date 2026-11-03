@@ -158,6 +158,24 @@ class US2ScenarioTest(_Base):
         s2 = self.process(stmt)  # 重跑同一份：仍然只有一筆
         self.assertEqual((s2["written"], self.ledger_count()), (0, 1))
 
+    def test_dialog_entry_without_ref_not_duplicated(self):
+        # F1：對話記錄的成交沒有委託書號，以欄位完全相同配對、每筆只抵銷一次
+        self.store.save_trade_ledger_entry("2330", "台積電", "買", 10, 100.0, "2026-10-29")
+        s = self.process(_stmt("2026-10-29", [_buy("台積電", 10, 100.0, "kAAAA00"),
+                                              _buy("台積電", 10, 100.0, "kAAAA01")],
+                               [{"code": "2330", "name": "台積電", "shares": 20}]))
+        self.assertEqual((s["written"], s["duplicates"], self.ledger_count()), (1, 1, 2))
+
+    def test_known_cost_kept_when_buy_and_share_mismatch(self):
+        # F3：當天有買進、股數又對不上（例如同日配股），不清空已知成本
+        self.store.save_holdings([{"code": "2330", "shares": 100, "avg_cost": 300.0}],
+                                 snapshot_date="2026-10-01")
+        s = self.process(_stmt("2026-10-29", [_buy("台積電", 100, 400.0, "kAAAA00")],
+                               [{"code": "2330", "name": "台積電", "shares": 250}]))
+        self.assertEqual(self.holding("2330")["avg_cost"], 350.0)
+        self.assertEqual(s["cost_alerts"], [])
+        self.assertEqual(s["diffs"], [{"code": "2330", "expected": 200, "actual": 250}])
+
     def test_newer_manual_sync_snapshot_does_not_block_statement_holdings(self):
         # 手動匯入交易同步出的 10-30 快照不擋 10-29 對帳單寫入庫存（FR-013 只比對帳單）
         self.store.save_holdings([{"code": "2330", "shares": 99}], snapshot_date="2026-10-30")
@@ -327,15 +345,42 @@ class RunTest(_Base):
         out = io.StringIO()
         for _ in range(2):
             with contextlib.redirect_stdout(out):
+                # 不注入 today：「同一天」比的是真實寫入時間，注入固定日期會隨時間推移失準
                 statement_import.run(self.tmp, get_secret=self._secret,
                                      fetch=lambda a, p, d: [item], notifier=self._notifier,
-                                     resolver=counting, today="2026-10-30")
+                                     resolver=counting)
         self.assertEqual(calls, [["神秘股"]])
         self.assertEqual(self.store.statement_import_status("<p@x>")["status"], "partial")
         self.store.save_stock_alias("神秘股", "9999")  # PO 補上對應 → 下一次只查快取即可補寫
-        self.run_job([item])
+        with contextlib.redirect_stdout(out):
+            statement_import.run(self.tmp, get_secret=self._secret,
+                                 fetch=lambda a, p, d: [item], notifier=self._notifier,
+                                 resolver=counting)
+        self.assertEqual(len(calls), 1)
         self.assertEqual(self.store.statement_import_status("<p@x>")["status"], "processed")
         self.assertEqual(self.ledger_count(), 2)
+
+    def test_failure_record_unwritable_still_notifies(self):
+        # F4：連失敗紀錄都寫不進資料庫，仍要送出通知
+        item = {"message_id": "<bad@x>", "date_hint": "2026-10-29", "pdf_bytes": b"BAD"}
+        with mock.patch.object(KBStore, "record_statement_failure",
+                               side_effect=sqlite3.OperationalError("disk full")), \
+                mock.patch.object(KBStore, "alert_once",
+                                  side_effect=sqlite3.OperationalError("disk full")):
+            self.assertEqual(self.run_job([item]), 0)
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("處理紀錄也無法寫入資料庫", self.sent[0])
+
+    def test_rerun_failure_keeps_previous_record(self):
+        good = {"message_id": "<a@x>", "date_hint": "2026-10-29",
+                "pdf_bytes": STATEMENT_TEXT.encode()}
+        self.run_job([good])
+        self.run_job([dict(good, pdf_bytes=b"BAD")], rerun="2026-10-29")
+        st = self.store.statement_import_status("<a@x>")
+        self.assertEqual((st["status"], st["holdings_written"]), ("processed", 1))
+        self.assertIn("重跑失敗", self.sent[-1])
+        self.assertIn("先前已寫入的資料不變", self.sent[-1])
+        self.assertEqual(self.ledger_count(), 1)
 
     def test_notify_failure_recorded(self):
         item = {"message_id": "<a@x>", "date_hint": "2026-10-29",

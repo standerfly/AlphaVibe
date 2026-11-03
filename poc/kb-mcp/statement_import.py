@@ -71,7 +71,15 @@ def _replay_cost(ledger_rows, code):
 
 
 def _resolve_avg_cost(code, stmt_shares, sim_row, base_row, bought_today, ledger_rows):
-    """research R6 四層順序；回傳均價或 None。"""
+    """research R6 順序；回傳均價或 None。
+
+    1. 基準庫存套用今天成交、股數與對帳單一致 → 模擬結果
+    2. 今天沒買進 → 沿用基準庫存原有成本（賣出不改成本）
+    3. 交易紀錄完整重播、股數與對帳單一致 → 重播結果
+    4. 今天有買進但股數對不上（例如同日配股）→ 仍用基準成本與今天買進加權的模擬結果，
+       不把已知成本清空（FR-006「已有成本的沿用」）；股數差異另列入通知
+    5. 都沒有 → 留空並通知
+    """
     if sim_row and sim_row["shares"] == stmt_shares and sim_row["avg_cost"] is not None:
         return sim_row["avg_cost"]
     if base_row and base_row.get("avg_cost") is not None and not bought_today:
@@ -79,6 +87,8 @@ def _resolve_avg_cost(code, stmt_shares, sim_row, base_row, bought_today, ledger
     shares, cost = _replay_cost(ledger_rows, code)
     if shares == stmt_shares and cost is not None:
         return cost
+    if sim_row and sim_row["avg_cost"] is not None:
+        return sim_row["avg_cost"]
     return None
 
 
@@ -96,6 +106,15 @@ def process_statement(store, statement, message_id, resolver, dry_run=False):
     # 委託書號（含序號）相同的列——同委託分次成交會有不同序號，完全同號較可能是 PDF 轉文字
     # 時同一列被讀兩次——只寫第一筆，並列入通知請 PO 確認，不靜默處理。
     existing_refs = store.existing_normalized_order_refs()
+    all_entries = store.get_all_trade_entries()
+    # 對話手動記錄的成交沒有委託書號（save_trade_ledger_entry 不收 order_ref）：以
+    # 「代號＋日期＋買賣＋股數＋價格」完全相同配對，每筆舊列只抵銷一次（FR-005、Q-014）。
+    refless = {}
+    for e in all_entries:
+        if not normalize_order_ref(e.get("order_ref")):
+            k = (e["code"], e["date"], e["action"], float(e["shares"] or 0),
+                 float(e["price"] or 0))
+            refless[k] = refless.get(k, 0) + 1
     day_trades, to_write, unresolved, repeated_refs = [], [], [], []
     seen = set()
     duplicates = 0
@@ -114,10 +133,14 @@ def process_statement(store, statement, message_id, resolver, dry_run=False):
         if key in existing_refs:
             duplicates += 1
             continue
+        fields = (code, t["date"], t["action"], float(t["shares"]), float(t["price"]))
+        if refless.get(fields):
+            refless[fields] -= 1
+            duplicates += 1
+            continue
         to_write.append(trade)
 
     # add_sequence：沿用 resolve_and_save_trade_ledger 規則（既有有序號的買進筆數＋1 起算）。
-    all_entries = store.get_all_trade_entries()
     next_seq = {}
     for e in all_entries:
         if e["action"] == "買" and e["add_sequence"] is not None:
@@ -230,8 +253,14 @@ class _Run:
         self.messages = []
 
     def notify_once(self, key, text):
-        """錯誤／部分完成類通知：同一 key 一天一次（statement_alerts）。"""
-        if self.dry_run or self.store.alert_once("error", "%s|%s" % (self.today, key)):
+        """錯誤／部分完成類通知：同一 key 一天一次（statement_alerts）。
+        去重紀錄寫不進資料庫時寧可多通知，也不能漏通知。"""
+        try:
+            first = self.dry_run or self.store.alert_once("error", "%s|%s" % (self.today, key))
+        except Exception:
+            traceback.print_exc(file=sys.stderr)
+            first = True
+        if first:
             self.messages.append(text)
 
 
@@ -246,12 +275,23 @@ def _process_item(run, item, pdf_password, resolver, cache_resolver):
         resolver = cache_resolver
 
     def fail(category, reason):
-        if not run.dry_run:
-            store.record_statement_failure({
-                "message_id": msg_id, "statement_date": date or run.today,
-                "status": FAILED, "error": reason})
-        run.notify_once("%s|%s" % (msg_id, category), format_failure(date, reason))
-        return "%s %s 失敗：%s" % (SOURCE_PREFIX, date or "?", reason)
+        if previous and previous["status"] in (PROCESSED, PARTIAL):
+            # 重跑已寫入過的對帳單失敗：保留原紀錄，先前寫入的資料也不動
+            text = ("❌ %s %s 重跑失敗：%s（先前已寫入的資料不變）"
+                    % (SOURCE_PREFIX, date or "（日期不明）", reason))
+        else:
+            text = format_failure(date, reason)
+            if not run.dry_run:
+                try:
+                    store.record_statement_failure({
+                        "message_id": msg_id, "statement_date": date or run.today,
+                        "status": FAILED, "error": reason})
+                except Exception:
+                    # 連處理紀錄都寫不進去（磁碟滿、資料庫鎖住）：仍要通知 PO
+                    traceback.print_exc(file=sys.stderr)
+                    text += "（處理紀錄也無法寫入資料庫）"
+        run.notify_once("%s|%s" % (msg_id, category), text)
+        return text.replace("\n", "｜")
 
     pdf = item.get("pdf_path") or item.get("pdf_bytes")
     if not pdf:
