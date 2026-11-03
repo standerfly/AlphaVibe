@@ -39,8 +39,11 @@ _TRADE_RE = re.compile(
 # 「看起來像成交列」放寬判斷：任何「買/賣緊接數字」或「有數字且行尾是委託書號樣式」的列。
 # 類別不在已知清單（例如定期定額、未見過的市場別）時 _TRADE_RE 不會吻合，靠這裡讓整份
 # 判定格式錯誤，而不是靜默略過一筆成交（FR-009「不猜欄位」）。
+#   - 「類別（1～3 字＋買/賣）股數 單價」：定買 5 310.00；不吃「委買 3 委賣 0」這類說明文字
+#   - 行尾是含數字的委託書號樣式（k05rg00）：不吃 Cathay、Taipei 這類純英文字
 _LOOKS_LIKE_TRADE_RE = re.compile(
-    r"[買賣]\s*\d|\d[\d,.]*\s.*\s[A-Za-z][0-9A-Za-z\-]{4,10}$")
+    r"[^\s\d]{1,3}[買賣]\s*\d[\d,]*\s+\d"
+    r"|\d[\d,.]*\s.*\s(?=[0-9A-Za-z\-]*\d)[A-Za-z][0-9A-Za-z\-]{4,10}$")
 _HOLDING_RE = re.compile(
     r"^(?P<code>\d{4}[0-9A-Z]{0,2})\s+"
     r"(?P<name>\S+?)\s+"
@@ -63,15 +66,22 @@ def _int(s):
     return int(s.replace(",", ""))
 
 
+_ORDER = (SECTION_SETTLEMENT, SECTION_TRADES, SECTION_HOLDINGS)
+
+
 def _split_sections(lines):
+    """依標題切區塊；區塊只會往後推進（交割金額 → 交易明細 → 庫存明細）。跨頁頁首若重複
+    出現前面區塊的標題，視為頁首雜訊、留在目前區塊——否則後面的持股會被切進前面的區塊而
+    被當成已出清（寫錯庫存）。"""
     sections = {}
     current = None
     for line in lines:
         stripped = line.strip()
-        for title in (SECTION_SETTLEMENT, SECTION_TRADES, SECTION_HOLDINGS):
+        for title in _ORDER:
             if stripped.startswith(title):
-                current = title
-                sections.setdefault(current, [])
+                if current is None or _ORDER.index(title) > _ORDER.index(current):
+                    current = title
+                    sections.setdefault(current, [])
                 stripped = stripped[len(title):].strip()
                 break
         if current is not None and stripped:

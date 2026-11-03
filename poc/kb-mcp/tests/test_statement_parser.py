@@ -94,12 +94,28 @@ class ParseDailyStatementTest(unittest.TestCase):
         with self.assertRaises(StatementFormatError):
             parse_daily_statement(HEAD + bad + HOLDINGS)
 
-    def test_trade_row_under_repeated_settlement_title_fails(self):
-        # 跨頁頁首重複「交割金額」把成交列切進交割金額區塊：不得靜默略過
+    def test_repeated_earlier_titles_on_later_pages_stay_in_current_section(self):
+        # 跨頁頁首重複前面區塊的標題：成交列與持股都不得被切走（持股被切走＝當成出清）
         text = (HEAD + TRADES_ONE + "交割金額  第 2 頁\n"
-                " 台積電  集買  5  310.00  1,550  1  0  -1,551  0 0 0 0  kDdDd00\n" + HOLDINGS)
+                " 台積電  集買  5  310.00  1,550  1  0  -1,551  0 0 0 0  kDdDd00\n"
+                + HOLDINGS + "交割金額  第 3 頁\n交易明細\n"
+                " 2330   台積電     1,000.00          5      5,000\n")
+        r = parse_daily_statement(text)
+        self.assertEqual([t["order_ref"] for t in r["trades"]], ["kAbCd00", "kDdDd00"])
+        self.assertEqual([h["code"] for h in r["holdings"]], ["2308", "6223", "2330"])
+
+    def test_trade_row_inside_settlement_section_fails(self):
+        text = (HEAD + " 台積電  集買  5  310.00  1,550  1  0  -1,551  0 0 0 0  kDdDd00\n"
+                + HOLDINGS)
         with self.assertRaises(StatementFormatError):
             parse_daily_statement(text)
+
+    def test_noise_lines_do_not_fail_statement(self):
+        noise = ("證券商代號 8880 國泰證券 分公司 Taipei\n委買 3 委賣 0\n買 1 張以下為零股\n"
+                 "第 1 頁 共 2 頁 Cathay\n")
+        settle_noise = "交割銀行 帳號末四碼 1234 Cathay\n"
+        r = parse_daily_statement(HEAD + settle_noise + TRADES_ONE + noise + HOLDINGS)
+        self.assertEqual(len(r["trades"]), 1)
 
     def test_missing_holdings_section(self):
         with self.assertRaises(StatementFormatError):
