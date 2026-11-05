@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.alphavibe.amoscheck</string>
+    <!-- 直接執行包裝腳本，不經 /bin/bash：mac-amos-check.sh 第 3 節會把
+         「ProgramArguments 含 /bin/bash」視為可疑，自己的排程不該害自己命中。 -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/stander/My_project/AlphaVibe/ops/security/scheduled-amos-check.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/stander/My_project/AlphaVibe</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <!-- 每週一 10:00：白天到點率高（夜間睡眠會延到喚醒才補跑），
+         並避開既有排程（02:00/03:30/03:45/04:00/06:00/09:30）。 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>1</integer>
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/stander/Library/Logs/alphavibe-amoscheck.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/stander/Library/Logs/alphavibe-amoscheck.err.log</string>
+</dict>
+</plist>
