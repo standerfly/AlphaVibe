@@ -14,6 +14,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import statement_import  # noqa: E402
 import statement_pdf  # noqa: E402
@@ -381,6 +382,16 @@ class RunTest(_Base):
         self.assertIn("重跑失敗", self.sent[-1])
         self.assertIn("先前已寫入的資料不變", self.sent[-1])
         self.assertEqual(self.ledger_count(), 1)
+
+    def test_real_layout_end_to_end(self):
+        import test_statement_parser as tsp
+        item = {"message_id": "<real@x>", "date_hint": "2026-11-04",
+                "pdf_bytes": tsp.REAL_LAYOUT.encode()}
+        self.assertEqual(self.run_job([item]), 0)
+        self.assertEqual(self.store.statement_import_status("<real@x>")["status"], "processed")
+        self.assertEqual(self.ledger_count(), 2)
+        self.assertEqual(self.store.get_holdings()["count"], 4)
+        self.assertIn("成交 2 筆寫入", self.sent[0])
 
     def test_notify_failure_recorded(self):
         item = {"message_id": "<a@x>", "date_hint": "2026-10-29",

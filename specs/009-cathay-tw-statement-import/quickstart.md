@@ -51,5 +51,7 @@ cd /Users/stander/My_project/AlphaVibe-prod
 ## 已知坑
 
 - launchd 的 PATH 不含 Homebrew：程式會自己找 `/opt/homebrew/bin/qpdf` 等路徑。
+- 真實日對帳單（2026-11-04 實測）轉出的文字**沒有**「交割金額／交易明細／庫存明細」標題字，
+  解析器以各表表頭列（成交日期 交割日期／商品名稱 類別／代碼 股票名稱）切區塊。
 - 國泰 PDF 改版會導致「格式無法辨識」：整份不寫入並通知，需更新 `cathay_statement_parser.py`。
 - 測試一律用暫存資料目錄，絕不指向 `poc/data`。

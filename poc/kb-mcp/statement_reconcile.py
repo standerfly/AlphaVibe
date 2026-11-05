@@ -175,7 +175,8 @@ def format_report(rep, pdf_name):
 
 def _row_text(r):
     return "%s %s %s %s %s股 @%s %s" % (
-        ("#%s" % r["id"]) if r.get("id") else "", r.get("date"), r.get("code") or r.get("name"),
+        ("#%s" % r["id"]) if r.get("id") else "", r.get("date"),
+        r.get("code") or "%s（代號未知）" % r.get("name"),
         r.get("action"), r.get("shares"), r.get("price"), r.get("order_ref") or "")
 
 

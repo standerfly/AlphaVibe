@@ -27,7 +27,55 @@ HOLDINGS = """庫存明細
 """
 
 
+# 2026-11-04 真實對帳單的 pdftotext -layout 版面（數值、名稱皆改為虛構）：沒有區塊標題字、
+# 客戶應收付額在成交列上一行、彙總列用全形冒號、換頁後欄寬變窄並重複表頭。
+REAL_LAYOUT = """證 券 日 對 帳 單 1 1 5年 1 1月 4 日
+親愛的 *** 先生/小姐 您好:
+以下是您115年11月4日於 ***分公司，帳號：*** 的客戶日對帳單。
+ 成交日期        交割日期        預收款   留置款   客戶淨收(+)/付(-)金額
+                                                    -3,006
+ 2026/11/04      2026/11/06      0        0
+                                                    +0
+ 商品名稱 類別 成交股數 單價 成交金額 手續費 交易稅 客戶應收付額/預收款/留置款 融資自備款/融券擔保品 融資金額/融券保證金 融券手續費 債息利息 委託書號
+                                     -2,001
+ 範例電  集買   2  1000  2,000  1  0   0  0  0  0  kAa1100
+                                     -1,005
+ 範例電  集賣   1  1004  1,004  1  3   0  0  0  0  kBb2200
+   總合計              3,004  2  3   0  0  0  0
+買進總計：2,000  賣出總計：1,004  本期買+賣合計：3,004  當沖損益：0
+預收款：0  留置款：0  應收付金額：-3,006  現沖損益：0
+淨收付金額：-3,006  淨收付點數：+0
+ 代碼 股票名稱 當日收盤價 集保股數 集保市值 融資股數 融券股數 理財資訊
+ 1111  範例電     ▼1,010     21     21,210     0   0   停損/停利通知 個股分析 我要下單
+ 2222  範例-KY    ▲3,100     5      15,500     0   0   停損/停利通知 個股分析 我要下單
+\f
+ 代碼 股票名稱 當日收盤價 集保股數 集保市值 融資股數 融券股數 理財資訊
+ 3333 範例航  ▼50.5  1  50.5  0 0 停損/停利通知
+ 4444 範例凇  321.07  150  48,160.5  0 0 停損/停利通知
+ 集保市值總計：84,921
+"""
+
+
 class ParseDailyStatementTest(unittest.TestCase):
+    def test_real_layout_without_section_titles(self):
+        r = parse_daily_statement(REAL_LAYOUT)
+        self.assertEqual(r["statement_date"], "2026-11-04")
+        self.assertEqual([(t["name"], t["action"], t["shares"], t["price"], t["fee"], t["tax"],
+                           t["order_ref"]) for t in r["trades"]],
+                         [("範例電", "買", 2, 1000.0, 1.0, 0.0, "kAa1100"),
+                          ("範例電", "賣", 1, 1004.0, 1.0, 3.0, "kBb2200")])
+        self.assertEqual([(h["code"], h["name"], h["shares"]) for h in r["holdings"]],
+                         [("1111", "範例電", 21), ("2222", "範例-KY", 5),
+                          ("3333", "範例航", 1), ("4444", "範例凇", 150)])
+
+    def test_real_layout_no_trades_day(self):
+        # 無成交日推測不會有交易明細表頭：只有交割金額與庫存仍可匯入
+        start = REAL_LAYOUT.index(" 商品名稱")
+        end = REAL_LAYOUT.index(" 代碼 股票名稱")
+        r = parse_daily_statement(REAL_LAYOUT[:start] + REAL_LAYOUT[end:])
+        self.assertEqual((r["statement_date"], r["trades"], len(r["holdings"])),
+                         ("2026-11-04", [], 4))
+
     def test_single_buy(self):
         r = parse_daily_statement(HEAD + TRADES_ONE + HOLDINGS)
         self.assertEqual(r["statement_date"], "2026-10-29")

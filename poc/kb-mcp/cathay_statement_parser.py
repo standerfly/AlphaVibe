@@ -1,7 +1,8 @@
 """國泰綜合證券（台股）日對帳單文字解析（specs/009 research R8、FR-003、FR-009）。
 
 輸入是 `statement_pdf.extract_text()`（`pdftotext -layout`）的輸出；格式紀錄見
-`docs/spec-intake/broker-statement-import/raw/src-002-*`。PDF 有三個區塊：
+`docs/spec-intake/broker-statement-import/raw/src-002-*`。PDF 有三個區塊，真實文字裡沒有
+區塊標題字，以各表的表頭列（成交日期 交割日期／商品名稱 類別／代碼 股票名稱）切開：
 
 - 交割金額：第一個西元日期 `YYYY/MM/DD` 是成交日＝對帳單日期。
 - 交易明細：每筆成交一列「名稱 類別 股數 單價 成交金額 手續費 交易稅 …… 委託書號」，
@@ -67,23 +68,42 @@ def _int(s):
 
 
 _ORDER = (SECTION_SETTLEMENT, SECTION_TRADES, SECTION_HOLDINGS)
+# 區塊起點：真實 PDF（2026-11-04 樣本實測）轉出的文字**沒有**三個區塊標題字，只有各表的
+# 表頭列，所以以表頭辨識；標題字仍保留相容。比對前先去掉所有空白——pdftotext 的欄間距
+# 不固定，標題也可能被拆成「交 割 金 額」。表頭列本身不是資料，整列丟棄。
+_SECTION_HEADERS = (
+    (SECTION_SETTLEMENT, ("成交日期交割日期",)),
+    (SECTION_TRADES, ("商品名稱類別",)),
+    (SECTION_HOLDINGS, ("代碼股票名稱", "代號股票名稱")),
+)
+
+
+def _section_start(stripped):
+    """回傳 (區塊名稱, 該列剩下要保留的文字)；不是區塊起點回傳 (None, None)。"""
+    squashed = re.sub(r"\s+", "", stripped)
+    for title in _ORDER:
+        if squashed.startswith(title):
+            return title, re.sub(r"^%s" % r"\s*".join(title), "", stripped).strip()
+    for title, headers in _SECTION_HEADERS:
+        if any(squashed.startswith(h) for h in headers):
+            return title, ""
+    return None, None
 
 
 def _split_sections(lines):
-    """依標題切區塊；區塊只會往後推進（交割金額 → 交易明細 → 庫存明細）。跨頁頁首若重複
-    出現前面區塊的標題，視為頁首雜訊、留在目前區塊——否則後面的持股會被切進前面的區塊而
-    被當成已出清（寫錯庫存）。"""
+    """依表頭／標題切區塊；區塊只會往後推進（交割金額 → 交易明細 → 庫存明細）。跨頁頁首若
+    重複出現前面（或同一個）區塊的表頭／標題，視為頁首雜訊、留在目前區塊——否則後面的持股
+    會被切進前面的區塊而被當成已出清（寫錯庫存）。"""
     sections = {}
     current = None
     for line in lines:
         stripped = line.strip()
-        for title in _ORDER:
-            if stripped.startswith(title):
-                if current is None or _ORDER.index(title) > _ORDER.index(current):
-                    current = title
-                    sections.setdefault(current, [])
-                stripped = stripped[len(title):].strip()
-                break
+        title, rest = _section_start(stripped)
+        if title is not None:
+            if current is None or _ORDER.index(title) > _ORDER.index(current):
+                current = title
+                sections.setdefault(current, [])
+            stripped = rest
         if current is not None and stripped:
             sections[current].append(stripped)
     return sections
