@@ -114,6 +114,20 @@ class US1ScenarioTest(_Base):
         self.assertIn("平均成本算不出來：2330", statement_import.format_summary(s1))
         self.assertNotIn("平均成本", statement_import.format_summary(s2))
 
+    def test_stale_baseline_includes_gap_trades(self):
+        # 快照停在 09-02，期間的買賣已在交易紀錄：不應誤報差異，成本也應正確加權
+        self.store.save_holdings([{"code": "2330", "shares": 10, "avg_cost": 100.0},
+                                  {"code": "2317", "shares": 50, "avg_cost": 80.0}],
+                                 snapshot_date="2026-09-02")
+        self.store.save_trade_ledger_entry("2330", "台積電", "買", 10, 200.0, "2026-10-01",
+                                           order_ref="k-GGGG-00")
+        self.store.save_trade_ledger_entry("2317", "鴻海", "賣", 50, 90.0, "2026-10-02",
+                                           order_ref="k-HHHH-00")
+        s = self.process(_stmt("2026-10-29", [_buy("台積電", 5, 300.0, "kAAAA00")],
+                               [{"code": "2330", "name": "台積電", "shares": 25}]))
+        self.assertEqual(s["diffs"], [])
+        self.assertEqual(self.holding("2330")["avg_cost"], (10 * 100 + 10 * 200 + 5 * 300) / 25)
+
     def test_cost_from_full_ledger_replay(self):
         # 基準庫存沒有成本，但交易紀錄完整、重播股數等於對帳單 → 採用重播結果
         self.store.save_holdings([{"code": "2330", "shares": 10}], snapshot_date="2026-10-01")
