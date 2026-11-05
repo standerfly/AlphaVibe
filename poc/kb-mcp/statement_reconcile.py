@@ -84,7 +84,7 @@ def reconcile(statement_trades, conn):
     names = _name_to_code(conn)
     stmt = []
     for t in statement_trades:
-        s = dict(t, code=names.get(normalize_name(t.get("name"))),
+        s = dict(t, code=t.get("code") or names.get(normalize_name(t.get("name"))),
                  key=normalize_order_ref(t.get("order_ref")))
         stmt.append(s)
     start = min(t["date"] for t in stmt)

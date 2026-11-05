@@ -145,13 +145,32 @@ class LedgerCleanupTest(unittest.TestCase):
 
     def test_failure_midway_rolls_back(self):
         p = self.plan("--alias", "新股票=9999")
+        with sqlite3.connect(self.db) as c:
+            c.execute("CREATE TRIGGER boom BEFORE INSERT ON trade_ledger"
+                      " WHEN NEW.order_ref='k-FFFF-00' BEGIN SELECT RAISE(ABORT, 'boom'); END")
         before = self.digest()
-        bad = dict(p, inserts=p["inserts"] + [{"code": None, "name": "x", "action": "買",
-                                               "add_sequence": 1, "shares": 1, "price": 1,
-                                               "date": "2026-10-07", "source_ref": "",
-                                               "order_ref": "k-ZZZZ-00"}])
-        with self.assertRaises(sqlite3.IntegrityError):
-            ledger_cleanup.apply_plan(self.db, bad, self.backup)
+        rc, _, err = self.run_cli("--alias", "新股票=9999", "--apply", "--confirm", p["plan_code"])
+        self.assertEqual(rc, 2)
+        self.assertIn("資料庫未改動", err)
+        self.assertEqual(self.digest(), before)
+
+    def test_write_after_dry_run_changes_plan_refused(self):
+        p = self.plan("--alias", "新股票=9999")
+        with sqlite3.connect(self.db) as c:   # 試跑後服務補進缺漏的那筆
+            c.execute("INSERT INTO trade_ledger (code, name, action, shares, price, date,"
+                      " order_ref, created_at) VALUES ('2330','台積電','買',2,1000,'2026-10-06',"
+                      "'k-FFFF-00','x')")
+        rc, _, err = self.run_cli("--alias", "新股票=9999", "--apply", "--confirm", p["plan_code"])
+        self.assertEqual(rc, 2)
+        self.assertIn("計畫代碼不符", err)
+
+    def test_backup_dir_unwritable_exit_2(self):
+        p = self.plan("--alias", "新股票=9999")
+        with open(self.backup, "w") as f:
+            f.write("not a dir")
+        before = self.digest()
+        rc, _, _ = self.run_cli("--alias", "新股票=9999", "--apply", "--confirm", p["plan_code"])
+        self.assertEqual(rc, 2)
         self.assertEqual(self.digest(), before)
 
     def test_text_report(self):
@@ -163,3 +182,73 @@ class LedgerCleanupTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewCasesTest(unittest.TestCase):
+    """獨立驗收找到的誤刪情境：無法安全判定的重複群組整組不處理、列入待確認。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="stnd-cleanup-review-")
+        self.store = KBStore(os.path.join(self.tmp, "data"))
+        self.store.save_stock_alias("台積電", "2330")
+        self.store.save_stock_alias("聯發科", "2454")
+
+    def tearDown(self):
+        self.store.conn.close()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def plan(self, detail_lines, aliases=None):
+        text = "交易日期 CD 股票名稱 股數 單價 手續費 交易稅 委託書號\n" + "\n".join(detail_lines)
+        trades = ledger_cleanup.trade_ledger_parser.parse_trade_ledger_text(text)["trades"]
+        self.store.conn.row_factory = sqlite3.Row
+        return ledger_cleanup.build_plan(trades, self.store.conn, aliases or {})
+
+    def add(self, code, action, shares, price, date, ref):
+        self.store.save_trade_ledger_entry(code, None, action, shares, price, date,
+                                           order_ref=ref)
+
+    L = "115/10/01 集買 台積電 10 1,000.00 14 0 10,000 10,014(付) k-AAAA-00"
+
+    def test_same_ref_different_date_not_deleted(self):
+        self.add("2330", "買", 10, 1000.0, "2026-03-02", "k-AAAA-00")
+        self.add("2330", "買", 10, 1000.0, "2026-10-01", "k-AAAA-00")
+        p = self.plan([self.L])
+        self.assertEqual(p["deletes"], [])
+        self.assertEqual(len(p["review"]), 1)
+
+    def test_same_ref_different_stock_not_deleted(self):
+        self.add("2454", "買", 10, 1000.0, "2026-10-01", "kAAAA")
+        self.add("2330", "買", 10, 1000.0, "2026-10-01", "k-AAAA-00")
+        p = self.plan([self.L])
+        self.assertEqual(p["deletes"], [])
+        self.assertIn("股票、日期或買賣別不同", p["review"][0]["reason"])
+
+    def test_no_new_format_row_not_deleted(self):
+        self.add("2330", "買", 6, 1000.0, "2026-10-01", "kAAAA")
+        self.add("2330", "買", 4, 1000.0, "2026-10-01", "kAAAA")
+        p = self.plan([self.L])
+        self.assertEqual(p["deletes"], [])
+        self.assertIn("相同的列", p["review"][0]["reason"])
+
+    def test_new_format_row_with_wrong_values_not_kept(self):
+        self.add("2330", "買", 10, 1000.0, "2026-10-01", "kAAAA")
+        self.add("2330", "買", 20, 1000.0, "2026-10-01", "k-AAAA-00")
+        p = self.plan([self.L])
+        self.assertEqual(p["deletes"], [])
+        self.assertIn("數值與明細表不符", p["review"][0]["reason"])
+
+    def test_statement_lists_same_ref_twice(self):
+        self.add("2330", "買", 10, 1000.0, "2026-10-01", "kAAAA")
+        self.add("2330", "買", 10, 1000.0, "2026-10-01", "k-AAAA-00")
+        p = self.plan([self.L, self.L])
+        self.assertEqual(p["deletes"], [])
+        self.assertIn("出現 2 次", p["review"][0]["reason"])
+
+    def test_unresolved_name_listed_even_if_fields_match_other_stock(self):
+        self.add("2454", "買", 3, 50.0, "2026-10-01", None)
+        p = self.plan(["115/10/01 集買 神秘股 3 50.00 1 0 150 151(付) k-EEEE-00"])
+        self.assertEqual(p["unresolved_names"], ["神秘股"])
+        p2 = self.plan(["115/10/01 集買 神秘股 3 50.00 1 0 150 151(付) k-EEEE-00"],
+                       {"神秘股": "9999"})
+        self.assertEqual([t["code"] for t in p2["inserts"]], ["9999"])
+        self.assertEqual([r["code"] for r in p2["extra_kept"]], ["2454"])
