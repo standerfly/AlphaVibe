@@ -8,10 +8,10 @@
          「ProgramArguments 含 /bin/bash」視為可疑，自己的排程不該害自己命中。 -->
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/stander/My_project/AlphaVibe/ops/security/scheduled-amos-check.sh</string>
+        <string>/Users/stander/My_project/AlphaVibe-prod/ops/security/scheduled-amos-check.sh</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/stander/My_project/AlphaVibe</string>
+    <string>/Users/stander/My_project/AlphaVibe-prod</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>

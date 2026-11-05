@@ -167,10 +167,18 @@ roundtrip-search 來源）。
   教訓紀錄。真正要對正式庫寫入資產種子資料，用
   `poc/kb-mcp/seed_assets_once.py --data-dir poc/data`，一次性、需要
   人手動執行。
-- 正式服務常駐設定：`~/Library/LaunchAgents/com.alphavibe.reportserver.plist`
-  （現在跑 `uvicorn app.main:app`，不是 `report_server.py`）；舊版 plist
-  備份在 `~/Library/LaunchAgents/backup-20260822/`，回滾步驟見同一天
-  教訓紀錄。
+- **正式環境跑在獨立資料夾（2026-10-29 起）**：`/Users/stander/My_project/AlphaVibe-prod`
+  （`git worktree`，detached HEAD，只放 `function/alphavibe` 正式版），正式服務
+  `com.alphavibe.reportserver` 與 8 個排程（marketscan／dbbackup／logrotate／
+  healthcheck／usstockscan／flighttracking／moduled）的 plist 全部指向它；
+  開發資料夾 `AlphaVibe` 切任何分支都不影響正式環境。資料庫**沒搬**：
+  `AlphaVibe-prod/poc/data` 是指向 `AlphaVibe/poc/data` 的 symlink（Claude Code
+  本機 MCP、相片工具等仍直接讀 `AlphaVibe/poc/data`）。**部署**（合併 PR 後）：
+  `cd /Users/stander/My_project/AlphaVibe-prod && git fetch origin function/alphavibe && bash <(git show origin/function/alphavibe:ops/deploy.sh)`
+  （腳本 `ops/deploy.sh`：只重建有變動的部分、`kickstart -k` 重啟、健康檢查、印出
+  回滾指令）。**不要**再在開發資料夾 `git pull` 後重啟服務——那已經不是正式環境。
+  切換前的 plist 備份在 `~/Library/LaunchAgents/backup-20261029/`；更早的
+  `backup-20260822/` 是 report_server.py 時代的。
 - **機票查詢（外站四段票）**：`poc/kb-mcp/flight_search.py`（CLI，97 測試）
   ＋ `poc/kb-mcp/scraper/`（Node/Playwright 抓 Google Flights，需先
   `npm install`）。**接手前先讀
@@ -357,6 +365,21 @@ roundtrip-search 來源）。
   squash-再比對＋雙特徵字串；已補迴歸測試（`test_smoke.py` 「RC 啟用
   偵測」三項）；完整方案與這次撞見的地雷見
   `~/.claude/plans/hazy-petting-wreath.md`「擴充三」
+
+- 2026-10-29｜情境：把正式服務與 8 個排程從開發資料夾切到獨立 worktree
+  `AlphaVibe-prod` 時連踩兩個坑：(1) 給 PO 的指令用 `JOBS="a b c"; for n in $JOBS`，
+  PO 的終端機是 macOS 預設 zsh，zsh 不會把未加引號的變數拆字，整串被當成一個
+  檔名，全部指令失敗（幸好什麼都沒改到）；(2) 對常駐服務 reportserver 做
+  `launchctl bootout` 後立刻 `bootstrap`，舊行程還沒關完，回 `Bootstrap failed: 5`，
+  服務停擺到手動重新 bootstrap 為止（排程類沒在跑，所以沒事）
+  ｜教訓：(1) 給 PO 在 Mac 上貼的指令要假設是 zsh——迴圈用陣列
+  `JOBS=(a b c); for n in "${JOBS[@]}"`，或乾脆把清單直接寫在 `for n in a b c`；
+  寫成腳本檔就明確用 `bash` 執行。(2) 重啟常駐服務一律用
+  `launchctl kickstart -k`；非得 bootout 時，bootstrap 前要等舊行程結束並檢查回傳
+  值，失敗就立刻重試或還原備份。另外，服務停擺時 STND 網頁可能仍顯示得出來
+  （瀏覽器／PWA 快取），判斷服務死活要用 `curl` 打 127.0.0.1:8080，不能看網頁
+  ｜動作：`ops/deploy.sh` 用 bash 執行、只用 `kickstart -k` 重啟並做健康檢查；
+  本檔「常用查證點」的正式環境說明已改寫
 
 ## 相片整理工具（2026-10-04，分支 `function/photo-organizer`）
 
