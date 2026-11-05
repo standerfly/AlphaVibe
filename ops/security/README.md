@@ -71,6 +71,13 @@ bash ops/security/mac-amos-check.sh 2>&1 | tee ~/Desktop/amos-check-$(date +%Y%m
 - 開啟 GCP / 雲端的帳單異常偵測與預算警示，不用的 project 解除帳單連結。
 - API key 用完即撤、定期輪替；本 repo 已確認沒有把金鑰 commit 進 git
   （2026-11-04 掃描 `sk-`／`AIza`／Telegram／`ghp_`／`/mcp/<token>` 樣式皆無命中）。
-- 每季跑一次 `mac-amos-check.sh`。
+- **已排程每週一 10:00 自動跑**（launchd `com.alphavibe.amoscheck`，2026-11-05 起）：
+  完整報告存 `~/Library/Logs/amos-check/`（權限 600、保留 26 份），Mac 通知＋Telegram
+  只送「命中幾項／比上次新增幾項」，**不送細節**（報告含 shell 歷史）。第 1 節命中會標 🚨。
+  - 安裝：`cp ops/launchd/com.alphavibe.amoscheck.plist ~/Library/LaunchAgents/ && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.alphavibe.amoscheck.plist`
+  - 立即跑一次：`launchctl kickstart gui/$(id -u)/com.alphavibe.amoscheck`
+  - 停用：`launchctl bootout gui/$(id -u)/com.alphavibe.amoscheck`
+  - 目前已知且合法的 2 項命中：`com.user.claude.heartbeat`（AI-stock-km-v1）、
+    `com.visualstudio.code.tunnel`——每週都會出現，看「新增」數字即可。
 
 參考：Huntress〈AMOS stealer〉、Google Cloud〈LLMjacking〉、Tom's Hardware 帳單案例（見原文 Reference）。
