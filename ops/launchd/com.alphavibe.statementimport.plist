@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.alphavibe.statementimport</string>
+    <!-- 國泰台股日對帳單 Email 自動匯入（specs/009）。正式環境跑獨立 worktree
+         AlphaVibe-prod（見 ops/deploy.sh）；密碼一律從鑰匙圈讀取，這裡不放任何秘密。
+         首次執行時 macOS 可能詢問是否允許 python3 讀取鑰匙圈項目，選「永遠允許」。 -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/stander/My_project/AlphaVibe-prod/poc/kb-mcp/statement_import.py</string>
+        <string>--data-dir</string>
+        <string>/Users/stander/My_project/AlphaVibe-prod/poc/data</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/stander/My_project/AlphaVibe-prod</string>
+    <!-- launchd 預設 PATH 不含 Homebrew；qpdf／pdftotext 在 /opt/homebrew/bin。
+         statement_pdf.find_tool() 另有一層絕對路徑後備。 -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <!-- 對帳單約 18:30～19:15 寄達：20:15、23:15 涵蓋延遲寄送，07:45 補 Mac 晚間睡眠。
+         避開既有排程（02:00、03:30、03:45、04:00、06:00、09:30、17:00）。 -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Hour</key>
+            <integer>20</integer>
+            <key>Minute</key>
+            <integer>15</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>23</integer>
+            <key>Minute</key>
+            <integer>15</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>7</integer>
+            <key>Minute</key>
+            <integer>45</integer>
+        </dict>
+    </array>
+    <key>StandardOutPath</key>
+    <string>/Users/stander/Library/Logs/alphavibe-statement-import.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/stander/Library/Logs/alphavibe-statement-import.err.log</string>
+</dict>
+</plist>

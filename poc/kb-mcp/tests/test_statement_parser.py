@@ -1,0 +1,192 @@
+"""009 T010：國泰日對帳單文字解析（測試資料皆為虛構數值）。"""
+import os
+import sys
+import unittest
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+from cathay_statement_parser import StatementFormatError, parse_daily_statement  # noqa: E402
+
+HEAD = """國泰綜合證券 日對帳單
+交割金額
+   成交日期      交割日期      預收款   留置款   客戶淨收(+)/付(-)金額
+   2026/10/29    2026/11/02       0        0          -15,006
+"""
+
+TRADES_ONE = """交易明細
+ 商品名稱  類別  成交股數  單價   成交金額  手續費  交易稅  客戶應收付額  委託書號
+ 範例股      集買      3    5000    15,000       6       0       -15,006    0 0 0 0   kAbCd00
+ 總合計                           15,000       6       0       -15,006
+"""
+
+HOLDINGS = """庫存明細
+ 代號   股票名稱   當日收盤價   集保股數   集保市值   融資股數  融券股數  理財資訊
+ 2308   台達電     ▲1,905.00        10     19,050        0         0   停損/停利通知 個股分析 我要下單
+ 6223   範例股     ▼5000             3     15,000        0         0
+ 集保市值總計                                34,050
+"""
+
+
+# 2026-11-04 真實對帳單的 pdftotext -layout 版面（數值、名稱皆改為虛構）：沒有區塊標題字、
+# 客戶應收付額在成交列上一行、彙總列用全形冒號、換頁後欄寬變窄並重複表頭。
+REAL_LAYOUT = """證 券 日 對 帳 單 1 1 5年 1 1月 4 日
+親愛的 *** 先生/小姐 您好:
+以下是您115年11月4日於 ***分公司，帳號：*** 的客戶日對帳單。
+ 成交日期        交割日期        預收款   留置款   客戶淨收(+)/付(-)金額
+                                                    -3,006
+ 2026/11/04      2026/11/06      0        0
+                                                    +0
+ 商品名稱 類別 成交股數 單價 成交金額 手續費 交易稅 客戶應收付額/預收款/留置款 融資自備款/融券擔保品 融資金額/融券保證金 融券手續費 債息利息 委託書號
+                                     -2,001
+ 範例電  集買   2  1000  2,000  1  0   0  0  0  0  kAa1100
+                                     -1,005
+ 範例電  集賣   1  1004  1,004  1  3   0  0  0  0  kBb2200
+   總合計              3,004  2  3   0  0  0  0
+買進總計：2,000  賣出總計：1,004  本期買+賣合計：3,004  當沖損益：0
+預收款：0  留置款：0  應收付金額：-3,006  現沖損益：0
+淨收付金額：-3,006  淨收付點數：+0
+ 代碼 股票名稱 當日收盤價 集保股數 集保市值 融資股數 融券股數 理財資訊
+ 1111  範例電     ▼1,010     21     21,210     0   0   停損/停利通知 個股分析 我要下單
+ 2222  範例-KY    ▲3,100     5      15,500     0   0   停損/停利通知 個股分析 我要下單
+\f
+ 代碼 股票名稱 當日收盤價 集保股數 集保市值 融資股數 融券股數 理財資訊
+ 3333 範例航  ▼50.5  1  50.5  0 0 停損/停利通知
+ 4444 範例凇  321.07  150  48,160.5  0 0 停損/停利通知
+ 集保市值總計：84,921
+"""
+
+
+class ParseDailyStatementTest(unittest.TestCase):
+    def test_real_layout_without_section_titles(self):
+        r = parse_daily_statement(REAL_LAYOUT)
+        self.assertEqual(r["statement_date"], "2026-11-04")
+        self.assertEqual([(t["name"], t["action"], t["shares"], t["price"], t["fee"], t["tax"],
+                           t["order_ref"]) for t in r["trades"]],
+                         [("範例電", "買", 2, 1000.0, 1.0, 0.0, "kAa1100"),
+                          ("範例電", "賣", 1, 1004.0, 1.0, 3.0, "kBb2200")])
+        self.assertEqual([(h["code"], h["name"], h["shares"]) for h in r["holdings"]],
+                         [("1111", "範例電", 21), ("2222", "範例-KY", 5),
+                          ("3333", "範例航", 1), ("4444", "範例凇", 150)])
+
+    def test_real_layout_no_trades_day(self):
+        # 無成交日推測不會有交易明細表頭：只有交割金額與庫存仍可匯入
+        start = REAL_LAYOUT.index(" 商品名稱")
+        end = REAL_LAYOUT.index(" 代碼 股票名稱")
+        r = parse_daily_statement(REAL_LAYOUT[:start] + REAL_LAYOUT[end:])
+        self.assertEqual((r["statement_date"], r["trades"], len(r["holdings"])),
+                         ("2026-11-04", [], 4))
+
+    def test_single_buy(self):
+        r = parse_daily_statement(HEAD + TRADES_ONE + HOLDINGS)
+        self.assertEqual(r["statement_date"], "2026-10-29")
+        self.assertEqual(len(r["trades"]), 1)
+        t = r["trades"][0]
+        self.assertEqual((t["name"], t["market"], t["action"], t["shares"], t["price"],
+                          t["amount"], t["fee"], t["tax"], t["order_ref"], t["date"]),
+                         ("範例股", "集", "買", 3, 5000.0, 15000.0, 6.0, 0.0, "kAbCd00",
+                          "2026-10-29"))
+        self.assertEqual([(h["code"], h["name"], h["shares"]) for h in r["holdings"]],
+                         [("2308", "台達電", 10), ("6223", "範例股", 3)])
+
+    def test_multiple_trades_with_ot_xing_and_tax_star(self):
+        trades = """交易明細
+ 中美晶    OT賣     50   242.50    12,125       4     *36     12,085   0 0 0 0  kXy0100
+ 世芯-KY   集買    100     2,500   250,000     356       0   -250,356   0 0 0 0  V00on01
+ 某興櫃    興買  1,000     12.30    12,300      17       0    -12,317   0 0 0 0  kZz9900
+"""
+        r = parse_daily_statement(HEAD + trades + HOLDINGS)
+        got = [(t["name"], t["market"], t["action"], t["shares"], t["tax"], t["order_ref"])
+               for t in r["trades"]]
+        self.assertEqual(got, [("中美晶", "OT", "賣", 50, 36.0, "kXy0100"),
+                               ("世芯-KY", "集", "買", 100, 0.0, "V00on01"),
+                               ("某興櫃", "興", "買", 1000, 0.0, "kZz9900")])
+
+    def test_name_with_digits(self):
+        trades = """交易明細
+ 元大台灣50  集買  1,000  150.00  150,000  213  0  -150,213  0 0 0 0  kEtF5000
+ 台灣50反1   集賣     10    5.00       50    1  0       49  0 0 0 0  kEtF5100
+"""
+        r = parse_daily_statement(HEAD + trades + HOLDINGS)
+        self.assertEqual([(t["name"], t["action"], t["shares"]) for t in r["trades"]],
+                         [("元大台灣50", "買", 1000), ("台灣50反1", "賣", 10)])
+
+    def test_odd_lot_and_zero_close_and_page_break(self):
+        holdings = """庫存明細
+ 代號   股票名稱   當日收盤價   集保股數   集保市值
+ 2308   台達電     1,905.00          1      1,905
+\f
+ 國泰綜合證券 日對帳單  第 2 頁
+ 代號   股票名稱   當日收盤價   集保股數   集保市值
+ 00878  國泰永續高股息   0          3          0
+"""
+        r = parse_daily_statement(HEAD + TRADES_ONE + holdings)
+        self.assertEqual([(h["code"], h["shares"]) for h in r["holdings"]],
+                         [("2308", 1), ("00878", 3)])
+
+    def test_holdings_only(self):
+        r = parse_daily_statement(HEAD + "交易明細\n 總合計  0  0  0\n" + HOLDINGS)
+        self.assertEqual(r["trades"], [])
+        self.assertEqual(len(r["holdings"]), 2)
+
+    def test_no_trade_section_uses_fallback_date(self):
+        r = parse_daily_statement(HOLDINGS, fallback_date="2026-10-30")
+        self.assertEqual((r["statement_date"], r["trades"]), ("2026-10-30", []))
+
+    def test_empty_holdings_section_is_valid(self):
+        r = parse_daily_statement(HEAD + TRADES_ONE + "庫存明細\n 集保市值總計 0\n")
+        self.assertEqual(r["holdings"], [])
+
+    def test_unknown_category_fails_whole_statement(self):
+        # F2：類別不在已知清單（例如定期定額）不得靜默略過
+        bad = "交易明細\n 台積電  定買  5  310.00  1,550  1  0  -1,551  0 0 0 0  kDdDd00\n"
+        with self.assertRaises(StatementFormatError):
+            parse_daily_statement(HEAD + bad + HOLDINGS)
+
+    def test_repeated_earlier_titles_on_later_pages_stay_in_current_section(self):
+        # 跨頁頁首重複前面區塊的標題：成交列與持股都不得被切走（持股被切走＝當成出清）
+        text = (HEAD + TRADES_ONE + "交割金額  第 2 頁\n"
+                " 台積電  集買  5  310.00  1,550  1  0  -1,551  0 0 0 0  kDdDd00\n"
+                + HOLDINGS + "交割金額  第 3 頁\n交易明細\n"
+                " 2330   台積電     1,000.00          5      5,000\n")
+        r = parse_daily_statement(text)
+        self.assertEqual([t["order_ref"] for t in r["trades"]], ["kAbCd00", "kDdDd00"])
+        self.assertEqual([h["code"] for h in r["holdings"]], ["2308", "6223", "2330"])
+
+    def test_trade_row_inside_settlement_section_fails(self):
+        text = (HEAD + " 台積電  集買  5  310.00  1,550  1  0  -1,551  0 0 0 0  kDdDd00\n"
+                + HOLDINGS)
+        with self.assertRaises(StatementFormatError):
+            parse_daily_statement(text)
+
+    def test_noise_lines_do_not_fail_statement(self):
+        noise = ("證券商代號 8880 國泰證券 分公司 Taipei\n委買 3 委賣 0\n買 1 張以下為零股\n"
+                 "第 1 頁 共 2 頁 Cathay\n")
+        settle_noise = "交割銀行 帳號末四碼 1234 Cathay\n"
+        r = parse_daily_statement(HEAD + settle_noise + TRADES_ONE + noise + HOLDINGS)
+        self.assertEqual(len(r["trades"]), 1)
+
+    def test_missing_holdings_section(self):
+        with self.assertRaises(StatementFormatError):
+            parse_daily_statement(HEAD + TRADES_ONE)
+
+    def test_missing_date(self):
+        with self.assertRaises(StatementFormatError):
+            parse_daily_statement(TRADES_ONE + HOLDINGS)
+
+    def test_unparseable_trade_row(self):
+        bad = "交易明細\n 範例股 集買 3 5000 15,000\n"
+        with self.assertRaises(StatementFormatError):
+            parse_daily_statement(HEAD + bad + HOLDINGS)
+
+    def test_unparseable_holding_row(self):
+        bad = "庫存明細\n 2308 台達電 ▲\n"
+        with self.assertRaises(StatementFormatError):
+            parse_daily_statement(HEAD + TRADES_ONE + bad)
+
+    def test_garbage(self):
+        with self.assertRaises(StatementFormatError):
+            parse_daily_statement("完全不相干的文字")
+
+
+if __name__ == "__main__":
+    unittest.main()

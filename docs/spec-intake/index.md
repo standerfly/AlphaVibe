@@ -3,6 +3,7 @@
 | Feature Slug | Title | Status | PO | TPM | Product Spec | Handoff Checklist | Last Updated | Notes |
 |--------------|-------|--------|----|-----|--------------|-------------------|--------------|-------|
 | alphavibe | AlphaVibe 投資資訊儀表板 | Ready | Stander | Stander | [product-spec.md](alphavibe/product-spec.md) | [handoff-checklist.md](alphavibe/handoff-checklist.md) | 2026-09-17 | Ready for Spec Kit handoff |
+| broker-statement-import | 券商對帳單 Email 自動匯入 | Ready | Stander | Stander | [product-spec.md](broker-statement-import/product-spec.md) | [handoff-checklist.md](broker-statement-import/handoff-checklist.md) | 2026-10-30 | Ready for Spec Kit handoff |
 | entry-exit-timing-analysis | 進出場時機分析工具 | Accepted | Stander | Stander | [product-spec.md](entry-exit-timing-analysis/product-spec.md) | [handoff-checklist.md](entry-exit-timing-analysis/handoff-checklist.md) | 2026-09-02 | Missing: Every required supporting artifact is complete and linked from `product-spec.md` |
 | flight-roundtrip-search | 機票查詢：四段票天數區間化＋單純來回搜尋 | Ready | Stander | Claude | [product-spec.md](flight-roundtrip-search/product-spec.md) | [handoff-checklist.md](flight-roundtrip-search/handoff-checklist.md) | 2026-09-25 | Ready for Spec Kit handoff |
 | flight-search | 機票查詢分頁（外站四段票掃描＋價格追蹤） | Ready | Stander | Stander | [product-spec.md](flight-search/product-spec.md) | [handoff-checklist.md](flight-search/handoff-checklist.md) | 2026-09-23 | Ready for Spec Kit handoff |

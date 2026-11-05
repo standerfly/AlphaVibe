@@ -56,6 +56,12 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 決策依據：`docs/adr/0027-prespec-workflow.md`。
 
 <!-- SPECKIT START -->
+`specs/009-cathay-tw-statement-import/plan.md`（國泰台股日對帳單 Email 自動匯入：
+Gmail IMAP 唯讀取信、qpdf＋pdftotext 解密擷取、委託書號正規化防重複、單一交易寫入成交與
+庫存、Telegram 摘要、唯讀比對工具 `statement_reconcile.py`；需求基線
+`docs/spec-intake/broker-statement-import/`，2026-10-31 Accepted）**開發中**。接手前先讀
+`specs/009-cathay-tw-statement-import/quickstart.md`。
+
 `specs/007-trip-day-range/plan.md`（四段票天數區間化：`trip_days` 從
 單一固定整數升級為區間、id=9 遷移、組合數上限守衛，`docs/spec-intake/
 flight-roundtrip-search/` 拆包的第一包）**2026-09-24 已完成並正式
@@ -188,6 +194,11 @@ roundtrip-search 來源）。
   第1段拉遠以免密集請假）與已找到的方案。尚未做成 STND 分頁，只有 CLI。
   查價走瀏覽器路徑（免費、無額度），**有速率限制**（預設 20 筆/小時，
   超過會被 Google 軟封鎖成連續逾時）；SerpApi 路徑是備援、需自備 key。
+- **國泰日對帳單自動匯入（009，開發中）**：`poc/kb-mcp/statement_import.py`（排程
+  `ops/launchd/com.alphavibe.statementimport.plist`）＋唯讀比對 `statement_reconcile.py`；
+  密碼只放鑰匙圈 `stnd-statement-import`，需 `brew install qpdf poppler`。委託書號防重複一律
+  比對 `order_ref.normalize_order_ref()` 正規化後的值。接手前讀
+  `specs/009-cathay-tw-statement-import/quickstart.md`
 - 加碼/減碼決策原則：`poc/data/philosophy/framework_evidence_based_position_sizing.md`
   （或呼叫 `get_philosophy`）——**不會自動載入**，討論加碼/減碼前主動查
   （Layer 1「啟動時拼接進 system prompt」的 FR-014 尚未實作，見下方教訓紀錄）

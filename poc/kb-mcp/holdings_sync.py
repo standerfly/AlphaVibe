@@ -31,56 +31,22 @@ FR-029）原本是兩張互不相干的表：匯入交易紀錄不會反映到�
 from __future__ import annotations
 
 
-def sync_holdings_from_trades(store, trades, snapshot_date=None,
-                               source_ref="交易紀錄自動同步"):
-    """依這批交易更新持股快照。
+def apply_trades_to_positions(baseline_rows, trades):
+    """純函式（不寫資料庫）：以 baseline 持股依序套用這批交易，回傳模擬結果。
 
-    trades：`resolve_and_save_trade_ledger()` 回傳的 `saved` 清單格式
-    （每筆至少含 `code`／`name`／`action`／`shares`／`price`／`date`；
-    `add_sequence`／`order_ref` 等其餘欄位不使用）。**呼叫端必須保持
-    這份清單的原始出現順序**——同代碼的排序 tie-break 用
-    (date, 這份清單裡的原始位置)，不是重新猜測真實下單時間。
+    2026-10-31（009-cathay-tw-statement-import research R6）從
+    `sync_holdings_from_trades()` 抽出，讓日對帳單匯入與既有交易同步共用同一套
+    成本規則（買進加權平均、賣出不變、舊均價缺值則保持缺值）。
 
-    trades 為空（呼叫端沒有任何交易真的寫入，例如整批都是
-    unresolved_names 或 duplicates_skipped）時完全不觸發，回傳
-    synced=False，不呼叫 save_holdings()——避免無意義地把 baseline
-    原封不動重寫一份新快照。
-
-    baseline 一律讀 `store.get_holdings()`（不帶 code，取最新快照、已
-    篩掉 shares<=0 的代碼）——因此「先前已出清、這批又重新買回」的
-    代碼會被當成全新持股處理（shares 從 0 起算，符合「shares<=0 時新
-    均價=成交價」的規則），不需要額外的特殊分支。
-
-    回傳 dict：
-        synced: bool，是否真的執行了同步
-        codes_new: 這批交易讓一個原本沒有持股（不在 baseline）的代碼
-            變成有持股（同步後 shares>0）
-        codes_cleared: 這批交易讓一個原本有持股（在 baseline）的代碼
-            歸零（同步後 shares<=0）
-        avg_cost_unknown_codes: 這批交易有碰到、且同步後 shares>0、但
-            均價算不出來（舊均價本身就是缺值）的代碼——不含完全沒被
-            這批交易碰到、只是原封不動搬過去的代碼
-        oversold_codes: 這批交易裡有任何一筆賣出超過當時可賣股數的
-            代碼（股數已 floor 在 0，這裡只是標記供人工注意，去重）
-        save_result: `store.save_holdings()` 的原始回傳
-            （synced=False 時為 None）
+    baseline_rows：`get_holdings()["holdings"]` 格式的清單。
+    回傳 dict：rows（完整持股清單，含未被交易碰到的 baseline 持股）、
+    codes_new、codes_cleared、avg_cost_unknown_codes、oversold_codes。
     """
-    empty_result = {
-        "synced": False, "codes_new": [], "codes_cleared": [],
-        "avg_cost_unknown_codes": [], "oversold_codes": [],
-        "save_result": None,
-    }
-    if not trades:
-        return empty_result
-
     by_code = {}
     for idx, t in enumerate(trades):
         by_code.setdefault(t["code"], []).append((idx, t))
-    if not by_code:
-        return empty_result
 
-    baseline = store.get_holdings()
-    baseline_by_code = {h["code"]: dict(h) for h in baseline["holdings"]}
+    baseline_by_code = {h["code"]: dict(h) for h in baseline_rows}
 
     codes_new = []
     codes_cleared = []
@@ -140,8 +106,63 @@ def sync_holdings_from_trades(store, trades, snapshot_date=None,
             "code": code, "name": name, "shares": shares, "avg_cost": avg_cost,
         }
 
-    rows = list(result_by_code.values())
-    save_result = store.save_holdings(rows, snapshot_date=snapshot_date,
+    return {
+        "rows": list(result_by_code.values()),
+        "codes_new": codes_new,
+        "codes_cleared": codes_cleared,
+        "avg_cost_unknown_codes": avg_cost_unknown_codes,
+        "oversold_codes": sorted(set(oversold_codes)),
+    }
+
+
+def sync_holdings_from_trades(store, trades, snapshot_date=None,
+                               source_ref="交易紀錄自動同步"):
+    """依這批交易更新持股快照。
+
+    trades：`resolve_and_save_trade_ledger()` 回傳的 `saved` 清單格式
+    （每筆至少含 `code`／`name`／`action`／`shares`／`price`／`date`；
+    `add_sequence`／`order_ref` 等其餘欄位不使用）。**呼叫端必須保持
+    這份清單的原始出現順序**——同代碼的排序 tie-break 用
+    (date, 這份清單裡的原始位置)，不是重新猜測真實下單時間。
+
+    trades 為空（呼叫端沒有任何交易真的寫入，例如整批都是
+    unresolved_names 或 duplicates_skipped）時完全不觸發，回傳
+    synced=False，不呼叫 save_holdings()——避免無意義地把 baseline
+    原封不動重寫一份新快照。
+
+    baseline 一律讀 `store.get_holdings()`（不帶 code，取最新快照、已
+    篩掉 shares<=0 的代碼）——因此「先前已出清、這批又重新買回」的
+    代碼會被當成全新持股處理（shares 從 0 起算，符合「shares<=0 時新
+    均價=成交價」的規則），不需要額外的特殊分支。
+
+    回傳 dict：
+        synced: bool，是否真的執行了同步
+        codes_new: 這批交易讓一個原本沒有持股（不在 baseline）的代碼
+            變成有持股（同步後 shares>0）
+        codes_cleared: 這批交易讓一個原本有持股（在 baseline）的代碼
+            歸零（同步後 shares<=0）
+        avg_cost_unknown_codes: 這批交易有碰到、且同步後 shares>0、但
+            均價算不出來（舊均價本身就是缺值）的代碼——不含完全沒被
+            這批交易碰到、只是原封不動搬過去的代碼
+        oversold_codes: 這批交易裡有任何一筆賣出超過當時可賣股數的
+            代碼（股數已 floor 在 0，這裡只是標記供人工注意，去重）
+        save_result: `store.save_holdings()` 的原始回傳
+            （synced=False 時為 None）
+    """
+    empty_result = {
+        "synced": False, "codes_new": [], "codes_cleared": [],
+        "avg_cost_unknown_codes": [], "oversold_codes": [],
+        "save_result": None,
+    }
+    if not trades:
+        return empty_result
+
+    sim = apply_trades_to_positions(store.get_holdings()["holdings"], trades)
+    codes_new = sim["codes_new"]
+    codes_cleared = sim["codes_cleared"]
+    avg_cost_unknown_codes = sim["avg_cost_unknown_codes"]
+    oversold_codes = sim["oversold_codes"]
+    save_result = store.save_holdings(sim["rows"], snapshot_date=snapshot_date,
                                        source_ref=source_ref)
 
     return {
@@ -149,6 +170,6 @@ def sync_holdings_from_trades(store, trades, snapshot_date=None,
         "codes_new": codes_new,
         "codes_cleared": codes_cleared,
         "avg_cost_unknown_codes": avg_cost_unknown_codes,
-        "oversold_codes": sorted(set(oversold_codes)),
+        "oversold_codes": oversold_codes,
         "save_result": save_result,
     }
