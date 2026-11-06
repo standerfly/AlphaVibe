@@ -166,9 +166,16 @@ def process_statement(store, statement, message_id, resolver, dry_run=False):
     if write_holdings:
         baseline = store.get_holdings_before(date)
         base_by = {r["code"]: r for r in baseline}
+        # 基準快照可能落後好幾天（例如對帳單漏處理、或首次匯入前快照停在兩個月前）：
+        # 「推算」要把基準日之後、對帳單日之前資料庫已有的成交一起算進去，否則會把
+        # 這段期間的正常買賣全部誤報成「庫存與買賣紀錄推算不同」（2026-11-05 首次匯入實測）。
+        baseline_date = baseline[0]["snapshot_date"] if baseline else None
+        gap_trades = [e for e in all_entries
+                      if baseline_date and baseline_date < e["date"] < date]
+        moves = gap_trades + day_trades
         sim_by = {r["code"]: r for r in
-                  holdings_sync.apply_trades_to_positions(baseline, day_trades)["rows"]}
-        bought = {t["code"] for t in day_trades if t["action"] == "買"}
+                  holdings_sync.apply_trades_to_positions(baseline, moves)["rows"]}
+        bought = {t["code"] for t in moves if t["action"] == "買"}
         ledger_by = {}
         for e in all_entries + rows_to_write:
             ledger_by.setdefault(e["code"], []).append(e)

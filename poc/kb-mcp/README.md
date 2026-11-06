@@ -163,7 +163,8 @@ gui/501/com.alphavibe.moduled`。log 在 `~/Library/Logs/alphavibe-module-d.log`
 | `cathay_statement_parser.py` | 日對帳單文字解析（交割金額／交易明細／庫存明細） |
 | `order_ref.py` | 委託書號正規化（`k-ABCD-00`＝`kABCD`＝`kABCD00`），防重複 |
 | `keychain_secrets.py` | 從鑰匙圈 `stnd-statement-import` 讀密碼 |
-| `statement_reconcile.py` | 交易明細表與資料庫唯讀比對（重複／缺漏／不一致） |
+| `statement_reconcile.py` | 交易明細表與資料庫唯讀比對（重複／多出／缺漏／不一致） |
+| `ledger_cleanup.py` | 一次性：依交易明細表刪重複、補缺漏、重算加碼次數（試跑唯讀；`--apply --confirm <計畫代碼>` 才寫入，先備份、單一交易）。2026-11-05 已對正式庫執行一次 |
 
 系統依賴：`brew install qpdf poppler`。密碼只放鑰匙圈（設定步驟見
 `specs/009-cathay-tw-statement-import/quickstart.md`）。
