@@ -1459,6 +1459,25 @@ class KBStore:
             " WHERE h.shares > 0 ORDER BY h.code", (latest,)).fetchall()
         return [dict(r) for r in rows]
 
+    def get_holdings_on(self, snapshot_date):
+        """某一天快照的持股列（同代碼取 max(id)，含 shares=0 的已出清列）。"""
+        rows = self.conn.execute(
+            "SELECT h.* FROM holdings h"
+            " INNER JOIN (SELECT code, max(id) AS max_id FROM holdings"
+            "             WHERE snapshot_date=? GROUP BY code) t ON h.id = t.max_id"
+            " ORDER BY h.code", (snapshot_date,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def record_statement_duplicate(self, import_row):
+        """同一天已有別封信處理過：只登記這封信（status=processed、不寫成交與庫存），
+        之後排程就不會再下載解密這一封。"""
+        try:
+            self._upsert_statement_import(import_row, _now())
+        except Exception:
+            self.conn.rollback()
+            raise
+        self.conn.commit()
+
     def latest_statement_holdings_date(self):
         """已寫入庫存的日對帳單中最新的對帳單日期（FR-013 的比較基準）。"""
         return self.conn.execute(

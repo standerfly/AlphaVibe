@@ -407,6 +407,61 @@ class RunTest(_Base):
         self.assertEqual(self.store.get_holdings()["count"], 4)
         self.assertIn("成交 2 筆寫入", self.sent[0])
 
+    def _item(self, msg, text=None):
+        return {"message_id": msg, "date_hint": "2026-10-29",
+                "pdf_bytes": (text or STATEMENT_TEXT).encode()}
+
+    def test_same_day_from_other_message_is_skipped_and_keeps_manual_cost(self):
+        # 2026-11-11 首次匯入實測：11-04 先用本機檔案匯入、PO 手動補正成本，之後 Gmail
+        # 抓到同一天的信（不同 message_id）——不得重寫，成本補正不得被蓋掉。
+        self.run_job([self._item("file:/x/stmt.pdf")])
+        self.store.conn.execute(
+            "UPDATE holdings SET avg_cost=123.45 WHERE code='2330' AND snapshot_date='2026-10-29'")
+        self.store.conn.commit()
+        self.sent.clear()
+        self.run_job([self._item("<gmail-1@x>")])
+        self.assertEqual(self.holding("2330")["avg_cost"], 123.45)
+        self.assertEqual(self.ledger_count(), 1)
+        self.assertEqual(self.sent, [])                        # 不通知
+        st = self.store.statement_import_status("<gmail-1@x>")
+        self.assertEqual((st["status"], st["trades_written"], st["holdings_written"]),
+                         ("processed", 0, 0))
+        self.assertIn("duplicate_of", st["detail_json"])
+        # 之後的排程不會再處理這一封
+        self.assertEqual(self.store.get_holdings("2330")["count"], 1)
+        self.run_job([self._item("<gmail-1@x>")])
+        self.assertEqual(self.holding("2330")["avg_cost"], 123.45)
+
+    def test_rerun_forces_reprocess_but_keeps_same_day_cost(self):
+        self.run_job([self._item("<a@x>")])
+        self.store.conn.execute(
+            "UPDATE holdings SET avg_cost=123.45 WHERE code='2330' AND snapshot_date='2026-10-29'")
+        self.store.conn.commit()
+        self.run_job([self._item("<b@x>")], rerun="2026-10-29")
+        self.assertEqual(self.holding("2330")["avg_cost"], 123.45)
+        self.assertIsNotNone(self.store.statement_import_status("<b@x>"))
+        self.assertEqual(self.store.statement_import_status("<b@x>")["trades_written"], 0)
+
+    def test_same_day_cost_not_used_when_shares_differ(self):
+        # 同日既有成本只在股數相同時沿用；股數不同（對帳單才是標準）就重新推算
+        self.store.save_holdings([{"code": "2330", "shares": 5, "avg_cost": 999.0}],
+                                 snapshot_date="2026-10-29")
+        self.run_job([self._item("<a@x>")])
+        self.assertEqual(self.holding("2330")["shares"], 10)
+        self.assertEqual(self.holding("2330")["avg_cost"], 100.0)
+
+    def test_different_date_is_not_skipped(self):
+        self.run_job([self._item("<a@x>")])
+        nxt = STATEMENT_TEXT.replace("2026/10/29", "2026/10/30").replace("kAAAA00", "kCCCC00")
+        item = {"message_id": "<c@x>", "date_hint": "2026-10-30", "pdf_bytes": nxt.encode()}
+        self.run_job([item])
+        self.assertEqual(self.store.statement_import_status("<c@x>")["trades_written"], 1)
+
+    def test_dry_run_records_nothing_for_same_day_twin(self):
+        self.run_job([self._item("file:/x/stmt.pdf")])
+        self.run_job([self._item("<g@x>")], dry_run=True)
+        self.assertIsNone(self.store.statement_import_status("<g@x>"))
+
     def test_notify_failure_recorded(self):
         item = {"message_id": "<a@x>", "date_hint": "2026-10-29",
                 "pdf_bytes": STATEMENT_TEXT.encode()}
