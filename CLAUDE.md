@@ -59,7 +59,11 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 `specs/009-cathay-tw-statement-import/plan.md`（國泰台股日對帳單 Email 自動匯入：
 Gmail IMAP 唯讀取信、qpdf＋pdftotext 解密擷取、委託書號正規化防重複、單一交易寫入成交與
 庫存、Telegram 摘要、唯讀比對工具 `statement_reconcile.py`；需求基線
-`docs/spec-intake/broker-statement-import/`，2026-10-31 Accepted）**開發中**。接手前先讀
+`docs/spec-intake/broker-statement-import/`，2026-10-31 Accepted）**2026-11-12 已正式上線**：
+排程 `com.alphavibe.statementimport`（20:15／23:15／07:45）已安裝並用 launchd 實跑驗證；上線前
+已用整年度交易明細表清理正式庫（刪重複 138、補缺漏 62、重算加碼次數，工具
+`poc/kb-mcp/ledger_cleanup.py`）。**目前處於驗證期**：之後每次有交易，隔天用交易明細表跑
+`statement_reconcile.py`，連續 3 次全部一致即結束（FR-011）。接手前先讀
 `specs/009-cathay-tw-statement-import/quickstart.md`。
 
 `specs/007-trip-day-range/plan.md`（四段票天數區間化：`trip_days` 從
@@ -194,10 +198,11 @@ roundtrip-search 來源）。
   第1段拉遠以免密集請假）與已找到的方案。尚未做成 STND 分頁，只有 CLI。
   查價走瀏覽器路徑（免費、無額度），**有速率限制**（預設 20 筆/小時，
   超過會被 Google 軟封鎖成連續逾時）；SerpApi 路徑是備援、需自備 key。
-- **國泰日對帳單自動匯入（009，開發中）**：`poc/kb-mcp/statement_import.py`（排程
+- **國泰日對帳單自動匯入（009，2026-11-12 已上線）**：`poc/kb-mcp/statement_import.py`（排程
   `ops/launchd/com.alphavibe.statementimport.plist`）＋唯讀比對 `statement_reconcile.py`；
   密碼只放鑰匙圈 `stnd-statement-import`，需 `brew install qpdf poppler`。委託書號防重複一律
-  比對 `order_ref.normalize_order_ref()` 正規化後的值。接手前讀
+  比對 `order_ref.normalize_order_ref()` 正規化後的值；**同一天的對帳單只處理一次**（以對帳單日期
+  判斷，不是信件編號），強制重處理用 `--rerun <日期>`。接手前讀
   `specs/009-cathay-tw-statement-import/quickstart.md`
 - 加碼/減碼決策原則：`poc/data/philosophy/framework_evidence_based_position_sizing.md`
   （或呼叫 `get_philosophy`）——**不會自動載入**，討論加碼/減碼前主動查
@@ -391,6 +396,21 @@ roundtrip-search 來源）。
   （瀏覽器／PWA 快取），判斷服務死活要用 `curl` 打 127.0.0.1:8080，不能看網頁
   ｜動作：`ops/deploy.sh` 用 bash 執行、只用 `kickstart -k` 重啟並做健康檢查；
   本檔「常用查證點」的正式環境說明已改寫
+
+- 2026-11-12｜情境：國泰日對帳單自動匯入（009）上線過程撞見兩個坑：(1) PO 把 Gmail 地址與應用程式
+  密碼存進鑰匙圈時，指令格式 `security add-generic-password -a <名稱> -w` 被誤填成
+  `-a <信箱> -w <密碼>`，值被存成「項目名稱」；Mac 上的 Claude 排查時列出鑰匙圈項目名稱，應用程式
+  密碼因此原文出現在對話紀錄，必須撤銷重建。(2) 同一天的對帳單先以 `--from-file` 匯入（message_id
+  是檔案路徑）、PO 手動補正平均成本，之後 Gmail 抓到同一天的信（另一個 Message-ID）被當成新訊息整份
+  重處理，補正的成本被推算值蓋回（基準快照取「嚴格早於當天」，看不到當天已補正的值）
+  ｜教訓：(1) 給 PO 輸入秘密的指令，要明講「`-a` 後面是固定名稱、`-w` 後面不接任何東西」，並讓他
+  存完用 `find-generic-password ... >/dev/null && echo` 驗證；**任何排查都不得用 `dump-keychain`、
+  `-w`、`-g`**（只能用「存在與否」的形式），給 Mac 對話的任務要把這條寫進規則。(2) 「身分」要用
+  資料本身的鍵（對帳單日期），不能只用傳輸層的鍵（信件編號、檔案路徑）；會覆寫資料的流程，要先問「同一份
+  資料換個來源再來一次會怎樣」。手動補正與自動寫入放在同一張會被重寫的表裡，需要額外保護。
+  ｜動作：`statement_import.py` 同日只處理一次＋同日快照既有成本優先（PR #46）；quickstart 補說明；
+  鑰匙圈被存錯的兩筆已刪除並用新密碼重存、舊密碼已撤銷。治本（以日期為身分、手動成本另存）記為待辦，
+  見 PR #46 的 code-review 發現。
 
 ## 相片整理工具（2026-10-04，分支 `function/photo-organizer`）
 
