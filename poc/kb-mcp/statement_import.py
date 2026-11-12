@@ -179,10 +179,18 @@ def process_statement(store, statement, message_id, resolver, dry_run=False):
         ledger_by = {}
         for e in all_entries + rows_to_write:
             ledger_by.setdefault(e["code"], []).append(e)
+        # 同一天快照裡已有的成本優先（股數相同時）：那是 PO 手動補正過、或手動匯入交易時
+        # 已算好的值（Q-011「沿用 STND 原本的紀錄」）；重跑同一天不會把它蓋回推算值。
+        same_day = {r["code"]: r for r in store.get_holdings_on(date)}
         for h in holdings:
-            cost = _resolve_avg_cost(h["code"], h["shares"], sim_by.get(h["code"]),
-                                     base_by.get(h["code"]), h["code"] in bought,
-                                     ledger_by.get(h["code"], []))
+            existing = same_day.get(h["code"])
+            if existing and existing.get("avg_cost") is not None \
+                    and existing.get("shares") == h["shares"]:
+                cost = existing["avg_cost"]
+            else:
+                cost = _resolve_avg_cost(h["code"], h["shares"], sim_by.get(h["code"]),
+                                         base_by.get(h["code"]), h["code"] in bought,
+                                         ledger_by.get(h["code"], []))
             if cost is None and h["shares"] > 0:
                 cost_unknown.append(h["code"])
             holdings_rows.append({"code": h["code"], "name": h["name"],
@@ -271,7 +279,7 @@ class _Run:
             self.messages.append(text)
 
 
-def _process_item(run, item, pdf_password, resolver, cache_resolver):
+def _process_item(run, item, pdf_password, resolver, cache_resolver, force=False):
     store, msg_id = run.store, item["message_id"]
     date = item.get("date_hint")
     previous = store.statement_import_status(msg_id)
@@ -312,6 +320,21 @@ def _process_item(run, item, pdf_password, resolver, cache_resolver):
     except StatementFormatError as e:
         return fail("format", "PDF 格式無法辨識（可能改版）：%s" % e)
     date = statement["statement_date"]
+    if not force:
+        # 同一天的對帳單可能以不同 message_id 出現（本機檔案匯入過、Gmail 又抓到同一天、
+        # 重寄）。同一天已處理過就不再處理第二次——重寫會把當天手動補正過的資料蓋掉
+        # （2026-11-11 首次匯入實測）。要重處理請用 --rerun。
+        twins = [r for r in store.find_statement_imports_by_date(date)
+                 if r["message_id"] != msg_id and r["status"] == PROCESSED]
+        if twins:
+            if not run.dry_run:
+                store.record_statement_duplicate({
+                    "message_id": msg_id, "statement_date": date, "status": PROCESSED,
+                    "trades_written": 0, "trades_skipped_duplicate": None,
+                    "holdings_count": None, "holdings_written": 0,
+                    "detail_json": json.dumps({"duplicate_of": twins[0]["message_id"]}),
+                    "error": None})
+            return "%s %s 同一天已處理過（另一封信），略過" % (SOURCE_PREFIX, date)
     try:
         s = process_statement(store, statement, msg_id, resolver, dry_run=run.dry_run)
     except Exception as e:  # apply_statement_import 已 rollback
@@ -376,7 +399,8 @@ def run(data_dir, days=14, dry_run=False, rerun=None, from_file=None,
         cache_resolver = make_resolver(store, data_dir, dry_run=True)
         resolver = resolver or make_resolver(store, data_dir, dry_run)
         for item in items:
-            print(_process_item(r, item, pdf_password, resolver, cache_resolver))
+            print(_process_item(r, item, pdf_password, resolver, cache_resolver,
+                                force=bool(rerun or from_file)))
         if not items:
             print("沒有需要處理的新對帳單")
         return 0

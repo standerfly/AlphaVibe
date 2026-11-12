@@ -407,6 +407,111 @@ class RunTest(_Base):
         self.assertEqual(self.store.get_holdings()["count"], 4)
         self.assertIn("成交 2 筆寫入", self.sent[0])
 
+    def _item(self, msg, text=None):
+        return {"message_id": msg, "date_hint": "2026-10-29",
+                "pdf_bytes": (text or STATEMENT_TEXT).encode()}
+
+    def test_same_day_from_other_message_is_skipped_and_keeps_manual_cost(self):
+        # 2026-11-11 首次匯入實測：11-04 先用本機檔案匯入、PO 手動補正成本，之後 Gmail
+        # 抓到同一天的信（不同 message_id）——不得重寫，成本補正不得被蓋掉。
+        self.run_job([self._item("file:/x/stmt.pdf")])
+        self.store.conn.execute(
+            "UPDATE holdings SET avg_cost=123.45 WHERE code='2330' AND snapshot_date='2026-10-29'")
+        self.store.conn.commit()
+        self.sent.clear()
+        self.run_job([self._item("<gmail-1@x>")])
+        self.assertEqual(self.holding("2330")["avg_cost"], 123.45)
+        self.assertEqual(self.ledger_count(), 1)
+        self.assertEqual(self.sent, [])                        # 不通知
+        st = self.store.statement_import_status("<gmail-1@x>")
+        self.assertEqual((st["status"], st["trades_written"], st["holdings_written"]),
+                         ("processed", 0, 0))
+        self.assertIn("duplicate_of", st["detail_json"])
+        # 之後的排程不會再處理這一封
+        self.assertEqual(self.store.get_holdings("2330")["count"], 1)
+        self.run_job([self._item("<gmail-1@x>")])
+        self.assertEqual(self.holding("2330")["avg_cost"], 123.45)
+
+    def test_rerun_forces_reprocess_but_keeps_same_day_cost(self):
+        self.run_job([self._item("<a@x>")])
+        self.store.conn.execute(
+            "UPDATE holdings SET avg_cost=123.45 WHERE code='2330' AND snapshot_date='2026-10-29'")
+        self.store.conn.commit()
+        self.run_job([self._item("<b@x>")], rerun="2026-10-29")
+        self.assertEqual(self.holding("2330")["avg_cost"], 123.45)
+        self.assertIsNotNone(self.store.statement_import_status("<b@x>"))
+        self.assertEqual(self.store.statement_import_status("<b@x>")["trades_written"], 0)
+
+    def test_same_day_cost_not_used_when_shares_differ(self):
+        # 同日既有成本只在股數相同時沿用；股數不同（對帳單才是標準）就重新推算
+        self.store.save_holdings([{"code": "2330", "shares": 5, "avg_cost": 999.0}],
+                                 snapshot_date="2026-10-29")
+        self.run_job([self._item("<a@x>")])
+        self.assertEqual(self.holding("2330")["shares"], 10)
+        self.assertEqual(self.holding("2330")["avg_cost"], 100.0)
+
+    def test_different_date_is_not_skipped(self):
+        self.run_job([self._item("<a@x>")])
+        nxt = STATEMENT_TEXT.replace("2026/10/29", "2026/10/30").replace("kAAAA00", "kCCCC00")
+        item = {"message_id": "<c@x>", "date_hint": "2026-10-30", "pdf_bytes": nxt.encode()}
+        self.run_job([item])
+        self.assertEqual(self.store.statement_import_status("<c@x>")["trades_written"], 1)
+
+    def test_partial_first_copy_then_resend_then_alias_added(self):
+        # A（partial：名稱對不到）→ 同一天重寄 B 也是 partial → PO 補上名稱對應 → 下一輪
+        # A 補寫缺的成交並完成，B 被登記為同一天重複、不再寫第二次
+        text = STATEMENT_TEXT.replace(
+            "庫存明細", " 神秘股  集買  5  20  100  1  0  -101  0 0 0 0  kBBBB00\n庫存明細")
+        a, b = self._item("<a@x>", text), self._item("<b@x>", text)
+        self.run_job([a])
+        self.run_job([b])
+        self.assertEqual(self.store.statement_import_status("<a@x>")["status"], "partial")
+        self.assertEqual(self.store.statement_import_status("<b@x>")["status"], "partial")
+        self.store.save_stock_alias("神秘股", "9999")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            statement_import.run(
+                self.tmp, get_secret=self._secret, fetch=lambda x, y, z: [a, b],
+                notifier=self._notifier, today="2026-10-30",
+                resolver=statement_import.make_resolver(self.store, self.tmp, dry_run=True))
+        self.assertEqual(self.store.statement_import_status("<a@x>")["status"], "processed")
+        st_b = self.store.statement_import_status("<b@x>")
+        self.assertEqual((st_b["status"], st_b["trades_written"]), ("processed", 0))
+        self.assertIn("duplicate_of", st_b["detail_json"])
+        refs = [e["order_ref"] for e in self.store.get_all_trade_entries()]
+        self.assertEqual(sorted(refs), ["kAAAA00", "kBBBB00"])           # 各一筆，沒有重複
+
+    def test_failed_first_copy_then_resend_then_first_retried(self):
+        bad = {"message_id": "<a@x>", "date_hint": "2026-10-29", "pdf_bytes": b"BAD"}
+        self.run_job([bad])
+        self.assertEqual(self.store.statement_import_status("<a@x>")["status"], "failed")
+        self.run_job([self._item("<b@x>")])
+        self.assertEqual(self.store.statement_import_status("<b@x>")["status"], "processed")
+        self.run_job([self._item("<a@x>")])                 # A 後來讀得開了
+        st_a = self.store.statement_import_status("<a@x>")
+        self.assertEqual((st_a["status"], st_a["trades_written"]), ("processed", 0))
+        self.assertEqual((self.ledger_count(), self.store.get_holdings("2330")["count"]), (1, 1))
+
+    def test_from_file_forces_reprocess_of_already_processed_day(self):
+        self.run_job([self._item("<a@x>")])
+        path = os.path.join(self.tmp, "s.pdf")
+        with open(path, "wb") as f:
+            f.write(STATEMENT_TEXT.encode())
+
+        def extract_path(pdf, pw):
+            with open(pdf, "rb") as fh:
+                return fh.read().decode("utf-8")
+        with mock.patch.object(statement_pdf, "extract_text", extract_path):
+            self.assertEqual(self.run_job([], from_file=path), 0)
+        st = self.store.statement_import_status("file:%s" % os.path.abspath(path))
+        self.assertEqual(st["status"], "processed")
+        self.assertNotIn("duplicate_of", st["detail_json"] or "")   # 被處理，而不是被略過
+
+    def test_dry_run_records_nothing_for_same_day_twin(self):
+        self.run_job([self._item("file:/x/stmt.pdf")])
+        self.run_job([self._item("<g@x>")], dry_run=True)
+        self.assertIsNone(self.store.statement_import_status("<g@x>"))
+
     def test_notify_failure_recorded(self):
         item = {"message_id": "<a@x>", "date_hint": "2026-10-29",
                 "pdf_bytes": STATEMENT_TEXT.encode()}
