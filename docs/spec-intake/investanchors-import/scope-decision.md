@@ -1,14 +1,15 @@
 # Scope Decision: 定錨產業筆記文章自動匯入
 
 **Feature Slug:** investanchors-import
-**Last Updated:** 2026-11-12
+**Last Updated:** 2026-11-13
 
 ## MVP In Scope
 
 - 自動登入 investanchors.com 並取得「台股」「美股」「週報」文章全文（含圖片）。
 - 歷史全量回補（分批）＋之後定期取新文章，排程不定時。
 - 以文章 ID/網址防重複；略過置頂公告。
-- 全文可被檢索（供 claude.ai／Claude Code 查詢後與 PO 討論）。
+- 全文可被檢索與讀取（供 claude.ai／Claude Code 查詢後與 PO 討論；介面見 Q-005）。
+- 不超過網站兩台裝置上限（Q-011）。
 - 失敗通知（Telegram）與可續跑。
 
 ## Out Of Scope

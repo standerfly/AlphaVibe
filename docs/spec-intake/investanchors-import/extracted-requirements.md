@@ -1,7 +1,7 @@
 # Extracted Requirements: 定錨產業筆記文章自動匯入
 
 **Feature Slug:** investanchors-import
-**Last Updated:** 2026-11-12
+**Last Updated:** 2026-11-13
 
 ## Candidate Functional Requirements
 
@@ -20,7 +20,7 @@
 
 ## Candidate Success Criteria
 
-- 歷史文章回補後，三類文章篇數與網站清單相符（SRC-002 顯示：週報31、台股17、美股32，含重疊待確認）。
+- 歷史文章回補後，與網站三類清單逐篇核對無缺漏（SRC-002 的紅色數字可能是未讀數，不作為篇數依據）。
 - 重跑不產生重複文章。
 
 ## Candidate Constraints And Assumptions
@@ -41,4 +41,5 @@
 |----|------------|------|-----------|--------|-------|
 | GAP-001 | SRC-002 | Unclear | 「週報」與「台股」分類可能重疊（「台股產業週報」） | Open | 見 Q-006 |
 | GAP-002 | SRC-002 | Unclear | 置頂公告日期（2026-12-30）晚於其他文章，日期不可當新舊判斷 | Open | 見 Q-009 |
+| GAP-004 | SRC-004 | Conflict | 「保存登入狀態」與「同一帳號最多兩台裝置上線」衝突 | Open | 見 Q-011 |
 | GAP-003 | SRC-002 | Unclear | 已讀粗細體是否會因爬蟲開啟文章而改變 | Open | 見 Q-004，需在 Mac 實測 |

@@ -40,4 +40,5 @@
 
 ## Notes
 
-- 阻擋項：Q-004（已讀副作用）、Q-005（儲存位置）、Q-008（個人使用條款）；其餘支撐文件為 Draft，待上述定案後轉 Complete。
+- 阻擋項：Q-004（已讀副作用）、Q-005（儲存位置與查詢介面）、Q-008（個人使用條款）、Q-011（兩台裝置上限）；其餘支撐文件為 Draft，待上述定案後轉 Complete。
+- `product-spec.md` 標頭的 Function Branch 為 `function/investanchors-import`，但該分支尚未建立；目前產物在 `claude/admiring-ptolemy-1jaw79`（基於 `function/alphavibe`），合併去向待 PO 決定。
