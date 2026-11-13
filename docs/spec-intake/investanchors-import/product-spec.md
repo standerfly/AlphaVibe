@@ -1,6 +1,6 @@
 # Product Spec: 定錨產業筆記文章自動匯入
 
-**Status:** Draft
+**Status:** In Review
 **Feature Slug:** investanchors-import
 **Function Branch:** function/investanchors-import
 **Product Owner:** Stander
@@ -27,7 +27,8 @@ PO 訂閱「定錨產業筆記」（需登入的付費網站，每週報告與�
 
 ### In Scope
 
-- 自動登入、取得「台股」「美股」「週報」文章全文與圖片。
+- 自動登入、取得「台股」「美股」「週報」文章全文與圖片；表格圖的數字可供 LLM 討論使用。
+- 對話中搜尋與讀取文章（台/美連接器各自分流）；新文章 Telegram 通知（標題＋連結）。
 - 歷史全量回補（分批）＋定期取新文章，排程不定時。
 - 文章 ID 防重複、略過置頂公告。
 - 全文檢索；失敗通知；可續跑。
@@ -38,7 +39,7 @@ PO 訂閱「定錨產業筆記」（需登入的付費網站，每週報告與�
 
 ### Deferred
 
-- 留言、圖片 OCR、STND 閱讀頁、自動摘要（見 scope-decision.md）。
+- 留言、STND 閱讀頁、自動摘要與立場抽取（見 scope-decision.md）。
 
 ## Functional Requirements
 
@@ -50,10 +51,13 @@ PO 訂閱「定錨產業筆記」（需登入的付費網站，每週報告與�
 - FR-006 回補完成後定期取得新文章；抓取維持低頻、分散時段，不對網站造成明顯負載。
 - FR-007 已匯入文章的全文可被關鍵字檢索，結果可回溯到原文網址與日期。
 - FR-008 登入失敗、被網站阻擋、頁面結構改變時，系統中止當次、不刪除既有資料，並通知 PO（Telegram）。
-- FR-009 系統不得改變 PO 在網站上的資料（不留言、不按最愛、不變更帳號設定）；是否影響「已讀」狀態見 Q-004。
+- FR-009 系統不得改變 PO 在網站上的資料（不留言、不按最愛、不變更帳號設定）；文章因被開啟而變成「已讀」為 PO 接受的例外（Q-004）。
 - FR-010 文章內容僅供 PO 個人使用，不得經無驗證的公開網址提供，不對外分享（Q-008；條款依據 SRC-004）。
-- FR-011 排程登入不得使 PO 帳號超過網站「同一帳號最多兩台裝置或瀏覽器上線」的限制（Q-011）。
-- FR-012 PO 能在 claude.ai／Claude Code 對話中搜尋並讀取已匯入文章全文，作為與 LLM 討論的依據（Q-005）。
+- FR-011 排程每次執行完即登出、不常駐登入狀態，並避開 PO 常用時段，使帳號不超過「同一帳號最多兩台裝置或瀏覽器上線」的限制（Q-011）。
+- FR-012 PO 能在 claude.ai／Claude Code 對話中搜尋並讀取已匯入文章全文，作為與 LLM 討論的依據；文章存於獨立文章庫，台股連接器只看得到台股與週報、美股連接器只看得到美股（Q-005）。
+- FR-013 文章內表格圖片（財測 EPS、本益比等）的數字，PO 與 LLM 討論時必須取得得到；若以機器轉寫成文字，須標示為機器轉寫並可回查原圖，轉寫失敗不得以空白或猜測值充數（Q-007）。
+- FR-014 取得新文章時以 Telegram 通知 PO，僅含標題與連結、不含內文（Q-012）。
+- FR-015 低頻抓取為硬性要求：每次執行的篇數、每日執行次數、篇與篇的間隔都有保守上限；歷史回補寧可拉長到數天也不加速（Q-002、Q-008）。
 
 ## Acceptance Scenarios
 
@@ -65,6 +69,10 @@ PO 訂閱「定錨產業筆記」（需登入的付費網站，每週報告與�
 6. 登入失敗：密碼錯誤時當次中止、既有文章不變、PO 收到通知。
 7. 被擋：連續逾時／回傳非預期頁面時中止並退避，PO 收到通知，不反覆重試。
 8. 檢索：以個股名稱（如「環宇-KY」）查詢，可得含該字樣的文章與原文連結。
+9. 表格數字：針對含財測表的文章詢問「聯發科 2027 年財測 EPS」，LLM 取得的資料中含該表格內容，且可回查原圖。
+10. 台美分流：美股連接器搜尋不到台股／週報文章，反之亦然。
+11. 登出：每次排程結束後，網站端不留排程的登入狀態；PO 在手機與電腦切換使用不受影響。
+12. 新文章通知：新文章匯入後 PO 收到含標題與連結的 Telegram 訊息。
 
 ## Success Criteria
 
@@ -77,7 +85,8 @@ PO 訂閱「定錨產業筆記」（需登入的付費網站，每週報告與�
 
 - 登入僅 email＋密碼，無 captcha／雙因素（SRC-001，截圖觀察）。
 - 雲端沙箱無登入狀態，實測只能在 PO 的 Mac。
-- 內文表格以圖片呈現，圖內數字不可全文檢索（OCR 為 Deferred）。
+- 內文表格以圖片呈現（SRC-003）；表格數字是 PO 討論重點，須讓 LLM 讀得到（FR-013）。機器轉寫可能有誤，原圖為準。
+- 低頻上限的建議起始值（plan 可調得更保守；要放寬須 PO 同意）：每次最多 5 篇、每日最多 2 次、篇間隔 30～90 秒隨機；以此回補約需一至兩週。
 - 無附件／PDF（PO 確認，SRC-003）。
 - 台股與美股在 STND 為獨立系統，匯入後兩者須可分別被查詢（Q-005）。
 - 付費內容、僅個人使用（Q-008，待確認）；條款允許個人使用目的之瀏覽及下載、禁止散布（SRC-004）。
@@ -98,6 +107,7 @@ PO 訂閱「定錨產業筆記」（需登入的付費網站，每週報告與�
 | 登入失敗（密碼錯/帳號鎖） | 當次中止，不重試 | Telegram 通知 | PO 更新鑰匙圈密碼後重跑 | Yes |
 | 被擋／連續逾時 | 中止並拉長下次間隔 | Telegram 通知 | 稍後自動或手動續跑 | Yes |
 | 頁面結構改變（取不到內文） | 該篇標記失敗、不寫入殘缺全文 | Telegram 通知＋失敗清單 | 修爬蟲後重跑失敗清單 | Yes |
+| 表格圖轉寫失敗或信心不足 | 文章與原圖仍存，該圖標記「未轉寫」 | 查詢結果註明該圖未轉寫 | 重跑轉寫或 PO 直接看原圖 | No |
 | 單篇圖片下載失敗 | 文章仍存，圖片標記缺 | 日誌 | 重跑時補圖 | No |
 | 回補中斷（Mac 關機等） | 已存文章保留 | 無 | 從未完成處續跑 | No |
 
@@ -105,12 +115,12 @@ PO 訂閱「定錨產業筆記」（需登入的付費網站，每週報告與�
 
 | Artifact | Required | Status | Link | Rationale |
 |----------|----------|--------|------|-----------|
-| Readiness Checks | Yes | Draft | supporting-artifacts/readiness-checks.md | Required by ADR-0027 |
-| Workflow Diagram | Yes | Draft | supporting-artifacts/workflow-and-states.md | 多步驟流程＋批次狀態 |
-| Integration/Data/Security Note | Yes | Draft | supporting-artifacts/integration-data-security-note.md | 第三方登入整合、資料生命週期、憑證與版權、批次部分失敗、查詢介面 |
+| Readiness Checks | Yes | Complete | supporting-artifacts/readiness-checks.md | Required by ADR-0027 |
+| Workflow Diagram | Yes | Complete | supporting-artifacts/workflow-and-states.md | 多步驟流程＋批次狀態 |
+| Integration/Data/Security Note | Yes | Complete | supporting-artifacts/integration-data-security-note.md | 第三方登入整合、資料生命週期、憑證與版權、批次部分失敗、查詢介面 |
 
 ## Source Decisions
 
 - 範圍、回補、先存全文：Q-001～Q-003（PO 2026-11-12）。
-- 未決：Q-004、Q-005、Q-008、Q-011（Blocking）；Q-006、Q-007、Q-009、Q-012 為建議值待確認；Q-010 Deferred；Q-013 為技術探查項。
+- Q-004、Q-005、Q-007、Q-008、Q-011 已由 PO 於 2026-11-13 答覆；Q-006、Q-009、Q-012 採建議值（Non-blocking）；Q-010 Deferred；Q-013 為技術探查項。無 Blocking 項。
 - 2026-11-13 複審：補查網站條款（SRC-004）、更正篇數假設、補上查詢介面與裝置上限。
