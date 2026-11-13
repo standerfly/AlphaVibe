@@ -9,3 +9,4 @@
 | SRC-002 | raw/src-002-article-list.png | 截圖（登入後清單頁） | Stander | 2026-11-12 | Extracted | 分類頁籤與紅色數字（總覽114／週報31／產業13／台股17／美股32／總經21／最愛）——**數字是總篇數還是未讀數未確認**；五類相加恰為114，推測各文章只屬一類；每列標題＋日期＋留言數、置頂【公告】、已讀粗細體 |
 | SRC-003 | raw/src-003-article-body.png | 截圖（文章內頁） | Stander | 2026-11-12 | Extracted | 內文為文字段落（編號個股條目）＋表格以**圖片**呈現；無附件/PDF（PO 確認） |
 | SRC-004 | raw/src-004-site-terms-excerpts.md | 網站條款摘錄（公開頁面） | Claude | 2026-11-13 | Extracted | 允許個人使用目的瀏覽及下載；禁止散布/公開發表；**同一帳號最多兩台裝置或瀏覽器上線，超過可停用帳號**；無爬蟲明文條款 |
+| SRC-005 | raw/src-005-po-followup-trigger-and-transcription.md | PO 口述（後續答覆） | Stander | 2026-11-13 | Extracted | Gmail 新信（只有標題＋連結）作為觸發；重試要有間隔；表格圖於排程時轉成文字、用成本最低的有效模型 |

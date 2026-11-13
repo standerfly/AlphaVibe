@@ -18,6 +18,9 @@
 | Q-011 | 條款規定同一帳號最多兩台裝置或瀏覽器上線，超過可停用帳號；排程的瀏覽器算一台。PO 平常用幾台看定錨？ | SRC-004 | Integration／Security | Answered | PO 只在手機或電腦間切換、不會同時上線；採建議：排程每次跑完即登出、不常駐登入狀態、避開 PO 常用時段 | Stander | 2026-11-13 |
 | Q-012 | 抓到新文章時要不要 Telegram 通知（標題＋連結）？ | SRC-001 | Scope | Non-blocking | 採建議值（PO 未異議）：新文章 Telegram 通知，僅標題與連結 | Stander | 2026-11-13 |
 | Q-013 | 清單是否分頁、文章網址形態、`lv=` 參數意義、登入狀態有效期、紅色數字是總數或未讀數 | SRC-002 | Integration | Non-blocking | 無法由截圖判斷；列為技術規劃第一步的 Mac 探查項目，不需 PO 決策 | Claude | 2026-11-13 |
+| Q-014 | 每天掃描網站，還是 Gmail 有定錨新信才掃描？ | SRC-005 | Integration／Workflow | Answered | Gmail 新信觸發：平常只檢查 Gmail（寄件者 `postmaster@mailer.investanchors.com`，信內只有標題＋連結），有新信才登入網站抓文；另每週一次只讀清單做核對，補信件漏寄 | Stander | 2026-11-13 |
+| Q-015 | 如何避免重複與過度掃描？重試有間隔嗎？ | SRC-005 | Import／Error handling | Answered | 不以「當日」判斷，以文章 ID 記帳：抓過不再開啟、清單碰到已抓過即停；失敗文章不在同一次執行內重試，留待下次排程（間隔以小時計），單篇累計失敗達上限即停止並通知；出現被擋跡象則整次中止並拉長下次間隔 | Stander | 2026-11-13 |
+| Q-016 | 表格圖何時、用什麼轉成文字？ | SRC-005 | Data／Integration | Answered | 排程匯入時即轉成文字並存檔（之後可全文檢索表格數字）；採成本最低且抽查準確度合格的模型，起始用最低價位模型，抽查不合格才升級；原圖保留可回查 | Stander | 2026-11-13 |
 
 ## Notes
 

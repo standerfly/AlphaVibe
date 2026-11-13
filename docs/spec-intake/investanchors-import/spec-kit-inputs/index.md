@@ -5,4 +5,4 @@
 
 | Spec Feature Slug | Status | Scope Summary | Dependencies | Source Decisions | Handoff Order |
 |-------------------|--------|---------------|--------------|------------------|---------------|
-| [investanchors-article-import](investanchors-article-import/speckit-input.md) | Draft | 登入取文（台股／美股／週報）＋獨立文章庫＋表格圖內容＋查詢工具＋低頻排程＋通知 | 無 | Q-001～Q-009、Q-011～Q-013 | 1 |
+| [investanchors-article-import](investanchors-article-import/speckit-input.md) | Draft | Gmail 觸發＋登入取文（台股／美股／週報）＋獨立文章庫＋表格圖內容＋查詢工具＋低頻排程＋通知 | 無 | Q-001～Q-009、Q-011～Q-016 | 1 |
