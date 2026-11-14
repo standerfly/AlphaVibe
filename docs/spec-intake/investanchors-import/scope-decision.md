@@ -1,7 +1,7 @@
 # Scope Decision: 定錨產業筆記文章自動匯入
 
 **Feature Slug:** investanchors-import
-**Last Updated:** 2026-11-14
+**Last Updated:** 2026-11-15
 
 ## MVP In Scope
 
@@ -24,6 +24,7 @@
 
 ## Deferred Or Later
 
+- 半年以前的歷史文章：只標記、不抓取，PO 要求時再補（Q-022）。
 - 文章留言（Q-010）；表格數字結構化入庫（逐格成為可計算欄位）。
 - STND 前端閱讀頁、LLM 自動摘要與立場抽取（Layer 2 寫入需人工確認，FR-003）。
 
@@ -38,6 +39,7 @@
 | Decision | Source IDs | Owner | Date | Rationale |
 |----------|------------|-------|------|-----------|
 | 範圍＝台/美/週報（已被下列決策取代） | SRC-001 | Stander | 2026-11-12 | PO 原先指定 |
+| 歷史回補只補半年內，更早的延後 | SRC-007 | Stander | 2026-11-15 | PO：目前僅需半年內資料；降低回補天數與網站存取 |
 | 範圍＝全部文章、不分類 | SRC-006 | Stander | 2026-11-14 | PO：文章標題不好分類 |
 | 歷史全量＋分批慢抓 | SRC-001 | Stander | 2026-11-12 | 避免被網站阻擋 |
 | 先存全文不做自動抽取 | SRC-001 | Stander | 2026-11-12 | 之後由 PO 與 LLM 討論，降低初期成本 |

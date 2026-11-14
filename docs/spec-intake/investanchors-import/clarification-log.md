@@ -6,7 +6,7 @@
 | ID | Question Or Conflict | Source IDs | Impact Area | Status | Answer Or Decision | Owner | Date |
 |----|----------------------|------------|-------------|--------|--------------------|-------|------|
 | Q-001 | 要抓哪些分類？ | SRC-001 | Scope | Answered | （已被 Q-017 取代）原答覆：台股、美股、週報 | Stander | 2026-11-12 |
-| Q-002 | 歷史資料要回補嗎？如何避免被擋？ | SRC-001 | Scope／Import | Answered | 全部回補；排程不定時、分批 | Stander | 2026-11-12 |
+| Q-002 | 歷史資料要回補嗎？如何避免被擋？ | SRC-001 | Scope／Import | Answered | （回補範圍已被 Q-022 改為半年內）原答覆：全部回補；排程不定時、分批 | Stander | 2026-11-12 |
 | Q-003 | 抓回後做什麼分析？ | SRC-001 | Scope | Answered | 先存全文；之後由 PO 與 LLM 討論，MVP 不做自動抽取 | Stander | 2026-11-12 |
 | Q-004 | 爬蟲開啟文章會讓網站把文章標成「已讀」，是否接受？ | SRC-002 | Data／Integration | Answered | 接受：排程開啟文章導致網站標成已讀可以接受 | Stander | 2026-11-13 |
 | Q-005 | 抓回的文章放哪、PO 怎麼跟 LLM 討論？（2026-11-13 複審補充選項） | SRC-001 | Data／API／Scope | Answered | 選項B：獨立文章庫＋新增「搜尋文章／讀取單篇」查詢工具；台股連接器看台股＋週報、美股連接器看美股；STND 閱讀頁 Deferred | Stander | 2026-11-13 |
@@ -26,6 +26,7 @@
 | Q-019 | 排程時段？（規劃階段提出） | spec 010 research R8 | Workflow | Answered | 一天一次，每晚 23:00；每日登入上限由 2 次改為 1 次。影響：歷史回補每天最多 5 篇，總天數待探查總篇數後估算 | Stander | 2026-11-14 |
 | Q-020 | 表格轉寫上線前抽查的標準？ | spec 010 research R5 | Data | Answered | 抽 10 張真實表格圖，轉寫數字由 PO 本人確認，PO 認可才採用；不設百分比門檻 | Stander | 2026-11-14 |
 | Q-021 | 是否同意把表格圖送模型 API 轉寫？ | spec 010 research R5 | Security | Answered | 同意（agree） | Stander | 2026-11-14 |
+| Q-022 | 歷史回補要補多久以前的文章？ | SRC-007 | Scope／Import | Answered | 只補最近半年內；更早的先標記不抓，有需要再補。取代 Q-002 的「全部回補」。PO 另提供：網站發文頻率約每週 2～5 篇（半年約 50～130 篇，以每天 5 篇計約 11～26 天） | Stander | 2026-11-15 |
 
 ## Notes
 
