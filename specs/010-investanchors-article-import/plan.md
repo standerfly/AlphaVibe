@@ -22,7 +22,7 @@ JSON Lines 溝通、獨立 store＋`_deps.py` 資料目錄守衛、鑰匙圈取�
 **Testing**: `python3 -m unittest discover -s poc/kb-mcp/tests`；新增 `test_article_store.py`／`test_investanchors_*.py`；以注入 fake（IMAP／scraper／模型／notifier／時鐘）測試，不連真網站；以獨立 `tempfile` data-dir
 **Target Platform**: macOS（PO 的 MacBook，launchd；部署於 `AlphaVibe-prod` worktree，`ops/deploy.sh`）
 **Project Type**: 排程 CLI ＋ 兩個 MCP 唯讀工具（無 STND 網頁頁面，spec 明列不在範圍）
-**Performance Goals**: 無吞吐目標；反向目標——每次 ≤5 篇、每日 ≤1 次登入（每晚 23:00）、篇間隔 30～90 秒隨機（FR-007）；歷史回補因此最多每天 5 篇
+**Performance Goals**: 無吞吐目標；反向目標——每次 ≤5 篇、每日 ≤1 次登入（每晚 23:00）、篇間隔 30～90 秒隨機（FR-007）；歷史回補只補最近半年（PO 2026-11-15）、最多每天 5 篇，預估約 11～26 天
 **Constraints**: 每次執行結束必登出；不留 cookie／storageState 檔；日誌／通知不含帳密、cookie、全文；失敗同次不重試；被擋→整次中止並延後 ≥1 天
 **Scale/Scope**: 1 位使用者；文章總數待探查（預期數百～數千篇）；單篇約數十 KB 文字＋數張圖
 
@@ -37,7 +37,7 @@ JSON Lines 溝通、獨立 store＋`_deps.py` 資料目錄守衛、鑰匙圈取�
 | 資料目錄必須明確指定、正式庫需 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1` | `article_deps.py` 複製 `us_stock_deps.py` 守衛；CLI 走 `--data-dir` |
 | 帳密不進 repo／日誌（FR-001、009 鑰匙圈教訓） | 新 service `stnd-investanchors`；禁止 dump-keychain／-w／-g |
 | 低頻硬上限、放寬須 PO 同意（FR-007） | 上限寫成常數＋執行紀錄表強制檢查，超限直接拒絕啟動 |
-| 驗證不自驗、獨立驗收（全域規則） | tasks 階段排入 fresh-agent 驗收；回補完成需與網站「總覽」逐篇核對（SC-001） |
+| 驗證不自驗、獨立驗收（全域規則） | tasks 階段排入 fresh-agent 驗收；回補完成需與網站「總覽」半年內文章逐篇核對（SC-001） |
 
 建議（不阻擋本 plan）：PO 另行決定是否要用 `/speckit-constitution` 填寫原則；目前各 feature 靠 CLAUDE.md 運作。
 

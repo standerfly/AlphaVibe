@@ -5,7 +5,14 @@
 ```
 python3 poc/kb-mcp/investanchors_import.py --data-dir <dir>
         [--dry-run] [--force-weekly] [--retranscribe] [--reset-abandoned <article_id>]
+        [--backfill-since <YYYY-MM-DD>]
 ```
+- `--backfill-since <日期>`：**PO 要求補抓更早文章時**使用。把 `backfill_state.cutoff_date` 放寬到該日期、
+  `completed` 重設為 0，並把清單日期落在新舊截止日之間的 `deferred` 文章轉回 `discovered`；之後仍依每日 5 篇
+  上限慢慢補。只能「往前放寬」（新日期早於現有截止日），否則拒絕；**放寬回補範圍＝放寬低頻負擔，須 PO 同意**。
+- 回補清單讀取：從最新一頁往舊翻；某一頁**所有文章的清單日期都早於截止日**即停止，不再往更舊翻（比全量更
+  低頻）。清單日期只作半年粗篩，不作新舊／是否已抓的判斷（身分只看文章 ID）；截止日附近日期不可靠的文章
+  （例如置頂公告日期在未來）不影響停止判斷——公告先依標題前綴略過再看日期。
 - `--data-dir` 預設 `poc/data`；指向正式庫需 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1`。
 - 流程：(1) 讀 `import_runs`：`blocked_until` 未到 或 今日登入已達 1 次 → 寫一筆 `aborted_limit`／`none` 後結束，**不登入**。
   (2) 唯讀取信（失敗＝不觸發抓取，連續失敗才通知；每週核對仍會補漏）。 (3) 決定觸發：新信／週日核對／回補未完成；
@@ -27,8 +34,8 @@ python3 poc/kb-mcp/article_probe.py --data-dir poc/data --confirm-po-present
   內文／圖片 DOM 結構。**不含全文、不含 cookie、不含帳密。**
 
 ## 3. 核對工具 `poc/kb-mcp/article_reconcile.py`（回補完成後，唯讀）
-- 讀「總覽」清單所有頁（受同樣上限與間隔約束，可分多次），與 `article`（排除公告）逐篇比對，輸出缺漏／重複清單
-  （SC-001）。不寫入 `article`；只輸出報告。
+- 讀「總覽」清單到「整頁都早於截止日」為止（受同樣上限與間隔約束，可分多次），與 `article`（排除公告）
+  中發布日期在半年內者逐篇比對，輸出缺漏／重複清單（SC-001）；早於截止日的只確認為 `deferred`。不寫入 `article`；只輸出報告。
 
 ## 4. Scraper 協定 `scraper/investanchors_scraper.js`
 - **stdin（單一 JSON）**：`{"mode":"list|articles","email":…,"password":…,"article_ids":[…],"max_pages":N,"delay_ms":[30000,90000],"image_dir":"…"}`

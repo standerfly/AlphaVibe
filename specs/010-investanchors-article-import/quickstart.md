@@ -18,13 +18,15 @@
 `python3 poc/kb-mcp/article_probe.py --data-dir poc/data --confirm-po-present`；把輸出的結構事實回填
 `research.md` R0 的 P1～P7。PO 已決定（2026-11-14／15）：(a) 排程**每晚 23:00 一天一次**、(b) 表格圖送第三方
 模型 API **已同意**（Q-016）、(c) 轉寫抽查**抽 10 張、由 PO 本人逐格確認、無百分比門檻**。探查後還需回報 PO：
-總篇數與以每天 5 篇回補所需天數（P1）、登出機制與名額釋放行為（P2／P2a／P2b）。
+半年內篇數、每頁篇數與以每天 5 篇回補所需天數（P1／P8；PO 預估約 50～130 篇、11～26 天）、登出機制與名額釋放行為（P2／P2a／P2b）。
 
 ## 3. 轉寫抽查（上線前，FR-018）
 抽 10 張真實表格圖 → 轉寫 → **PO 本人逐格確認**；PO 認可才採用目前模型，不認可則升級模型再抽 10 張。不設百分比門檻。結果寫入本檔「實測」節。
 
 ## 4. 回補
-排程啟用後，每次至多 5 篇、分多天自動進行；完成後跑 `article_reconcile.py` 與「總覽」逐篇核對（SC-001）。
+排程啟用後，每次至多 5 篇、分多天自動進行，**只補最近半年**（預估約 11～26 天），更早的標記為 `deferred`；
+完成後跑 `article_reconcile.py` 與「總覽」清單中半年內的文章逐篇核對（SC-001）。日後要補更早的文章：
+`investanchors_import.py --backfill-since <YYYY-MM-DD>`（須 PO 同意放寬）。
 
 ## 5. 日常
 無新信的日子不登入；新文章 Telegram 通知。從 claude.ai／Claude Code 以 `search_articles`／`get_article` 查詢。

@@ -14,7 +14,7 @@
 | title | TEXT NOT NULL | 標題 |
 | published_at | TEXT | 發布日期（ISO；清單日期不可靠，僅作顯示，**不參與新舊判斷**） |
 | body | TEXT | 全文；僅在 `status='fetched'` 時非空（FR-013 不寫殘缺全文） |
-| status | TEXT NOT NULL | `discovered`／`fetched`／`failed`／`abandoned`／`skipped` |
+| status | TEXT NOT NULL | `discovered`／`fetched`／`failed`／`abandoned`／`skipped`／`deferred`（清單看到、早於回補截止日、未抓取；只存 ID、標題、日期，`body` 為 NULL） |
 | attempts | INTEGER NOT NULL DEFAULT 0 | 累計失敗次數（達 3 → abandoned） |
 | last_error | TEXT | 最近一次失敗原因（**不含全文／帳密**） |
 | discovered_via | TEXT | `mail`／`weekly`／`backfill` |
@@ -38,7 +38,9 @@
 `processed INTEGER`。同一篇多封信＝多列，不影響 `article` 去重。
 
 ### `backfill_state`（單列）
-`id=1`、`completed INTEGER`（0／1）、`next_cursor TEXT`（清單續讀位置；形式依 P1 探查而定）、`updated_at`。
+`id=1`、`completed INTEGER`（0／1）、`next_cursor TEXT`（清單續讀位置；形式依 P1 探查而定）、
+`cutoff_date TEXT`（截止日＝回補**首次啟動日**往前六個月，ISO 日期；啟動後固定不隨日期漂移，除非 PO 用
+`--backfill-since` 放寬並重新開啟回補）、`started_at`、`updated_at`。
 
 ### `import_runs`（執行紀錄；用來強制上限與驗證 SC-004）
 `id`、`started_at`、`trigger`（`mail`／`weekly`／`backfill`／`none`）、`logged_in INTEGER`、
@@ -55,7 +57,11 @@ discovered ──取文成功──▶ fetched            （終態；不覆寫�
 discovered ──失敗──▶ failed(attempts+1) ──下次排程再試──▶ fetched
 failed ──attempts≥3──▶ abandoned + Telegram （終態；PO 介入後可手動重置為 failed）
 discovered ──標題以【公告】開頭──▶ skipped   （終態；FR-004）
+（回補時）清單日期早於截止日 ──▶ deferred    （不開啟；只存 ID、標題、日期）
+deferred ──PO 要求補抓（放寬截止日，`--backfill-since`）──▶ discovered ──▶（走上面的流程）
 ```
+**清單日期只用於「半年內」粗篩**，不用於判斷文章新舊或是否已抓（身分只看 `article_id`）。`deferred` 的文章
+之後若被通知信指到（理論上不會：通知信只寄新文章），直接轉 `discovered` 並抓取。
 同一次執行內：進入 `failed` 的文章**不再嘗試**（FR-012）。`fetched` 的文章再從信或清單被看到 → 無動作
 （不重新開啟，FR-003）。
 
