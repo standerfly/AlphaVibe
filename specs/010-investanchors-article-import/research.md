@@ -15,7 +15,7 @@
 | P4 | 通知信連結是否直指 `/user/vip_contents/<ID>`（或是追蹤轉址） | 能否從信直接取得 ID、不開信內連結 | 若為追蹤轉址：**不跟隨轉址**（會替 PO 留下點擊紀錄且可能計入存取），改以信內標題比對清單取得 ID；若直指則直接取 ID |
 | P5 | `lv=` 參數意義、清單日期列結構、公告標題格式 | 清單解析、【公告】略過 | 解析器以標題前綴 `【公告】` 判斷，不依賴 `lv` |
 | P6 | 文章頁 DOM：內文容器、表格圖與一般圖的區分 | 取全文、判斷哪些圖要轉寫 | 見 R5：不可靠區分時，**所有內文圖都送轉寫**，由模型回報「非表格」 |
-| P7 | 是否有同一 IP／行為頻率偵測、登入頁是否有隱藏欄位或 CSRF token | 封鎖偵測規則 | 先用 spec 起始值（5 篇／2 次／30–90 秒）並再保守 |
+| P7 | 是否有同一 IP／行為頻率偵測、登入頁是否有隱藏欄位或 CSRF token | 封鎖偵測規則 | 先用起始值（5 篇／每日 1 次／30–90 秒）並再保守 |
 
 **探查規約（保護帳號，硬性）**：只在 PO 在場、一次性執行；總計登入 1 次、開啟清單 ≤3 頁、開啟文章 ≤2 篇；
 全程單一 context，結束即登出；輸出只寫結構事實（DOM 選擇器、頁數、有無分頁）到 `poc/data/articles_probe/`
@@ -49,13 +49,13 @@ contracts/cli.md §4 一致）。登出失敗＝該次標記 `logged_out=0`、Te
 防自動化旗標、zh-TW、Asia/Taipei、隨機延遲 `rnd()`、`BLOCK_URL_RE` 軟／硬封鎖偵測沿用 flight scraper 寫法
 （`flight_scraper.js:29,72,186-196,207`）。**登入／登出／fill 流程 repo 內沒有先例，須新寫**。
 **Rationale**: 全新 context 避免本機留下可重用的登入憑證；與伺服器端登出**合併**才滿足「網站端不留登入狀態」。
-代價是每次要重新登入——但本功能本就一天最多 2 次。
+代價是每次要重新登入——但本功能本就一天最多 1 次。
 **Alternatives**: 持久 profile（少登入但會留登入、可能占裝置名額，spec 明確取捨為不超限優先）；純 HTTP
 requests 登入（Python 無 requests 依賴、且不易模擬瀏覽器行為；未排除，視 P7 探查結果再議）。
 
 ## R4. 低頻上限、退避、重試
 
-**Decision**: 常數寫在 `investanchors_import.py` 頂端：`MAX_ARTICLES_PER_RUN=5`、`MAX_LOGINS_PER_DAY=2`、
+**Decision**: 常數寫在 `investanchors_import.py` 頂端：`MAX_ARTICLES_PER_RUN=5`、`MAX_LOGINS_PER_DAY=1`（PO 決定 2026-11-15：一天一次，見 R8）、
 `DELAY_RANGE=(30,90)` 秒、`MAX_ATTEMPTS_PER_ARTICLE=3`、`BLOCK_BACKOFF_DAYS=1`。執行前先查 `import_runs`
 表：當日登入次數已達上限、或 `blocked_until` 未到，**直接結束且不登入**。被擋跡象（連續 2 次逾時、
 導向登入頁、非預期頁面）→ 寫 `blocked_until = now+1 天`＋Telegram。單篇失敗：`attempts += 1`，同次不重試；
@@ -78,14 +78,14 @@ requests 登入（Python 無 requests 依賴、且不易模擬瀏覽器行為；
 **實作時須對照官方文件確認的點**：(1) 該模型預設會思考，`max_tokens` 要留足；(2) **不要送非預設的
 temperature／top_p／top_k**（會被拒）；(3) `{is_table, text}` 用**結構化輸出**，不自行解析自由文字；
 (4) 回應 `stop_reason` 為 `refusal` 或 `max_tokens` 時，該圖一律標 `untranscribed`，不採用任何部分輸出。
-**上線前抽查（FR-018／SC-007）**：從 P6 取得的真實表格抽 ≥20 張，PO 逐格比對，**門檻由 PO 定**（建議
-數字逐格一致率 ≥98%）；未達改用更準確模型（逐級升）。補轉寫：`investanchors_import.py --retranscribe` 只讀本機
+**上線前抽查（FR-018／SC-007；PO 決定 2026-11-15）**：從 P6 取得的真實表格抽 **10 張**，轉寫結果由 **PO 本人逐格
+確認**，PO 認可才採用目前模型；**PO 不認可則升級模型、再抽 10 張**（逐級升）。**不設百分比門檻**。補轉寫：`investanchors_import.py --retranscribe` 只讀本機
 圖片檔、不登入網站（FR-017）。
 **Rationale**: 既有慣例「圖交給對話中的 Claude 讀」（`us_stock_mcp_server.py:66-69`）不適用於無人值守排程，
 故必須新增，這是本功能唯一的全新外部依賴與費用來源。
 **Alternatives**: 本機 OCR（tesseract 對中文財測表的數字準確度未驗證；備選，若 API 成本或隱私不接受再評）；
-只存圖不轉寫（違反 FR-016，PO 明確要求表格數字進 MVP）。**[PROBE→PO 決策]** 抽查門檻數值與是否接受把
-付費文章的表格圖送第三方 API（spec 假設「用途為 PO 個人使用」，但需 PO 明確確認）。
+只存圖不轉寫（違反 FR-016，PO 明確要求表格數字進 MVP）。**表格圖送第三方模型 API：PO 已於 2026-11-14 同意**
+（需求基線 Q-016）；送出的只有表格圖本身，用途為 PO 個人使用的資料處理。
 
 ## R6. 搜尋實作（實測推翻了原先的 FTS5 假設）
 
@@ -116,10 +116,20 @@ docstring 同步並加入預期工具名；**2026-11-15 起初誤判此檔無斷
 
 **Decision**: `com.alphavibe.investanchorsimport.plist`，樣式同 `statementimport.plist`（`/usr/bin/python3`、
 `AlphaVibe-prod`、PATH 含 `/opt/homebrew/bin`、log 寫 `~/Library/Logs/alphavibe-investanchors*.log`、
-**無** `RunAtLoad`／`KeepAlive`，靠 `StartCalendarInterval` 於喚醒後補跑一次）。每天 2 個時段（≤`MAX_LOGINS_PER_DAY`），
-**避開既有 02:00、03:30、03:45、04:00、06:00、07:45、09:30、17:00、20:15、23:15 與週一 10:00**。建議
-12:40、15:40（白天、Mac 常開）；**[PROBE→PO 決策]** PO 常用定錨網站的時段須由 PO 確認後才能定案（FR-008 避開常用
-時段）。每次執行即使無觸發也會跑信箱檢查（便宜、唯讀），所以 2 個時段≠2 次登入。
+**無** `RunAtLoad`／`KeepAlive`，靠 `StartCalendarInterval` 於喚醒後補跑一次）。**PO 決定（2026-11-15）：一天一次，
+每晚 23:00**（取代原建議的 12:40、15:40，作廢），對應 `MAX_LOGINS_PER_DAY=1`。既有排程時段：02:00、03:30、
+03:45、04:00、06:00、07:45、09:30、17:00、20:15、23:15、週一 10:00；23:00 不與任一時段相同。
+**與 23:15 `statementimport` 的重疊評估**：最壞情況單次 = 登入＋5 篇×最長 90 秒間隔（≈7.5 分鐘）＋圖片下載
+與轉寫（每篇數秒～數十秒，且最後一篇之後無間隔）＋登出，保守估 10～12 分鐘，**可能跨到 23:15 而與之並行**。
+結論：**並行無衝突、不需錯開**——兩者各自獨立行程；資料庫不同（`articles.db` vs `alphavibe.db`）；唯一共用的是
+Gmail IMAP，但各開各的唯讀連線（皆 `readonly=True`／`BODY.PEEK`），Gmail 允許多連線；Chromium 與 qpdf 的
+資源負載在本機可忽略。launchd 對不同 label 的 job 不會互相等待。若實測發現互相拖慢再改為 22:30。
+**睡眠補跑風險**：Mac 在 23:00 睡眠時，launchd 於喚醒後補跑一次，實際時間可能落在 PO 正在使用網站的時段
+（FR-008 兩台上限）；探查 P2b 與上線驗證期須觀察，必要時於程式內加「非 22:30–次日 06:00 不啟動」的時間窗守衛
+（會使補跑延到下一個 23:00，視為可接受）。每次執行即使無觸發也會跑信箱檢查（便宜、唯讀），不等於登入。
+**影響（歷史回補速度）**：每日最多登入 1 次、每次最多 5 篇，回補速度為**每天最多 5 篇**；總天數＝總篇數÷5
+（例：1,000 篇約 200 天）。總篇數待 P1 探查取得後估算並回報 PO，由 PO 決定是否維持、或於 PO 同意下放寬。
+新文章在回補期間與回補共用同一個每日 5 篇額度，**新文章（有通知信者）優先於回補**。
 健康檢查：`check_scheduled_jobs.py` 新增 `check_investanchors_import()`（讀 `import_runs`，比照
 `check_statement_import`）。
 
@@ -142,5 +152,6 @@ docstring 同步並加入預期工具名；**2026-11-15 起初誤判此檔無斷
 
 1. 帳號被停用（兩台上限／行為偵測）→ R3 全新 context＋R4 上限；探查規約最小化。
 2. 站方改版 → DOM 解析集中在 scraper 一處，取不到內文就標失敗不寫殘缺（FR-013）。
-3. 轉寫不準 → 標示＋原圖＋上線前抽查＋PO 門檻。
-4. 把付費內容送第三方模型 API → 需 PO 明確同意（R5）。
+3. 轉寫不準 → 標示＋原圖＋上線前抽 10 張由 PO 本人逐格確認。
+4. 把付費內容送第三方模型 API → PO 已於 2026-11-14 同意（Q-016，R5）。
+5. 歷史回補很慢（每天最多 5 篇）→ 總篇數待探查，天數估算後回報 PO（R8）。
