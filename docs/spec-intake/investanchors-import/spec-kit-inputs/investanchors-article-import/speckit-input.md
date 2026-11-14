@@ -1,6 +1,6 @@
 # Spec Kit Input: 定錨產業筆記文章自動匯入
 
-**Status:** Draft
+**Status:** Accepted
 **Source Product Spec:** ../../product-spec.md
 **Source Scope Decision:** ../../scope-decision.md
 **Spec Feature Slug:** investanchors-article-import

@@ -1,7 +1,7 @@
 # Scope Decision: 定錨產業筆記文章自動匯入
 
 **Feature Slug:** investanchors-import
-**Last Updated:** 2026-11-13
+**Last Updated:** 2026-11-14
 
 ## MVP In Scope
 
@@ -31,7 +31,7 @@
 
 | Spec Feature Slug | Scope Summary | Dependencies | Handoff Order | Status |
 |-------------------|---------------|--------------|---------------|--------|
-| investanchors-import | 登入＋抓取＋儲存全文＋排程＋通知（單一 feature） | Playwright（沿用機票 scraper 架構）、Telegram 通知、鑰匙圈 | 1 | Draft |
+| investanchors-article-import | Gmail 觸發＋登入抓取全部文章＋獨立文章庫＋表格轉寫＋查詢工具＋通知（單一 feature） | Playwright（沿用機票 scraper 架構）、Telegram 通知、鑰匙圈 | 1 | Accepted |
 
 ## Decision Rationale
 

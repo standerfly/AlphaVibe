@@ -1,12 +1,12 @@
 # Product Spec: 定錨產業筆記文章自動匯入
 
-**Status:** In Review
+**Status:** Accepted
 **Feature Slug:** investanchors-import
 **Function Branch:** function/investanchors-import
 **Product Owner:** Stander
 **TPM:** Stander
-**Accepted At:** N/A
-**Acceptance Evidence:** N/A
+**Accepted At:** 2026-11-14
+**Acceptance Evidence:** PO/TPM Stander 於 2026-11-14 Claude Code session（session_017cx5dkCE4G9jBghp1LFCUn）中，在 Q-001～Q-017 全部定案（Q-009／Q-012／Q-018 為 Non-blocking 採建議值、Q-010 Deferred、Q-006 Out of Scope、Q-013 為技術探查項）、Claude 列出最終變更並說明「回覆『驗收通過』就可以進技術規劃」後，回覆「驗收通過」完成驗收；同一回覆即同意進入 Spec Kit 技術規劃（handoff 核准）。
 
 ## Problem And Goal
 

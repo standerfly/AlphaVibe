@@ -3,13 +3,13 @@
 **Feature Slug:** investanchors-import
 **Product Spec:** product-spec.md
 **Spec Kit Inputs Index:** spec-kit-inputs/index.md
-**Status:** Draft
+**Status:** Ready
 
 ## Product Baseline
 
 - [x] `docs/spec-intake/index.md` lists this feature workspace
-- [ ] `product-spec.md` status is `Accepted`
-- [ ] PO and TPM approval are recorded in `product-spec.md`
+- [x] `product-spec.md` status is `Accepted`
+- [x] PO and TPM approval are recorded in `product-spec.md`
 - [x] All raw source material for this feature is listed in `intake-index.md`
 - [x] Blocking questions in `clarification-log.md` are resolved
 - [x] In-scope and out-of-scope decisions are recorded in `scope-decision.md`
@@ -28,17 +28,17 @@
 
 - [x] `spec-kit-inputs/index.md` lists every generated input package
 - [x] Each input package has exactly one Spec Kit feature boundary
-- [ ] Each accepted `speckit-input.md` has `Status: Accepted`
-- [ ] Each accepted `speckit-input.md` links back to source decisions
-- [ ] Handoff order is recorded for accepted input packages
+- [x] Each accepted `speckit-input.md` has `Status: Accepted`
+- [x] Each accepted `speckit-input.md` links back to source decisions
+- [x] Handoff order is recorded for accepted input packages
 
 ## Handoff Approval
 
-- [ ] TPM confirms accepted input packages are ready for `speckit-specify`
-- [ ] PO confirms the split from product spec to Spec Kit inputs is acceptable
-- [ ] No accepted input contains unresolved contradictions or meeting-note noise
+- [x] TPM confirms accepted input packages are ready for `speckit-specify`
+- [x] PO confirms the split from product spec to Spec Kit inputs is acceptable
+- [x] No accepted input contains unresolved contradictions or meeting-note noise
 
 ## Notes
 
-- 2026-11-13：Blocking 項（Q-004、Q-005、Q-008、Q-011）與 Q-007 已由 PO 答覆；待 PO 回覆「驗收通過」後才可將 product-spec 與輸入包標為 Accepted。
+- 2026-11-14：PO/TPM Stander 回覆「驗收通過」，product-spec 與輸入包 `investanchors-article-import` 標為 Accepted，同意進入 Spec Kit 技術規劃。Q-018（公告是否抓取）維持建議值「略過」，Non-blocking。
 - `product-spec.md` 標頭的 Function Branch 為 `function/investanchors-import`，但該分支尚未建立；目前產物在 `claude/admiring-ptolemy-1jaw79`（基於 `function/alphavibe`），合併去向待 PO 決定。
