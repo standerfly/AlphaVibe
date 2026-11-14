@@ -82,7 +82,8 @@ poc/kb-mcp/
     ├── test_investanchors_mailbox.py
     ├── test_investanchors_import.py
     ├── test_article_transcribe.py
-    └── test_pnl.py               # 改：test_tool_counts 48→50、29→31
+    ├── test_pnl.py               # 改：test_tool_counts 48→50、29→31
+    └── test_traceability.py      # 改：test_tools_list_has_forty_eight（:252-261）48→50，函式名與 docstring 同步，預期工具名清單加兩項
 
 app/
 └── article_deps.py               # 新：資料目錄守衛（複製 us_stock_deps.py 邏輯）

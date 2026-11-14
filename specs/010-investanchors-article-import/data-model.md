@@ -30,8 +30,8 @@
 | file_path | TEXT | 相對 `data_dir` 的本機路徑；下載失敗為 NULL（標記缺，下次補抓） |
 | is_table | INTEGER | 1／0／NULL（模型判斷；未判斷為 NULL） |
 | transcription_status | TEXT NOT NULL | `done`／`untranscribed`／`not_table` |
-| transcription | TEXT | 轉寫文字（儲存時已含「機器轉寫」標示前綴） |
-| transcribed_model | TEXT | 例：`claude-haiku-4-5-20251001`（升級模型時可辨識哪些要重轉） |
+| transcription | TEXT | **只存轉寫內容**，不含任何標示或路徑（標示由輸出層加，避免 LIKE 搜尋被標示用字命中所有文章） |
+| transcribed_model | TEXT | 例：`claude-haiku-5-5`（升級模型時可辨識哪些要重轉） |
 
 ### `mail_clue`（通知信線索；只是觸發，不是身分）
 `message_id TEXT PRIMARY KEY`、`article_id INTEGER`（可為 NULL＝尚未解析出 ID）、`title`、`seen_at`、
@@ -62,6 +62,6 @@ discovered ──標題以【公告】開頭──▶ skipped   （終態；FR-0
 ## 驗證規則
 - `article_id` 必須是正整數；URL 必須符合 `^https://(www\.)?investanchors\.com/user/vip_contents/\d+$`（站內路徑才收）。
 - `status='fetched'` ⇔ `body` 非空且長度 ≥ 下限（防殘缺：下限由探查 P6 後定，起始 200 字）。
-- `transcription` 非 NULL ⇒ 必以固定「機器轉寫」標示開頭；`untranscribed` 時 `transcription` 必為 NULL（不以空白／猜測充數，FR-017）。
+- `transcription` 只含轉寫內容；「機器轉寫」標示一律在輸出時（`get_article`／`search_articles` 片段）加上，不入庫。`untranscribed` 時 `transcription` 必為 NULL（不以空白／猜測充數，FR-017）。
 - 只增不刪：store 不提供 delete 方法；放棄的文章只改 status。
 - 日誌／`last_error`／通知 **不得含** 帳密、cookie、全文（以單元測試對日誌輸出做負向斷言）。

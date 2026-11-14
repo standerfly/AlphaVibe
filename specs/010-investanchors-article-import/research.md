@@ -8,7 +8,9 @@
 | # | 未知 | 會影響什麼 | 設計對各結果的因應 |
 |---|---|---|---|
 | P1 | 「總覽」清單是否分頁／無限捲動、總篇數 | 回補批次數、核對方式、清單讀幾頁 | 讀取以「翻頁至沒有新 ID 為止」為通則；若無限捲動，scraper 改以捲動＋ID 去重，仍受單次篇數上限約束 |
-| P2 | 登入狀態有效期、登出方式（按鈕／endpoint） | 是否真的能「跑完登出」；cookie 是否殘留 | 不論結果，**每次用全新 context、結束 `context.close()`**；若網站有登出按鈕則額外點擊並以「再訪登入頁得到登入表單」驗證（SC-004） |
+| P2 | 登入狀態有效期、**伺服器端登出機制**（按鈕／endpoint） | FR-008 是否做得到；伺服器端 session 是否被釋放 | **伺服器端登出是必要步驟**，`context.close()` 只清本機 cookie、不算數。探查找不到登出機制 → **停止並回報 PO，不進入實作**；找到則以「再訪登入頁得到登入表單」驗證（SC-004） |
+| P2a | 新登入是否會把 PO 其他裝置踢下線 | 排程登入是否干擾 PO 手機／電腦使用 | 需 PO 配合觀察一次（探查時請 PO 手機保持登入） |
+| P2b | 網站如何計算「上線裝置」：登出後名額是否**立即釋放** | 兩台上限（FR-008）與排程時段安排 | 若不立即釋放（例如以 session 逾時計），每日登入次數與時段須更保守，並回報 PO 重新取捨 |
 | P3 | 開啟文章是否改變已讀（細體／粗體） | FR-009 例外是否如預期；是否可用已讀狀態輔助 | 僅確認，不依賴已讀狀態判斷新舊（spec：身分只靠文章 ID） |
 | P4 | 通知信連結是否直指 `/user/vip_contents/<ID>`（或是追蹤轉址） | 能否從信直接取得 ID、不開信內連結 | 若為追蹤轉址：**不跟隨轉址**（會替 PO 留下點擊紀錄且可能計入存取），改以信內標題比對清單取得 ID；若直指則直接取 ID |
 | P5 | `lv=` 參數意義、清單日期列結構、公告標題格式 | 清單解析、【公告】略過 | 解析器以標題前綴 `【公告】` 判斷，不依賴 `lv` |
@@ -40,12 +42,14 @@ app password **沿用既有鑰匙圈項目** `stnd-statement-import` 的 `gmail-
 
 **Decision**: 新 `scraper/investanchors_scraper.js`（Node/Playwright）；Python 以 `subprocess.Popen` 傳入 JSON
 指令、讀 JSONL 結果，與 `flight_scraper.js` 同介面慣例（`result`／`summary{blocked}` 行）。**不使用**
-`launchPersistentContext`／`storageState`：每次全新 context、結束關閉，登入狀態不落地（符合 FR-008、免
-cookie 檔視同密碼的風險）。帳密由 Python 從鑰匙圈讀出後**經 stdin 傳給子行程**，不放命令列參數與環境變數。
+`launchPersistentContext`／`storageState`：每次全新 context，登入狀態不落地（免 cookie 檔視同密碼的風險）。
+**但關閉 context 只清掉本機 cookie，網站伺服器端的登入狀態仍在，仍可能被算成一台上線裝置**，所以不能
+當作滿足 FR-008：**伺服器端登出是必要步驟**（`finally` 中先走網站登出、驗證成功，再關 context；與
+contracts/cli.md §4 一致）。登出失敗＝該次標記 `logged_out=0`、Telegram 通知，且下一次執行前先重試登出。帳密由 Python 從鑰匙圈讀出後**經 stdin 傳給子行程**，不放命令列參數與環境變數。
 防自動化旗標、zh-TW、Asia/Taipei、隨機延遲 `rnd()`、`BLOCK_URL_RE` 軟／硬封鎖偵測沿用 flight scraper 寫法
 （`flight_scraper.js:29,72,186-196,207`）。**登入／登出／fill 流程 repo 內沒有先例，須新寫**。
-**Rationale**: 全新 context 讓「網站端不留登入狀態」不依賴網站的登出行為，是最強保證；代價是每次要重新
-登入——但本功能本就一天最多 2 次。
+**Rationale**: 全新 context 避免本機留下可重用的登入憑證；與伺服器端登出**合併**才滿足「網站端不留登入狀態」。
+代價是每次要重新登入——但本功能本就一天最多 2 次。
 **Alternatives**: 持久 profile（少登入但會留登入、可能占裝置名額，spec 明確取捨為不超限優先）；純 HTTP
 requests 登入（Python 無 requests 依賴、且不易模擬瀏覽器行為；未排除，視 P7 探查結果再議）。
 
@@ -60,11 +64,20 @@ requests 登入（Python 無 requests 依賴、且不易模擬瀏覽器行為；
 
 ## R5. 表格圖轉寫
 
-**Decision**: 新 `article_transcribe.py`，用 `urllib` 呼叫視覺模型 HTTP API（repo 內**沒有任何 LLM 呼叫先例**，
-requirements.txt 無 SDK，故不新增依賴）。起始模型：`claude-haiku-4-5-20251001`（最低價位；Environment 提供的
-有效 ID）。金鑰存鑰匙圈 `stnd-investanchors`／`vision-api-key`，缺金鑰或額度不足 → 該圖標記 `untranscribed`，
-文章照存。提示詞要求：只轉寫圖中可見數字與文字、看不清楚的格子寫 `?`、判斷「是否為表格」並回
-`{is_table, text}`；轉寫文字存入時前綴固定標示「【機器轉寫，可能有誤，原圖見 <path>】」。
+**Decision**: 新 `article_transcribe.py`，用 `urllib` 呼叫視覺模型 HTTP API（repo 內**沒有任何 LLM 呼叫先例**）。
+**不裝 SDK 的理由**：排程跑系統 `/usr/bin/python3`（3.9.6）、僅標準庫（requirements.txt 只有 yfinance），
+新增套件會讓每次部署與 launchd 環境多一個失敗點。
+起始模型：**`claude-haiku-5-5`**（不加日期後綴；PO 決定「成本最低且抽查合格」，據主對話提供：輸入 0.10／輸出
+0.50 美元每百萬 token，Haiku 4.5 為 1／5）；**模型 ID 寫成可調的模組常數 `TRANSCRIBE_MODEL`**，升級或換模型
+只改一處，並寫入 `article_image.transcribed_model` 以便辨識重轉對象。**此 ID 與價格我無法在本環境獨立查證
+（我的環境清單只列到 Haiku 4.5），實作第一步須對照官方文件確認 ID 存在可用。**
+金鑰存鑰匙圈 `stnd-investanchors`／`vision-api-key`，缺金鑰或額度不足 → 該圖標記 `untranscribed`，
+文章照存。提示詞要求：只轉寫圖中可見數字與文字、看不清楚的格子寫 `?`、判斷「是否為表格」。
+**資料庫只存轉寫內容，不存任何「機器轉寫」標示或路徑**（否則 `LIKE` 搜尋會被標示用字／路徑字串命中所有
+文章）；標示在輸出層（`get_article`／搜尋片段）加上。
+**實作時須對照官方文件確認的點**：(1) 該模型預設會思考，`max_tokens` 要留足；(2) **不要送非預設的
+temperature／top_p／top_k**（會被拒）；(3) `{is_table, text}` 用**結構化輸出**，不自行解析自由文字；
+(4) 回應 `stop_reason` 為 `refusal` 或 `max_tokens` 時，該圖一律標 `untranscribed`，不採用任何部分輸出。
 **上線前抽查（FR-018／SC-007）**：從 P6 取得的真實表格抽 ≥20 張，PO 逐格比對，**門檻由 PO 定**（建議
 數字逐格一致率 ≥98%）；未達改用更準確模型（逐級升）。補轉寫：`investanchors_import.py --retranscribe` 只讀本機
 圖片檔、不登入網站（FR-017）。
@@ -93,8 +106,9 @@ KB（≤百 MB 量級），`LIKE` 全掃在本機毫秒～數百毫秒，足夠�
 解析各自開 `articles.db`，因為它不屬任一市場，路徑固定為同一 `data_dir` 下的 `articles.db`。工具回傳
 文字；`get_article` 一併回傳圖片清單（本機檔路徑＋是否為表格＋轉寫狀態＋轉寫文字）。同步清單
 （CLAUDE.md「常用查證點」）：`server.py` TOOLS＋call_tool、`server_readonly.py`、`us_stock_mcp_server.py`、
-`test_pnl.py::test_tool_counts`（**48→50、29→31**；探查證實只有此處有數量斷言，CLAUDE.md 所稱
-`test_traceability.py` 並無此斷言）、Mac 上 `~/.claude` 的 stock-researcher 白名單（**不在 repo**，PO 手動）。
+`test_pnl.py::test_tool_counts`（**48→50、29→31**）、
+`test_traceability.py::test_tools_list_has_forty_eight`（:252-261，`assertEqual(len(names), 48)`→50，函式名與
+docstring 同步並加入預期工具名；**2026-11-15 起初誤判此檔無斷言，經審查並開檔確認後更正**）、Mac 上 `~/.claude` 的 stock-researcher 白名單（**不在 repo**，PO 手動）。
 **注意**：`test_claude_ai_connector.py:46-49` 斷言美股模組不含 `get_holdings` 且 names==TOOLS；新工具名
 不得與台股工具衝突。
 
