@@ -4,8 +4,8 @@
 
 ```
 python3 poc/kb-mcp/investanchors_import.py --data-dir <dir>
-        [--dry-run] [--force-weekly] [--retranscribe] [--reset-abandoned <article_id>]
-        [--backfill-since <YYYY-MM-DD>]
+        [--dry-run] [--force-weekly] [--max-articles N] [--resume] [--retranscribe]
+        [--reset-abandoned <article_id>] [--backfill-since <YYYY-MM-DD>]
 ```
 - `--backfill-since <日期>`：**PO 要求補抓更早文章時**使用。把 `backfill_state.cutoff_date`／`cutoff_ms` 放寬到該日期、
   `completed` 重設為 0，並把 ID 建立時間落在新舊截止日之間的 `deferred` 文章轉回 `discovered`；之後仍依每日 5 篇
@@ -24,7 +24,10 @@ python3 poc/kb-mcp/investanchors_import.py --data-dir <dir>
   （SC-003：登入次數 0）。 (4) 登入後讀清單第 1 頁，必要時往後翻到「一頁內非置頂項全部已入庫」為止，組出待抓清單：
   **清單上所有未入庫的文章 ID**（不論有無對應通知信）＋`failed` 且 attempts<3；**新文章優先於回補**，上限 5 篇。 (5) 啟動 scraper（見 §4），逐篇、隨機 30–90 秒間隔。 (6) **無論成敗**確認登出並記 `logged_out`。
   (7) 新文章 Telegram（標題＋連結，不含內文）；失敗類別通知（FR-020）。
-- `--dry-run`：只取信＋列出將抓的 ID，**不登入、不寫入、不通知**。
+- `--dry-run`：只取信＋列出觸發判斷，**不登入、不寫入、不通知、不建立資料庫檔**（資料庫不存在時改用暫存目錄）。
+- `--resume`：帳號停用（`account_disabled`）時協調器會寫入 `setting.halted_reason` 並**停止後續排程**（直到 PO 處理）；排除後用此旗標恢復。
+- 每週核對觸發：週日且上次核對 ≥6 天前；**或超過 8 天沒核對**（週日那次因睡眠錯過時的保底）。
+- 信箱讀取連續失敗 3 次才通知（`setting.mail_fail_count`）；單次失敗不因信觸發，但每週核對照常登入。
 - `--retranscribe`：只讀本機圖片檔補轉 `untranscribed`／換模型後重轉，**不登入網站**；**轉寫開關關閉時拒絕（exit 2，訊息「轉寫開關未開」）**。
 - `--enable-transcription`／`--disable-transcription`：切換 `setting.transcribe_enabled`（冪等、印出目前狀態、只改設定）。**預設關閉**；關閉時匯入流程不呼叫模型 API、也不讀取 `vision-api-key`。
 - `--transcribe-sample N`：從本機已下載的圖隨機抽 N 張（**須含至少 1 張長圖**，長圖＝高/寬 ≥1.5 且高度 ≥2000px；庫內不足就回報不足與現況）轉寫，結果只寫進 `poc/data/articles_probe/transcribe-sample-<時間>.md` 供 PO 逐格比對，**不寫入資料庫**；不登入網站；開關關閉時仍可執行（唯一例外）。
@@ -60,8 +63,9 @@ python3 poc/kb-mcp/article_probe.py --data-dir poc/data --confirm-po-present --c
   中發布日期在半年內者逐篇比對，輸出缺漏／重複清單（SC-001）；早於截止日的只確認為 `deferred`。不寫入 `article`；只輸出報告。
 
 ## 4. Scraper 協定 `scraper/investanchors_scraper.js`
+- **import 模式（T013／T014 已實作）**：stdin `{"mode":"import","email":…,"password":…,"base_url":…,"known_ids":[…],"pending_ids":[…],"max_list_pages":≤3,"max_articles":≤5,"delay_ms":[30000,90000],"timeout_ms":N}`；單一登入 session 內：讀清單第 1 頁（必要時往後翻到「一頁內非置頂、非公告項目全部已知」為止）→ 目標＝清單上所有未入庫的 ID（含置頂）＋`pending_ids`，新文章在前、受 `max_articles` → 逐篇開啟 → 登出並驗證。stdout JSONL：`fact(login)`、`list_item{page,article_id,title,date,is_announcement,read_state,pinned}`、`fact(targets)`、`article{article_id,published_at,body,images[{seq,src_url}]}`、`article_error{article_id,reason:structure|short|timeout}`、`summary`。內文過短（<200 字）或缺 `div#inves_content` 一律輸出 `article_error`，**不輸出殘缺內文**；`pinned`＝同一 ID 在相鄰頁重複出現。
 - **stdin（單一 JSON）**：`{"mode":"list|articles","email":…,"password":…,"article_ids":[…],"max_pages":N,"delay_ms":[30000,90000],"image_dir":"…"}`
-  — 帳密只經 stdin 傳遞，不出現在 argv／env／stderr。
+  — 帳密只經 stdin 傳遞，不出現在 argv／env／stderr。（上一條的 import 模式取代 list／articles 兩個獨立模式的原構想。）
 - **stdout（JSON Lines）**：`{"type":"login","ok":bool,"reason":"bad_credentials|account_disabled|…"}`、
   `{"type":"list_item","article_id":…,"title":…,"date":…}`、
   `{"type":"article","article_id":…,"title":…,"date":…,"body":…,"images":[{"seq":1,"src_url":…,"file":…}]}`、

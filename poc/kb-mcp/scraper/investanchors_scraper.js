@@ -1,6 +1,6 @@
 /**
- * 定錨產業筆記（investanchors.com）瀏覽器抓取。目前實作 probe（探查）模式；
- * 日後的 import 模式在同一支檔案擴充（specs/010 contracts/cli.md §4）。
+ * 定錨產業筆記（investanchors.com）瀏覽器抓取。兩種模式：probe（探查，唯讀、極低頻）與
+ * import（匯入：讀清單＋抓文章；specs/010 contracts/cli.md §4）。
  * 登入／登出／被擋偵測／訊號處理一律來自共用模組 investanchors_session.js（T011），不在此重寫。
  *
  * 用法（由 article_probe.py 呼叫，不手動執行）：
@@ -19,6 +19,8 @@ const {
 } = require('./investanchors_session');
 
 const HARD = { logins: 1, listPages: 3, articles: 2, navigations: 12 };
+const IMPORT_HARD = { logins: 1, listPages: 3, articles: 5, navigations: 12 };
+const MIN_BODY_LEN = 200;
 
 async function probe(cfg) {
   const lim = {
@@ -335,6 +337,172 @@ async function probe(cfg) {
   }
 }
 
+
+// ---------------------------------------------------------------- import 模式（T013／T014）
+// stdin：{mode:"import", email, password, base_url, known_ids:[…], pending_ids:[…], max_list_pages,
+//         max_articles, delay_ms:[a,b], timeout_ms}
+// stdout JSONL：fact(login)／list_item／targets／article／article_error／summary
+// 硬規約：登入 1 次、清單 ≤3 頁、文章 ≤5 篇；結束一定先伺服器端登出並驗證；內文過短或缺容器不輸出殘缺內文。
+async function importMode(cfg) {
+  const maxPages = Math.min(cfg.max_list_pages || IMPORT_HARD.listPages, IMPORT_HARD.listPages);
+  const maxArticles = Math.min(cfg.max_articles == null ? IMPORT_HARD.articles : cfg.max_articles,
+                               IMPORT_HARD.articles);
+  const known = new Set((cfg.known_ids || []).map(String));
+  const pending = (cfg.pending_ids || []).map(String);
+  const sess = await launchSession(cfg, {
+    navigationCap: IMPORT_HARD.navigations,
+    counters: { list_pages: 0, articles_opened: 0 },
+  });
+  if (!sess) return;
+  const { baseUrl, counters, st, browser, context, page, emitSummary, go, logoutIfPossible,
+          submitLogin } = sess;
+
+  async function extractListItems() {
+    return page.evaluate(() => {
+      const items = [];
+      const seen = new Set();
+      for (const a of document.querySelectorAll('a[href*="vip_contents"]')) {
+        const m = (a.getAttribute('href') || '').match(/vip_contents\/(\d+)/);
+        if (!m || seen.has(m[1])) continue;
+        seen.add(m[1]);
+        const row = a.closest('tr, li, .row, article') || a.parentElement || a;
+        const rowText = row.innerText || '';
+        const full = rowText.match(/(\d{4})\s*[-\/.年]\s*(\d{1,2})\s*[-\/.月]\s*(\d{1,2})/);
+        const pad = (n) => String(n).padStart(2, '0');
+        const title = (a.innerText || '').trim();
+        items.push({
+          article_id: m[1],
+          title: title.slice(0, 200),
+          date: full ? full[1] + '-' + pad(full[2]) + '-' + pad(full[3]) : null,
+          is_announcement: title.startsWith('【公告】'),
+          read_state: (parseInt(getComputedStyle(a).fontWeight, 10) || 400) >= 600 ? 'bold' : 'normal',
+        });
+      }
+      return items;
+    });
+  }
+
+  async function nextHref() {
+    return page.evaluate(() => {
+      const rel = document.querySelector('a[rel="next"]');
+      const txt = Array.from(document.querySelectorAll('a'))
+        .find((a) => /下一頁|next|›|»/i.test((a.innerText || '').trim()));
+      const el = rel || txt;
+      return el ? (el.getAttribute('href') || null) : null;
+    });
+  }
+
+  async function extractArticle() {
+    await page.evaluate(async () => {
+      const h = document.body.scrollHeight;
+      for (let y = 0; y < h; y += 600) {
+        window.scrollTo(0, y);
+        await new Promise((r) => setTimeout(r, 120));
+      }
+      window.scrollTo(0, 0);
+    });
+    return page.evaluate((minLen) => {
+      const root = document.querySelector('#inves_content');
+      if (!root) return { error: 'structure' };
+      const body = (root.innerText || '').trim();
+      if (body.length < minLen) return { error: 'short' };
+      const dateEl = document.querySelector('span.post_date');
+      const m = ((dateEl && dateEl.innerText) || '').match(/(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{1,2}):(\d{2}))?/);
+      const publishedAt = m ? m[1] + '-' + m[2] + '-' + m[3] + (m[4] ? 'T' + m[4].padStart(2, '0') + ':' + m[5] : '') : null;
+      const images = [];
+      for (const im of Array.from(root.querySelectorAll('img'))) {
+        const src = im.currentSrc || im.src || im.getAttribute('data-src') || '';
+        if (!src || src.startsWith('data:')) continue;
+        let abs = src;
+        try { abs = new URL(src, location.href).toString(); } catch (e) { continue; }
+        images.push({ seq: images.length + 1, src_url: abs });
+      }
+      return { body, published_at: publishedAt, images };
+    }, MIN_BODY_LEN);
+  }
+
+  try {
+    step('login');
+    await go(baseUrl + ENTRY_PATH, 'entry');
+    counters.logins += 1;
+    if (counters.logins > IMPORT_HARD.logins) throw new Error('login_cap');
+    const login = await submitLogin();
+    if (sess.isAborting()) throw new Error('aborting');
+    fact('login', { ok: login.ok, reason: login.reason || null });
+    if (!login.ok) {
+      st.stage_error = login.reason === 'ambiguous_login_form'
+        ? 'ambiguous_login_form' : 'login_failed:' + login.reason;
+      throw new Error('login');
+    }
+    st.logged_in = true;
+    st.login_at = new Date().toISOString();
+
+    // ---- 清單：第 1 頁（登入後已在清單頁就直接用，否則再導覽一次）；必要時往後翻
+    const pages = [];
+    let pageNo = 1;
+    let onList = new URL(page.url()).pathname === ENTRY_PATH && !new URL(page.url()).search;
+    for (;;) {
+      step('list-' + pageNo);
+      if (!onList) await go(pageNo === 1 ? baseUrl + ENTRY_PATH : pages.nextUrl, 'list');
+      onList = false;
+      counters.list_pages += 1;
+      const items = await extractListItems();
+      const prevIds = new Set(pageNo > 1 ? pages[pageNo - 2].map((i) => i.article_id) : []);
+      pages.push(items);
+      const unknownNonPinned = items.filter(
+        (i) => !i.is_announcement && !known.has(i.article_id) && !prevIds.has(i.article_id));
+      const href = await nextHref();
+      if (!unknownNonPinned.length || !href || pageNo >= maxPages) break;
+      pages.nextUrl = new URL(href, baseUrl).toString();
+      pageNo += 1;
+    }
+    // 置頂＝同一 ID 在相鄰頁重複出現
+    pages.forEach((items, idx) => {
+      const neighbours = new Set();
+      if (idx > 0) pages[idx - 1].forEach((i) => neighbours.add(i.article_id));
+      if (idx < pages.length - 1) pages[idx + 1].forEach((i) => neighbours.add(i.article_id));
+      items.forEach((i) => { i.pinned = neighbours.has(i.article_id); });
+    });
+    pages.forEach((items, idx) => items.forEach((i) => emit({
+      type: 'list_item', page: idx + 1, article_id: Number(i.article_id), title: i.title, date: i.date,
+      is_announcement: i.is_announcement, read_state: i.read_state, pinned: i.pinned,
+    })));
+
+    // ---- 目標：清單上所有未入庫（含置頂）＋待重試的，新文章在前，受每次篇數上限
+    const fresh = [];
+    for (const items of pages) {
+      for (const i of items) {
+        if (!i.is_announcement && !known.has(i.article_id) && !fresh.includes(i.article_id)) fresh.push(i.article_id);
+      }
+    }
+    const targets = fresh.concat(pending.filter((id) => !fresh.includes(id))).slice(0, maxArticles);
+    fact('targets', { article_ids: targets.map(Number) });
+
+    for (const id of targets) {
+      step('article');
+      try {
+        await go(baseUrl + '/user/vip_contents/' + id, 'article');
+        counters.articles_opened += 1;
+        const res = await extractArticle();
+        if (res.error) emit({ type: 'article_error', article_id: Number(id), reason: res.error });
+        else emit({ type: 'article', article_id: Number(id), published_at: res.published_at,
+                    body: res.body, images: res.images });
+      } catch (e) {
+        if (st.blocked || sess.isAborting()) break;
+        emit({ type: 'article_error', article_id: Number(id), reason: 'timeout' });
+      }
+    }
+  } catch (e) {
+    if (!st.stage_error) st.stage_error = 'exception:' + (e && e.name ? e.name : 'Error');
+  } finally {
+    step('logout');
+    try { await logoutIfPossible(); } catch (e) { /* ignore */ }
+    await context.close().catch(() => {});
+    await browser.close().catch(() => {});
+    emitSummary();
+  }
+}
+
 (async () => {
   let cfg;
   try {
@@ -343,12 +511,12 @@ async function probe(cfg) {
     emit({ type: 'summary', counters: {}, stage_error: 'bad_stdin' });
     process.exit(2);
   }
-  if (cfg.mode !== 'probe') {
+  if (cfg.mode !== 'probe' && cfg.mode !== 'import') {
     emit({ type: 'summary', counters: {}, stage_error: 'unsupported_mode' });
     process.exit(2);
   }
   try {
-    await probe(cfg);
+    if (cfg.mode === 'import') await importMode(cfg); else await probe(cfg);
   } catch (e) {
     emit({ type: 'summary', counters: {}, stage_error: 'fatal:' + (e && e.name ? e.name : 'Error') });
     process.exit(1);
