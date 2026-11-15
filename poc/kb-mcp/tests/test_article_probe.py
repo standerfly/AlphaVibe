@@ -348,6 +348,144 @@ class SameSiteTest(unittest.TestCase):
         self.assertEqual(json.loads(out), [True, True, False, False])
 
 
+class MailAnalysisTest(unittest.TestCase):
+    TODAY = datetime.date(2026, 11, 15)
+    ID_A = "17942117264764"
+    ID_B = "17941457714762"
+
+    def test_path_shapes_query_keys_and_long_numbers_without_values(self):
+        html = ('<a href="https://investanchors.com/user/vip_contents/%s?utm_source=x&id=%s">a</a>'
+                '<a href="https://investanchors.com/articles/abc123def456/view">b</a>'
+                '<a href="https://click.example.net/t?u=SECRETTOKEN">c</a>' % (self.ID_A, self.ID_B))
+        got = article_probe.classify_mail_links(html)
+        self.assertEqual(got["path_shapes"], {"/user/vip_contents/#": 1, "/articles/#/view": 1})
+        self.assertEqual(sorted(got["query_keys"]), ["id", "u", "utm_source"])
+        self.assertEqual(got["links_with_long_number_in_path"], 1)
+        self.assertEqual(got["links_with_long_number_in_query"], 1)
+        self.assertEqual(sorted(got["long_numbers"]), sorted([self.ID_A, self.ID_B]))
+        self.assertNotIn("SECRETTOKEN", json.dumps({k: v for k, v in got.items()
+                                                    if k != "long_numbers"}))
+
+    def _mail(self, date_hdr, body):
+        m = MIMEMultipart("alternative")
+        m["From"] = "定錨 <%s>" % article_probe.MAIL_SENDER
+        m["Subject"] = "SECRETSUBJECT"
+        m["Date"] = date_hdr
+        m.attach(MIMEText(body, "html", "utf-8"))
+        return m.as_bytes()
+
+    def _imap(self, mails):
+        class Fake:
+            def login(self, u, p):
+                return "OK", [b""]
+            def list(self):
+                return "OK", [b'(\\HasNoChildren \\All) "/" "[Gmail]/All Mail"']
+            def select(self, name, readonly=False):
+                return "OK", [b"1"]
+            def uid(self, cmd, *args):
+                if cmd == "SEARCH":
+                    return "OK", [b" ".join(sorted(mails))]
+                return "OK", [(b"1 (UID 1)", mails[args[0]]), b")"]
+            def logout(self):
+                pass
+        return Fake()
+
+    def test_probe_mail_reports_dates_and_id_matches_without_leaking_numbers(self):
+        mails = {
+            b"1": self._mail("Sat, 14 Nov 2026 22:30:00 +0800",
+                             '<a href="https://investanchors.com/p/%s">x</a>' % self.ID_A),
+            b"2": self._mail("Sun, 15 Nov 2026 01:00:00 +0000",
+                             '<a href="https://investanchors.com/p/%s">x</a>'
+                             '<a href="https://investanchors.com/p/99999999999999">y</a>' % self.ID_B),
+        }
+        facts = article_probe.probe_mail("me@x", "pw", imap_factory=lambda: self._imap(mails),
+                                         max_messages=60, known_ids=[self.ID_A, self.ID_B])
+        self.assertEqual(facts["messages_examined"], 2)
+        dates = [m["date"] for m in facts["messages"]]
+        self.assertEqual(dates, ["2026-11-14", "2026-11-15"], "UTC 01:00 要換成台北日期")
+        self.assertEqual([m["ids_in_list"] for m in facts["messages"]], [1, 1])
+        self.assertEqual([m["ids_not_in_list"] for m in facts["messages"]], [0, 1])
+        self.assertEqual(facts["path_shapes"], {"/p/#": 3})
+        dumped = json.dumps(facts, ensure_ascii=False)
+        self.assertNotRegex(dumped, r"\d{13,}")
+        self.assertNotIn("SECRETSUBJECT", dumped)
+
+    def test_compare_mail_vs_list_by_date_only(self):
+        mk = lambda i, d, dup=False, ann=False: {"id": i, "date": d, "announcement": ann,
+                                                 "dup_across_pages": dup}
+        items = [
+            mk(1612580077558, "2021-02-06", dup=True, ann=True),
+            mk(int(self.ID_A), "2021-02-06", dup=True),          # 置頂：改用 ID 時間（2026-11-09）
+            mk(100000000000001, "2026-11-12"),
+            mk(100000000000002, "2026-11-12"),                    # 同日兩篇
+            mk(100000000000003, "2026-10-20"),                    # 前後 1 天內都沒有信
+        ]
+        msgs = [{"date": "2026-11-12", "sender_ok": True, "distinct_long_numbers": 2,
+                 "ids_in_list": 0, "ids_not_in_list": 2},
+                {"date": "2026-11-09", "sender_ok": True, "distinct_long_numbers": 1},
+                {"date": "2026-11-01", "sender_ok": True, "distinct_long_numbers": 0},
+                {"date": "2026-11-13", "sender_ok": False, "distinct_long_numbers": 0}]
+        r = article_probe.compare_mail_vs_list(msgs, items, self.TODAY, 30)
+        self.assertEqual(r["mails_in_window"], 3)
+        self.assertEqual(r["articles_in_window"], 4)
+        self.assertEqual(r["articles_on_days_with_no_mail_same_day"], 1)
+        self.assertEqual(r["articles_with_no_mail_within_1_day"], 1)
+        self.assertEqual(r["mail_days_with_no_article_same_day"], 1)
+        self.assertEqual(r["mails_with_multiple_long_numbers"], 1)
+        self.assertEqual({d["date"]: (d["mails"], d["articles"]) for d in r["per_day"]},
+                         {"2026-11-12": (1, 2), "2026-11-09": (1, 1),
+                          "2026-11-01": (1, 0), "2026-10-20": (0, 1)})
+
+
+class MailOnlyModeTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="probe-mailonly-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _boom(self, *a, **k):
+        raise AssertionError("must not be called")
+
+    def test_refuses_without_mail_consent_and_touches_nothing(self):
+        out = io.StringIO()
+        rc = article_probe.run(["--mail-only", "--data-dir", self.tmp], get_secret=self._boom,
+                               scraper_runner=self._boom, mail_prober=self._boom, out=out)
+        self.assertEqual(rc, 2)
+        self.assertIn("--confirm-mail-read", out.getvalue())
+
+    def test_never_logs_in_or_reads_site_credentials(self):
+        listing = {"P1_list_pagination": {"list_items": [
+            {"id": 100000000000001, "date": "2026-11-12", "announcement": False,
+             "dup_across_pages": False}]}}
+        os.makedirs(os.path.join(self.tmp, "articles_probe"))
+        with open(os.path.join(self.tmp, "articles_probe", "probe-20261115-000000.json"), "w") as f:
+            json.dump(listing, f)
+        asked = []
+        def get(account, runner=None, service=None):
+            asked.append((account, service))
+            return {"gmail-address": "me@gmail.example", "gmail-app-password": "app-pw-xyz"}[account]
+        seen = {}
+        def prober(addr, pw, days=30, max_messages=2, known_ids=None):
+            seen["known_ids"] = list(known_ids)
+            seen["max_messages"] = max_messages
+            return {"messages": [{"date": "2026-11-12", "sender_ok": True,
+                                  "distinct_long_numbers": 1, "ids_in_list": 1,
+                                  "ids_not_in_list": 0}]}
+        out = io.StringIO()
+        rc = article_probe.run(["--mail-only", "--confirm-mail-read", "--data-dir", self.tmp],
+                               get_secret=get, scraper_runner=self._boom, mail_prober=prober,
+                               now=lambda: NOW, out=out)
+        self.assertEqual(rc, 0, out.getvalue())
+        self.assertEqual([a for a, _ in asked], ["gmail-address", "gmail-app-password"])
+        self.assertTrue(all(svc is None for _, svc in asked), "不得讀 stnd-investanchors")
+        self.assertEqual(seen["known_ids"], [100000000000001])
+        path = out.getvalue().split("信箱檢視報告：")[1].splitlines()[0]
+        self.assertTrue(os.path.basename(path).startswith("mail-"))
+        with open(path, encoding="utf-8") as f:
+            raw = f.read()
+        self.assertNotIn("app-pw-xyz", raw)
+        self.assertIn("comparison", json.loads(raw))
+
+
 class KeychainServiceTest(unittest.TestCase):
     class _P:
         def __init__(self, rc, out):

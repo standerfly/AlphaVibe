@@ -17,6 +17,7 @@ import argparse
 import datetime
 import email
 import email.policy
+import email.utils
 import imaplib
 import json
 import os
@@ -26,7 +27,7 @@ import subprocess
 import sys
 import threading
 from html.parser import HTMLParser
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 import keychain_secrets
 import statement_mailbox
@@ -122,12 +123,25 @@ class _HrefParser(HTMLParser):
                     self.hrefs.append(v)
 
 
+_LONG_NUM_RE = re.compile(r"\d{13,}")
+_TZ8 = datetime.timezone(datetime.timedelta(hours=8))
+
+
+def _path_shape(path):
+    return re.sub(r"[0-9a-f]{6,}|\d+", "#", path or "")[:80]
+
+
 def classify_mail_links(html_text):
-    """只回分類與主機名，不回完整網址（追蹤網址可能帶個人識別碼）。"""
+    """只回分類、主機名與路徑形態（數字換成 #），不回完整網址與查詢值（追蹤網址可能帶個人識別碼）。
+
+    `long_numbers` 是連結路徑／查詢值中 ≥13 位的數字（可能是文章 ID），僅供呼叫端內部比對，
+    不得寫入報告。
+    """
     parser = _HrefParser()
     parser.feed(html_text or "")
     direct, same_site, external = 0, 0, 0
-    hosts = []
+    hosts, shapes, qkeys, long_numbers = [], {}, [], set()
+    long_in_path = long_in_query = 0
     for href in parser.hrefs:
         u = urlparse(href)
         if u.scheme not in ("http", "https"):
@@ -141,13 +155,43 @@ def classify_mail_links(html_text):
             external += 1
             if host and host not in hosts and len(hosts) < 5:
                 hosts.append(host)
+        if host.endswith("investanchors.com"):
+            sh = _path_shape(u.path)
+            shapes[sh] = shapes.get(sh, 0) + 1
+        nums_path = _LONG_NUM_RE.findall(u.path or "")
+        qsl = parse_qsl(u.query, keep_blank_values=True)
+        nums_query = [n for _k, v in qsl for n in _LONG_NUM_RE.findall(v)]
+        long_in_path += 1 if nums_path else 0
+        long_in_query += 1 if nums_query else 0
+        long_numbers.update(nums_path + nums_query)
+        for k, _v in qsl:
+            if k[:20] not in qkeys and len(qkeys) < 10:
+                qkeys.append(k[:20])
     return {"direct_article": direct, "same_site_other": same_site,
-            "external_redirect": external, "external_hosts": hosts}
+            "external_redirect": external, "external_hosts": hosts,
+            "path_shapes": shapes, "query_keys": qkeys,
+            "links_with_long_number_in_path": long_in_path,
+            "links_with_long_number_in_query": long_in_query,
+            "long_numbers": sorted(long_numbers)}
 
 
-def probe_mail(address, app_password, imap_factory=None, days=30, max_messages=2):
-    """唯讀檢視最近幾封定錨通知信的連結型態（BODY.PEEK，不標已讀、不跟隨任何連結）。"""
+def _mail_date(msg):
+    try:
+        dt = email.utils.parsedate_to_datetime(str(msg.get("Date")))
+        return dt.astimezone(_TZ8).date().isoformat()
+    except (TypeError, ValueError):
+        return None
+
+
+def probe_mail(address, app_password, imap_factory=None, days=30, max_messages=2,
+               known_ids=None):
+    """唯讀檢視定錨通知信的連結型態與寄達日期（BODY.PEEK，不標已讀、不跟隨任何連結）。
+
+    known_ids：清單上已知的文章 ID 集合；給了就額外回報每封信裡的長數字有幾個對得上
+    （只回數量，不回數字本身）。
+    """
     factory = imap_factory or statement_mailbox._default_factory
+    known_ids = set(str(i) for i in (known_ids or []))
     try:
         conn = factory()
         conn.login(address, app_password)
@@ -165,15 +209,22 @@ def probe_mail(address, app_password, imap_factory=None, days=30, max_messages=2
         facts = {"messages_found": len(uids), "messages_examined": 0,
                  "sender_matches": None, "has_html_part": False,
                  "direct_article": 0, "same_site_other": 0,
-                 "external_redirect": 0, "external_hosts": []}
+                 "external_redirect": 0, "external_hosts": [],
+                 "path_shapes": {}, "query_keys": [], "messages": []}
         for uid in uids[-max_messages:]:
             raw = statement_mailbox._fetch_parts(conn, uid, "BODY.PEEK[]")
             if not raw:
                 continue
             msg = email.message_from_bytes(raw, policy=email.policy.default)
             facts["messages_examined"] += 1
-            facts["sender_matches"] = MAIL_SENDER in str(msg.get("From") or "").lower()
-            if not facts["sender_matches"]:
+            ok = MAIL_SENDER in str(msg.get("From") or "").lower()
+            if facts["sender_matches"] is None or not ok:
+                facts["sender_matches"] = ok
+            rec = {"date": _mail_date(msg), "sender_ok": ok, "direct_article": 0,
+                   "same_site_other": 0, "external_redirect": 0,
+                   "distinct_long_numbers": 0, "ids_in_list": None, "ids_not_in_list": None}
+            facts["messages"].append(rec)
+            if not ok:
                 continue
             body = msg.get_body(preferencelist=("html", "plain"))
             if body is None:
@@ -183,9 +234,22 @@ def probe_mail(address, app_password, imap_factory=None, days=30, max_messages=2
             cls = classify_mail_links(body.get_content())
             for k in ("direct_article", "same_site_other", "external_redirect"):
                 facts[k] += cls[k]
+                rec[k] = cls[k]
             for h in cls["external_hosts"]:
                 if h not in facts["external_hosts"] and len(facts["external_hosts"]) < 5:
                     facts["external_hosts"].append(h)
+            for sh, n in cls["path_shapes"].items():
+                facts["path_shapes"][sh] = facts["path_shapes"].get(sh, 0) + n
+            for k in cls["query_keys"]:
+                if k not in facts["query_keys"] and len(facts["query_keys"]) < 10:
+                    facts["query_keys"].append(k)
+            nums = set(cls["long_numbers"])
+            rec["distinct_long_numbers"] = len(nums)
+            if known_ids:
+                rec["ids_in_list"] = len(nums & known_ids)
+                rec["ids_not_in_list"] = len(nums - known_ids)
+        top = sorted(facts["path_shapes"].items(), key=lambda kv: -kv[1])[:10]
+        facts["path_shapes"] = dict(top)
         return facts
     except (imaplib.IMAP4.error, OSError) as e:
         raise ProbeError("Gmail 讀取失敗：%s" % type(e).__name__)
@@ -194,6 +258,86 @@ def probe_mail(address, app_password, imap_factory=None, days=30, max_messages=2
             conn.logout()
         except Exception:
             pass
+
+
+def _id_time_date(article_id):
+    s = str(article_id)
+    if len(s) != 14:
+        return None
+    try:
+        dt = datetime.datetime.fromtimestamp(int(s[:13]) / 1000.0, _TZ8)
+    except (ValueError, OverflowError, OSError):
+        return None
+    return dt.date()
+
+
+def compare_mail_vs_list(messages, list_items, today, window_days=30):
+    """只比日期、不記標題：通知信寄達日 vs 清單逐項日期。
+
+    置頂項（跨頁重複）的清單日期不可靠，改用文章 ID 推得的建立日期。
+    """
+    start = today - datetime.timedelta(days=window_days)
+    mail_days = {}
+    for m in messages:
+        if not m.get("sender_ok") or not m.get("date"):
+            continue
+        d = datetime.date.fromisoformat(m["date"])
+        if start <= d <= today:
+            mail_days[d] = mail_days.get(d, 0) + 1
+    seen, art_days = set(), {}
+    for it in list_items:
+        if it.get("announcement") or it["id"] in seen:
+            continue
+        seen.add(it["id"])
+        d = None
+        if it.get("dup_across_pages"):
+            d = _id_time_date(it["id"])
+        elif it.get("date"):
+            try:
+                d = datetime.date.fromisoformat(it["date"])
+            except ValueError:
+                d = None
+        if d and start <= d <= today:
+            art_days[d] = art_days.get(d, 0) + 1
+
+    def near(d, days):
+        return any((d + datetime.timedelta(days=k)) in days for k in (-1, 0, 1))
+
+    all_days = sorted(set(mail_days) | set(art_days))
+    return {
+        "window": [start.isoformat(), today.isoformat()],
+        "mails_in_window": sum(mail_days.values()),
+        "articles_in_window": sum(art_days.values()),
+        "articles_on_days_with_no_mail_same_day": sum(
+            n for d, n in art_days.items() if d not in mail_days),
+        "articles_with_no_mail_within_1_day": sum(
+            n for d, n in art_days.items() if not near(d, mail_days)),
+        "mail_days_with_no_article_same_day": len([d for d in mail_days if d not in art_days]),
+        "mails_with_multiple_long_numbers": len(
+            [m for m in messages if (m.get("distinct_long_numbers") or 0) > 1]),
+        "mail_total_ids_in_list": sum((m.get("ids_in_list") or 0) for m in messages),
+        "mail_total_ids_not_in_list": sum((m.get("ids_not_in_list") or 0) for m in messages),
+        "per_day": [{"date": d.isoformat(), "mails": mail_days.get(d, 0),
+                     "articles": art_days.get(d, 0)} for d in all_days],
+    }
+
+
+def _latest_list_report(data_dir):
+    d = os.path.join(os.path.abspath(data_dir), PROBE_DIRNAME)
+    if not os.path.isdir(d):
+        return None
+    for name in sorted(os.listdir(d), reverse=True):
+        if not name.startswith("probe-"):
+            continue
+        path = os.path.join(d, name)
+        try:
+            with open(path, encoding="utf-8") as f:
+                rep = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if (rep.get("P1_list_pagination") or {}).get("list_items"):
+            return path
+    return None
 
 
 # ---------------------------------------------------------------- P8 估算
@@ -416,10 +560,10 @@ def sanitize(report, secrets):
             raise ProbeError("報告含憑證內容，拒絕寫檔")
 
 
-def _write_report(data_dir, report, now):
+def _write_report(data_dir, report, now, prefix="probe"):
     out_dir = os.path.join(os.path.abspath(data_dir), PROBE_DIRNAME)
     os.makedirs(out_dir, mode=0o700, exist_ok=True)
-    path = os.path.join(out_dir, "probe-%s.json" % now.strftime("%Y%m%d-%H%M%S"))
+    path = os.path.join(out_dir, "%s-%s.json" % (prefix, now.strftime("%Y%m%d-%H%M%S")))
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
@@ -454,11 +598,21 @@ def run(argv=None, get_secret=None, scraper_runner=None, mail_prober=None,
                     help="指定要開啟的文章 ID（最多 %d 篇；不足時補一篇對照文章）" % LIMITS["articles"])
     ap.add_argument("--skip-mail", action="store_true",
                     help="略過 Gmail 通知信連結檢查（P4）")
+    ap.add_argument("--mail-only", action="store_true",
+                    help="只唯讀檢視通知信連結形態與寄達日期並與清單日期比對；不登入定錨網站、不啟動瀏覽器")
+    ap.add_argument("--confirm-mail-read", action="store_true",
+                    help="PO 同意讀取 Gmail（--mail-only 必填；唯讀、不標已讀、不跟隨連結）")
+    ap.add_argument("--list-report", default=None,
+                    help="第二次探查報告路徑（--mail-only 比對用；預設取最新含逐項清單者）")
+    ap.add_argument("--mail-days", type=int, default=30)
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args(argv)
 
     def say(msg):
         out.write(msg + "\n")
+
+    if args.mail_only:
+        return _run_mail_only(args, get_secret, mail_prober, now, out)
 
     if not args.confirm_po_present:
         say("拒絕執行：探查會用 PO 的會員帳號登入定錨網站，必須 PO 在場並加上 "
@@ -553,6 +707,56 @@ def run(argv=None, get_secret=None, scraper_runner=None, mail_prober=None,
         ok = False
     say("探查%s。" % ("完成" if ok else "未完全成功"))
     return 0 if ok else 1
+
+
+def _run_mail_only(args, get_secret, mail_prober, now, out):
+    def say(msg):
+        out.write(msg + "\n")
+
+    if not args.confirm_mail_read:
+        say("拒絕執行：--mail-only 會讀取 PO 的 Gmail（唯讀），必須 PO 同意並加上 --confirm-mail-read。"
+            "未讀取任何憑證、未連線。")
+        return 2
+    if not 1 <= args.mail_days <= 90:
+        say("拒絕執行：--mail-days 必須介於 1～90")
+        return 2
+    get_secret = get_secret or keychain_secrets.get_secret
+    started = (now or datetime.datetime.now)()
+    list_path = args.list_report or _latest_list_report(args.data_dir)
+    list_items = []
+    if list_path:
+        try:
+            with open(list_path, encoding="utf-8") as f:
+                list_items = (json.load(f).get("P1_list_pagination") or {}).get("list_items") or []
+        except (OSError, ValueError):
+            say("⚠️ 讀不到清單報告，略過與清單的比對")
+    known_ids = [i["id"] for i in list_items]
+    try:
+        gmail_addr = get_secret("gmail-address")
+        gmail_pw = get_secret("gmail-app-password")
+    except keychain_secrets.SecretNotFound as e:
+        say("無法開始：%s" % e)
+        return 1
+    try:
+        facts = (mail_prober or probe_mail)(
+            gmail_addr, gmail_pw, days=args.mail_days, max_messages=60, known_ids=known_ids)
+    except ProbeError as e:
+        say("信箱檢視失敗：%s" % e)
+        return 1
+    report = {"generated_at": started.isoformat(), "mail": facts,
+              "list_report_used": bool(list_items)}
+    if list_items:
+        report["comparison"] = compare_mail_vs_list(
+            facts.get("messages") or [], list_items, started.date(), args.mail_days)
+    try:
+        sanitize(report, [gmail_addr, gmail_pw])
+        path = _write_report(args.data_dir, report, started, prefix="mail")
+    except ProbeError as e:
+        say("檢視完成但報告未寫出：%s" % e)
+        return 1
+    say("信箱檢視報告：%s" % path)
+    say("信箱檢視完成。")
+    return 0
 
 
 def main(argv=None):
