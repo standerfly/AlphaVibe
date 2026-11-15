@@ -243,11 +243,12 @@ class ToolRegistrationTest(unittest.TestCase):
 
     def test_tool_counts(self):
         """工具數守門：45→47（002 階段新增 2 個）、唯讀 27→28（只加 get_）；
-        2026-10-28 新增 get_today_highlights（唯讀）→ 48／29。"""
+        2026-10-28 新增 get_today_highlights（唯讀）→ 48／29。
+        2026-11：新增 search_articles／get_article（010 定錨文章，唯讀）→ 50／31。"""
         import server
         import server_readonly
-        self.assertEqual(len(server.TOOLS), 48)
-        self.assertEqual(len(server_readonly.READONLY_TOOLS), 29)
+        self.assertEqual(len(server.TOOLS), 50)
+        self.assertEqual(len(server_readonly.READONLY_TOOLS), 31)
 
     def test_new_tools_registered_in_all_three_places(self):
         import server

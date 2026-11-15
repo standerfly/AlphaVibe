@@ -157,6 +157,12 @@ roundtrip-search 來源）。
   工具時要同步：`server.py` TOOLS、唯讀工具另加 `server_readonly.py`
   白名單、`test_pnl.py`／`test_traceability.py` 的工具數守門，以及 Mac 上
   `~/.claude` 的 stock-researcher 白名單（不在 repo）。
+  **定錨文章查詢（010 US2，2026-11 起，台股 50／唯讀 31、美股 10）**：`search_articles`／
+  `get_article` 的格式化與唯讀開庫統一在 `poc/kb-mcp/article_tools.py`；`server.py` 與
+  `us_stock_mcp_server.py` 都呼叫它、共讀同一個 `<data_dir>/articles.db`（SQLite `mode=ro`，
+  庫不存在回錯誤、不建庫、不寫 `alphavibe.db`／`us_stocks.db`）。工具數守門兩處：
+  `test_pnl.py::test_tool_counts`（50／31）、`test_traceability.py::test_tools_list_has_fifty`；
+  另有 `test_article_connectors_parity.py` 守台美輸出逐字相同。
 - **STND 架構與使用方式總覽（2026-08-24 新增）**：`docs/architecture.md`
   （分頁地圖、前後端架構、資料層/防呆機制、部署方式、開新 session 該去哪個
   資料夾——比本檔案的「STND 分頁與程式碼位置」節更完整，含視覺化 diagram 連結）

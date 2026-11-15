@@ -25,6 +25,9 @@ import investanchors_redact
 DB_FILENAME = "articles.db"
 TZ8 = datetime.timezone(datetime.timedelta(hours=8))
 MIN_BODY_LEN = 200
+SNIPPET_RADIUS = 60
+DEFAULT_SEARCH_LIMIT = 10
+MAX_SEARCH_LIMIT = 30
 URL_RE = re.compile(r"^https://(www\.)?investanchors\.com/user/vip_contents/\d+$")
 
 STATUSES = ("discovered", "fetched", "failed", "abandoned", "skipped", "deferred")
@@ -292,6 +295,113 @@ class ArticleStore(object):
     def list_images(self, article_id):
         return [dict(r) for r in self.conn.execute(
             "SELECT * FROM article_image WHERE article_id=? ORDER BY seq", (article_id,))]
+
+    # ------------------------------------------------------------------ 查詢（US2，唯讀）
+
+    @classmethod
+    def open_readonly(cls, data_dir):
+        """以 SQLite 唯讀模式（mode=ro）開啟既有 articles.db，給 MCP 查詢用。
+
+        不建目錄、不建表、不寫任何東西；庫不存在就明確報錯而不是建立空庫。"""
+        path = os.path.join(os.path.abspath(data_dir), DB_FILENAME)
+        if not os.path.isfile(path):
+            raise FileNotFoundError("文章庫尚未建立（找不到 %s），尚無已匯入的文章" % DB_FILENAME)
+        self = cls.__new__(cls)
+        self.data_dir = os.path.abspath(data_dir)
+        self.db_path = path
+        self._now = lambda: datetime.datetime.now(TZ8)
+        self.conn = sqlite3.connect("file:%s?mode=ro" % path.replace("?", "%3f").replace("#", "%23"),
+                                    uri=True, check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
+        return self
+
+    @staticmethod
+    def _like_pattern(keyword):
+        esc = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return "%" + esc + "%"
+
+    @staticmethod
+    def _snippet(text, keyword, radius=SNIPPET_RADIUS):
+        idx = text.lower().find(keyword.lower())
+        if idx < 0:
+            return None
+        start = max(0, idx - radius)
+        end = min(len(text), idx + len(keyword) + radius)
+        out = text[start:end].replace("\n", " ")
+        return ("…" if start > 0 else "") + out + ("…" if end < len(text) else "")
+
+    def search_articles(self, query, limit=DEFAULT_SEARCH_LIMIT):
+        """關鍵字搜尋（LIKE，非 FTS5，見 research R6）。
+
+        query 以空白切多關鍵字、全部需出現（AND）；範圍＝標題＋全文＋圖片轉寫文字；
+        僅 status='fetched'；發布日期新到舊。回傳 list[dict]：
+        article_id／title／published_at／url／snippet／source（內文／表格轉寫／標題）。"""
+        keywords = (query or "").split()
+        if not keywords:
+            raise ValueError("query 不可為空，請給至少一個關鍵字")
+        try:
+            limit = int(limit) if limit is not None else DEFAULT_SEARCH_LIMIT
+        except (TypeError, ValueError):
+            raise ValueError("limit 必須是整數")
+        limit = max(1, min(limit, MAX_SEARCH_LIMIT))
+        conds, params = ["a.status = 'fetched'"], []
+        for kw in keywords:
+            pat = self._like_pattern(kw)
+            conds.append(
+                "(a.title LIKE ? ESCAPE '\\' OR a.body LIKE ? ESCAPE '\\' OR EXISTS ("
+                "SELECT 1 FROM article_image i WHERE i.article_id = a.article_id "
+                "AND i.transcription LIKE ? ESCAPE '\\'))")
+            params += [pat, pat, pat]
+        sql = ("SELECT a.* FROM article a WHERE " + " AND ".join(conds) +
+               " ORDER BY COALESCE(a.published_at, a.list_date, '') DESC, a.article_id DESC LIMIT ?")
+        params.append(limit)
+        results = []
+        for row in self.conn.execute(sql, params).fetchall():
+            row = dict(row)
+            snippet, source = None, None
+            images = None
+            for kw in keywords:
+                snippet = self._snippet(row.get("body") or "", kw)
+                if snippet:
+                    source = "內文"
+                    break
+                if images is None:
+                    images = self.list_images(row["article_id"])
+                for img in images:
+                    snippet = self._snippet(img.get("transcription") or "", kw)
+                    if snippet:
+                        source = "表格轉寫"
+                        break
+                if snippet:
+                    break
+                snippet = self._snippet(row.get("title") or "", kw)
+                if snippet:
+                    source = "標題"
+                    break
+            results.append({
+                "article_id": row["article_id"], "title": row["title"],
+                "published_at": row.get("published_at") or row.get("list_date"),
+                "url": row["url"], "snippet": snippet or "", "source": source or "",
+            })
+        return results
+
+    def get_article(self, article_id):
+        """讀單篇（僅 status='fetched'）。找不到或非 fetched → ValueError，不回殘缺內容。"""
+        try:
+            article_id = int(article_id)
+        except (TypeError, ValueError):
+            raise ValueError("article_id 必須是整數")
+        row = self.get_article_row(article_id)
+        if row is None:
+            raise ValueError("文章庫裡沒有 article_id=%d（唯讀查詢，不會去網站抓取）" % article_id)
+        if row["status"] != "fetched":
+            raise ValueError("article_id=%d 尚未成功匯入（狀態：%s），沒有可讀的全文" % (article_id, row["status"]))
+        return {
+            "article_id": row["article_id"], "title": row["title"],
+            "published_at": row.get("published_at") or row.get("list_date"),
+            "url": row["url"], "body": row.get("body") or "",
+            "images": self.list_images(article_id),
+        }
 
     def images_missing_file(self):
         return [dict(r) for r in self.conn.execute(

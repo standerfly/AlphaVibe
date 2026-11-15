@@ -17,13 +17,15 @@ import us_stock_mcp_server  # noqa: E402
 
 
 class ToolsListTest(unittest.TestCase):
-    def test_eight_phase3_phase4_phase5_tools_registered(self):
+    def test_ten_tools_registered(self):
         names = {t["name"] for t in us_stock_mcp_server.TOOLS}
         self.assertEqual(names, {
             "parse_and_save_us_trade", "get_us_holdings",
             "get_us_trade_ledger", "get_us_price_history",
             "save_us_stance", "get_us_stance",
             "save_us_watch_condition", "get_us_watch_conditions",
+            # 2026-11 010 定錨文章查詢（唯讀，與台股連接器共讀 articles.db）
+            "search_articles", "get_article",
         })
 
     def test_each_tool_has_input_schema(self):

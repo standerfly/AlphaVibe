@@ -42,7 +42,7 @@ class ResolveDataDirTest(unittest.TestCase):
         tmp = tempfile.mkdtemp(prefix="article-deps-")
         self.addCleanup(shutil.rmtree, tmp, True)
         with mock.patch.dict(os.environ, {"ALPHAVIBE_DATA_DIR": tmp}, clear=True):
-            self.assertEqual(article_deps._resolve_article_data_dir(), os.path.abspath(tmp))
+            self.assertEqual(article_deps._resolve_article_data_dir(), os.path.realpath(tmp))
 
     def test_dependency_yields_store_and_closes_it(self):
         tmp = tempfile.mkdtemp(prefix="article-deps-")
