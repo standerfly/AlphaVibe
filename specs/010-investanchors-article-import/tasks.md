@@ -100,7 +100,7 @@
 - [x] T029 [US2] 更新工具數守門測試（spec 驗收（d））：`poc/kb-mcp/tests/test_pnl.py::test_tool_counts`（`len(server.TOOLS)` 48→50、`len(READONLY_TOOLS)` 29→31）；`poc/kb-mcp/tests/test_traceability.py::test_tools_list_has_forty_eight`（約 :252-261，改名為 `…_fifty`、docstring 註明 2026-11 新增 `search_articles`／`get_article`、`assertEqual(len(names), 50)`、預期工具名清單加兩項）；`poc/kb-mcp/tests/test_claude_ai_connector.py` 美股 `names == TOOLS` 的預期清單加兩項（並確認「美股不含 `get_holdings`」斷言仍成立）；`poc/kb-mcp/tests/test_us_stock_mcp_server.py` 若有工具數斷言一併更新。完整套件實跑，確認只有基準的 5 個既有失敗。
 - [x] T030 [US2] 建立兩連接器一致性測試 `poc/kb-mcp/tests/test_article_connectors_parity.py`（spec 驗收（e））：同一個測試 `articles.db`、同一組關鍵字（中文 2 字、英文、多關鍵字、查無）、同一個 `get_article`，分別經台股 `server.call_tool` 與美股 `us_stock_mcp_server.call_tool` 呼叫，**輸出逐字相同**；且兩邊都不能寫入（無寫入工具、`articles.db` 開啟為唯讀查詢路徑）。
 - [x] T031 [US2] 文件同步：更新根目錄 `CLAUDE.md`「常用查證點」的新增 MCP 工具同步清單（加入 `article_tools.py`、`articles.db` 由兩個 server 共讀、兩處守門測試），並在 `specs/010-investanchors-article-import/quickstart.md` 補「Mac 上 `~/.claude` 的 stock-researcher 白名單須由 PO 手動加入兩個工具」（列入 PO 待辦 T056）。
-- [ ] T032 [GATE] [US2] 提交推送 T025～T031 並通知主對話審查；通過後由全新 agent 獨立驗收 US2 驗收情境 1～4、FR-014／015、SC-008（只給驗收條件與否決條件）。
+- [x] T032 [GATE] [US2] 提交推送 T025～T031 並通知主對話審查；通過後由全新 agent 獨立驗收 US2 驗收情境 1～4、FR-014／015、SC-008（只給驗收條件與否決條件）。
 
 **Checkpoint**：US2 可獨立使用——對話中查得到 US1 已匯入的文章。
 
