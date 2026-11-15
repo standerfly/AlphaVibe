@@ -180,7 +180,7 @@ async function probe(cfg) {
     try {
       counters.logout_navigations = (counters.logout_navigations || 0) + 1;
       await page.goto(baseUrl + ENTRY_PATH, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-      const formVisible = await page.locator(PW_SEL).first().isVisible().catch(() => false);
+      const formVisible = await page.locator(PW_SEL + ':visible').first().isVisible().catch(() => false);
       const still = (await findLogout()).length > 0;
       return formVisible && !still;
     } catch (e) {

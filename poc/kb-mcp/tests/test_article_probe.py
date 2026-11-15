@@ -362,9 +362,11 @@ class FakeSite(object):
     """logout_mode：link（可見 GET 連結）／none／menu_js_delete（隱藏選單、JS 送 DELETE）／
     hidden_delete_no_js（隱藏連結、只接受 DELETE 或 POST+_method=delete+CSRF，GET 無效）。"""
 
-    def __init__(self, logout_mode="link", register_first=False, post_login_pw_field=False):
+    def __init__(self, logout_mode="link", register_first=False, post_login_pw_field=False,
+                 hidden_register_first=False):
         self.logout_mode = logout_mode
         self.register_first = register_first
+        self.hidden_register_first = hidden_register_first
         self.post_login_pw_field = post_login_pw_field
         self.sessions = set()
         self.read = set()
@@ -410,7 +412,12 @@ class FakeSite(object):
                 register = ('<form method="POST" action="/register"><input name="name">'
                             '<input type="email" name="reg_email"><input type="password" name="rp">'
                             '<input type="password" name="rp2"><button type="submit">註冊</button></form>')
-                forms = register + login if site.register_first else login + register
+                if site.hidden_register_first:
+                    forms = '<div style="display:none">%s</div>%s' % (register, login)
+                elif site.register_first:
+                    forms = register + login
+                else:
+                    forms = login + register
                 return "<html><body>%s</body></html>" % forms
 
             def _chrome(self):
@@ -607,6 +614,16 @@ class EndToEndFakeSiteTest(unittest.TestCase):
         self.assertTrue(report["P2_logout"]["attempts"][-1]["verified"])
         self.assertFalse(any(a["verified"] for a in report["P2_logout"]["attempts"][:-1]))
         self.assertIn(("POST", "/logout"), site.log)
+
+    def test_logout_verification_ignores_hidden_password_field_before_login_form(self):
+        site = FakeSite(hidden_register_first=True)
+        rc, out, report = self._probe(site)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(site.sessions, set())
+        attempts = report["P2_logout"]["attempts"]
+        self.assertEqual(len(attempts), 1, "第一次登出後就應驗證成功，不該多跑幾輪")
+        self.assertTrue(attempts[0]["verified"])
+        self.assertEqual([e for e in site.log if e[0] == "POST"], [("POST", "/login")])
 
     def test_register_form_before_login_form_aborts_without_submitting(self):
         site = FakeSite(register_first=True)
