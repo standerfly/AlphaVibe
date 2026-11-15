@@ -28,7 +28,12 @@ python3 poc/kb-mcp/investanchors_import.py --data-dir <dir>
 ```
 python3 poc/kb-mcp/article_probe.py --data-dir poc/data --confirm-po-present
 ```
-- 沒有 `--confirm-po-present` 直接拒絕執行。
+- 沒有 `--confirm-po-present` 直接拒絕執行（拒絕時**不讀鑰匙圈、不連線**）。其他旗標：`--base-url`（預設
+  `https://investanchors.com`）、`--skip-mail`（略過 P4 通知信連結檢查）、`--verbose`。頁面間隔固定 30～90 秒
+  （下限 10 秒，不可由 CLI 調低）。
+- 實作狀態（2026-11-15）：`article_probe.py`＋`scraper/investanchors_scraper.js`（probe 模式）＋
+  `tests/test_article_probe.py` 已完成並通過測試；**尚未對真實網站執行**。
+- 探查前先找伺服器端登出機制；找不到即停止、不開任何文章、報告 `no_logout_mechanism`。
 - 硬上限：登入 1 次、清單 ≤3 頁、開文章 ≤2 篇；單一 context；結束登出並驗證登出。
 - 輸出 `poc/data/articles_probe/probe-<時間>.json`：分頁型態、選擇器、通知信連結型態、登出方式、已讀是否改變、
   內文／圖片 DOM 結構。**不含全文、不含 cookie、不含帳密。**
