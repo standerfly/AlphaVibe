@@ -4,10 +4,13 @@ import io
 import json
 import os
 import shutil
+import signal
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -24,6 +27,7 @@ EMAIL = "po@example.com"
 PASSWORD = "pw-secret-123"
 NOW = datetime.datetime(2026, 11, 15, 23, 0, 0)
 IA = keychain_secrets.INVESTANCHORS_SERVICE
+CONFIRM = ["--confirm-po-present", "--confirm-one-device-only"]
 
 
 def _secrets(wrong_password=False):
@@ -46,11 +50,21 @@ class GateTest(unittest.TestCase):
         self.assertEqual(rc, 2)
         self.assertIn("--confirm-po-present", out.getvalue())
 
+    def test_refuses_without_one_device_confirmation(self):
+        def boom(*a, **k):
+            raise AssertionError("must not be called")
+        out = io.StringIO()
+        rc = article_probe.run(["--confirm-po-present"], get_secret=boom,
+                               scraper_runner=boom, mail_prober=boom, out=out)
+        self.assertEqual(rc, 2)
+        self.assertIn("--confirm-one-device-only", out.getvalue())
+        self.assertIn("最多兩台", out.getvalue())
+
     def test_short_delay_refused_unless_test_override(self):
         def boom(*a, **k):
             raise AssertionError("must not be called")
         out = io.StringIO()
-        rc = article_probe.run(["--confirm-po-present"], get_secret=boom, scraper_runner=boom,
+        rc = article_probe.run(CONFIRM, get_secret=boom, scraper_runner=boom,
                                out=out, delay_ms=(100, 200))
         self.assertEqual(rc, 2)
 
@@ -60,7 +74,7 @@ class GateTest(unittest.TestCase):
         def boom(*a, **k):
             raise AssertionError("scraper must not run")
         out = io.StringIO()
-        rc = article_probe.run(["--confirm-po-present", "--skip-mail"], get_secret=get,
+        rc = article_probe.run(CONFIRM + ["--skip-mail"], get_secret=get,
                                scraper_runner=boom, out=out)
         self.assertEqual(rc, 1)
         self.assertNotIn(PASSWORD, out.getvalue())
@@ -84,7 +98,7 @@ class RunnerHygieneTest(unittest.TestCase):
             seen["payload"] = payload
             return objs
         out = io.StringIO()
-        rc = article_probe.run(["--data-dir", self.tmp, "--confirm-po-present", "--skip-mail"]
+        rc = article_probe.run(["--data-dir", self.tmp] + CONFIRM + ["--skip-mail"]
                                + (extra or []), get_secret=_secrets(), scraper_runner=runner,
                                now=lambda: NOW, out=out, allow_short_delay=True,
                                delay_ms=(10, 20))
@@ -113,6 +127,8 @@ class RunnerHygieneTest(unittest.TestCase):
                 return 0
             def kill(self):
                 pass
+            def terminate(self):
+                pass
         proc = FakeProc()
         with mock.patch.object(article_probe.subprocess, "Popen", return_value=proc) as popen, \
                 mock.patch.object(article_probe.os.path, "exists", return_value=True):
@@ -140,7 +156,9 @@ class RunnerHygieneTest(unittest.TestCase):
     def test_unverified_logout_fails_with_manual_logout_warning(self):
         rc, out, _ = self._run([self._summary(logout_verified=False)])
         self.assertEqual(rc, 1)
-        self.assertIn("請 PO 立刻手動登出", out)
+        self.assertIn("請勿再次執行探查", out)
+        self.assertIn("無法清除", out)
+        self.assertNotIn("請 PO 立刻手動登出", out)
 
     def test_no_logout_mechanism_stops_and_reports(self):
         rc, out, _ = self._run([self._summary(
@@ -152,7 +170,7 @@ class RunnerHygieneTest(unittest.TestCase):
     def test_missing_summary_is_failure(self):
         rc, out, _ = self._run([{"type": "fact", "step": "login", "data": {}}])
         self.assertEqual(rc, 1)
-        self.assertIn("手動登出", out)
+        self.assertIn("請勿再次執行探查", out)
 
     def test_report_file_is_private_and_under_probe_dir(self):
         rc, out, _ = self._run([self._summary()])
@@ -266,6 +284,36 @@ class MailProbeTest(unittest.TestCase):
         self.assertEqual(facts["direct_article"], 0)
 
 
+class RunnerTimeoutTest(unittest.TestCase):
+    def test_silent_node_is_terminated_by_watchdog(self):
+        tmp = tempfile.mkdtemp(prefix="probe-sleeper-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        script = os.path.join(tmp, "sleeper.py")
+        with open(script, "w") as f:
+            f.write("import time\ntime.sleep(60)\n")
+        with mock.patch.object(article_probe, "_node_binary", return_value=sys.executable), \
+                mock.patch.object(article_probe, "SCRAPER_JS", script):
+            t0 = time.time()
+            objs = article_probe.default_scraper_runner({"mode": "probe"}, timeout_sec=1,
+                                                        grace_sec=3)
+        self.assertLess(time.time() - t0, 15)
+        self.assertEqual(objs, [])
+
+
+@unittest.skipUnless(shutil.which("node") or os.path.exists("/opt/homebrew/bin/node"), "需要 node")
+class SameSiteTest(unittest.TestCase):
+    def test_www_variant_is_same_site_but_lookalikes_are_not(self):
+        node = shutil.which("node") or "/opt/homebrew/bin/node"
+        code = ("const {sameSite}=require('./scraper/site_util');"
+                "console.log(JSON.stringify([sameSite('investanchors.com','www.investanchors.com'),"
+                "sameSite('www.investanchors.com','investanchors.com'),"
+                "sameSite('evil.com','investanchors.com'),"
+                "sameSite('investanchors.com.evil.com','investanchors.com')]))")
+        out = subprocess.run([node, "-e", code], cwd=article_probe.HERE,
+                             capture_output=True, text=True, timeout=30).stdout
+        self.assertEqual(json.loads(out), [True, True, False, False])
+
+
 class KeychainServiceTest(unittest.TestCase):
     class _P:
         def __init__(self, rc, out):
@@ -294,9 +342,30 @@ class KeychainServiceTest(unittest.TestCase):
 
 # ------------------------------------------------------------------ 端到端（本機假網站）
 
+CSRF = "tok123"
+MENU_JS_DELETE = (
+    '<div class="dropdown"><a class="dropdown-toggle" href="#" '
+    'onclick="document.getElementById(\'m\').style.display=\'block\';return false">帳號</a>'
+    '<ul id="m" style="display:none"><li><a href="/logout" data-method="delete" '
+    'onclick="fetch(\'/logout\',{method:\'DELETE\'}).then(function(){location.href='
+    '\'/user/vip_contents/investanchors_index\'});return false">登出</a></li></ul></div>')
+HIDDEN_NO_JS = '<div style="display:none"><a href="/logout" data-method="delete">登出</a></div>'
+LOGOUT_HTML = {
+    "link": '<a href="/logout">登出</a>',
+    "none": "",
+    "menu_js_delete": MENU_JS_DELETE,
+    "hidden_delete_no_js": HIDDEN_NO_JS,
+}
+
+
 class FakeSite(object):
-    def __init__(self, has_logout=True):
-        self.has_logout = has_logout
+    """logout_mode：link（可見 GET 連結）／none／menu_js_delete（隱藏選單、JS 送 DELETE）／
+    hidden_delete_no_js（隱藏連結、只接受 DELETE 或 POST+_method=delete+CSRF，GET 無效）。"""
+
+    def __init__(self, logout_mode="link", register_first=False, post_login_pw_field=False):
+        self.logout_mode = logout_mode
+        self.register_first = register_first
+        self.post_login_pw_field = post_login_pw_field
         self.sessions = set()
         self.read = set()
         self.log = []
@@ -327,12 +396,27 @@ class FakeSite(object):
                 self.end_headers()
                 self.wfile.write(data)
 
+            def _do_logout(self):
+                site.sessions.discard(self._sid())
+                return self._send("", 302, {"Location": "/user/vip_contents/investanchors_index",
+                                            "Set-Cookie": "sid=; Max-Age=0; Path=/"})
+
             def _login_page(self, err=False):
-                return ('<html><body><form method="POST" action="/login">%s'
-                        '<input type="email" name="email"><input type="password" name="password">'
-                        '<label><input type="checkbox" name="remember" checked>記住我</label>'
-                        '<button type="submit">登入</button></form></body></html>'
-                        % ("<p>帳號或密碼錯誤</p>" if err else ""))
+                login = ('<form method="POST" action="/login">%s'
+                         '<input type="email" name="email"><input type="password" name="password">'
+                         '<label><input type="checkbox" name="remember" checked>記住我</label>'
+                         '<button type="submit">登入</button></form>'
+                         % ("<p>帳號或密碼錯誤</p>" if err else ""))
+                register = ('<form method="POST" action="/register"><input name="name">'
+                            '<input type="email" name="reg_email"><input type="password" name="rp">'
+                            '<input type="password" name="rp2"><button type="submit">註冊</button></form>')
+                forms = register + login if site.register_first else login + register
+                return "<html><body>%s</body></html>" % forms
+
+            def _chrome(self):
+                extra = '<input type="password" name="unlock">' if site.post_login_pw_field else ""
+                return ('<head><meta name="csrf-token" content="%s"></head><nav>%s%s</nav>'
+                        % (CSRF, LOGOUT_HTML[site.logout_mode], extra))
 
             def _list_page(self, page):
                 rows = []
@@ -348,17 +432,17 @@ class FakeSite(object):
                     for i, t, d in rows)
                 nxt = ('<a rel="next" href="/user/vip_contents/investanchors_index?page=2">'
                        '下一頁</a>' if page == 1 else "")
-                nav = ('<nav><a href="/user/vip_contents/investanchors_index?lv=0">總覽</a>'
-                       '<a href="/user/vip_contents/investanchors_index?lv=1">週報</a>%s</nav>'
-                       % ('<a href="/logout">登出</a>' if site.has_logout else ""))
-                return "<html><body>%s<table>%s</table>%s</body></html>" % (nav, trs, nxt)
+                nav = ('<a href="/user/vip_contents/investanchors_index?lv=0">總覽</a>'
+                       '<a href="/user/vip_contents/investanchors_index?lv=1">週報</a>')
+                return "<html>%s<body>%s<table>%s</table>%s</body></html>" % (
+                    self._chrome(), nav, trs, nxt)
 
             def _article_page(self, aid):
-                return ('<html><body><nav>%s</nav><h1>SECRETTITLE %d</h1><div class="post">'
+                return ('<html>%s<body><h1>SECRETTITLE %d</h1><div class="post">'
                         '<p>SECRETBODY 第一段內容</p><p>SECRETBODY 第二段內容</p>'
                         '<img src="/img/%d/a1b2c3d4e5.png" alt="">'
                         '<img src="/img/%d/f6e5d4c3b2.png" alt="表"></div></body></html>'
-                        % ('<a href="/logout">登出</a>' if site.has_logout else "", aid, aid, aid))
+                        % (self._chrome(), aid, aid, aid))
 
             def do_GET(self):
                 u = urlparse(self.path)
@@ -366,9 +450,9 @@ class FakeSite(object):
                     site.log.append(("GET", u.path))
                     logged = self._sid() in site.sessions
                     if u.path == "/logout":
-                        site.sessions.discard(self._sid())
-                        return self._send("", 302, {"Location": "/user/vip_contents/investanchors_index",
-                                                    "Set-Cookie": "sid=; Max-Age=0; Path=/"})
+                        if site.logout_mode == "link" and logged:
+                            return self._do_logout()
+                        return self._send("method not allowed", 405)
                     if u.path.startswith("/img/"):
                         return self._send("x")
                     if not logged:
@@ -382,11 +466,26 @@ class FakeSite(object):
                         return self._send(self._article_page(int(parts[-1])))
                     return self._send("not found", 404)
 
+            def do_DELETE(self):
+                with site.lock:
+                    site.log.append(("DELETE", urlparse(self.path).path))
+                    if urlparse(self.path).path == "/logout":
+                        return self._do_logout()
+                    return self._send("not found", 404)
+
             def do_POST(self):
                 length = int(self.headers.get("Content-Length") or 0)
                 form = parse_qs(self.rfile.read(length).decode("utf-8"))
+                path = urlparse(self.path).path
                 with site.lock:
-                    site.log.append(("POST", urlparse(self.path).path))
+                    site.log.append(("POST", path))
+                    if path == "/logout":
+                        if (form.get("_method") == ["delete"]
+                                and self.headers.get("X-CSRF-Token") == CSRF):
+                            return self._do_logout()
+                        return self._send("forbidden", 403)
+                    if path == "/register":
+                        return self._send("registered?!")
                     ok = (form.get("email") == [EMAIL] and form.get("password") == [PASSWORD])
                     if ok:
                         site.sessions.add("s1")
@@ -422,7 +521,7 @@ class EndToEndFakeSiteTest(unittest.TestCase):
         self.addCleanup(site.stop)
         out = io.StringIO()
         rc = article_probe.run(
-            ["--data-dir", self.tmp, "--confirm-po-present", "--skip-mail", "--base-url", base],
+            ["--data-dir", self.tmp] + CONFIRM + ["--skip-mail", "--base-url", base],
             get_secret=_secrets(wrong_password), now=lambda: NOW, out=out,
             allow_short_delay=True, delay_ms=(30, 60))
         path = None
@@ -433,7 +532,7 @@ class EndToEndFakeSiteTest(unittest.TestCase):
             with open(path, encoding="utf-8") as f:
                 raw = f.read()
             report = json.loads(raw)
-            for needle in ("SECRETTITLE", "SECRETBODY", PASSWORD, EMAIL):
+            for needle in ("SECRETTITLE", "SECRETBODY", PASSWORD, EMAIL, CSRF):
                 self.assertNotIn(needle, raw, "報告不得含 %s" % needle)
         return rc, out.getvalue(), report
 
@@ -443,7 +542,7 @@ class EndToEndFakeSiteTest(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertEqual(site.sessions, set(), "探查結束後伺服器端不得留有登入狀態")
         posts = [e for e in site.log if e[0] == "POST"]
-        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts, [("POST", "/login")], "只送出登入表單，不得碰註冊表單")
         opened = [e for e in site.log if e[0] == "GET" and e[1].rsplit("/", 1)[-1].isdigit()
                   and e[1].startswith("/user/vip_contents/")]
         self.assertEqual(len(opened), 2)
@@ -452,6 +551,7 @@ class EndToEndFakeSiteTest(unittest.TestCase):
         self.assertLessEqual(report["counters"]["list_pages"], 3)
         self.assertEqual(report["limit_violations"], [])
         self.assertTrue(report["P2_logout"]["server_side_verified"])
+        self.assertEqual(report["P2_logout"]["attempts"][0]["method"], "menu_click")
         self.assertEqual(report["P1_list_pagination"]["paging_type"], "link_pagination")
         self.assertEqual(report["P1_list_pagination"]["items_per_page_page1"], 7)
         self.assertEqual(report["P1_list_pagination"]["items_per_page_page2"], 3)
@@ -468,12 +568,14 @@ class EndToEndFakeSiteTest(unittest.TestCase):
         self.assertEqual(report["P8_id_monotonic_with_date"], True)
 
     def test_no_logout_mechanism_stops_before_opening_articles(self):
-        site = FakeSite(has_logout=False)
+        site = FakeSite(logout_mode="none")
         rc, out, report = self._probe(site)
         self.assertEqual(rc, 1)
         self.assertIn("找不到伺服器端登出機制", out)
+        self.assertIn("請勿再次執行探查", out)
         self.assertEqual(report["counters"]["articles_opened"], 0)
         self.assertFalse(report["P2_logout"]["mechanism_found"])
+        self.assertFalse(report["P2_logout"]["server_side_verified"])
 
     def test_bad_credentials_classified_and_nothing_else_visited(self):
         site = FakeSite()
@@ -482,6 +584,72 @@ class EndToEndFakeSiteTest(unittest.TestCase):
         self.assertEqual(report["P7_block_and_login"]["login_failure_reason"], "bad_credentials")
         self.assertEqual(report["counters"]["articles_opened"], 0)
         self.assertEqual(site.sessions, set())
+
+    def test_logout_in_hidden_dropdown_that_only_accepts_delete(self):
+        site = FakeSite(logout_mode="menu_js_delete")
+        rc, out, report = self._probe(site)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(site.sessions, set())
+        self.assertIn(("DELETE", "/logout"), site.log)
+        self.assertTrue(report["P2_logout"]["mechanism_found"])
+        cand = report["P2_logout"]["candidates"][0]
+        self.assertEqual(cand["data_method"], "delete")
+        self.assertFalse(cand["visible"])
+
+    def test_hidden_logout_link_without_js_falls_back_to_csrf_post_override(self):
+        site = FakeSite(logout_mode="hidden_delete_no_js")
+        rc, out, report = self._probe(site)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(site.sessions, set())
+        methods = [a["method"] for a in report["P2_logout"]["attempts"]]
+        self.assertEqual(methods[-1], "fetch")
+        self.assertIn("menu_click", methods)
+        self.assertTrue(report["P2_logout"]["attempts"][-1]["verified"])
+        self.assertFalse(any(a["verified"] for a in report["P2_logout"]["attempts"][:-1]))
+        self.assertIn(("POST", "/logout"), site.log)
+
+    def test_register_form_before_login_form_aborts_without_submitting(self):
+        site = FakeSite(register_first=True)
+        rc, out, report = self._probe(site)
+        self.assertEqual(rc, 1)
+        self.assertEqual(report["P7_block_and_login"]["stage_error"], "ambiguous_login_form")
+        self.assertEqual([e for e in site.log if e[0] == "POST"], [], "不得送出任何表單")
+        self.assertEqual(site.sessions, set())
+
+    def test_session_is_logged_out_even_when_login_is_judged_failed(self):
+        site = FakeSite(post_login_pw_field=True)
+        rc, out, report = self._probe(site)
+        self.assertEqual(rc, 1)
+        self.assertEqual(site.sessions, set(), "已登入但被判定失敗時仍須登出")
+        self.assertEqual(report["counters"]["articles_opened"], 0)
+
+    def test_sigterm_during_run_logs_out_before_exit(self):
+        site = FakeSite()
+        base = site.start()
+        self.addCleanup(site.stop)
+        payload = {"mode": "probe", "email": EMAIL, "password": PASSWORD, "base_url": base,
+                   "max_list_pages": 3, "max_articles": 2, "delay_ms": [6000, 6000],
+                   "timeout_ms": 30000}
+        proc = subprocess.Popen(["node", article_probe.SCRAPER_JS] if shutil.which("node")
+                                else ["/opt/homebrew/bin/node", article_probe.SCRAPER_JS],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        proc.stdin.write(json.dumps(payload).encode())
+        proc.stdin.close()
+        deadline = time.time() + 40
+        while not site.sessions and time.time() < deadline:
+            time.sleep(0.1)
+        self.assertTrue(site.sessions, "假網站應已建立登入狀態")
+        proc.send_signal(signal.SIGTERM)
+        out = proc.stdout.read().decode("utf-8")
+        proc.stdout.close()
+        proc.wait(timeout=60)
+        self.assertEqual(site.sessions, set(), "收到 SIGTERM 後須先登出再結束")
+        summaries = [json.loads(l) for l in out.splitlines() if '"type":"summary"' in l]
+        self.assertEqual(len(summaries), 1)
+        self.assertEqual(summaries[0]["stage_error"], "signal_SIGTERM")
+        self.assertTrue(summaries[0]["logout_verified"])
 
 
 if __name__ == "__main__":

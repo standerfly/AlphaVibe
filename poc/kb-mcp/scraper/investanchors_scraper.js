@@ -12,15 +12,22 @@
  * probe 的硬性規約（specs/010 research R0）：每次執行登入 1 次、清單頁最多 3 頁、
  * 文章最多開 2 篇、全程單一 context；**結束必走伺服器端登出並驗證**（context.close()
  * 只清本機 cookie，不算登出）；找不到登出機制就停止並回報；只輸出結構事實——
- * 不輸出文章標題、全文、cookie、帳密。
+ * 不輸出文章標題、全文、cookie、帳密、CSRF token。
+ *
+ * 登出的穩健性：登出連結常藏在使用者下拉選單且可能是 data-method="delete"，
+ * 所以依序嘗試 (a)展開選單再點 (b)頁面內 el.click() (c)以同源請求送出對應方法
+ * (d)GET，**每一步之後都驗證**，第一個驗證成功即停。任何異常路徑與收到
+ * SIGINT／SIGTERM 時，只要目前頁面找得到登出機制就先登出再結束。
  */
 const { chromium } = require('playwright');
 const fsp = require('fs');
 const path = require('path');
 const os = require('os');
+const { sameSite } = require('./site_util');
 
 const HARD = { logins: 1, listPages: 3, articles: 2, navigations: 12 };
 const ENTRY_PATH = '/user/vip_contents/investanchors_index';
+const LOGOUT_RE_SRC = '登出|log\\s*-?out|sign\\s*-?out';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -53,6 +60,8 @@ const BLOCK_URL_RE = /\/sorry\/|captcha|\/blocked|\/forbidden/i;
 const PW_SEL = 'input[type="password"]';
 const EMAIL_SEL =
   'input[type="email"], input[name*="email" i], input[name*="mail" i], input[id*="email" i]';
+const TEXT_INPUT_SEL =
+  'input:not([type]), input[type="text"], input[type="email"], input[type="tel"], input[type="number"]';
 
 function readStdin() {
   return new Promise((resolve, reject) => {
@@ -80,6 +89,10 @@ async function probe(cfg) {
     logout_verified: false, stage_error: null, login_at: null, logout_at: null,
   };
   let timeouts = 0;
+  let aborting = false;
+  let summaryEmitted = false;
+  let logoutPromise = null;
+  let loginSubmitted = false;
 
   const exe = findChromium();
   if (!exe) {
@@ -89,6 +102,8 @@ async function probe(cfg) {
   const browser = await chromium.launch({
     executablePath: exe, headless: true,
     args: ['--disable-blink-features=AutomationControlled'],
+    // Playwright 預設收到訊號就先關瀏覽器，導致無法登出；改由下方自己的處理器先登出再結束。
+    handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false,
   });
   const context = await browser.newContext({
     locale: 'zh-TW', timezoneId: 'Asia/Taipei',
@@ -97,13 +112,21 @@ async function probe(cfg) {
   const page = await context.newPage();
   page.setDefaultTimeout(timeoutMs);
 
-  // 每次導覽都經過這裡：計數、上限、禮貌間隔、被擋偵測。
+  function emitSummary() {
+    if (summaryEmitted) return;
+    summaryEmitted = true;
+    emit({ type: 'summary', counters, ...st });
+  }
+
+  // 每次（前進用的）導覽都經過這裡：計數、上限、禮貌間隔、被擋偵測。
   async function go(url, kind) {
+    if (aborting) throw new Error('aborting');
     if (counters.navigations >= HARD.navigations) {
       st.stage_error = 'navigation_cap';
       throw new Error('navigation_cap');
     }
     if (counters.navigations > 0) await sleep(rnd(delayRange[0], delayRange[1]));
+    if (aborting) throw new Error('aborting');
     counters.navigations += 1;
     let resp = null;
     try {
@@ -117,7 +140,7 @@ async function probe(cfg) {
     const u = new URL(page.url());
     const status = resp ? resp.status() : 0;
     if (status === 403 || status === 429 || BLOCK_URL_RE.test(u.pathname) ||
-        u.host !== baseHost) {
+        !sameSite(u.host, baseHost)) {
       st.blocked = true;
       st.stage_error = 'blocked_unexpected_page';
       throw new Error('blocked');
@@ -125,24 +148,169 @@ async function probe(cfg) {
     return { status, kind };
   }
 
+  // 找登出機制並在元素上做標記（data-probe-logout=序號），供後續各種嘗試定位。
+  // 只回方法名（data-method），不回 token。
   async function findLogout() {
-    return page.evaluate(() => {
-      const re = /登出|log\s*-?out|sign\s*-?out/i;
+    return page.evaluate((reSrc) => {
+      const re = new RegExp(reSrc, 'i');
       const hrefRe = /log-?out|sign[_-]?out/i;
+      for (const old of document.querySelectorAll('[data-probe-logout]')) {
+        old.removeAttribute('data-probe-logout');
+      }
       const out = [];
       for (const el of document.querySelectorAll('a,button,input[type=submit],form')) {
         const text = ((el.innerText || el.value || '') + '').trim().slice(0, 20);
         const href = el.getAttribute('href') || el.getAttribute('action') || '';
         if (re.test(text) || hrefRe.test(href)) {
+          if (out.length < 5) el.setAttribute('data-probe-logout', String(out.length));
           out.push({
             tag: el.tagName.toLowerCase(), text,
             href_path: href.split('?')[0].slice(0, 100),
             method: (el.getAttribute('method') || '').toUpperCase(),
+            data_method: (el.getAttribute('data-method') || '').toLowerCase().slice(0, 10),
             visible: !!(el.offsetWidth || el.offsetHeight),
           });
         }
       }
       return out.slice(0, 5);
+    }, LOGOUT_RE_SRC);
+  }
+
+  async function verifyLoggedOut() {
+    try {
+      counters.logout_navigations = (counters.logout_navigations || 0) + 1;
+      await page.goto(baseUrl + ENTRY_PATH, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+      const formVisible = await page.locator(PW_SEL).first().isVisible().catch(() => false);
+      const still = (await findLogout()).length > 0;
+      return formVisible && !still;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  const logoutAttempts = {
+    // (a) 展開使用者選單（或已可見）再點
+    async menu_click() {
+      const visibleLoc = () => page.locator('[data-probe-logout]:visible').first();
+      if ((await visibleLoc().count()) === 0) {
+        const toggles = page.locator(
+          '[data-toggle="dropdown"], [data-bs-toggle="dropdown"], .dropdown-toggle, ' +
+          '[aria-haspopup="true"], [aria-haspopup="menu"]');
+        const n = Math.min(await toggles.count(), 3);
+        for (let i = 0; i < n && (await visibleLoc().count()) === 0; i += 1) {
+          await toggles.nth(i).click({ timeout: 3000 }).catch(() => {});
+          await page.waitForTimeout(400);
+        }
+      }
+      if ((await visibleLoc().count()) === 0) return false;
+      await visibleLoc().click({ timeout: 8000 });
+      return true;
+    },
+    // (b) 頁面內 el.click()：對隱藏元素也有效，且會經過網站自己的 JS（data-method）
+    async js_click() {
+      return page.evaluate(() => {
+        const els = Array.from(document.querySelectorAll('[data-probe-logout]'));
+        const el = els.find((e) => e.tagName !== 'FORM') || els[0];
+        if (!el) return false;
+        if (el.tagName === 'FORM') {
+          if (el.requestSubmit) el.requestSubmit(); else el.submit();
+        } else {
+          el.click();
+        }
+        return true;
+      });
+    },
+    // (c) 讀 data-method 與 CSRF token，以同源請求送出對應方法（token 不離開頁面）
+    async fetch() {
+      return page.evaluate(async () => {
+        const el = document.querySelector('[data-probe-logout]');
+        if (!el) return false;
+        const href = el.getAttribute('href') || el.getAttribute('action') || '';
+        if (!href) return false;
+        const url = new URL(href, location.href);
+        if (url.host !== location.host) return false;
+        const dm = (el.getAttribute('data-method') || el.getAttribute('method') || 'get').toLowerCase();
+        const meta = document.querySelector('meta[name="csrf-token"]');
+        const token = meta ? meta.content : '';
+        const base = { credentials: 'same-origin' };
+        if (dm === 'get') {
+          await fetch(url.toString(), { ...base, method: 'GET', headers: { 'X-CSRF-Token': token } });
+          return true;
+        }
+        const body = new URLSearchParams({ _method: dm, authenticity_token: token });
+        await fetch(url.toString(), {
+          ...base, method: 'POST', body,
+          headers: { 'X-CSRF-Token': token, 'Content-Type': 'application/x-www-form-urlencoded' },
+        });
+        if (dm === 'delete' || dm === 'put' || dm === 'patch') {
+          await fetch(url.toString(), {
+            ...base, method: dm.toUpperCase(), headers: { 'X-CSRF-Token': token },
+          }).catch(() => {});
+        }
+        return true;
+      });
+    },
+    // (d) 最後才是 GET
+    async get() {
+      const mech = await page.evaluate(() => {
+        const el = document.querySelector('[data-probe-logout]');
+        return el ? (el.getAttribute('href') || '') : '';
+      });
+      if (!mech) return false;
+      const target = new URL(mech, baseUrl);
+      if (!sameSite(target.host, baseHost)) return false;
+      await page.goto(target.toString(), { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+      return true;
+    },
+  };
+
+  async function runLogoutFlow() {
+    const attempts = [];
+    let verified = false;
+    for (const method of ['menu_click', 'js_click', 'fetch', 'get']) {
+      let mech = [];
+      try { mech = await findLogout(); } catch (e) { mech = []; }
+      if (!mech.length) {
+        if (await verifyLoggedOut()) { verified = true; attempts.push({ method, acted: false, verified: true }); break; }
+        attempts.push({ method, acted: false, verified: false });
+        await sleep(rnd(1500, 3000));
+        continue;
+      }
+      let acted = false;
+      try { acted = !!(await logoutAttempts[method]()); } catch (e) { acted = false; }
+      await page.waitForTimeout(1200);
+      const ok = acted ? await verifyLoggedOut() : false;
+      attempts.push({ method, acted, verified: ok });
+      if (ok) { verified = true; break; }
+      await sleep(rnd(1500, 3000));
+    }
+    st.logged_out = verified;
+    st.logout_verified = verified;
+    st.logout_at = new Date().toISOString();
+    fact('logout', { verified, attempts });
+    return verified;
+  }
+
+  const ensureLogout = () => {
+    if (!logoutPromise) logoutPromise = runLogoutFlow();
+    return logoutPromise;
+  };
+
+  async function logoutIfPossible() {
+    let mech = [];
+    try { mech = await findLogout(); } catch (e) { mech = []; }
+    if (st.logged_in || loginSubmitted || mech.length) await ensureLogout();
+  }
+
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(sig, async () => {
+      if (aborting) return;
+      aborting = true;
+      st.stage_error = st.stage_error || 'signal_' + sig;
+      try { await logoutIfPossible(); } catch (e) { /* ignore */ }
+      emitSummary();
+      try { await browser.close(); } catch (e) { /* ignore */ }
+      process.exit(sig === 'SIGINT' ? 130 : (sig === 'SIGHUP' ? 129 : 143));
     });
   }
 
@@ -262,28 +430,44 @@ async function probe(cfg) {
     }, baseHost);
   }
 
+  // 登入：以第一個「可見」的密碼欄位找到所屬 form，其餘欄位與送出鈕都限定在該 form 內；
+  // 看起來像註冊表單（文字欄位 >2、或密碼欄位 >1）或找不到所屬 form → 不送出。
   async function submitLogin() {
-    const pw = page.locator(PW_SEL).first();
-    const email = page.locator(EMAIL_SEL).first();
-    if (!(await pw.isVisible().catch(() => false))) return { ok: false, reason: 'no_login_form' };
-    const remember = page.locator('input[type="checkbox"]').first();
+    const pwFirst = page.locator(PW_SEL + ':visible').first();
+    if ((await pwFirst.count()) === 0) return { ok: false, reason: 'no_login_form' };
+    const formHandle = await pwFirst.evaluateHandle((el) => el.closest('form'));
+    const formEl = formHandle.asElement();
+    if (!formEl) return { ok: false, reason: 'ambiguous_login_form' };
+    const info = await formEl.evaluate((f, sel) => ({
+      pw: f.querySelectorAll('input[type="password"]').length,
+      text: f.querySelectorAll(sel).length,
+    }), TEXT_INPUT_SEL);
+    if (info.pw !== 1 || info.text > 2) return { ok: false, reason: 'ambiguous_login_form' };
+    await formEl.evaluate((f) => f.setAttribute('data-probe-login', '1'));
+    const F = page.locator('form[data-probe-login="1"]');
+    const email = F.locator(EMAIL_SEL).first();
+    const emailField = (await email.count()) > 0 ? email : F.locator(TEXT_INPUT_SEL).first();
+    if ((await emailField.count()) === 0) return { ok: false, reason: 'ambiguous_login_form' };
+    const pw = F.locator(PW_SEL).first();
+    const remember = F.locator('input[type="checkbox"]').first();
     const hasRemember = (await remember.count()) > 0;
     let rememberDefault = null;
     if (hasRemember) {
       rememberDefault = await remember.isChecked().catch(() => null);
       if (rememberDefault) await remember.uncheck().catch(() => {});
     }
-    await email.fill(cfg.email);
+    await emailField.fill(cfg.email);
     await pw.fill(cfg.password);
-    const submit = page.locator('button[type="submit"], input[type="submit"]').first();
-    const hasSubmit = (await submit.count()) > 0;
+    let submit = F.locator('button[type="submit"], input[type="submit"]').first();
+    if ((await submit.count()) === 0) submit = F.locator('button').first();
     counters.navigations += 1;
+    loginSubmitted = true;
     await Promise.all([
       page.waitForLoadState('domcontentloaded').catch(() => {}),
-      hasSubmit ? submit.click() : page.locator('button:has-text("登入")').first().click(),
+      submit.click(),
     ]);
     await page.waitForTimeout(1500);
-    const stillForm = await page.locator(PW_SEL).first().isVisible().catch(() => false);
+    const stillForm = await page.locator(PW_SEL + ':visible').first().isVisible().catch(() => false);
     if (!stillForm) {
       return { ok: true, remember_checkbox: hasRemember, remember_default_checked: rememberDefault };
     }
@@ -295,44 +479,6 @@ async function probe(cfg) {
              remember_default_checked: rememberDefault };
   }
 
-  async function doLogout(mechanisms) {
-    const m = (mechanisms || []).find((x) => x.visible) || (mechanisms || [])[0];
-    if (!m) return false;
-    counters.navigations += 1;
-    let done = false;
-    const loc = m.href_path
-      ? page.locator('a[href^="' + m.href_path + '"], form[action^="' + m.href_path + '"] [type=submit], button').filter({ hasText: /登出|log\s*-?out|sign\s*-?out/i }).first()
-      : page.locator('button, input[type=submit]').filter({ hasText: /登出|log\s*-?out|sign\s*-?out/i }).first();
-    try {
-      await Promise.all([
-        page.waitForLoadState('domcontentloaded').catch(() => {}),
-        loc.click({ timeout: 8000 }),
-      ]);
-      done = true;
-    } catch (e) {
-      if (m.tag === 'a' && m.href_path) {
-        try { await page.goto(new URL(m.href_path, baseUrl).toString(),
-                              { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-              done = true; } catch (e2) { /* fall through */ }
-      }
-    }
-    await page.waitForTimeout(1000);
-    return done;
-  }
-
-  async function verifyLoggedOut() {
-    try {
-      counters.navigations += 1;
-      await page.goto(baseUrl + ENTRY_PATH, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-      const formVisible = await page.locator(PW_SEL).first().isVisible().catch(() => false);
-      const still = (await findLogout()).length > 0;
-      return formVisible && !still;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  let mechanisms = null;
   try {
     step('login');
     await go(baseUrl + ENTRY_PATH, 'entry');
@@ -346,14 +492,18 @@ async function probe(cfg) {
       remember_checkbox: !!login.remember_checkbox,
       remember_default_checked: login.remember_default_checked,
     });
-    if (!login.ok) { st.stage_error = 'login_failed:' + login.reason; throw new Error('login'); }
+    if (!login.ok) {
+      st.stage_error = login.reason === 'ambiguous_login_form'
+        ? 'ambiguous_login_form' : 'login_failed:' + login.reason;
+      throw new Error('login');
+    }
     st.logged_in = true;
     st.login_at = new Date().toISOString();
 
     step('list-1');
     await go(baseUrl + ENTRY_PATH, 'list');
     counters.list_pages += 1;
-    mechanisms = await findLogout();
+    const mechanisms = await findLogout();
     fact('logout_mechanism', { found: mechanisms.length > 0, candidates: mechanisms });
     st.logout_found = mechanisms.length > 0;
     if (!st.logout_found) { st.stage_error = 'no_logout_mechanism'; throw new Error('no_logout'); }
@@ -370,7 +520,6 @@ async function probe(cfg) {
     }
     fact('list_page_1', { items: page1, items_per_page: page1.length, paging_type: paging, ...lf });
 
-    let allItems = page1.slice();
     if (paging === 'link_pagination' && counters.list_pages < lim.listPages && lf.next_href) {
       step('list-2');
       await go(new URL(lf.next_href, baseUrl).toString(), 'list');
@@ -381,7 +530,6 @@ async function probe(cfg) {
         items: page2, items_per_page: page2.length,
         overlap_with_page1: page2.filter((i) => ids1.has(i.article_id)).length,
       });
-      allItems = allItems.concat(page2);
     }
 
     const targets = page1.filter((i) => !i.is_announcement).slice(0, lim.articles);
@@ -408,27 +556,15 @@ async function probe(cfg) {
         changed: changes.some((c) => c.after && c.after !== c.before),
         comparisons: changes,
       });
-      mechanisms = await findLogout().catch(() => mechanisms);
     }
   } catch (e) {
     if (!st.stage_error) st.stage_error = 'exception:' + (e && e.name ? e.name : 'Error');
   } finally {
-    if (st.logged_in) {
-      step('logout');
-      try {
-        if (!mechanisms || !mechanisms.length) mechanisms = await findLogout().catch(() => []);
-        const clicked = await doLogout(mechanisms);
-        st.logged_out = clicked;
-        st.logout_at = new Date().toISOString();
-        st.logout_verified = clicked ? await verifyLoggedOut() : false;
-      } catch (e) {
-        st.logged_out = false;
-      }
-      fact('logout', { clicked: st.logged_out, verified: st.logout_verified });
-    }
+    step('logout');
+    try { await logoutIfPossible(); } catch (e) { /* ignore */ }
     await context.close().catch(() => {});
     await browser.close().catch(() => {});
-    emit({ type: 'summary', counters, ...st });
+    emitSummary();
   }
 }
 

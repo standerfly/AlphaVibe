@@ -24,7 +24,7 @@ import re
 import shutil
 import subprocess
 import sys
-import time
+import threading
 from html.parser import HTMLParser
 from urllib.parse import urlparse
 
@@ -47,6 +47,11 @@ SCRAPER_DEADLINE_SEC = 25 * 60
 _ARTICLE_PATH_RE = re.compile(r"^/user/vip_contents/\d+$")
 
 
+LOGOUT_UNVERIFIED_MSG = (
+    "⚠️ 登出未驗證：探查的登入狀態可能仍留在網站伺服器端，PO 在自己的裝置上登出無法清除它。"
+    "請勿再次執行探查，先回報主對話（可能已佔用一台裝置名額）。")
+
+
 class ProbeError(Exception):
     """探查無法繼續。訊息不得含帳密、cookie、全文。"""
 
@@ -57,11 +62,17 @@ def _node_binary():
     return shutil.which("node") or "/opt/homebrew/bin/node"
 
 
-def default_scraper_runner(payload, verbose=False):
-    """啟動 Node scraper：帳密只寫進 stdin；stdout 逐行 JSON。回傳 JSON 物件清單。"""
+def default_scraper_runner(payload, verbose=False, timeout_sec=None, grace_sec=90):
+    """啟動 Node scraper：帳密只寫進 stdin；stdout 逐行 JSON。回傳 JSON 物件清單。
+
+    整體逾時用看門狗計時器實作（`for raw in proc.stdout` 在 Node 沒輸出時會一直卡住，
+    單靠迴圈內檢查時間不會觸發）：到時間先送 SIGTERM（Node 會先走伺服器端登出再結束），
+    `grace_sec` 後仍未結束才 kill。
+    """
     node = _node_binary()
     if not os.path.exists(node):
         raise ProbeError("找不到 node，無法執行探查")
+    timeout_sec = SCRAPER_DEADLINE_SEC if timeout_sec is None else timeout_sec
     try:
         proc = subprocess.Popen(
             [node, SCRAPER_JS],
@@ -69,24 +80,27 @@ def default_scraper_runner(payload, verbose=False):
             stderr=None if verbose else subprocess.DEVNULL)
     except OSError:
         raise ProbeError("無法啟動 node")
+    killer = threading.Timer(timeout_sec + grace_sec, proc.kill)
+    terminator = threading.Timer(timeout_sec, proc.terminate)
+    for t in (terminator, killer):
+        t.daemon = True
+        t.start()
     objs = []
     try:
         proc.stdin.write(json.dumps(payload).encode("utf-8"))
         proc.stdin.close()
-        deadline = time.time() + SCRAPER_DEADLINE_SEC
         for raw in proc.stdout:
             try:
                 objs.append(json.loads(raw.decode("utf-8").strip() or "{}"))
             except ValueError:
                 continue
-            if time.time() > deadline:
-                proc.kill()
-                break
     finally:
         try:
-            proc.wait(timeout=30)
+            proc.wait(timeout=grace_sec + 30)
         except subprocess.TimeoutExpired:
             proc.kill()
+        for t in (terminator, killer):
+            t.cancel()
         try:
             proc.stdout.close()
         except (AttributeError, OSError):
@@ -287,16 +301,17 @@ def build_report(facts, summary, mail, today, started_at):
         "P2_logout": {
             "mechanism_found": mech.get("found"),
             "candidates": mech.get("candidates"),
-            "clicked": logout.get("clicked"),
+            "attempts": logout.get("attempts"),
             "server_side_verified": logout.get("verified"),
             "context_close_is_not_logout": True,
         },
-        "P2a_P2b_manual": {
+        "P2a_P2b_observation": {
             "login_at": summary.get("login_at"),
             "logout_at": summary.get("logout_at"),
             "need_po_observation": [
-                "P2a：探查期間請 PO 手機與電腦保持登入，探查結束後確認是否被登出",
-                "P2b：登出後立刻用第三個瀏覽器登入，確認是否因名額未釋放而被拒",
+                "P2a：探查期間 PO 只保留手機一台登入（電腦瀏覽器先登出），探查瀏覽器算第二台；"
+                "結束後確認手機是否仍在線、有沒有被登出",
+                "P2b：被動結論——以伺服器端登出已驗證為依據，不做任何額外登入測試（避免三台同時上線）",
             ],
         },
         "P3_read_state": {
@@ -380,6 +395,9 @@ def run(argv=None, get_secret=None, scraper_runner=None, mail_prober=None,
     ap.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
     ap.add_argument("--confirm-po-present", action="store_true",
                     help="PO 本人在場並同意此次探查（必填，否則拒絕執行）")
+    ap.add_argument("--confirm-one-device-only", action="store_true",
+                    help="PO 已確認定錨帳號目前只有一台裝置（手機）登入、電腦瀏覽器已登出"
+                         "（必填：網站規定同帳號最多兩台，探查瀏覽器算一台）")
     ap.add_argument("--base-url", default=DEFAULT_BASE_URL)
     ap.add_argument("--skip-mail", action="store_true",
                     help="略過 Gmail 通知信連結檢查（P4）")
@@ -392,6 +410,12 @@ def run(argv=None, get_secret=None, scraper_runner=None, mail_prober=None,
     if not args.confirm_po_present:
         say("拒絕執行：探查會用 PO 的會員帳號登入定錨網站，必須 PO 在場並加上 "
             "--confirm-po-present。未讀取任何憑證、未連線。")
+        return 2
+
+    if not args.confirm_one_device_only:
+        say("拒絕執行：網站規定同一帳號最多兩台裝置上線，探查的瀏覽器算一台。請 PO 先把電腦"
+            "瀏覽器登出、只保留手機一台登入，再加上 --confirm-one-device-only。"
+            "未讀取任何憑證、未連線。")
         return 2
 
     get_secret = get_secret or keychain_secrets.get_secret
@@ -438,7 +462,7 @@ def run(argv=None, get_secret=None, scraper_runner=None, mail_prober=None,
     facts = [o for o in objs if o.get("type") == "fact"]
     summaries = [o for o in objs if o.get("type") == "summary"]
     if not summaries:
-        say("⚠️ 探查異常結束（沒有收到 summary）。若曾登入成功，請立刻手動登出定錨網站。")
+        say("⚠️ 探查異常結束（沒有收到 summary），無法確認是否已登出。" + LOGOUT_UNVERIFIED_MSG[len("⚠️ 登出未驗證："):])
         return 1
     summary = summaries[-1]
 
@@ -458,14 +482,14 @@ def run(argv=None, get_secret=None, scraper_runner=None, mail_prober=None,
         say("⚠️ 超過硬上限：%s" % ",".join(violations))
         ok = False
     if summary.get("stage_error") == "no_logout_mechanism":
-        say("⚠️ 停止：找不到伺服器端登出機制，不得進入實作；請 PO 立刻手動登出並回報。")
+        say("⚠️ 停止：找不到伺服器端登出機制，不得進入實作，請回報主對話。")
         ok = False
     elif summary.get("stage_error"):
         say("⚠️ 探查中止：%s" % summary.get("stage_error"))
         ok = False
     if summary.get("logged_in") and not (summary.get("logged_out")
                                          and summary.get("logout_verified")):
-        say("⚠️ 登出未驗證：請 PO 立刻手動登出定錨網站（避免佔用裝置名額）。")
+        say(LOGOUT_UNVERIFIED_MSG)
         ok = False
     if not summary.get("logged_in"):
         ok = False

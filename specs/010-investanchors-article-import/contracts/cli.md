@@ -26,14 +26,23 @@ python3 poc/kb-mcp/investanchors_import.py --data-dir <dir>
 
 ## 2. 探查工具 `poc/kb-mcp/article_probe.py`（Phase 0，PO 在場一次性）
 ```
-python3 poc/kb-mcp/article_probe.py --data-dir poc/data --confirm-po-present
+python3 poc/kb-mcp/article_probe.py --data-dir poc/data --confirm-po-present --confirm-one-device-only
 ```
-- 沒有 `--confirm-po-present` 直接拒絕執行（拒絕時**不讀鑰匙圈、不連線**）。其他旗標：`--base-url`（預設
+- 沒有 `--confirm-po-present` 或 `--confirm-one-device-only`（PO 確認電腦瀏覽器已登出、只剩手機一台）直接拒絕執行（拒絕時**不讀鑰匙圈、不連線**）。其他旗標：`--base-url`（預設
   `https://investanchors.com`）、`--skip-mail`（略過 P4 通知信連結檢查）、`--verbose`。頁面間隔固定 30～90 秒
   （下限 10 秒，不可由 CLI 調低）。
 - 實作狀態（2026-11-15）：`article_probe.py`＋`scraper/investanchors_scraper.js`（probe 模式）＋
   `tests/test_article_probe.py` 已完成並通過測試；**尚未對真實網站執行**。
 - 探查前先找伺服器端登出機制；找不到即停止、不開任何文章、報告 `no_logout_mechanism`。
+- 登入表單：以第一個**可見**密碼欄位所屬 form 為準，其餘欄位與送出鈕限定在該 form 內；該 form 看起來像註冊表單
+  （文字欄位 >2 或密碼欄位 ≠1）或找不到 form → `ambiguous_login_form`，不送出。
+- 登出依序嘗試並**每步後驗證**：(a) 展開使用者選單再點 (b) 頁面內 `el.click()` (c) 讀 `data-method`＋CSRF token 以同源請求送出
+  對應方法（POST＋`_method` 覆寫，並補送真實 DELETE／PUT／PATCH）(d) GET；token 不離開頁面、不寫入報告。
+- 任何異常路徑、以及收到 SIGINT／SIGTERM／SIGHUP，只要已送出登入表單或頁面找得到登出機制，就先登出再結束
+  （已關閉 Playwright 內建的訊號處理，否則它會先關瀏覽器導致無法登出）。
+- Python 端有看門狗整體逾時：到時先送 SIGTERM（讓 Node 登出），寬限後才 kill。
+- 登出未驗證時，工具訊息為「探查的登入狀態可能仍留在伺服器端，PO 在自己裝置登出無法清除；請勿再次執行探查，先回報」。
+- `www.investanchors.com` 與 `investanchors.com` 視為同站。
 - 硬上限：登入 1 次、清單 ≤3 頁、開文章 ≤2 篇；單一 context；結束登出並驗證登出。
 - 輸出 `poc/data/articles_probe/probe-<時間>.json`：分頁型態、選擇器、通知信連結型態、登出方式、已讀是否改變、
   內文／圖片 DOM 結構。**不含全文、不含 cookie、不含帳密。**
