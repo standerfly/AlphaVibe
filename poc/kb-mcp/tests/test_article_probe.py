@@ -366,6 +366,13 @@ class MailAnalysisTest(unittest.TestCase):
         self.assertNotIn("SECRETTOKEN", json.dumps({k: v for k, v in got.items()
                                                     if k != "long_numbers"}))
 
+    def test_long_path_segments_are_masked_as_token(self):
+        tok = "eJwUzEGOhCAQAMDXwHFCNabcdefGHIJKLMNOPQRSTUVWXYZ"
+        html = '<a href="https://investanchors.com/c/%s">x</a>' % tok
+        got = article_probe.classify_mail_links(html)
+        self.assertEqual(got["path_shapes"], {"/c/<token>": 1})
+        self.assertNotIn("eJw", json.dumps({k: v for k, v in got.items() if k != "long_numbers"}))
+
     def _mail(self, date_hdr, body):
         m = MIMEMultipart("alternative")
         m["From"] = "定錨 <%s>" % article_probe.MAIL_SENDER

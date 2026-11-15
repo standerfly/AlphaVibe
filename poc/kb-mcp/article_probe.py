@@ -128,7 +128,11 @@ _TZ8 = datetime.timezone(datetime.timedelta(hours=8))
 
 
 def _path_shape(path):
-    return re.sub(r"[0-9a-f]{6,}|\d+", "#", path or "")[:80]
+    """路徑形態：長路徑段（≥20 字元，可能是追蹤 token）一律標成 <token>，其餘數字／長十六進位換成 #。"""
+    segs = []
+    for seg in (path or "").split("/"):
+        segs.append("<token>" if len(seg) >= 20 else re.sub(r"[0-9a-f]{6,}|\d+", "#", seg))
+    return "/".join(segs)[:80]
 
 
 def classify_mail_links(html_text):
