@@ -383,5 +383,144 @@ class StatementImportCheckTest(unittest.TestCase):
         self.assertEqual(self._sev(), ["warning", "warning"])
 
 
+class InvestanchorsImportCheckTest(unittest.TestCase):
+    """010 定錨文章匯入巡檢：唯讀、只輸出數字與狀態。"""
+
+    def setUp(self):
+        import article_store
+        self.article_store = article_store
+        self.tmp = tempfile.mkdtemp(prefix="alphavibe-health-ia-")
+        self.store = article_store.ArticleStore(self.tmp)
+
+    def tearDown(self):
+        self.store.conn.close()
+        shutil.rmtree(self.tmp)
+
+    def _iso8(self, hours_ago):
+        tz8 = datetime.timezone(datetime.timedelta(hours=8))
+        return (datetime.datetime.now(tz8) - datetime.timedelta(hours=hours_ago)).isoformat()
+
+    def _run(self, hours_ago, logged_in=1, logged_out=1, blocked_until=None):
+        self.store.conn.execute(
+            "INSERT INTO import_runs (started_at, finished_at, trigger, logged_in, logged_out,"
+            " blocked_until) VALUES (?,?,?,?,?,?)",
+            (self._iso8(hours_ago), self._iso8(hours_ago), "schedule", logged_in, logged_out,
+             blocked_until))
+        self.store.conn.commit()
+
+    def _article(self, aid, status, ok=1):
+        self.store.conn.execute(
+            "INSERT INTO article (article_id, url, title, status, id_time_ok) VALUES (?,?,?,?,?)",
+            (aid, "https://investanchors.com/user/vip_contents/%d" % aid, "SECRET-TITLE", status, ok))
+        self.store.conn.commit()
+
+    def _check(self):
+        return checker.check_investanchors_import(self.tmp)
+
+    def _sev(self):
+        return [f[0] for f in self._check() if f[0] != "ok"]
+
+    def _text(self):
+        return " ".join(f[2] for f in self._check())
+
+    def test_db_missing_is_ok_and_not_created(self):
+        empty = tempfile.mkdtemp(prefix="alphavibe-health-ia-empty-")
+        try:
+            findings = checker.check_investanchors_import(empty)
+            self.assertEqual([f[0] for f in findings], ["ok"])
+            self.assertIn("尚未建立", findings[0][2])
+            self.assertEqual(os.listdir(empty), [])
+        finally:
+            shutil.rmtree(empty)
+
+    def test_no_runs_is_ok(self):
+        self.assertEqual([f[0] for f in self._check()], ["ok"])
+
+    def test_recent_normal_run_ok_with_summary(self):
+        self._run(5)
+        findings = self._check()
+        self.assertEqual([f[0] for f in findings], ["ok"])
+        self.assertIn("轉寫開關 關", findings[0][2])
+        self.assertIn("回補 未啟動", findings[0][2])
+
+    def test_logged_in_not_logged_out_critical(self):
+        self._run(5, logged_in=1, logged_out=0)
+        self.assertEqual(self._sev(), ["critical"])
+        self.assertIn("未確認登出", self._text())
+
+    def test_no_login_logged_out_zero_not_flagged(self):
+        self._run(5, logged_in=0, logged_out=0)
+        self.assertEqual(self._sev(), [])
+
+    def test_stale_runs_critical(self):
+        self._run(24 * checker.INVESTANCHORS_STALE_DAYS + 1)
+        self.assertEqual(self._sev(), ["critical"])
+        self._run(24 * checker.INVESTANCHORS_STALE_DAYS - 1)
+        self.assertEqual(self._sev(), [])
+
+    def test_blocked_until_active_warning_expired_ignored(self):
+        future = (datetime.datetime.now(datetime.timezone.utc)
+                  + datetime.timedelta(hours=10)).isoformat()
+        self._run(5, blocked_until=future)
+        self.assertEqual(self._sev(), ["warning"])
+        self.store.conn.execute("UPDATE import_runs SET blocked_until=?", (self._iso8(3),))
+        self.store.conn.commit()
+        self.assertEqual(self._sev(), [])
+
+    def test_abandoned_and_id_time_anomalies_warn(self):
+        self._run(5)
+        self._article(1111111111111, "abandoned")
+        self._article(2222, "fetched", ok=0)
+        findings = self._check()
+        self.assertEqual([f[0] for f in findings if f[0] != "ok"], ["warning", "warning"])
+        text = self._text()
+        self.assertIn("1 篇文章已放棄", text)
+        self.assertIn("累計 1 篇", text)
+
+    def test_transcription_and_backfill_status_in_summary(self):
+        self._run(5)
+        self._article(1111111111111, "fetched")
+        self.store.add_image(1111111111111, 1, "https://x/1.png")
+        self.store.add_image(1111111111111, 2, "https://x/2.png")
+        self.store.conn.execute(
+            "UPDATE article_image SET transcribe_attempts=? WHERE seq=2",
+            (self.article_store.MAX_TRANSCRIBE_ATTEMPTS,))
+        self.store.set_setting("transcribe_enabled", "1")
+        self.store.conn.execute(
+            "INSERT INTO backfill_state (id, completed, next_cursor) VALUES (1, 0, 'p3')")
+        self.store.conn.commit()
+        text = self._text()
+        self.assertIn("轉寫開關 開", text)
+        self.assertIn("未轉寫 2 張、已達上限 1 張", text)
+        self.assertIn("進行中（游標 p3）", text)
+        self.store.conn.execute("UPDATE backfill_state SET completed=1")
+        self.store.conn.commit()
+        self.assertIn("回補 已完成", self._text())
+
+    def test_output_has_no_title_or_body(self):
+        self._run(5, logged_out=0)
+        self._article(1111111111111, "abandoned")
+        self.assertNotIn("SECRET-TITLE", self._text())
+
+    def test_read_only_file_unchanged(self):
+        self._run(5, logged_out=0)
+        self._article(1111111111111, "abandoned")
+        self.store.conn.close()
+        path = os.path.join(self.tmp, "articles.db")
+        with open(path, "rb") as f:
+            before = f.read()
+        mtime = os.stat(path).st_mtime_ns
+        checker.check_investanchors_import(self.tmp)
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), before)
+        self.assertEqual(os.stat(path).st_mtime_ns, mtime)
+        self.assertEqual(sorted(os.listdir(self.tmp)), ["articles.db"])
+        self.store = self.article_store.ArticleStore(self.tmp)  # 讓 tearDown 能關
+
+    def test_registered_in_run_all(self):
+        names = [c[0] for c in checker.CHECKS]
+        self.assertIn("investanchors_import", names)
+
+
 if __name__ == "__main__":
     unittest.main()

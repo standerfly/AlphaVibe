@@ -49,6 +49,8 @@ BACKUP_STALE_HOURS = 30
 STATEMENT_STALE_HOURS = 30
 # 單次執行正常幾分鐘內結束；開始超過 1 小時仍沒有結果＝被中斷或卡住
 STATEMENT_UNFINISHED_HOURS = 1
+# 定錨文章匯入（010）排程每晚 23:00 跑；超過這麼多天沒有任何執行紀錄＝排程沒在跑（容許 Mac 睡眠漏跑 2 晚）
+INVESTANCHORS_STALE_DAYS = 3
 
 
 def _now():
@@ -255,9 +257,82 @@ def check_statement_import(data_dir):
                          "正常（最後執行 %s）" % run["started_at"])]
 
 
+def _aware_age_hours(value):
+    """ISO 時間字串（articles.db 為帶 +08:00 的時區字串）距現在幾小時；解析不了回 None。"""
+    dt = _parse_iso(value)
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone().replace(tzinfo=None)
+    return _hours_since(dt)
+
+
+def check_investanchors_import(data_dir):
+    """定錨文章匯入（specs/010）：唯讀檢視 articles.db，輸出只含數字與狀態，不含標題／內文。
+
+    庫不存在＝尚未上線（視為正常，不建庫）；沒有任何執行紀錄＝排程尚未安裝，同樣視為正常。
+    """
+    import article_store  # 延後 import：未上線時不需要
+    try:
+        store = article_store.ArticleStore.open_readonly(data_dir)
+    except FileNotFoundError:
+        return [("ok", "investanchors_import", "尚未建立（找不到 articles.db）")]
+    findings = []
+    try:
+        try:
+            runs = store.conn.execute("SELECT * FROM import_runs ORDER BY id DESC").fetchall()
+            last = runs[0] if runs else None
+            if last is None:
+                return [("ok", "investanchors_import", "尚未有執行紀錄（排程未安裝？）")]
+            # 以 logged_in=1 且 logged_out=0 判定（logged_out=NULL 是尚未收尾／被中斷，同樣視為未驗證登出）
+            bad_logout = [r for r in runs if r["logged_in"] == 1 and r["logged_out"] == 0]
+            if bad_logout:
+                findings.append(("critical", "investanchors_import",
+                                 "有 %d 次執行已登入但未確認登出（logged_out=0，最近 run id=%d）"
+                                 % (len(bad_logout), bad_logout[0]["id"])))
+            age = _aware_age_hours(last["started_at"])
+            if age is None or age > INVESTANCHORS_STALE_DAYS * 24:
+                findings.append(("critical", "investanchors_import",
+                                 "超過 %d 天沒有任何執行紀錄（最後一次：%s）"
+                                 % (INVESTANCHORS_STALE_DAYS, last["started_at"])))
+            blocked = store.blocked_until()
+            if blocked is not None:
+                if blocked.tzinfo is not None:
+                    blocked = blocked.astimezone().replace(tzinfo=None)
+                if blocked > _now():
+                    findings.append(("warning", "investanchors_import",
+                                     "封鎖冷卻中，blocked_until=%s（期間不會登入）" % blocked.isoformat()))
+            counts = store.count_by_status()
+            if counts.get("abandoned"):
+                findings.append(("warning", "investanchors_import",
+                                 "有 %d 篇文章已放棄（abandoned，需人工處理）" % counts["abandoned"]))
+            anomalies = store.count_id_time_anomalies()
+            if anomalies:
+                findings.append(("warning", "investanchors_import",
+                                 "累計 %d 篇文章 ID 推不出建立時間（id_time_ok=0）" % anomalies))
+            enabled = str(store.get_setting("transcribe_enabled", "0")) == "1"
+            tc = store.transcription_counts()
+            bf = store.get_backfill_state()
+            if bf is None:
+                bf_text = "未啟動"
+            elif bf["completed"]:
+                bf_text = "已完成"
+            else:
+                bf_text = "進行中（游標 %s）" % (bf["next_cursor"] if bf["next_cursor"] else "無")
+        finally:
+            store.conn.close()
+    except sqlite3.OperationalError:
+        return [("ok", "investanchors_import", "尚未上線（沒有匯入資料表）")]
+    summary = ("最後執行 %s；轉寫開關 %s；未轉寫 %d 張、已達上限 %d 張；回補 %s"
+               % (last["started_at"], "開" if enabled else "關",
+                  tc["untranscribed"], tc["exhausted"], bf_text))
+    return findings + [("ok", "investanchors_import", summary)]
+
+
 CHECKS = (
     ("market_scan", check_market_scan, True),   # True = 需要 data_dir
     ("statement_import", check_statement_import, True),
+    ("investanchors_import", check_investanchors_import, True),
     ("backup", check_backups, False),
     ("web_service", check_web_service, False),
 )

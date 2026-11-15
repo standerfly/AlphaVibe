@@ -59,8 +59,10 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 `specs/010-investanchors-article-import/plan.md`（定錨產業筆記文章自動匯入：Gmail 通知信觸發＋
 全新無持久化 profile 的 Playwright 登入取文、跑完即登出、獨立 `articles.db`、表格圖視覺模型轉寫、
 台股／美股連接器共用唯讀 `search_articles`／`get_article`；需求基線
-`docs/spec-intake/investanchors-import/`，2026-11-14 Accepted）**2026-11-15 完成規劃階段，尚未實作**。
-接手前先讀其 `research.md` R0（須在 PO 的 Mac 先探查網站）與 `quickstart.md`；
+`docs/spec-intake/investanchors-import/`，2026-11-14 Accepted）**2026-11-16 現況：T001～T047 程式完成並通過
+獨立驗收；T023 已真實單篇執行；T048 真實回補試跑待 PO；尚未部署、尚未安裝排程**（plist 已備於
+`ops/launchd/com.alphavibe.investanchorsimport.plist`，每晚 23:00，T055 才安裝）。
+接手前先讀 `specs/010-investanchors-article-import/quickstart.md` 與 `tasks.md`；
 `setup-plan.sh` 在此分支要加 `SPECIFY_FEATURE=010-investanchors-article-import`。
 
 `specs/009-cathay-tw-statement-import/plan.md`（國泰台股日對帳單 Email 自動匯入：
@@ -424,6 +426,17 @@ roundtrip-search 來源）。
   ｜動作：`statement_import.py` 同日只處理一次＋同日快照既有成本優先（PR #46）；quickstart 補說明；
   鑰匙圈被存錯的兩筆已刪除並用新密碼重存、舊密碼已撤銷。治本（以日期為身分、手動成本另存）記為待辦，
   見 PR #46 的 code-review 發現。
+
+- 2026-11-16｜情境：010 定錨文章匯入開發（探查、T023 真實單篇、回補）累積的幾個站方／工具行為，皆見
+  `specs/010-investanchors-article-import/research.md`／`quickstart.md` 第 6 節
+  ｜教訓：(1) 清單每頁頂端的置頂項日期不可靠（4 篇近期文章顯示 2021-02-06），新舊與半年截止只能看文章 ID；
+  文章 ID 前 13 位＝epoch 毫秒＝建立時間，這是觀察而非站方保證，所以有防呆 `id_time_ok`（推不出就標 0、不當新舊依據）。
+  (2) Playwright 預設收到 SIGTERM／SIGINT 會先關瀏覽器，導致無法登出；登出保證要自行處理訊號（關掉內建訊號處理、
+  先登出再結束）。(3) 通知信連結是每位收件人的追蹤轉址（`/c/<token>`），不可跟隨、不可解碼，信只當觸發。
+  (4) 報告／探查輸出不得含 token（首次實跑發現字母 token 片段會進報告）。(5) 開啟文章會把未讀改成已讀（PO 已接受）。
+  (6) 圖片轉寫由 `articles.db` 的 `setting.transcribe_enabled` 開關控制、預設關閉；不得用鑰匙圈有無金鑰當開關
+  （存了金鑰不應意外啟動送第三方）。(7) macOS `/var`→`/private/var`，路徑比對一律用 `os.path.realpath`（已踩兩次）。
+  ｜動作：以上皆已落成程式防呆與測試；quickstart 第 6、7 節留有接手備忘
 
 ## 相片整理工具（2026-10-04，分支 `function/photo-organizer`）
 

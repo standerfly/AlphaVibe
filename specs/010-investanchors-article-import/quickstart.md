@@ -65,3 +65,35 @@
 - **測試慣例**：要證明「沒讀金鑰」就沿用 `test_investanchors_transcription.py` 的 `Env`（包裝 `get_secret` 計數）；該測試依賴 `test_article_image_tiles`／`test_article_transcribe` 的輔助函式，改名要同步；同日第二次登入會被低頻守衛拒絕，測試要推進時鐘。
 - **macOS 路徑**：`/var` → `/private/var`，比對路徑一律用 `os.path.realpath`（已踩過兩次）。
 - **本機測試目錄**：`poc/data-test-articles/`（已被 `.gitignore` 涵蓋）內有 T023 真實抓的 1 篇＋1 張 1653×993 圖，供 US3 抽查與 US4 試跑用，不要刪。
+
+## 8. 實測回填與進度（2026-11-16）
+- **T023 真實單篇執行（已完成）**：登入 1 次、讀清單 3 頁；discovered 44、fetched 1、skipped 1（公告）；`logged_out=1`；
+  圖片 1 張（1653×993）；外洩檢查 0。資料在 `poc/data-test-articles/`（測試庫，非正式庫）。
+- **程式進度**：T033～T047 程式完成；US3（轉寫）與 US4（回補）已通過全新 agent 獨立驗收（程式行為；真實轉寫模型與
+  真實回補尚未驗證）。T048 真實回補試跑待 PO 在場。T049～T051（plist、巡檢 `check_investanchors_import`、文件）完成後，
+  剩 T052～T056。
+
+## 9. 上線步驟（T055，PO 在場同意後依序執行）
+1. 提交推送（T054 主對話最後審查通過後）。
+2. 備份（`ops/deploy.sh` 慣例）。
+3. 部署到 `AlphaVibe-prod` 並重啟：`cd /Users/stander/My_project/AlphaVibe-prod && git fetch origin function/alphavibe && bash <(git show origin/function/alphavibe:ops/deploy.sh)`；改過 `app/` 與 `poc/kb-mcp/*.py`，確認 MCP 連接器已套用。
+4. 安裝 plist：複製 `ops/launchd/com.alphavibe.investanchorsimport.plist` 到 `~/Library/LaunchAgents/` 後 `launchctl bootstrap gui/$(id -u) <plist>`（plist 已帶 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1`，因 prod 的 `poc/data` 是 symlink）。
+5. 用 launchd 實跑一次驗證（`launchctl kickstart gui/$(id -u)/com.alphavibe.investanchorsimport`），看 log 與 `check_scheduled_jobs.py` 的 `investanchors_import` 項。
+**正式庫的轉寫開關維持預設關閉**；回報實際結果，不假設已上線。
+
+## 10. 唯讀查詢範例（T057 用；一律 `-readonly`，不寫入）
+```bash
+DB=poc/data/articles.db
+# 累積圖片張數（只計已入庫文章）
+sqlite3 -readonly $DB "select count(*) from article_image i join article a on a.article_id=i.article_id where a.status='fetched';"
+# 長圖張數：不在 SQL 內判定，用抽查工具（--transcribe-sample）依圖片尺寸判定
+# import_runs 摘要（最近 10 次）
+sqlite3 -readonly $DB "select id, started_at, trigger, logged_in, login_ok, list_pages, articles_fetched, result, logged_out, blocked_until from import_runs order by id desc limit 10;"
+# abandoned 與 id_time_ok=0 計數
+sqlite3 -readonly $DB "select status, count(*) from article group by status;"
+sqlite3 -readonly $DB "select count(*) from article where id_time_ok=0 and status!='skipped';"
+# 未轉寫與已達上限（3 次）張數
+sqlite3 -readonly $DB "select count(*), coalesce(sum(i.transcribe_attempts>=3),0) from article_image i join article a on a.article_id=i.article_id where a.status='fetched' and i.transcription_status='untranscribed';"
+# 轉寫開關（無此列＝關）
+sqlite3 -readonly $DB "select value from setting where key='transcribe_enabled';"
+```
