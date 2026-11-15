@@ -230,6 +230,40 @@ class EstimateTest(unittest.TestCase):
                          "insufficient_data")
 
 
+class AnalyzeListTest(unittest.TestCase):
+    TODAY = datetime.date(2026, 11, 15)
+
+    def test_duplicates_across_pages_excluded_from_ranges_and_counts(self):
+        pinned = {"article_id": 7, "date": "2021-02-06", "is_announcement": False}
+        p1 = [pinned, {"article_id": 10, "date": "2026-11-10", "is_announcement": False},
+              {"article_id": 9, "date": "2026-11-01", "is_announcement": False}]
+        p2 = [pinned, {"article_id": 8, "date": "2026-05-01", "is_announcement": False},
+              {"article_id": 6, "date": "2026-01-01", "is_announcement": False}]
+        r = article_probe.analyze_list(p1, p2, self.TODAY)
+        self.assertEqual(r["duplicated_across_pages"], 1)
+        self.assertEqual(r["duplicated_item_dates_sorted"], ["2021-02-06"])
+        self.assertEqual(r["page1_excluding_duplicates"]["from"], "2026-11-01")
+        self.assertEqual(r["items_within_half_year_excluding_duplicates"], 2)  # 5/1 早於 5/16 截止日
+        self.assertTrue(r["half_year_boundary_reached_on_page2"])
+        self.assertEqual(r["unique_items"], 5)
+
+
+class CliValidationTest(unittest.TestCase):
+    def _run(self, extra):
+        def boom(*a, **k):
+            raise AssertionError("must not be called")
+        out = io.StringIO()
+        rc = article_probe.run(CONFIRM + extra, get_secret=boom, scraper_runner=boom, out=out)
+        return rc, out.getvalue()
+
+    def test_non_numeric_article_id_rejected(self):
+        self.assertEqual(self._run(["--article-id", "abc"])[0], 2)
+
+    def test_more_than_two_article_ids_rejected(self):
+        self.assertEqual(self._run(["--article-id", "1", "--article-id", "2",
+                                    "--article-id", "3"])[0], 2)
+
+
 class MailProbeTest(unittest.TestCase):
     def test_classify_links_never_returns_full_urls(self):
         html = ('<a href="https://investanchors.com/user/vip_contents/123">a</a>'
@@ -391,9 +425,10 @@ class FakeSite(object):
             def _send(self, body, code=200, headers=None):
                 data = body.encode("utf-8")
                 self.send_response(code)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
+                hdrs = dict(headers or {})
+                self.send_header("Content-Type", hdrs.pop("Content-Type", "text/html; charset=utf-8"))
                 self.send_header("Content-Length", str(len(data)))
-                for k, v in (headers or {}).items():
+                for k, v in hdrs.items():
                     self.send_header(k, v)
                 self.end_headers()
                 self.wfile.write(data)
@@ -426,7 +461,7 @@ class FakeSite(object):
                         % (CSRF, LOGOUT_HTML[site.logout_mode], extra))
 
             def _list_page(self, page):
-                rows = []
+                rows = [(777, "SECRETTITLE置頂", "2021-02-06")]
                 if page == 1:
                     rows.append((9999, "【公告】SECRETTITLE公告", "2027-01-01"))
                     ids = [(1010 - i, "2026-11-%02d" % (14 - 2 * i)) for i in range(6)]
@@ -445,11 +480,13 @@ class FakeSite(object):
                     self._chrome(), nav, trs, nxt)
 
             def _article_page(self, aid):
-                return ('<html>%s<body><h1>SECRETTITLE %d</h1><div class="post">'
-                        '<p>SECRETBODY 第一段內容</p><p>SECRETBODY 第二段內容</p>'
-                        '<img src="/img/%d/a1b2c3d4e5.png" alt="">'
-                        '<img src="/img/%d/f6e5d4c3b2.png" alt="表"></div></body></html>'
-                        % (self._chrome(), aid, aid, aid))
+                return ('<html>%s<body><img src="/img/pub/logo.png" alt="logo">'
+                        '<div id="inves_content" class="investanchors_content"><p>SECRETBODY 第一段內容</p>'
+                        '<p>SECRETBODY 第二段內容</p><table><tr><td>'
+                        '<img src="/img/pub/a1b2c3d4e5.png" alt="">'
+                        '<img data-src="/img/secure/f6e5d4c3b2.png" '
+                        'src="/img/secure/f6e5d4c3b2.png" loading="lazy" alt="表"></td></tr></table>'
+                        '</div></body></html>' % (self._chrome(), ))
 
             def do_GET(self):
                 u = urlparse(self.path)
@@ -460,8 +497,12 @@ class FakeSite(object):
                         if site.logout_mode == "link" and logged:
                             return self._do_logout()
                         return self._send("method not allowed", 405)
+                    if u.path.startswith("/img/secure/"):
+                        if not logged:
+                            return self._send("login required", 403)
+                        return self._send("x", 200, {"Content-Type": "image/png"})
                     if u.path.startswith("/img/"):
-                        return self._send("x")
+                        return self._send("x", 200, {"Content-Type": "image/png"})
                     if not logged:
                         return self._send(self._login_page())
                     if u.path == "/user/vip_contents/investanchors_index":
@@ -523,12 +564,12 @@ class EndToEndFakeSiteTest(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="probe-e2e-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
-    def _probe(self, site, wrong_password=False):
+    def _probe(self, site, wrong_password=False, extra=None):
         base = site.start()
         self.addCleanup(site.stop)
         out = io.StringIO()
         rc = article_probe.run(
-            ["--data-dir", self.tmp] + CONFIRM + ["--skip-mail", "--base-url", base],
+            ["--data-dir", self.tmp] + CONFIRM + ["--skip-mail", "--base-url", base] + (extra or []),
             get_secret=_secrets(wrong_password), now=lambda: NOW, out=out,
             allow_short_delay=True, delay_ms=(30, 60))
         path = None
@@ -560,8 +601,9 @@ class EndToEndFakeSiteTest(unittest.TestCase):
         self.assertTrue(report["P2_logout"]["server_side_verified"])
         self.assertEqual(report["P2_logout"]["attempts"][0]["method"], "menu_click")
         self.assertEqual(report["P1_list_pagination"]["paging_type"], "link_pagination")
-        self.assertEqual(report["P1_list_pagination"]["items_per_page_page1"], 7)
-        self.assertEqual(report["P1_list_pagination"]["items_per_page_page2"], 3)
+        self.assertEqual(report["P1_list_pagination"]["items_per_page_page1"], 8)
+        self.assertEqual(report["P1_list_pagination"]["items_per_page_page2"], 4)
+        self.assertEqual(report["P1_list_pagination"]["overlap_page1_page2"], 1)
         self.assertEqual(report["P5_list_structure"]["announcements_on_page1"], 1)
         self.assertEqual([t["lv"] for t in report["P5_list_structure"]["tabs"]], ["0", "1"])
         self.assertTrue(report["P3_read_state"]["changed_after_open"])
@@ -569,10 +611,47 @@ class EndToEndFakeSiteTest(unittest.TestCase):
         self.assertTrue(report["P7_block_and_login"]["remember_default_checked"])
         arts = report["P6_article_dom"]
         self.assertEqual(len(arts), 2)
-        self.assertEqual(arts[0]["container_chain"][0]["classes"], ["post"])
-        self.assertEqual(len(arts[0]["images"]), 2)
-        self.assertGreater(arts[0]["body_text_len"], 0)
-        self.assertEqual(report["P8_id_monotonic_with_date"], True)
+        a0 = arts[0]
+        self.assertEqual(a0["container_chain"][0]["id"], "inves_content")
+        self.assertEqual(a0["content_image_count"], 2)
+        self.assertEqual(a0["outside_image_count"], 1, "站台 logo 不算內文圖")
+        self.assertTrue(all(i["in_table"] for i in a0["content_images"]))
+        self.assertTrue(a0["content_images"][1]["lazy_attr"])
+        self.assertEqual(a0["content_images"][1]["loading_attr"], "lazy")
+        self.assertEqual(len(a0["content_tables"]), 1)
+        self.assertTrue(a0["content_tables"][0]["has_img"])
+        self.assertGreater(a0["body_text_len"], 0)
+        checks = a0["image_download_check_without_cookies"]
+        self.assertEqual([c["status"] for c in checks], [200, 403],
+                         "公開圖不需登入；需登入的圖不帶 cookie 會被拒")
+        self.assertEqual(report["P8_id_monotonic_with_date_excluding_duplicates"], True)
+        li = report["P1_list_pagination"]["list_items"]
+        self.assertEqual(len(li), 12)
+        self.assertEqual([i["id"] for i in li if i["dup_across_pages"]], [777, 777])
+        h = report["P8_half_year"]
+        self.assertEqual(h["duplicated_across_pages"], 1)
+        self.assertEqual(h["duplicated_item_dates_sorted"], ["2021-02-06"])
+        self.assertFalse(h["half_year_boundary_reached_on_page2"], "假網站第 2 頁尚未早於半年前")
+        self.assertEqual(h["page2_excluding_duplicates"]["from"], "2026-10-24")
+
+    def test_explicit_article_ids_are_opened_first_and_control_is_unread_item(self):
+        site = FakeSite()
+        rc, out, report = self._probe(site, extra=["--article-id", "424242"])
+        self.assertEqual(rc, 0, out)
+        opened = [int(e[1].rsplit("/", 1)[-1]) for e in site.log
+                  if e[0] == "GET" and e[1].startswith("/user/vip_contents/")
+                  and e[1].rsplit("/", 1)[-1].isdigit()]
+        self.assertEqual(opened, [424242, 1010],
+                         "先開指定的，再補一篇未讀對照（排除置頂／跨頁重複項 777）；不得超過 2 篇")
+        arts = report["P6_article_dom"]
+        self.assertTrue(arts[0]["explicitly_requested"])
+        self.assertFalse(arts[0]["was_in_list_pages_1_2"])
+        self.assertFalse(arts[1]["explicitly_requested"])
+        self.assertTrue(arts[1]["was_in_list_pages_1_2"])
+        rs = report["P3_read_state"]
+        self.assertTrue(rs["had_unread_target"])
+        self.assertTrue(rs["changed_after_open"])
+        self.assertEqual(report["limit_violations"], [])
 
     def test_no_logout_mechanism_stops_before_opening_articles(self):
         site = FakeSite(logout_mode="none")

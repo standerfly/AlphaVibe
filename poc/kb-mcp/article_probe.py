@@ -247,6 +247,46 @@ def estimate_half_year(items, today):
     return out
 
 
+def analyze_list(page1, page2, today):
+    """清單逐項分析：跨頁重複項（疑似置頂）不參與日期範圍與半年內計數。"""
+    ids1 = set(i["article_id"] for i in page1)
+    dup_ids = ids1 & set(i["article_id"] for i in page2)
+    cutoff = today - datetime.timedelta(days=HALF_YEAR_DAYS)
+
+    def dates(items):
+        out = []
+        for it in items:
+            if it.get("is_announcement") or it["article_id"] in dup_ids:
+                continue
+            d = _resolve_date(it, today)
+            if d:
+                out.append(d)
+        return out
+
+    def rng(items):
+        ds = dates(items)
+        return {"count": len(ds),
+                "from": min(ds).isoformat() if ds else None,
+                "to": max(ds).isoformat() if ds else None}
+
+    p2_dates = dates(page2)
+    nondup = [i for i in page1 + page2 if i["article_id"] not in dup_ids]
+    all_dates = dates(page1) + p2_dates
+    dup_dates = sorted(
+        (_resolve_date(i, today).isoformat() if _resolve_date(i, today) else "?")
+        for i in page1 if i["article_id"] in dup_ids)
+    return {
+        "unique_items": len(set(i["article_id"] for i in page1 + page2)),
+        "duplicated_across_pages": len(dup_ids),
+        "duplicated_item_dates_sorted": dup_dates,
+        "page1_excluding_duplicates": rng(page1),
+        "page2_excluding_duplicates": rng(page2),
+        "items_within_half_year_excluding_duplicates": len([d for d in all_dates if d >= cutoff]),
+        "half_year_boundary_reached_on_page2": any(d < cutoff for d in p2_dates),
+        "rate_estimate_excluding_duplicates": estimate_half_year(nondup, today),
+    }
+
+
 def check_id_monotonic(items, today):
     """文章 ID 是否隨發布日期單調遞增（若是，日後可用 ID 做更穩的截止判斷）。"""
     pairs = []
@@ -276,7 +316,15 @@ def build_report(facts, summary, mail, today, started_at):
     steps = _by_step(facts)
     p1 = (steps.get("list_page_1") or [{}])[0]
     p2 = (steps.get("list_page_2") or [{}])[0]
-    items = list(p1.get("items") or []) + list(p2.get("items") or [])
+    p1_items = list(p1.get("items") or [])
+    p2_items = list(p2.get("items") or [])
+    items = p1_items + p2_items
+    dup_ids = set(i["article_id"] for i in p1_items) & set(i["article_id"] for i in p2_items)
+    list_items = [
+        {"id": i["article_id"], "date": i.get("date") or i.get("md"),
+         "announcement": bool(i.get("is_announcement")), "read": i.get("read_state"),
+         "page": pg, "dup_across_pages": i["article_id"] in dup_ids}
+        for pg, group in ((1, p1_items), (2, p2_items)) for i in group]
     counters = summary.get("counters") or {}
     login = (steps.get("login") or [{}])[0]
     mech = (steps.get("logout_mechanism") or [{}])[0]
@@ -297,6 +345,7 @@ def build_report(facts, summary, mail, today, started_at):
             "next_href_path": (p1.get("next_href") or "").split("?")[0][:100],
             "page_query_keys": p1.get("page_query_keys"),
             "load_more_button": p1.get("load_more_button"),
+            "list_items": list_items,
         },
         "P2_logout": {
             "mechanism_found": mech.get("found"),
@@ -316,6 +365,7 @@ def build_report(facts, summary, mail, today, started_at):
         },
         "P3_read_state": {
             "changed_after_open": read_state.get("changed"),
+            "had_unread_target": read_state.get("was_unread_before"),
             "comparisons": read_state.get("comparisons"),
         },
         "P4_mail_links": mail,
@@ -337,8 +387,9 @@ def build_report(facts, summary, mail, today, started_at):
             "remember_default_checked": login.get("remember_default_checked"),
             "login_failure_reason": login.get("reason"),
         },
-        "P8_half_year": estimate_half_year(items, today),
-        "P8_id_monotonic_with_date": check_id_monotonic(items, today),
+        "P8_half_year": analyze_list(p1_items, p2_items, today),
+        "P8_id_monotonic_with_date_excluding_duplicates": check_id_monotonic(
+            [i for i in items if i["article_id"] not in dup_ids], today),
     }
 
 
@@ -399,6 +450,8 @@ def run(argv=None, get_secret=None, scraper_runner=None, mail_prober=None,
                     help="PO 已確認定錨帳號目前只有一台裝置（手機）登入、電腦瀏覽器已登出"
                          "（必填：網站規定同帳號最多兩台，探查瀏覽器算一台）")
     ap.add_argument("--base-url", default=DEFAULT_BASE_URL)
+    ap.add_argument("--article-id", action="append", default=[],
+                    help="指定要開啟的文章 ID（最多 %d 篇；不足時補一篇對照文章）" % LIMITS["articles"])
     ap.add_argument("--skip-mail", action="store_true",
                     help="略過 Gmail 通知信連結檢查（P4）")
     ap.add_argument("--verbose", action="store_true")
@@ -412,6 +465,10 @@ def run(argv=None, get_secret=None, scraper_runner=None, mail_prober=None,
             "--confirm-po-present。未讀取任何憑證、未連線。")
         return 2
 
+    if len(args.article_id) > LIMITS["articles"] or not all(
+            re.match(r"^\d{1,20}$", a) for a in args.article_id):
+        say("拒絕執行：--article-id 最多 %d 篇，且必須是純數字" % LIMITS["articles"])
+        return 2
     if not args.confirm_one_device_only:
         say("拒絕執行：網站規定同一帳號最多兩台裝置上線，探查的瀏覽器算一台。請 PO 先把電腦"
             "瀏覽器登出、只保留手機一台登入，再加上 --confirm-one-device-only。"
@@ -451,6 +508,7 @@ def run(argv=None, get_secret=None, scraper_runner=None, mail_prober=None,
         "mode": "probe", "email": email_addr, "password": password,
         "base_url": args.base_url,
         "max_list_pages": LIMITS["list_pages"], "max_articles": LIMITS["articles"],
+        "target_article_ids": list(args.article_id),
         "delay_ms": list(delay), "timeout_ms": 30000,
     }
     try:
