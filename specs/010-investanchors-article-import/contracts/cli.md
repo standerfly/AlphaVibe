@@ -6,6 +6,7 @@
 python3 poc/kb-mcp/investanchors_import.py --data-dir <dir>
         [--dry-run] [--force-weekly] [--max-articles N] [--resume] [--retranscribe]
         [--reset-abandoned <article_id>] [--backfill-since <YYYY-MM-DD>]
+        [--enable-transcription | --disable-transcription] [--retranscribe] [--transcribe-sample N]
 ```
 - `--backfill-since <日期>`：**PO 要求補抓更早文章時**使用。把 `backfill_state.cutoff_date`／`cutoff_ms` 放寬到該日期、
   `completed` 重設為 0，並把 ID 建立時間落在新舊截止日之間的 `deferred` 文章轉回 `discovered`；之後仍依每日 5 篇
@@ -29,8 +30,8 @@ python3 poc/kb-mcp/investanchors_import.py --data-dir <dir>
 - 每週核對觸發：週日且上次核對 ≥6 天前；**或超過 8 天沒核對**（週日那次因睡眠錯過時的保底）。
 - 信箱讀取連續失敗 3 次才通知（`setting.mail_fail_count`）；單次失敗不因信觸發，但每週核對照常登入。
 - `--retranscribe`：只讀本機圖片檔補轉 `untranscribed`／換模型後重轉，**不登入網站**；**轉寫開關關閉時拒絕（exit 2，訊息「轉寫開關未開」）**。
-- `--enable-transcription`／`--disable-transcription`：切換 `setting.transcribe_enabled`（冪等、印出目前狀態、只改設定）。**預設關閉**；關閉時匯入流程不呼叫模型 API、也不讀取 `vision-api-key`。
-- `--transcribe-sample N`：從本機已下載的圖隨機抽 N 張（**須含至少 1 張長圖**，長圖＝高/寬 ≥1.5 且高度 ≥2000px；庫內不足就回報不足與現況）轉寫，結果只寫進 `poc/data/articles_probe/transcribe-sample-<時間>.md` 供 PO 逐格比對，**不寫入資料庫**；不登入網站；開關關閉時仍可執行（唯一例外）。
+- `--enable-transcription`／`--disable-transcription`：切換 `setting.transcribe_enabled`（冪等、印出目前狀態、只改設定）。**預設關閉（無 `transcribe_enabled` 列＝關）**；關閉時匯入流程不呼叫模型 API、也不讀取 `vision-api-key`；切換旗標不取信、不登入，且不可與其他動作旗標併用（exit 2）。開啟後匯入流程逐圖轉寫（`is_table=false` 記 `not_table`、失敗留 `untranscribed`；某張遇金鑰／額度問題即中止本次後續圖，其餘待 `--retranscribe`）。
+- `--transcribe-sample N`：從本機已下載的圖隨機抽 N 張（**須含至少 1 張長圖**，長圖＝高/寬 ≥1.5 且高度 ≥2000px；庫內不足就回報不足與現況）轉寫，結果只寫進 `<data-dir>/articles_probe/transcribe-sample-<時間>.md`（正式庫即 `poc/data/articles_probe/`，已被 gitignore）供 PO 逐格比對；每張圖列出 article_id／seq、尺寸、原圖路徑與轉寫文字（不含標題、內文、金鑰），**不寫入資料庫**；不登入網站；開關關閉時仍可執行（唯一例外）。
 - Exit code：0＝正常（含無觸發）；1＝有失敗；2＝因上限／退避而拒絕（非錯誤，供健康檢查辨識）。
 - 依賴注入點（測試用）：`fetch_mail`、`run_scraper`、`transcribe`、`notifier`、`get_secret`、`now`。
 

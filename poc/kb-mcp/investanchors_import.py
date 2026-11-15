@@ -15,13 +15,16 @@ sleeper、rng、delay_ms、image_hosts。僅標準庫，Python 3.9 相容。
 import argparse
 import datetime
 import os
+import random
 import sys
 import tempfile
 import shutil
 
 import article_data_guard
+import article_image_tiles
 import article_images
 import article_store
+import article_transcribe
 import investanchors_limits
 import investanchors_mailbox
 import investanchors_redact
@@ -35,6 +38,8 @@ MAIL_FAILURES_BEFORE_ALERT = 3
 WEEKLY_MIN_GAP_DAYS = 6
 WEEKLY_OVERDUE_DAYS = 8          # 週日那次因睡眠錯過時的保底：超過 8 天沒核對就補
 HALT_SETTING = "halted_reason"
+TRANSCRIBE_SETTING = "transcribe_enabled"   # 無此列＝關閉（預設）；不得以鑰匙圈有無金鑰當開關（T038）
+SAMPLE_DIRNAME = "articles_probe"
 RECENT_ARTICLE_DAYS = 7           # 建立時間（由 ID 推得）在此天數內才逐篇通知，更早的合併成一則摘要
 
 ALERT_TEXTS = {
@@ -95,13 +100,23 @@ def build_parser():
     ap.add_argument("--reset-abandoned", type=int, default=None, metavar="ARTICLE_ID",
                     help="PO 介入後把已放棄的文章重置為可重試")
     ap.add_argument("--resume", action="store_true", help="帳號停用等狀況排除後，恢復排程")
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--enable-transcription", action="store_true", help="開啟表格圖轉寫（預設關閉；冪等，只改設定）")
+    g.add_argument("--disable-transcription", action="store_true", help="關閉表格圖轉寫（冪等，只改設定）")
+    ap.add_argument("--retranscribe", action="store_true",
+                    help="只讀本機圖片補轉寫（未轉寫、或換模型後重轉）；不登入；轉寫開關關閉時拒絕")
+    ap.add_argument("--transcribe-sample", type=int, default=None, metavar="N",
+                    help="只讀本機圖片隨機抽 N 張（至少含 1 張長圖）轉寫，結果寫 <data-dir>/articles_probe/；"
+                         "不寫資料庫、不登入；開關關閉時仍可執行")
     return ap
 
 
 class Importer(object):
     def __init__(self, args, fetch_mail=None, run_scraper=None, download_images=None, transcribe=None,
                  notifier=None, get_secret=None, now=None, sleeper=None, rng=None, delay_ms=None,
-                 image_hosts=None, base_url=None, timeout_ms=30000, out=None):
+                 image_hosts=None, base_url=None, timeout_ms=30000, out=None,
+                 transcribe_api_url=None, transcribe_model=None, transcribe_timeout=None,
+                 tiles_runner=None, tile_tmp_root=None, sample_rng=None):
         self.args = args
         self.out = out or sys.stdout
         self.now = now or _default_now
@@ -109,7 +124,14 @@ class Importer(object):
         self.fetch_mail = fetch_mail or self._default_fetch_mail
         self.run_scraper = run_scraper or self._default_run_scraper
         self.download_images = download_images or article_images.download_images
-        self.transcribe = transcribe
+        self.transcribe = transcribe or article_transcribe.transcribe_image
+        self.transcribe_api_url = transcribe_api_url
+        self.transcribe_model = transcribe_model or article_transcribe.TRANSCRIBE_MODEL
+        self.transcribe_timeout = transcribe_timeout
+        self.tiles_runner = tiles_runner
+        self.tile_tmp_root = tile_tmp_root
+        self.sample_rng = sample_rng or random.Random()
+        self.transcribe_aborted = False
         self.notifier = notifier or _default_notifier
         self.sleeper = sleeper
         self.rng = rng
@@ -153,10 +175,16 @@ class Importer(object):
         except article_data_guard.DataDirRefused as e:
             self.say("拒絕執行：%s" % e)
             return 2
+        if args.enable_transcription or args.disable_transcription:
+            return self._toggle_transcription()
+        if args.transcribe_sample is not None:
+            return self._transcribe_sample(args.transcribe_sample)
         if args.dry_run:
             return self._dry_run()
         store = article_store.ArticleStore(args.data_dir, now=self.now)
         try:
+            if args.retranscribe:
+                return self._retranscribe(store)
             if args.reset_abandoned is not None:
                 ok = store.reset_abandoned(args.reset_abandoned)
                 self.say("已重置文章 %s" % args.reset_abandoned if ok else "該文章不是 abandoned，未變更")
@@ -168,6 +196,169 @@ class Importer(object):
             return self._execute(store)
         finally:
             store.close()
+
+    # ---------------------------------------------------------------- 轉寫（T037～T040）
+    @staticmethod
+    def transcription_enabled(store):
+        return str(store.get_setting(TRANSCRIBE_SETTING, "0")) == "1"
+
+    def _toggle_transcription(self):
+        """只改設定：不取信、不登入、不讀任何金鑰。冪等，印出目前狀態。"""
+        a = self.args
+        if a.retranscribe or a.transcribe_sample is not None or a.dry_run or a.resume \
+                or a.reset_abandoned is not None:
+            self.say("拒絕執行：切換轉寫開關時不可同時帶其他動作旗標")
+            return 2
+        store = article_store.ArticleStore(a.data_dir, now=self.now)
+        try:
+            store.set_setting(TRANSCRIBE_SETTING, "1" if a.enable_transcription else "0")
+            self.say("轉寫開關：%s" % ("已開啟" if self.transcription_enabled(store) else "已關閉"))
+            return 0
+        finally:
+            store.close()
+
+    def _transcribe_one(self, store, img):
+        """轉寫一張本機圖並寫回資料庫。回傳 True 表示應中止本次後續圖（金鑰／額度問題）。永不丟例外。"""
+        aid, seq = img["article_id"], img["seq"]
+        try:
+            path = os.path.join(store.data_dir, img["file_path"])
+            with article_image_tiles.open_tiles(path, runner=self.tiles_runner, tmp_root=self.tile_tmp_root) as ts:
+                if ts.status != "ok":
+                    return False                      # 保持 untranscribed，原因為固定代碼、不進任何輸出
+                tiles = [b for _i, b, _mt in ts.iter_tile_bytes()]
+                kw = {"get_secret": self.get_secret, "api_url": self.transcribe_api_url,
+                      "model": self.transcribe_model, "timeout": self.transcribe_timeout,
+                      "merge": article_image_tiles.merge_transcripts}
+                if self.sleeper is not None:
+                    kw["sleeper"] = self.sleeper
+                r = self.transcribe(tiles, **kw)
+            if r.get("status") == "transcribed":
+                if r.get("is_table") is False:
+                    store.set_transcription(aid, seq, "not_table", is_table=False)
+                elif (r.get("text") or "").strip():
+                    store.set_transcription(aid, seq, "done", text=r["text"], model=r.get("model"), is_table=True)
+            return bool(r.get("abort"))
+        except Exception:
+            return False
+
+    def _transcribe_article(self, store, aid):
+        for img in store.list_images(aid):
+            if self.transcribe_aborted:
+                return
+            if not img.get("file_path") or img.get("transcription_status") != "untranscribed":
+                continue
+            if self._transcribe_one(store, img):
+                self.transcribe_aborted = True
+
+    def _retranscribe(self, store):
+        """只讀本機圖片：補轉 untranscribed，並重轉「模型不同於目前設定」的已轉寫圖。不登入、不啟動 scraper。"""
+        if not self.transcription_enabled(store):
+            self.say("拒絕執行：轉寫開關未開（先用 --enable-transcription 開啟）")
+            return 2
+        todo = store.images_to_transcribe()
+        todo += [dict(r) for r in store.conn.execute(
+            "SELECT * FROM article_image WHERE file_path IS NOT NULL AND transcription_status='done' "
+            "AND COALESCE(transcribed_model,'') != ? ORDER BY article_id, seq", (self.transcribe_model,))]
+        done = 0
+        for img in todo:
+            if self.transcribe_aborted:
+                break
+            if self._transcribe_one(store, img):
+                self.transcribe_aborted = True
+            row = [i for i in store.list_images(img["article_id"]) if i["seq"] == img["seq"]][0]
+            if row["transcription_status"] != img["transcription_status"] or \
+                    row.get("transcribed_model") != img.get("transcribed_model"):
+                done += 1
+        left = len(store.images_to_transcribe())
+        self.say("重轉完成：處理 %d 張、仍未轉寫 %d 張%s" % (done, left, "（因金鑰或額度問題中止）" if self.transcribe_aborted else ""))
+        return 1 if (self.transcribe_aborted or left) else 0
+
+    def _transcribe_sample(self, n):
+        """抽查工具：只讀本機圖、不登入、不寫資料庫；結果寫 <data-dir>/articles_probe/transcribe-sample-<時間>.md。"""
+        a = self.args
+        if a.retranscribe or a.dry_run or a.resume or a.reset_abandoned is not None:
+            self.say("拒絕執行：--transcribe-sample 不可與其他動作旗標併用")
+            return 2
+        if n < 1:
+            self.say("拒絕執行：N 必須 ≥ 1")
+            return 2
+        try:
+            store = article_store.ArticleStore.open_readonly(a.data_dir)
+        except FileNotFoundError:
+            self.say("文章庫尚未建立，沒有可抽查的圖片")
+            return 1
+        try:
+            imgs = [dict(r) for r in store.conn.execute(
+                "SELECT * FROM article_image WHERE file_path IS NOT NULL ORDER BY article_id, seq")]
+            data_dir = store.data_dir
+        finally:
+            store.close()
+        avail, longs = [], []
+        for img in imgs:
+            full = os.path.join(data_dir, img["file_path"])
+            try:
+                with open(full, "rb") as f:
+                    size = article_image_tiles.image_size(f.read())
+            except OSError:
+                continue
+            if size is None:
+                continue
+            img["_size"] = size
+            avail.append(img)
+            if article_image_tiles.is_long_image(*size):
+                longs.append(img)
+        if len(avail) < n:
+            self.say("不足：目前本機有檔且可讀的圖片只有 %d 張（需要 %d 張），其中長圖 %d 張；不勉強抽樣" % (
+                len(avail), n, len(longs)))
+            return 1
+        if not longs:
+            self.say("不足：目前 %d 張圖片裡沒有長圖（高/寬 ≥ 1.5 且高 ≥ 2000px）；不勉強抽樣" % len(avail))
+            return 1
+        first = self.sample_rng.choice(longs)
+        rest = [i for i in avail if i is not first]
+        picked = [first] + self.sample_rng.sample(rest, n - 1)
+        stamp = self.now().astimezone(TZ8).strftime("%Y%m%d-%H%M%S")
+        out_dir = os.path.join(data_dir, SAMPLE_DIRNAME)
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, "transcribe-sample-%s.md" % stamp)
+        lines = ["# 轉寫抽查（模型 %s；不寫資料庫）" % self.transcribe_model, ""]
+        aborted = False
+        for k, img in enumerate(picked, 1):
+            w, h = img["_size"]
+            lines.append("## %d. article_id=%s seq=%s｜%dx%d%s" % (
+                k, img["article_id"], img["seq"], w, h, "｜長圖" if article_image_tiles.is_long_image(w, h) else ""))
+            lines.append("原圖：%s" % os.path.join(data_dir, img["file_path"]))
+            lines.append("")
+            if aborted:
+                lines += ["（因前一張遇到金鑰或額度問題，略過）", ""]
+                continue
+            res = self._sample_one(os.path.join(data_dir, img["file_path"]))
+            lines.append("狀態：%s%s" % (res["status"], "（%s）" % res["reason"] if res.get("reason") else ""))
+            lines.append("")
+            if res["status"] == "transcribed":
+                lines += ["```", res["text"] or "", "```", ""]
+            aborted = bool(res.get("abort"))
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+        self.say("抽查完成：%d 張（含長圖），結果寫入 %s" % (n, out_path))
+        return 0
+
+    def _sample_one(self, path):
+        try:
+            with article_image_tiles.open_tiles(path, runner=self.tiles_runner, tmp_root=self.tile_tmp_root) as ts:
+                if ts.status != "ok":
+                    return {"status": "untranscribed", "reason": ts.reason}
+                tiles = [b for _i, b, _mt in ts.iter_tile_bytes()]
+                kw = {"get_secret": self.get_secret, "api_url": self.transcribe_api_url,
+                      "model": self.transcribe_model, "timeout": self.transcribe_timeout,
+                      "merge": article_image_tiles.merge_transcripts}
+                if self.sleeper is not None:
+                    kw["sleeper"] = self.sleeper
+                r = self.transcribe(tiles, **kw)
+            return {"status": r.get("status"), "reason": r.get("reason"), "text": r.get("text"),
+                    "abort": r.get("abort")}
+        except Exception:
+            return {"status": "untranscribed", "reason": "exception"}
 
     def _mail_step(self, store, record):
         """唯讀取信；record=False（dry-run）時不寫入。回傳 (clues, failed)。"""
@@ -405,6 +596,8 @@ class Importer(object):
             self.download_images(store, aid, store.data_dir, **{k: v for k, v in kwargs.items() if v is not None})
         except Exception:
             pass                                   # 圖片失敗不影響文章，下次補抓
+        if self.transcription_enabled(store) and not self.transcribe_aborted:
+            self._transcribe_article(store, aid)   # 開關關閉時：不呼叫模型、不讀 vision-api-key
 
 
 def run(argv=None, **deps):

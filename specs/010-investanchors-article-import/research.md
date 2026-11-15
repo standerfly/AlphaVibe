@@ -97,6 +97,7 @@ requests 登入（Python 無 requests 依賴、且不易模擬瀏覽器行為；
 ## R5. 表格圖轉寫
 
 **Decision**: 新 `article_transcribe.py`，用 `urllib` 呼叫視覺模型 HTTP API（repo 內**沒有任何 LLM 呼叫先例**）。
+**轉寫開關預設關閉（T038）**：`setting.transcribe_enabled` 無此列＝關；關閉時圖片照常下載、標 `untranscribed`、不呼叫模型 API、不讀 `vision-api-key`（不得以鑰匙圈有無金鑰當開關）；`--transcribe-sample` 是唯一關閉時可呼叫模型的路徑。
 **不裝 SDK 的理由**：排程跑系統 `/usr/bin/python3`（3.9.6）、僅標準庫（requirements.txt 只有 yfinance），
 新增套件會讓每次部署與 launchd 環境多一個失敗點。
 起始模型：**`claude-haiku-5-5`**（不加日期後綴；PO 決定「成本最低且抽查合格」，據主對話提供：輸入 0.10／輸出
