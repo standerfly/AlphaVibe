@@ -81,7 +81,7 @@
 - [x] T021 [US1] 建立不外洩負向測試 `poc/kb-mcp/tests/test_investanchors_no_leak.py`（spec 驗收（c））：延伸 T020 的執行，收集 stdout／stderr、所有寫出的檔案、資料庫每個 TEXT 欄位（含 `last_error`）、全部假 Telegram 訊息，逐一以 `assert_clean` 斷言**不含**：測試密碼、假 cookie 值、CSRF token、`/c/<token>` 形態、文章全文（用一段獨特標記字串）。同時涵蓋登入失敗與被擋的失敗路徑。
 - [x] T022 [GATE] [US1] 提交推送 T001～T021 並通知主對話審查（commits、檔案、測試結果、完整套件對照基準）。**審查通過前不得執行真實網站。**
 - [x] T023 [GATE] [PO] [US1] 首次對真實網站執行（**PO 在場、電腦瀏覽器已登出、只留手機一台登入、在對話親自確認；主對話已審過**）：`python3 poc/kb-mcp/investanchors_import.py --data-dir poc/data-test-articles --max-articles 1 --force-weekly`（**獨立測試資料目錄，不是正式庫**；`--force-weekly` 用來觸發）。只執行一次，不重跑；**空庫第一次執行會讀 3 頁清單**，把清單上約 45 篇登記為 `discovered`，但只抓 1 篇。結束後確認 `import_runs.logged_out=1`、文章庫 `fetched` 恰 1 篇（其餘為 `discovered`）、PO 手機仍在線、無 token／全文外洩（以 `assert_clean` 掃描器對真實輸出跑一次）；結果與下一步回報主對話。此時正式排程尚未安裝（T055 之前），不受通用規則 8 影響。
-- [ ] T024 [GATE] [US1] 獨立驗收（全新 agent，非實作者）：對照 spec US1 驗收情境 1～7、FR-001～004／006～013／019～020、SC-003／004／006，**只給驗收條件與否決條件，不給實作推理**；任一條沒有證據 → 整體 FAIL。通過後 US1 才算可交付。
+- [x] T024 [GATE] [US1] 獨立驗收（全新 agent，非實作者）：對照 spec US1 驗收情境 1～7、FR-001～004／006～013／019～020、SC-003／004／006，**只給驗收條件與否決條件，不給實作推理**；任一條沒有證據 → 整體 FAIL。通過後 US1 才算可交付。
 
 **Checkpoint**：US1 可獨立交付（MVP）。其後 US2～US4 不得破壞 US1 測試。
 
