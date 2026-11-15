@@ -54,7 +54,7 @@ class GateTest(unittest.TestCase):
         def boom(*a, **k):
             raise AssertionError("must not be called")
         out = io.StringIO()
-        rc = article_probe.run(["--confirm-po-present"], get_secret=boom,
+        rc = article_probe.run(["--data-dir", tempfile.gettempdir(), "--confirm-po-present"], get_secret=boom,
                                scraper_runner=boom, mail_prober=boom, out=out)
         self.assertEqual(rc, 2)
         self.assertIn("--confirm-one-device-only", out.getvalue())
@@ -74,7 +74,7 @@ class GateTest(unittest.TestCase):
         def boom(*a, **k):
             raise AssertionError("scraper must not run")
         out = io.StringIO()
-        rc = article_probe.run(CONFIRM + ["--skip-mail"], get_secret=get,
+        rc = article_probe.run(["--data-dir", tempfile.gettempdir()] + CONFIRM + ["--skip-mail"], get_secret=get,
                                scraper_runner=boom, out=out)
         self.assertEqual(rc, 1)
         self.assertNotIn(PASSWORD, out.getvalue())
@@ -176,7 +176,7 @@ class RunnerHygieneTest(unittest.TestCase):
         rc, out, _ = self._run([self._summary()])
         path = out.split("探查報告：")[1].splitlines()[0]
         self.assertEqual(os.path.dirname(path),
-                         os.path.join(os.path.abspath(self.tmp), "articles_probe"))
+                         os.path.join(os.path.realpath(self.tmp), "articles_probe"))
         self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
 
 

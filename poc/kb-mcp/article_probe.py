@@ -29,6 +29,7 @@ import threading
 from html.parser import HTMLParser
 from urllib.parse import parse_qsl, urlparse
 
+import article_data_guard
 import keychain_secrets
 import statement_mailbox
 
@@ -39,7 +40,6 @@ LIMITS = {"logins": 1, "list_pages": 3, "articles": 2}
 MIN_DELAY_MS = 10000
 DEFAULT_DELAY_MS = (30000, 90000)
 DEFAULT_BASE_URL = "https://investanchors.com"
-DEFAULT_DATA_DIR = os.path.join(HERE, "..", "data")
 MAIL_SENDER = "postmaster@mailer.investanchors.com"
 PROBE_DIRNAME = "articles_probe"
 HALF_YEAR_DAYS = 183
@@ -591,7 +591,8 @@ def run(argv=None, get_secret=None, scraper_runner=None, mail_prober=None,
         now=None, out=None, allow_short_delay=False, delay_ms=None):
     out = out or sys.stdout
     ap = argparse.ArgumentParser(description="010 定錨網站探查（唯讀、極低頻）")
-    ap.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    ap.add_argument("--data-dir", default=None,
+                    help="必填、無預設值；指向正式資料目錄需 ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1")
     ap.add_argument("--confirm-po-present", action="store_true",
                     help="PO 本人在場並同意此次探查（必填，否則拒絕執行）")
     ap.add_argument("--confirm-one-device-only", action="store_true",
@@ -614,6 +615,12 @@ def run(argv=None, get_secret=None, scraper_runner=None, mail_prober=None,
 
     def say(msg):
         out.write(msg + "\n")
+
+    try:                                    # 最先判斷：拒絕時不讀憑證、不連線、不寫入
+        args.data_dir = article_data_guard.resolve_data_dir(args.data_dir)
+    except article_data_guard.DataDirRefused as e:
+        say("拒絕執行：%s" % e)
+        return 2
 
     if args.mail_only:
         return _run_mail_only(args, get_secret, mail_prober, now, out)

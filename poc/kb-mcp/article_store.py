@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS import_runs (
     trigger TEXT NOT NULL,
     logged_in INTEGER NOT NULL DEFAULT 0,
     login_ok INTEGER,
+    list_pages INTEGER NOT NULL DEFAULT 0,
     articles_attempted INTEGER NOT NULL DEFAULT 0,
     articles_fetched INTEGER NOT NULL DEFAULT 0,
     result TEXT,
@@ -144,6 +145,8 @@ class ArticleStore(object):
         cols = [r[1] for r in self.conn.execute("PRAGMA table_info(import_runs)")]
         if "login_ok" not in cols:          # 早期測試目錄建立的舊表
             self.conn.execute("ALTER TABLE import_runs ADD COLUMN login_ok INTEGER")
+        if "list_pages" not in cols:        # 每週核對判定用：本次讀到幾頁清單
+            self.conn.execute("ALTER TABLE import_runs ADD COLUMN list_pages INTEGER NOT NULL DEFAULT 0")
 
     def close(self):
         self.conn.close()
@@ -406,15 +409,16 @@ class ArticleStore(object):
         self.conn.commit()
 
     def finish_run(self, run_id, login_ok, attempted, fetched, result, logged_out,
-                   blocked_until=None, now=None):
+                   blocked_until=None, now=None, list_pages=0):
         """`login_ok`：登入是否成功（None＝沒嘗試登入）。`logged_in`（已嘗試）只升不降：成功必然代表嘗試過。"""
         self.conn.execute(
             "UPDATE import_runs SET finished_at=?, logged_in=MAX(logged_in, ?), login_ok=?, "
-            "articles_attempted=?, articles_fetched=?, result=?, logged_out=?, blocked_until=? WHERE id=?",
+            "articles_attempted=?, articles_fetched=?, result=?, logged_out=?, blocked_until=?, list_pages=? "
+            "WHERE id=?",
             (_iso(now or self.now()), 1 if login_ok else 0, None if login_ok is None else (1 if login_ok else 0),
              attempted, fetched, result,
              None if logged_out is None else (1 if logged_out else 0),
-             _iso(blocked_until) if blocked_until else None, run_id))
+             _iso(blocked_until) if blocked_until else None, int(list_pages or 0), run_id))
         self.conn.commit()
 
     def logins_today(self, now=None):
@@ -432,8 +436,9 @@ class ArticleStore(object):
         return max(values) if values else None
 
     def last_weekly_check(self):
+        """只有「登入成功且至少讀到一頁清單」的每週核對才算完成；登入失敗、被擋、沒讀到清單都不算。"""
         row = self.conn.execute(
-            "SELECT started_at FROM import_runs WHERE trigger LIKE '%weekly%' AND logged_in=1 "
+            "SELECT started_at FROM import_runs WHERE trigger LIKE '%weekly%' AND login_ok=1 AND list_pages>=1 "
             "ORDER BY started_at DESC LIMIT 1").fetchone()
         return _parse(row[0]) if row else None
 

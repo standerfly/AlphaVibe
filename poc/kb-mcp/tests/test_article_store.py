@@ -319,21 +319,50 @@ class RunsAndAlertsTest(Base):
         self.s.finish_run(r2, True, 0, 0, "blocked", True, blocked_until=T(18, 23))
         self.assertEqual(self.s.blocked_until(), T(18, 23))
 
-    def test_last_weekly_check_only_counts_logged_in_weekly_runs(self):
+    def test_last_weekly_check_only_counts_successful_login_that_read_the_list(self):
         self.assertIsNone(self.s.last_weekly_check())
         self.clock[0] = T(8)
         r = self.s.start_run("weekly")
         self.s.mark_login_started(r)
+        self.s.finish_run(r, True, 0, 0, "ok", True, list_pages=1)
         self.clock[0] = T(10)
-        r2 = self.s.start_run("mail")
+        r2 = self.s.start_run("mail")                              # 非 weekly 觸發 → 不算
         self.s.mark_login_started(r2)
+        self.s.finish_run(r2, True, 0, 0, "ok", True, list_pages=1)
         self.clock[0] = T(12)
         self.s.start_run("weekly")                                 # 沒登入 → 不算
         self.assertEqual(self.s.last_weekly_check(), T(8))
         self.clock[0] = T(14)
-        r4 = self.s.start_run("mail+weekly")
+        r4 = self.s.start_run("weekly")                            # 已嘗試登入但失敗 → 不算
         self.s.mark_login_started(r4)
-        self.assertEqual(self.s.last_weekly_check(), T(14))
+        self.s.finish_run(r4, False, 0, 0, "login_failed", True)
+        self.clock[0] = T(15)
+        r5 = self.s.start_run("weekly")                            # 登入成功但被擋、沒讀到清單 → 不算
+        self.s.mark_login_started(r5)
+        self.s.finish_run(r5, True, 0, 0, "blocked", True, list_pages=0)
+        self.assertEqual(self.s.last_weekly_check(), T(8))
+        self.clock[0] = T(16)
+        r6 = self.s.start_run("mail+weekly")                       # 成功且讀到清單 → 算
+        self.s.mark_login_started(r6)
+        self.s.finish_run(r6, True, 0, 0, "ok", True, list_pages=3)
+        self.assertEqual(self.s.last_weekly_check(), T(16))
+
+    def test_old_import_runs_table_gets_list_pages_column(self):
+        import sqlite3
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        conn = sqlite3.connect(os.path.join(d, A.DB_FILENAME))
+        conn.execute("CREATE TABLE import_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, "
+                     "finished_at TEXT, trigger TEXT NOT NULL, logged_in INTEGER NOT NULL DEFAULT 0, "
+                     "articles_attempted INTEGER NOT NULL DEFAULT 0, articles_fetched INTEGER NOT NULL DEFAULT 0, "
+                     "result TEXT, logged_out INTEGER, blocked_until TEXT)")
+        conn.commit()
+        conn.close()
+        s = A.ArticleStore(d)
+        self.addCleanup(s.close)
+        cols = [r[1] for r in s.conn.execute("PRAGMA table_info(import_runs)")]
+        self.assertIn("list_pages", cols)
+        self.assertIsNone(s.last_weekly_check())
 
     def test_unverified_logout_runs(self):
         a = self.s.start_run("mail")

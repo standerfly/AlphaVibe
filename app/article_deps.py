@@ -20,6 +20,7 @@ _ARTICLE_KB_MCP_DIR = Path(__file__).resolve().parent.parent / "poc" / "kb-mcp"
 if str(_ARTICLE_KB_MCP_DIR) not in sys.path:
     sys.path.insert(0, str(_ARTICLE_KB_MCP_DIR))
 
+import article_data_guard  # noqa: E402
 from article_store import ArticleStore  # noqa: E402  (需先插入 sys.path 才能 import)
 
 
@@ -37,15 +38,7 @@ def _resolve_article_data_dir() -> str:
             "意外寫進正式資料庫。測試／開發：指向獨立的資料目錄（例如 poc/data-test-articles/）。"
             "正式部署：明確指向 " + _ARTICLE_PRODUCTION_DATA_DIR
         )
-    resolved = os.path.abspath(env_dir)
-    if resolved == _ARTICLE_PRODUCTION_DATA_DIR and os.environ.get(
-            "ALPHAVIBE_ALLOW_PRODUCTION_WRITE") != "1":
-        raise RuntimeError(
-            "ALPHAVIBE_DATA_DIR 指向正式資料庫路徑（" + _ARTICLE_PRODUCTION_DATA_DIR
-            + "），但沒有設定 ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1 明確確認。"
-            "如果是要測試，請改指向獨立的資料目錄，不要指向這個路徑。"
-        )
-    return resolved
+    return article_data_guard.resolve_data_dir(env_dir)   # 與 CLI 共用同一份判斷（含 symlink 解析）
 
 
 def get_article_store() -> Iterator[ArticleStore]:

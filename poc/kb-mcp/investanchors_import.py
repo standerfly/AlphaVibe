@@ -19,6 +19,7 @@ import sys
 import tempfile
 import shutil
 
+import article_data_guard
 import article_images
 import article_store
 import investanchors_limits
@@ -27,7 +28,6 @@ import investanchors_redact
 import keychain_secrets
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DATA_DIR = os.path.join(HERE, "..", "data")
 TZ8 = investanchors_limits.TZ8
 CANON_URL = "https://investanchors.com/user/vip_contents/%d"
 MAIL_DAYS = 14
@@ -35,6 +35,7 @@ MAIL_FAILURES_BEFORE_ALERT = 3
 WEEKLY_MIN_GAP_DAYS = 6
 WEEKLY_OVERDUE_DAYS = 8          # 週日那次因睡眠錯過時的保底：超過 8 天沒核對就補
 HALT_SETTING = "halted_reason"
+RECENT_ARTICLE_DAYS = 7           # 建立時間（由 ID 推得）在此天數內才逐篇通知，更早的合併成一則摘要
 
 ALERT_TEXTS = {
     "login_failed": "⚠️ 定錨匯入：登入失敗（帳號或密碼可能錯誤）。請更新鑰匙圈 stnd-investanchors 後再執行。",
@@ -84,7 +85,8 @@ def _default_notifier(text):
 
 def build_parser():
     ap = argparse.ArgumentParser(description="定錨產業筆記文章匯入（排程進入點）")
-    ap.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    ap.add_argument("--data-dir", required=True,
+                    help="必填、無預設值；指向正式資料目錄需 ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1")
     ap.add_argument("--dry-run", action="store_true",
                     help="只取信並列出觸發判斷；不登入、不寫入、不通知")
     ap.add_argument("--force-weekly", action="store_true", help="視為每週核對日（手動試跑用）")
@@ -117,6 +119,7 @@ class Importer(object):
         self.base_url = base_url or "https://investanchors.com"
         self.timeout_ms = timeout_ms
         self.secrets = []
+        self.older_fetched = 0
 
     # ---------------------------------------------------------------- 預設依賴
     def _default_fetch_mail(self):
@@ -145,6 +148,11 @@ class Importer(object):
     # ---------------------------------------------------------------- 主流程
     def main(self):
         args = self.args
+        try:                                            # 在取信、登入、寫入之前就拒絕（dry-run 也一樣）
+            args.data_dir = article_data_guard.resolve_data_dir(args.data_dir)
+        except article_data_guard.DataDirRefused as e:
+            self.say("拒絕執行：%s" % e)
+            return 2
         if args.dry_run:
             return self._dry_run()
         store = article_store.ArticleStore(args.data_dir, now=self.now)
@@ -294,7 +302,13 @@ class Importer(object):
         via = triggers[0]
         if login_ok:
             self._apply_list(store, items, via)
+            self.older_fetched = 0
             ok_n, fail_n = self._apply_articles(store, articles, errors)
+            if self.older_fetched:                     # 較早的文章合併成一則，不列標題
+                try:
+                    self.notifier("📰 定錨補抓：已補抓 %d 篇較早的文章" % self.older_fetched)
+                except Exception:
+                    pass
             attempted, fetched = ok_n + fail_n, ok_n
             if summary.get("blocked"):
                 result, failed_run = "blocked", True
@@ -316,7 +330,8 @@ class Importer(object):
         if not logged_out and stage != "no_browser":    # 有嘗試登入就必須驗證登出；未驗證立即通知
             self.alert(store, "logout_unverified")
             failed_run = True
-        store.finish_run(run_id, login_ok, attempted, fetched, result, logged_out, blocked_until=blocked_until)
+        store.finish_run(run_id, login_ok, attempted, fetched, result, logged_out, blocked_until=blocked_until,
+                         list_pages=(counters.get("list_pages") or 0) if login_ok else 0)
         self.say("完成：結果 %s；抓取 %d／%d 篇；登出%s" % (result, fetched, attempted, "已驗證" if logged_out else "未驗證"))
         return 1 if failed_run else 0
 
@@ -365,11 +380,22 @@ class Importer(object):
 
     def _notify_new(self, store, aid):
         row = store.get_article_row(aid)
-        if store.alert_once("new_article", str(aid), day="forever"):
-            try:
-                self.notifier("📰 定錨新文章：%s\n%s" % (row["title"], CANON_URL % aid))
-            except Exception:
-                pass
+        if not store.alert_once("new_article", str(aid), day="forever"):
+            return
+        if not self._is_recent(row):
+            self.older_fetched += 1
+            return
+        try:
+            self.notifier("📰 定錨新文章：%s\n%s" % (row["title"], CANON_URL % aid))
+        except Exception:
+            pass
+
+    def _is_recent(self, row):
+        """建立時間（由文章 ID 推得）距現在 7 天內；`id_time_ok=0`（推不出）視為近期。"""
+        if not row.get("id_time_ok") or row.get("id_time_ms") is None:
+            return True
+        age = self.now().timestamp() * 1000 - row["id_time_ms"]
+        return age <= RECENT_ARTICLE_DAYS * 86400 * 1000
 
     def _images(self, store, aid):
         kwargs = {"allowed_hosts": self.image_hosts, "rng": self.rng}

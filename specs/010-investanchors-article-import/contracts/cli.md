@@ -17,7 +17,7 @@ python3 poc/kb-mcp/investanchors_import.py --data-dir <dir>
 - 標題取自清單連結文字（通知信主旨為輔）；文章頁只取內文容器 `div#inves_content`、發布時間 `span.post_date`、
   內文容器內的圖片（記 `src_url`）。圖片不帶 cookie 即可下載：登出後由 Python 以 HTTP 下載，**不算登入次數，
   但每張之間仍隨機間隔 5～15 秒**；一篇可能只有 1 張長圖，轉寫前依 research R5 的原則切片。
-- `--data-dir` 預設 `poc/data`；指向正式庫需 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1`。
+- `--data-dir` **必填、無預設值**；解析（realpath，含 AlphaVibe-prod 的 symlink）後若是正式資料目錄，需 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1`，否則在取信、登入、寫入之前拒絕（`--dry-run`、`--resume` 等也一樣）。判斷邏輯在 `article_data_guard.py`，CLI（含 `article_probe.py`）與 `app/article_deps.py` 共用。
 - 流程：(1) 讀 `import_runs`：`blocked_until` 未到 或 今日登入已達 1 次 → 寫一筆 `aborted_limit`／`none` 後結束，**不登入**。
   (2) 唯讀取信：**只取 Message-ID 與寄達時間**，不解析、不記錄信中連結與標題（失敗＝不因信觸發，連續失敗才通知；每週
   核對仍會登入）。 (3) 決定觸發：有未處理的新信／週日核對（保底）／回補未完成；都沒有 → 寫 `trigger=none`，結束
@@ -76,6 +76,7 @@ python3 poc/kb-mcp/article_probe.py --data-dir poc/data --confirm-po-present --c
 - 一律 `finally` 區塊登出並 `context.close()`；`logged_out` 以「再訪登入頁出現登入表單」驗證。
 
 ## 5. Telegram 通知文字（沿用 `notify.send_telegram`，純文字）
-- 新文章：`📰 定錨新文章：<標題>\n<url>`（只標題＋連結）。
+- 新文章（建立時間距抓取當下 ≤7 天，`id_time_ok=0` 視為近期）：`📰 定錨新文章：<標題>\n<url>`（只標題＋連結），逐篇一則。
+- 較早的文章（>7 天）：每次執行合併一則 `📰 定錨補抓：已補抓 N 篇較早的文章`，不列標題。
 - 需介入：`⚠️ 定錨匯入：<類別>`＋一句行動建議（登入失敗／帳號停用／被阻擋已延後／單篇放棄 <id>／頁面結構改變）。不含內文、帳密、cookie。
 - 以 `alert_once(kind,key)` 同日去重。

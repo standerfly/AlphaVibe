@@ -455,5 +455,139 @@ class LogoutAndNotificationTest(unittest.TestCase):
         self.assertEqual(h.store().get_article_row(1001)["status"], "fetched")
 
 
+def _id_at(dt, k=1):
+    """造一個「前 13 位是 epoch 毫秒」的 14 位數文章 ID。"""
+    return int(dt.timestamp() * 1000) * 10 + k
+
+
+class DataDirGuardTest(unittest.TestCase):
+    """審查 #1：--data-dir 必填；指向正式庫（含 symlink）沒有旗標就在取信、登入、寫入之前拒絕。"""
+
+    def setUp(self):
+        import article_data_guard
+        self.guard = article_data_guard
+        self.prod = article_data_guard.PRODUCTION_DATA_DIR
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.touched = []
+
+    def _boom(self, *a, **k):
+        self.touched.append(1)
+        raise AssertionError("must not be called")
+
+    def _run(self, argv):
+        out = io.StringIO()
+        env = dict(os.environ)
+        env.pop("ALPHAVIBE_ALLOW_PRODUCTION_WRITE", None)
+        old = os.environ
+        os.environ = env
+        try:
+            rc = I.run(argv, fetch_mail=self._boom, run_scraper=self._boom, get_secret=self._boom,
+                       notifier=self._boom, out=out)
+        finally:
+            os.environ = old
+        return rc, out.getvalue()
+
+    def test_data_dir_is_required_and_has_no_default(self):
+        with self.assertRaises(SystemExit):
+            I.build_parser().parse_args([])
+        with self.assertRaises(SystemExit):
+            I.build_parser().parse_args(["--dry-run"])
+        self.assertFalse(hasattr(I, "DEFAULT_DATA_DIR"))
+
+    def test_production_dir_refused_without_flag_for_normal_and_dry_run(self):
+        for extra in ([], ["--dry-run"], ["--resume"]):
+            rc, out = self._run(["--data-dir", self.prod] + extra)
+            self.assertEqual(rc, 2)
+            self.assertIn("拒絕執行", out)
+        self.assertEqual(self.touched, [])
+
+    def test_symlink_to_production_dir_is_also_refused(self):
+        link = os.path.join(self.tmp, "link")
+        os.symlink(self.prod, link)
+        rc, out = self._run(["--data-dir", link, "--dry-run"])
+        self.assertEqual(rc, 2)
+        self.assertEqual(self.touched, [])
+        with self.assertRaises(self.guard.DataDirRefused):
+            self.guard.resolve_data_dir(link, env={})
+
+    def test_flag_allows_production_and_other_dirs_need_no_flag(self):
+        self.assertEqual(self.guard.resolve_data_dir(self.prod, env={"ALPHAVIBE_ALLOW_PRODUCTION_WRITE": "1"}),
+                         self.prod)
+        self.assertEqual(self.guard.resolve_data_dir(self.tmp, env={}), os.path.realpath(self.tmp))
+        with self.assertRaises(self.guard.DataDirRefused):
+            self.guard.resolve_data_dir(self.prod, env={"ALPHAVIBE_ALLOW_PRODUCTION_WRITE": "0"})
+        with self.assertRaises(self.guard.DataDirRefused):
+            self.guard.resolve_data_dir("", env={})
+
+    def test_probe_uses_same_guard(self):
+        import article_probe
+        out = io.StringIO()
+        rc = article_probe.run(["--data-dir", self.prod, "--confirm-po-present", "--confirm-one-device-only"],
+                               get_secret=self._boom, scraper_runner=self._boom, out=out)
+        self.assertEqual(rc, 2)
+        rc = article_probe.run(["--confirm-po-present", "--confirm-one-device-only"],
+                               get_secret=self._boom, scraper_runner=self._boom, out=out)
+        self.assertEqual(rc, 2)
+        self.assertEqual(self.touched, [])
+
+
+class NotificationRecencyTest(unittest.TestCase):
+    """審查 #3：7 天內逐篇通知；更早的合併成一則摘要（不列標題）；id_time_ok=0 視為近期。"""
+
+    def test_recent_notified_individually_and_older_merged_into_one_summary(self):
+        recent = _id_at(WED - datetime.timedelta(days=2))
+        edge = _id_at(WED - datetime.timedelta(days=6, hours=23), 2)
+        old1 = _id_at(WED - datetime.timedelta(days=8), 3)
+        old2 = _id_at(WED - datetime.timedelta(days=60), 4)
+        h = Harness(self, clues=[clue()], script=lambda p: [
+            li(recent, "近期文"), li(edge, "邊界文"), li(old1, "舊文一"), li(old2, "舊文二"),
+            art(recent), art(edge), art(old1), art(old2), summ()])
+        self.assertEqual(h.run(), 0)
+        singles = [n for n in h.notes if n.startswith("📰 定錨新文章")]
+        self.assertEqual(len(singles), 2)
+        self.assertTrue(any("近期文" in n for n in singles) and any("邊界文" in n for n in singles))
+        merged = [n for n in h.notes if "補抓" in n]
+        self.assertEqual(merged, ["📰 定錨補抓：已補抓 2 篇較早的文章"])
+        self.assertFalse(any("舊文" in n for n in h.notes))
+
+    def test_id_time_ok_zero_counts_as_recent(self):
+        h = Harness(self, clues=[clue()], script=lambda p: [li(1001, "短ID文"), art(1001), summ()])
+        h.run()
+        self.assertEqual(h.store().get_article_row(1001)["id_time_ok"], 0)
+        self.assertEqual(len(h.notes), 1)
+        self.assertIn("短ID文", h.notes[0])
+
+    def test_recency_constant_is_seven_days(self):
+        self.assertEqual(I.RECENT_ARTICLE_DAYS, 7)
+
+    def test_no_summary_when_nothing_old(self):
+        recent = _id_at(WED - datetime.timedelta(hours=5))
+        h = Harness(self, clues=[clue()], script=lambda p: [li(recent), art(recent), summ()])
+        h.run()
+        self.assertFalse(any("補抓" in n for n in h.notes))
+
+
+class WeeklyCheckCompletionTest(unittest.TestCase):
+    """審查 #2：核對日登入失敗或沒讀到清單，不算完成核對。"""
+
+    def test_failed_weekly_run_is_not_counted_as_checked(self):
+        h = Harness(self, now=SUN, script=lambda p: [summ(logged_in=False, stage_error="login_failed:bad_credentials")])
+        h.run()
+        self.assertIsNone(h.store().last_weekly_check())
+
+    def test_blocked_without_list_is_not_counted(self):
+        h = Harness(self, now=SUN, script=lambda p: [
+            summ(blocked=True, counters={"logins": 1, "navigations": 1, "list_pages": 0, "articles_opened": 0})])
+        h.run()
+        self.assertIsNone(h.store().last_weekly_check())
+
+    def test_successful_weekly_run_that_read_list_is_counted(self):
+        h = Harness(self, now=SUN, script=lambda p: [li(1001), summ()])
+        h.run()
+        self.assertEqual(h.store().last_weekly_check(), SUN)
+        self.assertEqual(h.store().recent_runs(1)[0]["list_pages"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
