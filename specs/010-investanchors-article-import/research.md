@@ -131,6 +131,91 @@ cookie 即可下載（200 image/png），但網址要從登入後的文章頁取
 只存圖不轉寫（違反 FR-016，PO 明確要求表格數字進 MVP）。**表格圖送第三方模型 API：PO 已於 2026-11-14 同意**
 （需求基線 Q-016）；送出的只有表格圖本身，用途為 PO 個人使用的資料處理。
 
+### T033 官方文件查證（2026-11-15）
+
+> 方法：WebFetch 官方文件（platform.claude.com）＋ claude-api skill。**未呼叫任何需金鑰的 API。**
+> 注意：claude-api skill 內建模型表快取於 2026-09-25，**未列出** Haiku 5.5（最新只到 Haiku 4.5）；
+> 官方文件（2026-11-15 抓取）則明確列出，兩者並列如下，以官方文件為準（skill 表只是過期，非否定）。
+
+1. **模型 ID**：`claude-haiku-5-5` **存在**（2026-10-07 發布，固定 ID、無日期後綴、無別名），文字＋圖片輸入、
+   1M context、128K 輸出、預設 effort `medium`、思考為 adaptive。價格：輸入 $0.10／輸出 $0.50 每百萬 token
+   （**提示 ≤100K token**；>100K 則 $0.50／$2.50），與 R5 數字相符，但 R5 未提「>100K 提示漲價」（切片後
+   單次請求遠低於 100K，不影響）。**tokenizer 比 Haiku 4.5 多約 30% token。** Priority Tier 不支援。
+   https://platform.claude.com/docs/en/models/haiku-5-5/overview ／
+   https://platform.claude.com/docs/en/models/overview ／
+   https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide
+2. **圖片格式**：user content 放 `{"type":"image","source":{"type":"base64","media_type":"image/png","data":"<base64，無換行>"}}`，
+   支援 `image/jpeg`、`image/png`、`image/gif`、`image/webp`（GIF 只取第一幀）；圖片區塊放文字區塊之前效果較佳（官方範例順序）。
+   https://platform.claude.com/docs/en/build-with-claude/vision
+3. **尺寸／大小／token**：單張上限 8000×8000 px、**10 MB（base64 後）**（Claude API）；單請求 >20 張圖時每張
+   改限 ≤3000 px（本功能每請求 1 張，不觸發）。Haiku 5.5 屬「高解析度層」：**長邊 >2,576 px 或 >4,784 視覺 token
+   就自動等比縮小**（不報錯；除非在圖片區塊設 `transformations`／`"oversized_image":"error"` 才改成報錯）。
+   token ＝ `⌈寬/28⌉ × ⌈高/28⌉`。**對 R5 的影響**：2190×5195 的長圖若整張送，會被縮到長邊 2576（寬約 1086），
+   文字會變小失真——**切片仍必要**；切片後每片寬度 2190 ≤2576 不被縮，每片高 ≈ 寬×0.6～0.8 ≈ 1300～1750 px，
+   token ＝ 79×(47～63) ≈ 3,700～4,900，**約貼近 4,784 上限**，建議片高 ≤ 1,700 px（約 4,700 token）以免被縮，
+   T035 規劃時以「寬 ≤2576、`⌈寬/28⌉×⌈高/28⌉` ≤ 4,784」為硬條件。檔案 base64 後 >10 MB 要先降（PNG 切片通常遠小於此）。
+   https://platform.claude.com/docs/en/build-with-claude/vision
+4. **結構化輸出**：兩種都可行，**建議 `output_config.format`（官方 structured outputs，GA、不需 beta header）**：
+   body 加 `"output_config":{"format":{"type":"json_schema","schema":{"type":"object","properties":{"is_table":{"type":"boolean"},"text":{"type":"string"}},"required":["is_table","text"],"additionalProperties":false}}}`，
+   回應在 `content` 的 `text` 區塊內是 JSON 字串，`json.loads` 即可；**不能用 `output_format`（已棄用）**。
+   理由：請求最短、不需定義工具與解析 `tool_use`、與思考預設開啟相容性最好。限制：schema 不支援 `minLength` 等數值／字串約束、
+   `additionalProperties` 只能 `false`。備案：forced `tool_choice`＋`strict:true`——**Haiku 5.5 接受強制 tool_choice**
+   （Sonnet 5.5／Opus 5.5 不接受），但強制呼叫時**不會有 thinking 區塊**；官方另警告「思考關閉＋`output_config.format`＋需要自己的工具」才會漏呼叫工具，
+   本功能無自有工具，不適用。**未驗證**：官方文件未明述 `max_tokens`／`refusal` 時輸出是否一定符合 schema——程式必須自行
+   防禦（先查 `stop_reason`，再 `json.loads` 並驗證有 `is_table`、`text` 兩鍵，失敗→`untranscribed`）。
+   https://platform.claude.com/docs/en/build-with-claude/structured-outputs ／
+   https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-haiku-5-5#json-output-with-your-own-tools
+5. **預設思考與 max_tokens**：**adaptive 思考預設開啟**，思考 token **計入 `max_tokens`**，過小會在思考區塊後、文字前就
+   `stop_reason:"max_tokens"`；預設 thinking 區塊的 `thinking` 欄位為空字串（只有 signature）。`thinking.type:"enabled"`＋`budget_tokens`
+   回 400。選項：省略 `thinking`（adaptive，官方建議）並調低 `output_config.effort`（`low` 最省），或 `thinking:{"type":"disabled"}`（Haiku 5.5 接受，
+   但僅限 effort low/medium/high，`xhigh`／`max` 回 400；官方提醒關閉思考時較易出現推理文字漏進回覆）。
+   **建議**：`thinking` 省略、`output_config.effort:"low"`（轉寫是機械性抄錄，不需深度推理；實測抽查若準確度不足再升 `medium`），
+   **`max_tokens` 先設 16000**（一片表格約數千輸出 token，加思考餘裕；可調常數，上限 128K）。**非串流請求 16000 在 SDK 逾時限制內；
+   urllib 自行設 timeout（建議 ≥120 秒）。**
+   https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide#configure-thinking ／
+   https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-haiku-5-5#use-effort-to-control-thinking
+6. **sampling 參數**：Haiku 5.5 **明確要求省略 `temperature`／`top_p`／`top_k`**。另外，**API 版本 `2026-10-21` 起，這三個參數在所有模型上
+   一律回 400（連預設值也是）**。→ 請求絕不帶這三個欄位（與 R5 假設相符，且比 R5 更嚴格）。
+   https://platform.claude.com/docs/en/models/haiku-5-5/overview ／ https://platform.claude.com/docs/en/api/versioning ／
+   https://platform.claude.com/docs/en/api/migration-2026-10-21
+7. **stop_reason**：`refusal`＝HTTP 200（非錯誤），`stop_reason:"refusal"`，`stop_details`（`type`／`category`／`explanation`）有值，
+   category 例：`cyber`／`frontier_llm`／`bio`／`general_harms`；**Haiku 5.5 沒有 server-side fallback**，同請求重送通常再被拒——
+   程式處理：標 `untranscribed`、不重送、不採用任何部分輸出（與 R5 (4) 相符）。`max_tokens`＝回應被截斷（`stop_details` 為 null），
+   官方建議「提高 max_tokens 或續寫」；本功能依 R5 (4) 一律標 `untranscribed`（可在日誌記一筆 stop_reason 供日後調高常數）。
+   另 `stop_details` 只在 refusal 時非 null，讀取前要判斷。
+   https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons ／
+   https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-haiku-5-5#safeguard-refusals
+8. **HTTP header 與錯誤碼**：POST `https://api.anthropic.com/v1/messages`；`content-type: application/json`（必）、`anthropic-version`（必）、
+   金鑰 `x-api-key`（官方標為「legacy fallback，仍支援」）或 `Authorization: Bearer <key>`（新 SDK 預設）。**`anthropic-version` 現行文件值為
+   `2026-10-21`（官方建議用最新）**；舊值 `2023-06-01` 文件稱為「可保留」（migration 頁："keep that request on 2023-06-01"），**未見停用日期**。
+   **建議 T036 手寫請求送 `2026-10-21`＋`x-api-key`**（不送 sampling 參數故無相容問題）；`anthropic-version` 做成模組常數。
+   **未驗證**：未用真實金鑰確認 `x-api-key` 搭配 `2026-10-21` 的實際回應（本任務禁止）——T036 的假 server 測試無法證明此點，
+   PO 存金鑰後 `--transcribe-sample` 是第一次真實驗證。錯誤 JSON 形態：`{"type":"error","error":{"type":"<類型>","message":"..."},"request_id":"req_..."}`。
+   錯誤碼：400 `invalid_request_error`（**達到組織／工作區自訂花費上限也回 400**）、401 `authentication_error`（金鑰錯誤／撤銷／過期）、
+   402 `billing_error`、403 `permission_error`、413 `request_too_large`（Messages 上限 128 MB）、**429 `rate_limit_error`（限流或用量層級月花費上限；
+   花費上限型 429 沒有 `retry-after`，會持續失敗）**、500 `api_error`、504 `timeout_error`、**529 `overloaded_error`**。
+   → T036 處理：401／402／403／400（含額度）→ 該圖 `untranscribed` 且**本次執行不再重試後續圖**（避免整批重複失敗，由實作決定）；429／500／529／504
+   → 可退避重試 ≤2 次後標 `untranscribed`；所有錯誤訊息／日誌**不得含金鑰**（`request_id` 可記）。
+   https://platform.claude.com/docs/en/api/overview ／ https://platform.claude.com/docs/en/api/errors ／ https://platform.claude.com/docs/en/api/versioning
+
+**與 R5 假設比對（無阻擋項，結論：全部成立，另有 4 項需補入實作）**：
+- 成立：模型 ID 存在可用、支援圖片；預設思考且吃 `max_tokens`；不可送 temperature／top_p／top_k；結構化輸出（`output_config.format`）；`refusal`／`max_tokens` 處理。
+- 補充 A：R5 價格「0.10／0.50」僅適用提示 ≤100K token（切片後不影響）；tokenizer 約多 30% token。
+- 補充 B：圖片在 Haiku 5.5 上限為長邊 2,576 px／4,784 視覺 token，超過**自動縮小不報錯**——T035 切片須以此為硬條件（片高 ≤ ~1,700 px @寬 2190）。
+- 補充 C：`anthropic-version` 現行 `2026-10-21`；該版起 sampling 三參數一律 400。
+- 補充 D：結構化輸出在 `max_tokens`／`refusal` 時是否仍符 schema 官方未明述，程式必須自行驗證 JSON。
+
+### T034 切片實作方式決定（2026-11-15）
+
+**選 (a) Playwright canvas（Node，沿用既有依賴與 `findChromium()`）；不新增 Python 套件。**
+實測（本機既有 Chromium、真實那張 1653×993 PNG，只做本機步驟）：以 `data:` URL 載入 `Image` → `canvas.getImageData`
+可讀像素、可 `drawImage` 裁切並 `toDataURL("image/png")` 輸出，**不被 tainted**。分工：Python 端（`article_image_tiles.py`，
+標準庫）用 PNG IHDR／JPEG SOF 讀尺寸、判斷長圖、規劃切點；Node 腳本（`scraper/image_tiler.js`）負責偵測近乎同色的橫向空白帶
+並輸出切片；不啟動任何網站存取。(b) `sips` 讀不了像素、(c) Pillow 需 PO 同意，皆不採用。
+**待主對話確認的相依設計問題**：T033 查得 Haiku 5.5 對長邊 >2,576 px 或 >4,784 視覺 token 會自動縮小，
+故切片硬條件為「寬 ≤2576 且 ⌈寬/28⌉×⌈高/28⌉ ≤4784」。寬 2190 時片高須 ≤約 1,700 px，而 R5 原訂「片高約寬度 0.6～0.8 倍」
+上緣（約 1,750 px）會略超；擬改為「片高 = min(寬×0.8, 依上式算出的上限)」，重疊 ≥15% 且 ≥200 px、片數上限 8 不變。
+
 ## R6. 搜尋實作（實測推翻了原先的 FTS5 假設）
 
 **Decision**: **不用 FTS5**，用 `LIKE` 掃描：查詢字串以空白切成多個關鍵字，皆需出現（AND），搜尋範圍＝
