@@ -19,9 +19,10 @@ python3 poc/kb-mcp/investanchors_import.py --data-dir <dir>
   但每張之間仍隨機間隔 5～15 秒**；一篇可能只有 1 張長圖，轉寫前依 research R5 的原則切片。
 - `--data-dir` 預設 `poc/data`；指向正式庫需 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1`。
 - 流程：(1) 讀 `import_runs`：`blocked_until` 未到 或 今日登入已達 1 次 → 寫一筆 `aborted_limit`／`none` 後結束，**不登入**。
-  (2) 唯讀取信（失敗＝不觸發抓取，連續失敗才通知；每週核對仍會補漏）。 (3) 決定觸發：新信／週日核對／回補未完成；
-  都沒有 → 寫 `trigger=none`，結束（SC-003：登入次數 0）。 (4) 組出待抓清單（`discovered`＋`failed` 且 attempts<3，
-  上限 5 篇）。 (5) 啟動 scraper（見 §4），逐篇、隨機 30–90 秒間隔。 (6) **無論成敗**確認登出並記 `logged_out`。
+  (2) 唯讀取信：**只取 Message-ID 與寄達時間**，不解析、不記錄信中連結與標題（失敗＝不因信觸發，連續失敗才通知；每週
+  核對仍會登入）。 (3) 決定觸發：有未處理的新信／週日核對（保底）／回補未完成；都沒有 → 寫 `trigger=none`，結束
+  （SC-003：登入次數 0）。 (4) 登入後讀清單第 1 頁，必要時往後翻到「一頁內非置頂項全部已入庫」為止，組出待抓清單：
+  **清單上所有未入庫的文章 ID**（不論有無對應通知信）＋`failed` 且 attempts<3；**新文章優先於回補**，上限 5 篇。 (5) 啟動 scraper（見 §4），逐篇、隨機 30–90 秒間隔。 (6) **無論成敗**確認登出並記 `logged_out`。
   (7) 新文章 Telegram（標題＋連結，不含內文）；失敗類別通知（FR-020）。
 - `--dry-run`：只取信＋列出將抓的 ID，**不登入、不寫入、不通知**。
 - `--retranscribe`：只讀本機圖片檔補轉 `untranscribed`／換模型後重轉，**不登入網站**。

@@ -37,8 +37,8 @@
 | transcribed_model | TEXT | 例：`claude-haiku-5-5`（升級模型時可辨識哪些要重轉） |
 
 ### `mail_clue`（通知信線索；只是觸發，不是身分）
-`message_id TEXT PRIMARY KEY`、`article_id INTEGER`（可為 NULL＝尚未解析出 ID）、`title`、`seen_at`、
-`processed INTEGER`。同一篇多封信＝多列，不影響 `article` 去重。
+`message_id TEXT PRIMARY KEY`、`mail_date TEXT`（寄達時間，ISO，台北時區）、`seen_at`、`processed INTEGER`。
+只用來判斷「有沒有未處理的新信」；**不含文章 ID、標題或連結**（信中連結是追蹤轉址，不解析、不記錄）。
 
 ### `backfill_state`（單列）
 `id=1`、`completed INTEGER`（0／1）、`next_cursor TEXT`（清單續讀位置；形式依 P1 探查而定）、
