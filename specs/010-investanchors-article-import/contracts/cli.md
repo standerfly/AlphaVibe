@@ -25,7 +25,9 @@ python3 poc/kb-mcp/investanchors_import.py --data-dir <dir>
   **清單上所有未入庫的文章 ID**（不論有無對應通知信）＋`failed` 且 attempts<3；**新文章優先於回補**，上限 5 篇。 (5) 啟動 scraper（見 §4），逐篇、隨機 30–90 秒間隔。 (6) **無論成敗**確認登出並記 `logged_out`。
   (7) 新文章 Telegram（標題＋連結，不含內文）；失敗類別通知（FR-020）。
 - `--dry-run`：只取信＋列出將抓的 ID，**不登入、不寫入、不通知**。
-- `--retranscribe`：只讀本機圖片檔補轉 `untranscribed`／換模型後重轉，**不登入網站**。
+- `--retranscribe`：只讀本機圖片檔補轉 `untranscribed`／換模型後重轉，**不登入網站**；**轉寫開關關閉時拒絕（exit 2，訊息「轉寫開關未開」）**。
+- `--enable-transcription`／`--disable-transcription`：切換 `setting.transcribe_enabled`（冪等、印出目前狀態、只改設定）。**預設關閉**；關閉時匯入流程不呼叫模型 API、也不讀取 `vision-api-key`。
+- `--transcribe-sample N`：從本機已下載的圖隨機抽 N 張（**須含至少 1 張長圖**，長圖＝高/寬 ≥1.5 且高度 ≥2000px；庫內不足就回報不足與現況）轉寫，結果只寫進 `poc/data/articles_probe/transcribe-sample-<時間>.md` 供 PO 逐格比對，**不寫入資料庫**；不登入網站；開關關閉時仍可執行（唯一例外）。
 - Exit code：0＝正常（含無觸發）；1＝有失敗；2＝因上限／退避而拒絕（非錯誤，供健康檢查辨識）。
 - 依賴注入點（測試用）：`fetch_mail`、`run_scraper`、`transcribe`、`notifier`、`get_secret`、`now`。
 

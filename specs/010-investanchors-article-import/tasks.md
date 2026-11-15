@@ -3,14 +3,14 @@
 **Input**: `specs/010-investanchors-article-import/`（spec.md、plan.md、research.md、data-model.md、contracts/cli.md、contracts/mcp-tools.md、quickstart.md）
 **Prerequisites**: plan.md、spec.md 皆已定稿（主對話審查通過，2026-11-15）
 **Tests**: 本功能要求測試（低頻上限、登出驗證、不外洩、工具數守門等守門測試是需求的一部分）。每個實作任務都附自己的測試，測試與實作同一任務完成。
-**Organization**: 依 spec 四個 User Story 分階段；基礎 → US1（P1，可獨立交付）→ US2 → US3 → US4 → 上線。
+**Organization**: 依 spec 四個 User Story 分階段：基礎 → US1（P1，可獨立交付）→ US2 → US3（程式）→ US4 → 上線 → 上線後（轉寫啟用與驗證期）。**任務編號順序就是執行順序**（speckit-implement 依編號執行）。
 
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**：可平行（不同檔案、無未完成的相依）
 - **[US#]**：所屬 User Story（Setup／Foundational／上線階段不標）
-- **[PO]**：需要 PO 親自動作（存金鑰、在場確認、抽查確認、手動設定），agent 不得代做
-- **[GATE]**：關卡任務（審查／驗收／真實網站首次執行）
+- **[PO]**：需要 PO 親自動作（存金鑰、在場確認、抽查確認、同意、手動設定），agent 不得代做
+- **[GATE]**：關卡任務（審查／驗收／真實網站執行／部署）
 - 路徑慣例：程式在 `poc/kb-mcp/`，測試在 `poc/kb-mcp/tests/`，資料目錄守衛在 `app/`，排程在 `ops/launchd/`。Python 3.9 相容、僅標準庫（不得新增 Python 套件）。
 
 ## 通用規則（每個任務都適用）
@@ -22,6 +22,9 @@
 5. **低頻是硬性要求**（FR-007）：每次 ≤5 篇、每日登入 ≤1 次、頁面間隔 30～90 秒、圖片下載間隔 5～15 秒、被擋後下一次執行延後 ≥1 天；放寬任一項須 PO 同意。
 6. **推送與審查流程**：每個階段結束時提交、`git pull --rebase origin claude/admiring-ptolemy-1jaw79`、推送，並通知主對話審查（內容：commit、檔案、測試結果、需 PO 決定的事）。不建立或切換分支。
 7. 改了 `poc/kb-mcp/*.py` 後，正式服務要重新部署才生效（`ops/deploy.sh`）；測試通過 ≠ 已上線。
+8. **每日登入上限記在各自的資料庫裡**：手動對真實網站執行時用的是獨立測試資料目錄，與正式庫各算各的。**凡「正式排程已安裝」之後的任何手動真實網站執行**（例如 T062 的逐篇核對、日後的 `--backfill-since`），當天**必須先確認當晚排程不會再登入**（例如當天先停用該 launchd job，或其他方式佔用當日額度），並由 PO 知情同意，否則同一天會登入兩次。T023 與 T048 發生在部署（T055）之前，不受影響。
+9. **手動對真實網站的測試一律使用獨立測試資料目錄 `poc/data-test-articles/`**（T002 確認已被 `.gitignore` 忽略），**不得**把 `--data-dir poc/data`（正式庫）寫進任何手動真實網站指令。
+10. **轉寫由明確開關控制，預設關閉**（T038）：開關關閉時圖片照常下載、一律標 `untranscribed`、**完全不呼叫模型 API、也不讀取 `vision-api-key`**。不得用「鑰匙圈有沒有金鑰」當開關。
 
 ## 已完成（不要重列為待辦）
 
@@ -37,7 +40,7 @@
 ## Phase 1: Setup
 
 - [ ] T001 將 `tests/test_article_probe.py` 內的 `FakeSite` 抽成共用模組 `poc/kb-mcp/tests/fake_investanchors_site.py`（`test_article_probe.py` 改為 import，45 個探查測試行為不變仍全綠），並擴充：可設定每頁文章數、置頂項（跨頁重複）、文章頁內文結構（有圖／無圖／缺 `div#inves_content`／內文過短）、清單項目日期與 14 位數 ID（前 13 位為 epoch 毫秒）、被擋行為（403／逾時）、登出模式（沿用現有四種）、請求紀錄供斷言。驗收：`python3 -m unittest discover -s poc/kb-mcp/tests -p "test_article_probe.py"` 45 個全過。
-- [ ] T002 [P] 確認 `poc/data/articles.db`、`poc/data/articles_images/`、`poc/data/articles_probe/` 都被 `.gitignore` 忽略（`git check-ignore -v` 逐一驗證，貼輸出）；若有缺漏，補 `.gitignore` 規則並再驗證。
+- [ ] T002 [P] 確認 `poc/data/articles.db`、`poc/data/articles_images/`、`poc/data/articles_probe/` 與**手動真實網站測試用的 `poc/data-test-articles/`** 都被 `.gitignore` 忽略（`git check-ignore -v` 逐一驗證，貼輸出；現有規則只有 `poc/data/` 與 `poc/data-test/`，`poc/data-test-articles/` 預期缺漏，須補規則並再驗證）。
 
 ---
 
@@ -46,9 +49,9 @@
 **目的**：獨立資料庫、防呆工具、低頻守衛、不外洩工具、共用 scraper session。完成前不得開始任何 User Story。
 
 - [ ] T003 [P] 建立 `poc/kb-mcp/article_id_time.py` 與 `poc/kb-mcp/tests/test_article_id_time.py`：由文章 ID 推建立時間（research R11）——14 位數取前 13 位為 epoch 毫秒；換算時間早於 2020-01-01 或晚於「現在＋1 天」、ID 非 14 位數或非純數字 → `id_time_ok=0`（時間為 None）；`is_before_cutoff(id, cutoff_ms, margin_days=14)` 只在 `id_time_ok=1` 且 `id_ms < cutoff_ms − 14 天` 時回 True，**`id_time_ok=0` 一律回 False（不得判為早於截止日）**。測試涵蓋：樣本 ID（14 位、公告 13 位 `1612580077558`）、邊界日、非數字、過大／過小、餘裕邊界（恰好 14 天）。對應 spec 驗收（f）。
-- [ ] T004 建立 `poc/kb-mcp/article_store.py` 的 `ArticleStore` 骨架與 schema，以及 `poc/kb-mcp/tests/test_article_store.py`：`articles.db`（`DB_FILENAME="articles.db"`），比照 `flight_store.py`：`__init__(data_dir)` → `abspath`／`makedirs` → `sqlite3.connect(check_same_thread=False)` → `row_factory=Row` → `executescript(SCHEMA)`（全部 `CREATE TABLE IF NOT EXISTS`），**建構子不得寫入任何資料列**（2026-08-22 教訓，測試要斷言建構後各表筆數為 0）。六張表依 data-model.md：`article`（含 `id_time_ms`、`id_time_ok`、`pinned`、`status` 含 `deferred`）、`article_image`（`UNIQUE(article_id, seq)`）、`mail_clue`（`message_id`、`mail_date`、`seen_at`、`processed`；**無 article_id／title**）、`backfill_state`（單列，含 `cutoff_date`／`cutoff_ms`）、`import_runs`、`alert_log`。**不提供任何 delete 方法**。獨立 `tempfile` data-dir 測試。
+- [ ] T004 建立 `poc/kb-mcp/article_store.py` 的 `ArticleStore` 骨架與 schema，以及 `poc/kb-mcp/tests/test_article_store.py`：`articles.db`（`DB_FILENAME="articles.db"`），比照 `flight_store.py`：`__init__(data_dir)` → `abspath`／`makedirs` → `sqlite3.connect(check_same_thread=False)` → `row_factory=Row` → `executescript(SCHEMA)`（全部 `CREATE TABLE IF NOT EXISTS`），**建構子不得寫入任何資料列**（2026-08-22 教訓，測試要斷言建構後各表筆數為 0）。表依 data-model.md：`article`（含 `id_time_ms`、`id_time_ok`、`pinned`、`status` 含 `deferred`）、`article_image`（`UNIQUE(article_id, seq)`）、`mail_clue`（`message_id`、`mail_date`、`seen_at`、`processed`；**無 article_id／title**）、`backfill_state`（單列，含 `cutoff_date`／`cutoff_ms`）、`import_runs`、`alert_log`，**另加 `setting`（`key TEXT PRIMARY KEY`、`value TEXT`；存轉寫開關，T038 使用）**，並同步 `data-model.md` 加一小段 `setting` 說明。**不提供任何 delete 方法**。獨立 `tempfile` data-dir 測試。
 - [ ] T005 在 `poc/kb-mcp/article_store.py` 實作文章方法並補測試（`tests/test_article_store.py`）：`upsert_discovered(article_id, url, title, list_date, via, pinned)`（URL 須符合 `^https://(www\.)?investanchors\.com/user/vip_contents/\d+$`；已 `fetched` 的文章再被看到 → 無動作、不覆寫、不重複，FR-003）、`mark_fetched(article_id, body, published_at)`（body 長度 < 下限 200 字 → 拒絕，維持原狀態，FR-013 不寫殘缺全文）、`mark_failed(article_id, error)`（`attempts+1`；`last_error` 經 T010 的脫敏函式；達 3 → `abandoned`）、`mark_deferred`、`mark_skipped`（公告）、`reset_abandoned`、`list_pending(limit)`（`discovered`＋`failed` 且 attempts<3，新文章優先）、`known_ids()`、`set_pinned`。狀態機測試對照 data-model.md「狀態機」每條邊，**含 fetched 不可再被改寫／abandoned 只能手動重置**。
-- [ ] T006 在 `poc/kb-mcp/article_store.py` 實作圖片、通知信線索、回補進度方法並補測試：`add_image(article_id, seq, src_url)`、`set_image_file(...)`（下載失敗保留 NULL 供下次補抓）、`set_transcription(...)`（`transcription` 只存內容、無標示；`untranscribed` 時必為 NULL，FR-017）、`add_mail_clue(message_id, mail_date)`（同 Message-ID 不重複）、`unprocessed_mail_clues()`、`mark_mail_processed(...)`、`get_backfill_state()`／`set_backfill_state(...)`（`cutoff_date`／`cutoff_ms` 啟動後固定，只能經 T043 的放寬路徑變更）。
+- [ ] T006 在 `poc/kb-mcp/article_store.py` 實作圖片、通知信線索、回補進度、設定方法並補測試：`add_image(article_id, seq, src_url)`、`set_image_file(...)`（下載失敗保留 NULL 供下次補抓）、`set_transcription(...)`（`transcription` 只存內容、無標示；`untranscribed` 時必為 NULL，FR-017）、`add_mail_clue(message_id, mail_date)`（同 Message-ID 不重複）、`unprocessed_mail_clues()`、`mark_mail_processed(...)`、`get_backfill_state()`／`set_backfill_state(...)`（`cutoff_date`／`cutoff_ms` 啟動後固定，只能經 T044 的放寬路徑變更）、`get_setting(key, default)`／`set_setting(key, value)`。
 - [ ] T007 在 `poc/kb-mcp/article_store.py` 實作執行紀錄與去重通知方法並補測試：`start_run(trigger)`、`finish_run(run_id, logged_in, attempted, fetched, result, logged_out, blocked_until)`、`logins_today(now)`（以台北日期計）、`blocked_until()`、`last_weekly_check()`、`unverified_logout_runs()`、`alert_once(kind, key, day)`（同 kind＋key 同日只通知一次，比照 `statement_alerts`／`alert_once`）。測試涵蓋跨日、時區邊界（23:00 與 00:30）、`logged_out=0` 查詢。
 
 - [ ] T008 [P] 建立 `app/article_deps.py` 與 `app/tests/test_article_deps.py`：資料目錄守衛，**複製** `app/us_stock_deps.py` 的邏輯（`ALPHAVIBE_DATA_DIR` 必須明確設定、未設定拒絕啟動、指向正式路徑需 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1`、yield 型 dependency），不 import 對方。測試涵蓋三種情形（未設定、正式路徑無旗標、獨立測試目錄）。
@@ -77,7 +80,7 @@
 - [ ] T020 [US1] 建立端到端測試 `poc/kb-mcp/tests/test_investanchors_import_e2e.py`（假網站＋真 scraper＋假信箱＋假 Telegram，無瀏覽器環境時 skip）：情境一 有新信 → 文章入庫、假網站 `sessions` 為空、收到含標題與連結的通知；情境二 立刻再跑 → 新增 0 篇、不重複開啟已入庫文章；情境三 無新信、非核對日 → 假網站請求紀錄**登入請求為 0**（SC-003）；情境四 清單有置頂與公告 → 公告不開啟、置頂不重複入庫；情境五 待抓 8 篇 → 只抓 5 篇、其餘下次；情境六 被擋 → 中止且 `blocked_until` 生效。
 - [ ] T021 [US1] 建立不外洩負向測試 `poc/kb-mcp/tests/test_investanchors_no_leak.py`（spec 驗收（c））：延伸 T020 的執行，收集 stdout／stderr、所有寫出的檔案、資料庫每個 TEXT 欄位（含 `last_error`）、全部假 Telegram 訊息，逐一以 `assert_clean` 斷言**不含**：測試密碼、假 cookie 值、CSRF token、`/c/<token>` 形態、文章全文（用一段獨特標記字串）。同時涵蓋登入失敗與被擋的失敗路徑。
 - [ ] T022 [GATE] [US1] 提交推送 T001～T021 並通知主對話審查（commits、檔案、測試結果、完整套件對照基準）。**審查通過前不得執行真實網站。**
-- [ ] T023 [GATE] [PO] [US1] 首次對真實網站執行（**PO 在場、電腦瀏覽器已登出、只留手機一台登入、在對話親自確認；主對話已審過**）：`python3 poc/kb-mcp/investanchors_import.py --data-dir poc/data --max-articles 1`（先在**獨立測試資料目錄**，不用正式庫；需 `--force-weekly` 以觸發）。只執行一次，不重跑；結束後確認 `import_runs.logged_out=1`、文章庫恰 1 篇、PO 手機仍在線、無 token／全文外洩（`test_investanchors_no_leak` 的掃描器對真實輸出跑一次）；結果與下一步回報主對話。
+- [ ] T023 [GATE] [PO] [US1] 首次對真實網站執行（**PO 在場、電腦瀏覽器已登出、只留手機一台登入、在對話親自確認；主對話已審過**）：`python3 poc/kb-mcp/investanchors_import.py --data-dir poc/data-test-articles --max-articles 1 --force-weekly`（**獨立測試資料目錄，不是正式庫**；`--force-weekly` 用來觸發）。只執行一次，不重跑；結束後確認 `import_runs.logged_out=1`、文章庫恰 1 篇、PO 手機仍在線、無 token／全文外洩（以 `assert_clean` 掃描器對真實輸出跑一次）；結果與下一步回報主對話。此時正式排程尚未安裝（T055 之前），不受通用規則 8 影響。
 - [ ] T024 [GATE] [US1] 獨立驗收（全新 agent，非實作者）：對照 spec US1 驗收情境 1～7、FR-001～004／006～013／019～020、SC-003／004／006，**只給驗收條件與否決條件，不給實作推理**；任一條沒有證據 → 整體 FAIL。通過後 US1 才算可交付。
 
 **Checkpoint**：US1 可獨立交付（MVP）。其後 US2～US4 不得破壞 US1 測試。
@@ -96,31 +99,32 @@
 - [ ] T028 [P] [US2] 在美股 MCP 註冊兩個工具：`poc/kb-mcp/us_stock_mcp_server.py`（`TOOLS`＋`call_tool`，台美刻意各自一份，見 `app/routers/mcp.py` 註解；資料目錄解析沿用美股 server 既有方式，開**同一個** `<data_dir>/articles.db`，不寫入 `us_stocks.db`）。依賴 T026；與 T027 不同檔，可平行。
 - [ ] T029 [US2] 更新工具數守門測試（spec 驗收（d））：`poc/kb-mcp/tests/test_pnl.py::test_tool_counts`（`len(server.TOOLS)` 48→50、`len(READONLY_TOOLS)` 29→31）；`poc/kb-mcp/tests/test_traceability.py::test_tools_list_has_forty_eight`（約 :252-261，改名為 `…_fifty`、docstring 註明 2026-11 新增 `search_articles`／`get_article`、`assertEqual(len(names), 50)`、預期工具名清單加兩項）；`poc/kb-mcp/tests/test_claude_ai_connector.py` 美股 `names == TOOLS` 的預期清單加兩項（並確認「美股不含 `get_holdings`」斷言仍成立）；`poc/kb-mcp/tests/test_us_stock_mcp_server.py` 若有工具數斷言一併更新。完整套件實跑，確認只有基準的 5 個既有失敗。
 - [ ] T030 [US2] 建立兩連接器一致性測試 `poc/kb-mcp/tests/test_article_connectors_parity.py`（spec 驗收（e））：同一個測試 `articles.db`、同一組關鍵字（中文 2 字、英文、多關鍵字、查無）、同一個 `get_article`，分別經台股 `server.call_tool` 與美股 `us_stock_mcp_server.call_tool` 呼叫，**輸出逐字相同**；且兩邊都不能寫入（無寫入工具、`articles.db` 開啟為唯讀查詢路徑）。
-- [ ] T031 [US2] 文件同步：更新根目錄 `CLAUDE.md`「常用查證點」的新增 MCP 工具同步清單（加入 `article_tools.py`、`articles.db` 由兩個 server 共讀、兩處守門測試），並在 `specs/010-investanchors-article-import/quickstart.md` 補「Mac 上 `~/.claude` 的 stock-researcher 白名單須由 PO 手動加入兩個工具」（列入 PO 待辦）。
+- [ ] T031 [US2] 文件同步：更新根目錄 `CLAUDE.md`「常用查證點」的新增 MCP 工具同步清單（加入 `article_tools.py`、`articles.db` 由兩個 server 共讀、兩處守門測試），並在 `specs/010-investanchors-article-import/quickstart.md` 補「Mac 上 `~/.claude` 的 stock-researcher 白名單須由 PO 手動加入兩個工具」（列入 PO 待辦 T056）。
 - [ ] T032 [GATE] [US2] 提交推送 T025～T031 並通知主對話審查；通過後由全新 agent 獨立驗收 US2 驗收情境 1～4、FR-014／015、SC-008（只給驗收條件與否決條件）。
 
 **Checkpoint**：US2 可獨立使用——對話中查得到 US1 已匯入的文章。
 
 ---
 
-## Phase 5: User Story 3 — 表格裡的數字也讀得到（P3）
+## Phase 5: User Story 3 — 表格裡的數字也讀得到（P3，程式開發；真實啟用在上線後）
 
 **目標**：匯入時把內文圖（可能是很高的長圖）轉寫成文字存檔、可被搜尋；轉寫失敗標「未轉寫」、可事後補轉不需重抓網站。
 
-**獨立驗收**：匯入一篇含財測表的文章後，只出現在表格圖裡的個股代碼可搜到該文章；讀取時得到轉寫文字（機器轉寫標示）與原圖資訊；轉寫失敗的圖標「未轉寫」。
+**本階段的範圍**：只開發、審查、獨立驗收**程式**，一律使用**合成圖與假模型**；真實模型、PO 抽查與啟用在上線後（Phase 8 的 T058～T061），因為真實圖片要等回補累積。**轉寫由預設關閉的開關控制**（通用規則 10）。
+
+**獨立驗收（程式層）**：開關打開時，匯入含財測表圖的文章，只出現在表格圖裡的個股代碼可搜到該文章，讀取時有「機器轉寫」標示與原圖資訊；轉寫失敗的圖標「未轉寫」且可 `--retranscribe` 補轉；開關關閉時不呼叫模型。
 
 - [ ] T033 [US3] 研究任務（**不需金鑰**）：對照官方文件確認模型 ID `claude-haiku-5-5` 存在且可用、Messages API 請求格式（圖片 base64 區塊、結構化輸出、`max_tokens` 與預設思考的關係、不得送非預設 temperature／top_p／top_k、`stop_reason` 為 `refusal`／`max_tokens` 的處理）、單張圖片的尺寸與 token 計算上限；結果寫回 `research.md` R5。若模型 ID 不存在或請求格式與假設不符，**回報主對話，不自行換模型**。
 - [ ] T034 [US3] 決定切片實作方式並寫回 `research.md` R5：Python 標準庫**無法解碼 PNG**，而 plan 規定不新增 Python 套件。候選：(a) Playwright canvas（Node，已是既有依賴，可 `getImageData` 偵測空白橫帶並輸出切片）；(b) macOS `sips`（系統內建，只能裁切、無法讀像素）；(c) Pillow（新增依賴，**須 PO 同意**）。優先 (a)；若選 (c) 必須先回報主對話請 PO 決定。
 - [ ] T035 [P] [US3] 建立切片模組與測試：`poc/kb-mcp/article_image_tiles.py`（Python 端規劃與合併邏輯）＋依 T034 結論的 Node 腳本（例 `poc/kb-mcp/scraper/image_tiler.js`）＋`poc/kb-mcp/tests/test_article_image_tiles.py`。原則（research R5）：依高度垂直切片、每片高約寬度的 0.6～0.8 倍；**相鄰切片重疊 ≥15% 且 ≥200px**；切點優先落在整列近乎同色的橫向空白帶；**切片數上限 8**，超過 → 該圖標 `untranscribed`（不縮小湊數）；原圖完整保留、切片只暫存不入庫；合併轉寫時依重疊區列文字去重。測試用合成圖（程式生成的長圖與表格圖）：2190×5195 切片數與重疊、切點避開文字列、超過上限回報、短圖不切。（spec 驗收（g））
-- [ ] T036 [US3] 建立 `poc/kb-mcp/article_transcribe.py` 與 `poc/kb-mcp/tests/test_article_transcribe.py`：`urllib` 呼叫視覺模型（不裝 SDK，理由見 research R5）；模型 ID 為模組常數 `TRANSCRIBE_MODEL`（預設依 T033 結論）；金鑰用 `keychain_secrets.get_secret("vision-api-key", service=INVESTANCHORS_SERVICE)`，**絕不寫入日誌／例外**；提示詞：只轉寫可見數字與文字、看不清楚寫 `?`、回結構化 `{is_table, text}`；多切片時附「上一片表頭與最後 2 列」上下文並要求略過重複列；`stop_reason` 為 `refusal`／`max_tokens`、缺金鑰、額度不足、HTTP 錯誤、逾時 → 該圖 `untranscribed`（**不以空白或猜測值充數**，FR-017）。測試用本機假 HTTP server：成功、refusal、max_tokens、401、429、逾時、金鑰不外洩（錯誤訊息／日誌掃描）、多切片合併去重。
-- [ ] T037 [US3] 在 `poc/kb-mcp/investanchors_import.py` 把轉寫接進匯入流程並實作 `--retranscribe`（FR-016／017）：圖片下載後逐圖轉寫（失敗不影響文章）、記錄 `transcribed_model`；`--retranscribe` **只讀本機圖片檔、不啟動 scraper、不登入網站**（可補做未轉寫、或換模型後重轉）。測試：轉寫失敗時文章與原圖照常保存、之後 `--retranscribe` 補成功；`--retranscribe` 執行時 `run_scraper` 呼叫次數為 0。
-- [ ] T038 [US3] 搜尋與輸出整合測試 `poc/kb-mcp/tests/test_article_transcription_search.py`：只出現在表格轉寫文字的個股代碼／數字可搜到該文章（命中來源標「表格轉寫」）；`get_article` 輸出含「機器轉寫」標示與原圖 `src_url`；資料庫 `transcription` 欄不含標示字樣（避免 `LIKE` 被標示命中所有文章）；`untranscribed` 明寫「未轉寫」。（FR-016、US3 情境 1～3）
-- [ ] T039 [PO] [US3] **PO 待辦**：把視覺模型 API 金鑰存進鑰匙圈（`security add-generic-password -U -s stnd-investanchors -a vision-api-key -w`，`-a` 後是固定名稱、`-w` 後不接任何東西、互動輸入）；用「存在與否」指令驗證。agent 不讀取其值。
-- [ ] T040 [US3] 建立抽查工具：在 `poc/kb-mcp/investanchors_import.py` 加 `--transcribe-sample N`（只讀本機已下載的圖、不登入網站；隨機抽 N 張**且必須至少含 1 張長圖**，若庫內無長圖則回報不足），把「原圖路徑＋轉寫文字」寫進 `poc/data/articles_probe/transcribe-sample-<時間>.md`（gitignore）供 PO 逐格比對；測試：抽樣含長圖、不登入、輸出不含金鑰。
-- [ ] T041 [GATE] [PO] [US3] 上線前抽查（spec US3 情境 4、FR-018／SC-007）：真實文章匯入後（需 T023 之後已有真實圖片），跑 `--transcribe-sample 10`；**PO 本人逐格確認**轉寫與原圖一致，PO 認可才採用目前模型；**PO 不認可 → 升級模型（改 `TRANSCRIBE_MODEL`）再抽 10 張**，不設百分比門檻。結果記入 `quickstart.md`「實測」節。
-- [ ] T042 [GATE] [US3] 提交推送 T033～T040 並通知主對話審查；通過後由全新 agent 獨立驗收 US3 驗收情境 1～3、FR-016／017／018、SC-007（T041 的 PO 確認結果作為證據之一）。
+- [ ] T036 [US3] 建立 `poc/kb-mcp/article_transcribe.py` 與 `poc/kb-mcp/tests/test_article_transcribe.py`：`urllib` 呼叫視覺模型（不裝 SDK，理由見 research R5）；模型 ID 為模組常數 `TRANSCRIBE_MODEL`（預設依 T033 結論）；金鑰用 `keychain_secrets.get_secret("vision-api-key", service=INVESTANCHORS_SERVICE)`，**絕不寫入日誌／例外**；提示詞：只轉寫可見數字與文字、看不清楚寫 `?`、回結構化 `{is_table, text}`；多切片時附「上一片表頭與最後 2 列」上下文並要求略過重複列；`stop_reason` 為 `refusal`／`max_tokens`、缺金鑰、額度不足、HTTP 錯誤、逾時 → 該圖 `untranscribed`（**不以空白或猜測值充數**，FR-017）。測試用**本機假 HTTP server**：成功、refusal、max_tokens、401、429、逾時、金鑰不外洩（錯誤訊息／日誌掃描）、多切片合併去重。
+- [ ] T037 [US3] 在 `poc/kb-mcp/investanchors_import.py` 把轉寫接進匯入流程並實作 `--retranscribe`（FR-016／017）：圖片下載後逐圖轉寫（失敗不影響文章）、記錄 `transcribed_model`；`--retranscribe` **只讀本機圖片檔、不啟動 scraper、不登入網站**（可補做未轉寫、或換模型後重轉）。測試：轉寫失敗時文章與原圖照常保存、之後 `--retranscribe` 補成功；`--retranscribe` 執行時 `run_scraper` 呼叫次數為 0。**轉寫步驟與 `--retranscribe` 都受 T038 的開關控制。**
+- [ ] T038 [US3] 新增**轉寫啟用開關**（預設關閉）並補測試：開關存在 `articles.db` 的 `setting` 表（`transcribe_enabled`，無此列＝關），由 `investanchors_import.py --enable-transcription`／`--disable-transcription` 明確切換（冪等、印出目前狀態、只改該設定，不做其他事）；**不得用鑰匙圈有沒有 `vision-api-key` 當開關**。開關關閉時：圖片照常下載、`transcription_status` 一律 `untranscribed`、**不呼叫模型 API、也不呼叫 `get_secret("vision-api-key")`**；`--retranscribe` 在關閉時拒絕並回 exit 2（訊息寫明「轉寫開關未開」）。`--transcribe-sample`（T040）是唯一在開關關閉時可呼叫模型的路徑，且**不寫入資料庫**。測試（假 HTTP 模型 server 計數、假鑰匙圈 runner 計數）：(1) 預設關閉＋鑰匙圈**有**金鑰 → 匯入含圖文章後模型請求數 0、`get_secret("vision-api-key")` 呼叫數 0、圖標 `untranscribed`；(2) 打開後請求數 >0 且轉寫寫入；(3) 再關閉後新圖不轉寫；(4) 關閉時 `--retranscribe` 被拒；(5) 切換後重新建立 `ArticleStore` 仍保持狀態。同步 `contracts/cli.md` 加三個旗標與預設關閉說明、`research.md` R5 加一句。
+- [ ] T039 [US3] 搜尋與輸出整合測試 `poc/kb-mcp/tests/test_article_transcription_search.py`：只出現在表格轉寫文字的個股代碼／數字可搜到該文章（命中來源標「表格轉寫」）；`get_article` 輸出含「機器轉寫」標示與原圖 `src_url`；資料庫 `transcription` 欄不含標示字樣（避免 `LIKE` 被標示命中所有文章）；`untranscribed` 明寫「未轉寫」。（FR-016、US3 情境 1～3）
+- [ ] T040 [US3] 建立抽查工具：在 `poc/kb-mcp/investanchors_import.py` 加 `--transcribe-sample N`（只讀本機已下載的圖、不登入網站；隨機抽 N 張**且必須至少含 1 張長圖**，若庫內累積的圖不足 N 張或無長圖 → 回報不足與目前數量，不勉強）。「長圖」定義：高/寬 ≥ 1.5 且高度 ≥ 2000px；尺寸用標準庫讀 PNG IHDR／JPEG SOF（不需解碼）。**只轉寫抽樣的圖**，結果只寫進 `poc/data/articles_probe/transcribe-sample-<時間>.md`（gitignore；原圖路徑＋轉寫文字供 PO 逐格比對），**不寫入資料庫**（開關仍關閉時 DB 內仍全是 `untranscribed`）。測試（假模型）：抽樣含長圖、庫內不足時回報不足、不登入、不寫 DB、輸出檔不含金鑰。
+- [ ] T041 [GATE] [US3] 提交推送 T033～T040 並通知主對話審查；通過後由全新 agent 獨立驗收 US3 **程式層**驗收情境 1～3、FR-016／017／018 的程式行為（開關預設關閉、關閉時零 API 呼叫、失敗標未轉寫、可補轉、切片規則）、spec 驗收（g）（只給驗收條件與否決條件）。**SC-007 的真實準確度由上線後 T059 的 PO 抽查負責，不在本任務。**
 
-**Checkpoint**：US3 完成——表格數字可搜尋；轉寫失敗有標示、可補轉。
+**Checkpoint**：US3 程式完成並通過審查／驗收；真實轉寫尚未啟用（開關關閉）。
 
 ---
 
@@ -130,31 +134,44 @@
 
 **獨立驗收**：啟動回補後多次（模擬多天）執行：每次不超過 5 篇、中斷後從未完成處接續、置頂文章不被誤判為舊文、完成後與網站「總覽」中半年內文章逐篇核對無缺漏無重複、之後回補不再執行。
 
-- [ ] T043 [US4] 在 `poc/kb-mcp/investanchors_import.py` 實作回補核心並補測試（research R11、spec 驗收（f））：首次啟動把 `cutoff_date`／`cutoff_ms`（啟動日往前六個月）寫入 `backfill_state` 後固定；**半年截止只用 T003 的 ID 時間**（餘裕 14 天），不使用清單日期；`id_time_ok=0` 的文章**一律不得 `deferred`**、照常處理並累計，**累計超過 3 篇 → 通知 PO**（規律可能失效）；置頂項不得跳過；早於截止日者記 `deferred`（只存 ID、標題、清單日期，不開啟）；停止規則：一頁內所有「非置頂、非公告」項目的 ID 時間都早於 `cutoff−14 天` 才不再往舊翻；`next_cursor` 續跑；新文章優先於回補、共用每日 5 篇額度；完成 → `completed=1` 且之後不再觸發。測試涵蓋：置頂 4 篇清單日期顯示 2021 但 ID 為近期 → 照常抓；非 14 位 ID → 不跳過並記錄；換算時間不合理 → 不跳過；第 4 篇異常 ID → 通知；中斷（下一次）接續不重抓；完成後 `trigger` 不再因回補為真。
-- [ ] T044 [US4] 在 scraper `import` 模式補上回補用的清單翻頁（`poc/kb-mcp/scraper/investanchors_scraper.js`）：由 Python 傳入 `cutoff_ms`、`resume_cursor`（頁碼）與 `stop_rule`，每次登入翻頁數受 `max_list_pages` 約束（回補單次最多 3 頁），輸出每頁項目與是否已達停止條件；跨頁置頂去重沿用 T013。測試用假網站（多頁、置頂、跨截止日）：停在正確的頁、不往更舊翻、不超過頁數上限。
-- [ ] T045 [US4] 實作 `--backfill-since <YYYY-MM-DD>`（PO 要求補抓更早文章；contracts/cli.md §1）並補測試：只能往前放寬（新日期早於現有截止日，否則拒絕）、`cutoff_date`／`cutoff_ms` 更新、`completed` 重設為 0、ID 時間落在新舊截止日之間的 `deferred` 轉回 `discovered`、仍受每日 5 篇上限；放寬範圍須 PO 同意（參數說明與拒絕訊息要寫明）。
-- [ ] T046 [P] [US4] 建立 `poc/kb-mcp/article_reconcile.py` 與 `poc/kb-mcp/tests/test_article_reconcile.py`（SC-001）：唯讀，讀「總覽」清單到「整頁都早於截止日」為止（同樣受頁數上限與間隔約束，可分多次），與 `article`（排除公告）中建立時間在半年內者逐篇比對，輸出缺漏／重複清單；早於截止日者只確認為 `deferred`；不寫入 `article`。測試用假網站：缺漏、重複、置頂、延後各一例。
-- [ ] T047 [US4] 建立多日回補模擬測試 `poc/kb-mcp/tests/test_investanchors_backfill_e2e.py`（假網站＋假時鐘，每「天」跑一次）：約 12 篇半年內＋6 篇更早＋置頂 4 篇 → 每日 ≤5 篇、第二天中斷後第三天接續、更早的只有 `deferred`、完成後 `completed=1`、再跑不登入；`article_reconcile` 回報 0 缺漏 0 重複。
-- [ ] T048 [GATE] [PO] [US4] 對真實網站啟用回補（**PO 在場、電腦登出只留手機、主對話已審過本階段程式**）：先在獨立測試資料目錄以 `--max-articles 5` 手動跑**一次**回補，確認置頂文章被正確處理、`deferred` 標記、`logged_out=1`、無外洩；結果回報主對話並由 PO 決定何時對正式庫啟用（每次上線排程由 T052 負責）。回補約 20 天完成後，跑 `article_reconcile.py` 與「總覽」半年內文章逐篇核對（SC-001）；真實網站的核對同樣需 PO 同意。
-- [ ] T049 [GATE] [US4] 提交推送 T043～T047 並通知主對話審查；通過後由全新 agent 獨立驗收 US4 驗收情境 1～5、FR-005、SC-001（含置頂與 ID 防呆的否決條件）。
+- [ ] T042 [US4] 在 `poc/kb-mcp/investanchors_import.py` 實作回補核心並補測試（research R11、spec 驗收（f））：首次啟動把 `cutoff_date`／`cutoff_ms`（啟動日往前六個月）寫入 `backfill_state` 後固定；**半年截止只用 T003 的 ID 時間**（餘裕 14 天），不使用清單日期；`id_time_ok=0` 的文章**一律不得 `deferred`**、照常處理並累計，**累計超過 3 篇 → 通知 PO**（規律可能失效）；置頂項不得跳過；早於截止日者記 `deferred`（只存 ID、標題、清單日期，不開啟）；停止規則：一頁內所有「非置頂、非公告」項目的 ID 時間都早於 `cutoff−14 天` 才不再往舊翻；`next_cursor` 續跑；新文章優先於回補、共用每日 5 篇額度；完成 → `completed=1` 且之後不再觸發。測試涵蓋：置頂 4 篇清單日期顯示 2021 但 ID 為近期 → 照常抓；非 14 位 ID → 不跳過並記錄；換算時間不合理 → 不跳過；第 4 篇異常 ID → 通知；中斷（下一次）接續不重抓；完成後 `trigger` 不再因回補為真。
+- [ ] T043 [US4] 在 scraper `import` 模式補上回補用的清單翻頁（`poc/kb-mcp/scraper/investanchors_scraper.js`）：由 Python 傳入 `cutoff_ms`、`resume_cursor`（頁碼）與 `stop_rule`，每次登入翻頁數受 `max_list_pages` 約束（回補單次最多 3 頁），輸出每頁項目與是否已達停止條件；跨頁置頂去重沿用 T013。測試用假網站（多頁、置頂、跨截止日）：停在正確的頁、不往更舊翻、不超過頁數上限。
+- [ ] T044 [US4] 實作 `--backfill-since <YYYY-MM-DD>`（PO 要求補抓更早文章；contracts/cli.md §1）並補測試：只能往前放寬（新日期早於現有截止日，否則拒絕）、`cutoff_date`／`cutoff_ms` 更新、`completed` 重設為 0、ID 時間落在新舊截止日之間的 `deferred` 轉回 `discovered`、仍受每日 5 篇上限；放寬範圍須 PO 同意（參數說明與拒絕訊息要寫明）。
+- [ ] T045 [P] [US4] 建立 `poc/kb-mcp/article_reconcile.py` 與 `poc/kb-mcp/tests/test_article_reconcile.py`（SC-001）：唯讀，讀「總覽」清單到「整頁都早於截止日」為止（同樣受頁數上限與間隔約束，可分多次），與 `article`（排除公告）中建立時間在半年內者逐篇比對，輸出缺漏／重複清單；早於截止日者只確認為 `deferred`；不寫入 `article`。測試用假網站：缺漏、重複、置頂、延後各一例。
+- [ ] T046 [US4] 建立多日回補模擬測試 `poc/kb-mcp/tests/test_investanchors_backfill_e2e.py`（假網站＋假時鐘，每「天」跑一次）：約 12 篇半年內＋6 篇更早＋置頂 4 篇 → 每日 ≤5 篇、第二天中斷後第三天接續、更早的只有 `deferred`、完成後 `completed=1`、再跑不登入；`article_reconcile` 回報 0 缺漏 0 重複。
+- [ ] T047 [GATE] [US4] 提交推送 T042～T046 並通知主對話審查；通過後由全新 agent 獨立驗收 US4 驗收情境 1～5、FR-005、SC-001 的程式行為（含置頂與 ID 防呆的否決條件；只給驗收條件與否決條件）。**審查與驗收通過前不得執行下一個任務的真實網站手動回補。**
+- [ ] T048 [GATE] [PO] [US4] 對真實網站手動試跑一次回補（**PO 在場、電腦瀏覽器已登出、只留手機一台登入、在對話親自確認；T047 已審過**）：`python3 poc/kb-mcp/investanchors_import.py --data-dir poc/data-test-articles --max-articles 5`（**獨立測試資料目錄 `poc/data-test-articles/`，不是正式庫**；此時回補在該測試庫首次啟動）。只執行一次、不重跑；確認置頂文章被正確處理、`deferred` 標記、`logged_out=1`、無外洩；結果回報主對話。此任務在部署（T055）之前，**正式排程尚未安裝，不受通用規則 8 影響**；若日後有人在排程安裝後重做此類手動回補，須先依規則 8 處理當日額度。
 
 **Checkpoint**：US4 完成——半年回補可中斷續跑、完成即停。
 
 ---
 
-## Phase 7: 上線與收尾
+## Phase 7: 上線（部署前準備、驗收、部署）
 
-**目的**：排程、健康檢查、部署、全面驗收、上線驗證期。
+**目的**：排程、健康檢查、文件、全面驗收、主對話最後審查、部署。**順序即依賴**：部署（T055）一定在審查（T054）之後。
 
-- [ ] T050 [P] 建立 `ops/launchd/com.alphavibe.investanchorsimport.plist`：樣式同 `com.alphavibe.statementimport.plist`（`/usr/bin/python3 /Users/stander/My_project/AlphaVibe-prod/poc/kb-mcp/investanchors_import.py --data-dir …/AlphaVibe-prod/poc/data`、`WorkingDirectory`、PATH 含 `/opt/homebrew/bin`、log 寫 `~/Library/Logs/alphavibe-investanchors*.log`、**無** `RunAtLoad`／`KeepAlive`、`StartCalendarInterval` 每晚 **23:00**（PO 決定；不與既有 02:00／03:30／03:45／04:00／06:00／07:45／09:30／17:00／20:15／23:15／週一 10:00 相同）。以 `plutil -lint` 驗證語法；測試：讀 plist 斷言時間、無 RunAtLoad、log 路徑。
-- [ ] T051 [P] 在 `poc/kb-mcp/check_scheduled_jobs.py` 新增 `check_investanchors_import(data_dir)` 並補 `poc/kb-mcp/tests/test_check_scheduled_jobs.py`（比照 `check_statement_import`）：讀 `import_runs`，標出 `logged_out=0` 的執行（嚴重）、超過 N 天沒有任何執行紀錄、`blocked_until` 仍生效、`abandoned` 文章數、`id_time_ok=0` 累計。測試涵蓋各狀態的輸出。
-- [ ] T052 [GATE] [PO] 部署與安裝排程：依序提交推送 → 備份（`ops/deploy.sh` 慣例）→ 部署到 `AlphaVibe-prod`（改過 `poc/kb-mcp/*.py` 與 `app/` 需重啟對應正式服務，確認 MCP 連接器已套用）→ 安裝 plist（`launchctl bootstrap`）→ 用 launchd 實跑驗證一次。**部署、安裝與實跑需 PO 在場同意**（涉及正式資料與常駐設定）；回報實際結果，不假設已上線。
-- [ ] T053 [PO] **PO 待辦**：在 Mac 的 `~/.claude` stock-researcher 白名單手動加入 `search_articles`／`get_article`（不在 repo，agent 不修改 `~/.claude` 設定）。
-- [ ] T054 [P] 文件收尾：更新根目錄 `CLAUDE.md`（SPECKIT 區塊改指向本功能「已上線」現況與接手指引、新增教訓紀錄：置頂項清單日期不可靠、ID＝建立時間的觀察與防呆、Playwright 預設訊號處理會先關瀏覽器、通知信連結是追蹤轉址不可跟隨、報告不得含 token、開文章會改已讀）、`specs/010-.../quickstart.md` 回填實測與上線步驟、`docs/spec-intake/` 不動（由主對話維護）。
-- [ ] T055 完整回歸：`python3 -m unittest discover -s poc/kb-mcp/tests` 與 `ALPHAVIBE_DATA_DIR=<獨立測試庫> .venv/bin/python3 -m app.tests.test_smoke`（依 CLAUDE.md 的重建步驟），結果對照 T 通用規則 3 的基準：**只允許既有 5 個失敗／錯誤**，貼總數與失敗名單。
-- [ ] T056 [GATE] 全面獨立驗收（全新 agent，非實作者）：對照 spec **全部** User Story 驗收情境、FR-001～020、SC-001～008、Edge Cases；只給驗收條件與否決條件（含「測試其實沒跑」「宣稱處理 X 但檔案裡找不到」），不給實作過程。FAIL 的條目修好後重驗。
-- [ ] T057 [GATE] 提交推送並通知主對話做**上線前最後審查**；通過後才進入 T052 的實際部署與 T058。
-- [ ] T058 [GATE] [PO] 上線驗證期（至少兩週，SC-002／SC-005）：每週檢視一次——文章進庫時間 vs 發布時間（驗證 SC-002 的「下一次登入即匯入」、信漏搜只延後觸發）、睡眠補跑是否落在 PO 常用時段（若會與 PO 使用重疊，再加「非 22:30～次日 06:00 不啟動」的時間窗守衛，另開任務）、`import_runs` 的登入次數與 `logged_out`、帳號未被鎖定／停用、`abandoned` 與 `id_time_ok=0` 數量、通知是否過量。結論回報主對話並更新 `research.md` R8／R12 的「依上線後觀察調整」。
+- [ ] T049 [P] 建立 `ops/launchd/com.alphavibe.investanchorsimport.plist`：樣式同 `com.alphavibe.statementimport.plist`（`/usr/bin/python3 /Users/stander/My_project/AlphaVibe-prod/poc/kb-mcp/investanchors_import.py --data-dir …/AlphaVibe-prod/poc/data`、`WorkingDirectory`、PATH 含 `/opt/homebrew/bin`、log 寫 `~/Library/Logs/alphavibe-investanchors*.log`、**無** `RunAtLoad`／`KeepAlive`、`StartCalendarInterval` 每晚 **23:00**（PO 決定；不與既有 02:00／03:30／03:45／04:00／06:00／07:45／09:30／17:00／20:15／23:15／週一 10:00 相同）。以 `plutil -lint` 驗證語法；測試：讀 plist 斷言時間、無 RunAtLoad、log 路徑。
+- [ ] T050 [P] 在 `poc/kb-mcp/check_scheduled_jobs.py` 新增 `check_investanchors_import(data_dir)` 並補 `poc/kb-mcp/tests/test_check_scheduled_jobs.py`（比照 `check_statement_import`）：讀 `import_runs`，標出 `logged_out=0` 的執行（嚴重）、超過 N 天沒有任何執行紀錄、`blocked_until` 仍生效、`abandoned` 文章數、`id_time_ok=0` 累計、轉寫開關狀態。測試涵蓋各狀態的輸出。
+- [ ] T051 [P] 文件收尾：更新根目錄 `CLAUDE.md`（SPECKIT 區塊改指向本功能現況與接手指引、新增教訓紀錄：置頂項清單日期不可靠、ID＝建立時間的觀察與防呆、Playwright 預設訊號處理會先關瀏覽器、通知信連結是追蹤轉址不可跟隨、報告不得含 token、開文章會改已讀、轉寫由預設關閉的開關控制）、`specs/010-.../quickstart.md` 回填實測與上線步驟，並在 quickstart 加**唯讀查詢範例**（`sqlite3 -readonly poc/data/articles.db "select …"`：累積圖片張數、長圖張數〔以抽查工具判定〕、`import_runs` 摘要）供 T057 使用。`docs/spec-intake/` 不動（由主對話維護）。
+- [ ] T052 完整回歸：`python3 -m unittest discover -s poc/kb-mcp/tests` 與 `ALPHAVIBE_DATA_DIR=<獨立測試庫> .venv/bin/python3 -m app.tests.test_smoke`（依 CLAUDE.md 的重建步驟），結果對照通用規則 3 的基準：**只允許既有 5 個失敗／錯誤**，貼總數與失敗名單。
+- [ ] T053 [GATE] 全面獨立驗收（全新 agent，非實作者）：對照 spec **全部** User Story 驗收情境（US3 為程式層）、FR-001～020、SC-001～008（SC-001／SC-007 的真實驗證在上線後，此處驗程式行為）、Edge Cases；只給驗收條件與否決條件（含「測試其實沒跑」「宣稱處理 X 但檔案裡找不到」「轉寫開關預設不是關閉」），不給實作過程。FAIL 的條目修好後重驗。
+- [ ] T054 [GATE] 提交推送並通知主對話做**上線前最後審查**。通過後才可進入 T055。
+- [ ] T055 [GATE] [PO] 部署與安裝排程：依序提交推送 → 備份（`ops/deploy.sh` 慣例）→ 部署到 `AlphaVibe-prod`（改過 `poc/kb-mcp/*.py` 與 `app/` 需重啟對應正式服務，確認 MCP 連接器已套用）→ 安裝 plist（`launchctl bootstrap`）→ 用 launchd 實跑驗證一次。**部署、安裝與實跑需 PO 在場同意**（涉及正式資料與常駐設定）；**正式庫的轉寫開關維持預設關閉**；回報實際結果，不假設已上線。依賴 T049、T050、T054。
+- [ ] T056 [PO] **PO 待辦**：在 Mac 的 `~/.claude` stock-researcher 白名單手動加入 `search_articles`／`get_article`（不在 repo，agent 不修改 `~/.claude` 設定）。依賴 T055。
+
+---
+
+## Phase 8: 上線後——回補累積、轉寫啟用與驗證期
+
+**目的**：部署後回補隨排程自動開始（每天最多 5 篇），圖片逐漸累積；累積到 ≥10 張且含長圖後，才由 PO 存金鑰、抽查、通過後打開轉寫開關並補轉積壓。**轉寫在這之前一律關閉。**
+
+- [ ] T057 [PO] 部署後確認回補已開始並觀察圖片累積：用 quickstart 的唯讀查詢（T051）每隔幾天檢視 `import_runs`（登入次數、`logged_out`、是否被擋）與已下載圖片張數；回補約 20 天完成、圖片隨之累積。**目標：≥10 張且含 ≥1 張長圖**（`--transcribe-sample` 會回報目前數量與是否含長圖）。未達標前不進下一步。依賴 T055。
+- [ ] T058 [PO] **PO 待辦**：累積達標後，把視覺模型 API 金鑰存進鑰匙圈（`security add-generic-password -U -s stnd-investanchors -a vision-api-key -w`，`-a` 後是固定名稱、`-w` 後不接任何東西、互動輸入）；用「存在與否」指令驗證。agent 不讀取其值。**存金鑰不會啟動轉寫**（開關仍關閉，通用規則 10）。依賴 T057。
+- [ ] T059 [GATE] [PO] 上線前抽查（spec US3 情境 4、FR-018／SC-007）：在**正式庫**（唯讀圖片、不登入網站）跑 `python3 poc/kb-mcp/investanchors_import.py --data-dir poc/data --transcribe-sample 10`（只轉寫抽樣的 10 張，**須含長圖**；結果只寫入 `poc/data/articles_probe/transcribe-sample-<時間>.md`，不寫 DB；會產生少量 API 費用，**PO 同意後才執行**）。**PO 本人逐格確認**轉寫與原圖一致，PO 認可才採用目前模型；**PO 不認可 → 升級模型（改 `TRANSCRIBE_MODEL`、提交推送、主對話審查）再抽 10 張**，不設百分比門檻。結果記入 `quickstart.md`「實測」節。依賴 T058、T040。
+- [ ] T060 [GATE] [PO] 打開轉寫開關：PO 同意後執行 `python3 poc/kb-mcp/investanchors_import.py --data-dir poc/data --enable-transcription`（只改設定）；之後夜間排程對新圖開始轉寫。回報開關狀態與下一次排程的轉寫結果。依賴 T059 通過。
+- [ ] T061 補轉先前累積的圖片：`python3 poc/kb-mcp/investanchors_import.py --data-dir poc/data --retranscribe`（**只讀本機圖片檔，不登入網站**）；驗證：表格內才有的數字或個股代碼可在對話中搜到該文章（SC-008／US3 情境 2）、不一致或無法辨識者有「未轉寫」標示（SC-007）、轉寫失敗的圖可再次補轉。結果回報主對話。依賴 T060。
+- [ ] T062 [GATE] [PO] 回補完成後的逐篇核對（SC-001）：回補完成（`completed=1`）後，對真實網站跑 `article_reconcile.py`，與「總覽」中建立時間在半年內的文章逐篇核對，缺漏 0、重複 0。**這是排程安裝後的手動真實網站執行，須依通用規則 8**：當天先確認當晚排程不會再登入（例如當天先停用 `com.alphavibe.investanchorsimport`，核對後再啟用），PO 知情同意；PO 在場、只留手機一台登入；只執行一次。依賴 T057（回補完成）。
+- [ ] T063 [GATE] [PO] 上線驗證期（至少兩週，SC-002／SC-005）：每週檢視一次——文章進庫時間 vs 發布時間（驗證 SC-002 的「下一次登入即匯入」、信漏搜只延後觸發）、睡眠補跑是否落在 PO 常用時段（若會與 PO 使用重疊，再加「非 22:30～次日 06:00 不啟動」的時間窗守衛，另開任務）、`import_runs` 的登入次數與 `logged_out`、帳號未被鎖定／停用、`abandoned` 與 `id_time_ok=0` 數量、轉寫開關開啟後的成本與失敗率、通知是否過量。結論回報主對話並更新 `research.md` R8／R12 的「依上線後觀察調整」。依賴 T055。
 
 ---
 
@@ -162,23 +179,26 @@
 
 ### Phase 依賴
 - **Phase 1（Setup）**：T001 先；T002 可與之平行。
-- **Phase 2（Foundational）**：依賴 Phase 1；**阻擋所有 User Story**。
-  - 內部：T004 → T005 → T006 → T007（同檔順序）；T003、T008、T010 可與 T004 平行；T009 依賴 T007；T011 依賴 T001。
-- **Phase 3（US1）**：依賴 Phase 2。T012、T015 可平行；T013 → T014（同檔）；T016 依賴 T007／T009／T012；T017～T019 依序在 `investanchors_import.py`；T020 依賴 T013～T019；T021 依賴 T020；T022 → T023 → T024 為關卡順序。
-- **Phase 4（US2）**：依賴 Phase 2＋US1 有資料可查（測試可用合成資料，不必等 T023）。T025 → T026 → T027／T028（兩 server 不同檔可平行）→ T029／T030 → T031 → T032。
-- **Phase 5（US3）**：依賴 US1（有圖片可轉寫）。T033、T034 為研究／決策可與 US2 平行；T035 依賴 T034；T036 依賴 T033；T037 依賴 T036＋T035；T038 依賴 T025／T037；T039（PO）可隨時；T040 依賴 T037；T041 依賴 T023＋T039＋T040。
-- **Phase 6（US4）**：依賴 US1（`import` 模式與清單讀取）。T043 → T044（互相配合）→ T045；T046 可平行；T047 依賴 T043～T046；T048 依賴 T047 與主對話審查。
-- **Phase 7（上線）**：依賴 US1～US4 全部（或 PO 決定先上線 US1～US2、其後 US3／US4 分批上線——見下）。T050、T051、T054 可平行；T052 依賴 T050／T051／T057；T056 依賴 T055。
+- **Phase 2（Foundational）**：依賴 Phase 1；**阻擋所有 User Story**。內部：T004 → T005 → T006 → T007（同檔順序）；T003、T008、T010 可與 T004 平行；T009 依賴 T007；T011 依賴 T001。
+- **Phase 3（US1）**：依賴 Phase 2。T012、T015 可平行；T013 → T014（同檔）；T016 依賴 T007／T009／T012；T017～T019 依序在 `investanchors_import.py`；T020 依賴 T013～T019；T021 依賴 T020；T022 → T023 → T024 為關卡順序（審查 → 真實單篇 → 獨立驗收）。
+- **Phase 4（US2）**：依賴 Phase 2（測試用合成資料，不必等 T023）。T025 → T026 → T027／T028（兩 server 不同檔可平行）→ T029／T030 → T031 → T032。
+- **Phase 5（US3，程式）**：依賴 US1 的 `import` 流程（T017）。T033、T034 為研究／決策，可與 US2 平行；T035 依賴 T034；T036 依賴 T033；T037 依賴 T035＋T036；**T038 依賴 T004／T006／T037**；T039 依賴 T025／T037；T040 依賴 T037／T038；T041 為關卡。**全程不需金鑰、不需真實圖片。**
+- **Phase 6（US4）**：依賴 US1（`import` 模式與清單讀取）。T042 → T043 → T044；T045 可平行；T046 依賴 T042～T045；**T047（審查與獨立驗收）→ T048（真實網站手動試跑）**。
+- **Phase 7（上線）**：依賴 US1～US4 全部。T049、T050、T051 可平行；T052 依賴 T049～T051 及所有程式；T053 依賴 T052；T054 依賴 T053；**T055（部署）依賴 T049／T050／T054**；T056 依賴 T055。
+- **Phase 8（上線後）**：T057 依賴 T055；T058 依賴 T057；T059 依賴 T058 與 T040；T060 依賴 T059 通過；T061 依賴 T060；T062 依賴 T057（回補完成）；T063 依賴 T055（全程觀察）。
+
+### 順序驗證（上線流程）
+US1、US2、US4 與 US3 **程式**都通過審查與獨立驗收（T024／T032／T041／T047）→ 全面驗收與最後審查（T053～T054）→ 部署與安裝排程（T055）→ 回補開始、圖片累積（T057）→ 存金鑰（T058）→ 抽查 10 張（T059）→ 打開轉寫開關（T060）→ 補轉積壓（T061）。
 
 ### 可平行的任務
 - T002 ‖ T001；T003 ‖ T008 ‖ T010（與 T004～T007 序列平行）。
 - T012 ‖ T015（US1）；T027 ‖ T028（US2，不同檔）。
 - US2 與 US3 的研究任務（T033／T034）可平行；T035 ‖ T036（不同檔）。
-- T046（reconcile）‖ T043～T045。
-- T050 ‖ T051 ‖ T054。
+- T045（reconcile）‖ T042～T044。
+- T049 ‖ T050 ‖ T051。
 
 ### 需要 PO 配合的任務
-T023（首次真實執行：在場、電腦登出只留手機）、T039（存 API 金鑰）、T041（抽查 10 張逐格確認）、T048（真實網站回補啟用與核對）、T052（部署／安裝排程同意）、T053（手動白名單）、T058（上線驗證期觀察與回報）。
+T023（首次真實執行）、T048（真實手動回補試跑）、T055（部署／安裝排程同意）、T056（手動白名單）、T057（觀察回補與圖片累積）、T058（存 API 金鑰）、T059（抽查 10 張逐格確認）、T060（同意打開轉寫開關）、T062（SC-001 核對，須先處理當日排程）、T063（上線驗證期）。
 
 ---
 
@@ -186,16 +206,19 @@ T023（首次真實執行：在場、電腦登出只留手機）、T039（存 AP
 
 ### MVP 優先（US1）
 1. Phase 1 → Phase 2（基礎，含共用 session 抽取，探查測試須保持全綠）。
-2. Phase 3 US1：假網站＋假信箱全程可測 → T022 審查 → T023 真實首次單篇執行 → T024 獨立驗收。**此時即可獨立交付**（新文章自動進庫、無信不登入）。
-3. 此階段後可先安裝排程（T050～T052）讓 US1 先上線，再分批加入 US2～US4；但回補（US4）與轉寫（US3）未完成前，US1 的圖片先只下載、不轉寫（轉寫失敗本就標「未轉寫」，不阻擋）。
+2. Phase 3 US1：假網站＋假信箱全程可測 → T022 審查 → T023 真實單篇（測試目錄）→ T024 獨立驗收。**此時 US1 即可獨立交付**（新文章自動進庫、無信不登入）。
+3. 其後依序 US2（對話可查）、US3 程式（合成圖＋假模型，開關預設關閉）、US4（半年回補）；每個階段結束都：提交推送 → 通知主對話審查 → 獨立驗收 → 才進下一階段。
 
-### 分批交付建議
-Foundation → US1（MVP，真實驗證）→ US2（對話可查）→ US3（表格數字）→ US4（半年回補）→ 上線與驗證期。每個階段結束都：提交推送 → 通知主對話審查 → 獨立驗收 → 才進下一階段。
+### 上線與轉寫啟用（分段，轉寫最後才開）
+- **部署前**：US1、US2、US4 與 US3 的**程式**全部通過審查與獨立驗收，再做全面驗收與最後審查，才部署（T055）。部署時轉寫開關**維持關閉**：圖片照常下載、標 `untranscribed`、不呼叫模型。
+- **部署後**：回補隨排程自動開始（每天最多 5 篇，約 20 天），圖片逐漸累積。累積 ≥10 張且含長圖後，PO 存金鑰（不會啟動轉寫）→ 抽樣 10 張轉寫並逐格確認 → 通過才打開開關 → `--retranscribe` 補轉積壓。不通過則升級模型再抽。
+- 這樣 PO 存金鑰與模型準確度驗證之間不會有「夜間排程偷偷開始轉寫」的空窗。
 
 ### 風險提醒
 - 真實網站的版面可能與探查時不同：scraper 取不到內文就標失敗、不寫殘缺（T014／T018）。
-- ID＝建立時間的規律只有 31 筆樣本：防呆（T003／T043）與累計通知必須保留。
+- ID＝建立時間的規律只有 31 筆樣本：防呆（T003／T042）與累計通知必須保留。
 - 登出是帳號安全的核心：任何改動 scraper 的任務都要重跑 45 個探查測試（含 SIGTERM 與隱藏選單 DELETE）。
+- 每日登入上限記在各自的資料庫：手動真實網站執行與正式排程同日重疊會登入兩次（通用規則 8）。
 
 ---
 
@@ -203,11 +226,14 @@ Foundation → US1（MVP，真實驗證）→ US2（對話可查）→ US3（表
 
 | # | 任務 | 內容 | 時機 |
 |---|---|---|---|
-| 1 | T039 | 把視覺模型 API 金鑰存進鑰匙圈（`stnd-investanchors` / `vision-api-key`，`-w` 後不接值，互動輸入；用「存在與否」驗證） | 轉寫階段前 |
-| 2 | T023 | 首次真實網站執行：在場、**電腦瀏覽器登出、只留手機一台**、在對話親自確認 | US1 審查通過後 |
-| 3 | T041 | 抽 10 張（含長圖）轉寫結果**逐格確認**；不認可則升級模型再抽 10 張 | 有真實圖片後 |
-| 4 | T048 | 真實網站啟用回補與完成後的逐篇核對（在場同意） | US4 審查通過後 |
-| 5 | T052 | 同意部署到 AlphaVibe-prod、安裝 launchd 排程並實跑驗證一次 | 上線前最後審查通過後 |
-| 6 | T053 | 在 `~/.claude` stock-researcher 白名單手動加入 `search_articles`／`get_article` | 部署後 |
-| 7 | T058 | 上線驗證期（≥2 週）觀察與回報；必要時調整每週核對頻率（R12）或加時間窗守衛 | 上線後 |
-| 8 | T034 | （條件式）若切片實作需新增 Pillow 等依賴，由 PO 決定 | 轉寫階段 |
+| 1 | T023 | 首次真實網站執行（測試目錄 `poc/data-test-articles`）：在場、**電腦瀏覽器登出、只留手機一台**、在對話親自確認 | US1 審查通過後 |
+| 2 | T048 | 真實網站手動試跑回補（測試目錄）：同上在場確認 | US4 審查與驗收通過後 |
+| 3 | T055 | 同意部署到 AlphaVibe-prod、安裝 launchd 排程並實跑驗證一次（轉寫開關維持關閉） | 上線前最後審查通過後 |
+| 4 | T056 | 在 `~/.claude` stock-researcher 白名單手動加入 `search_articles`／`get_article` | 部署後 |
+| 5 | T057 | 觀察回補開始與圖片累積（≥10 張且含長圖） | 部署後數日～數週 |
+| 6 | T058 | 把視覺模型 API 金鑰存進鑰匙圈（`stnd-investanchors` / `vision-api-key`，`-w` 後不接值，互動輸入；用「存在與否」驗證）；存了不會啟動轉寫 | 圖片累積達標後 |
+| 7 | T059 | 同意跑抽查（少量 API 費用）並**逐格確認** 10 張（含長圖）轉寫；不認可則升級模型再抽 10 張 | 存金鑰後 |
+| 8 | T060 | 同意打開轉寫開關（`--enable-transcription`） | 抽查通過後 |
+| 9 | T062 | 回補完成後的 SC-001 逐篇核對：在場、只留手機一台、**當天先停用夜間排程再執行**（通用規則 8） | 回補完成後 |
+| 10 | T063 | 上線驗證期（≥2 週）觀察與回報；必要時調整每週核對頻率（R12）或加時間窗守衛 | 上線後 |
+| 11 | T034 | （條件式）若切片實作需新增 Pillow 等依賴，由 PO 決定 | US3 程式階段 |

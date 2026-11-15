@@ -51,6 +51,9 @@
 `articles_attempted`、`articles_fetched`、`result`（`ok`／`partial`／`login_failed`／`blocked`／`structure_changed`／`aborted_limit`）、
 `logged_out INTEGER`（**必為 1 才算合格**）、`blocked_until TEXT`（被擋後下一次最早時間）。
 
+### `setting`（設定；單純 key/value）
+`key TEXT PRIMARY KEY`、`value TEXT`。目前只存 **`transcribe_enabled`（轉寫啟用開關；沒有此列＝關閉，預設關閉）**。關閉時圖片照常下載、一律 `untranscribed`、不呼叫模型 API、不讀取 `vision-api-key`；**不得用鑰匙圈有沒有金鑰當開關**。
+
 ### `alert_log`（通知去重，比照 `statement_alerts`/`alert_once`）
 `kind`、`key`、`day`；同 kind+key 同日只通知一次。
 
