@@ -9,10 +9,13 @@
 ### `article`（文章；不含分類）
 | 欄位 | 型別 | 說明 |
 |---|---|---|
-| article_id | INTEGER PK | `/user/vip_contents/<數字>` 的數字（唯一身分，FR-003） |
+| article_id | INTEGER PK | `/user/vip_contents/<數字>` 的數字（唯一身分，FR-003）；實測為 14 位數，SQLite 64 位整數足夠 |
 | url | TEXT NOT NULL | 完整原文網址 |
-| title | TEXT NOT NULL | 標題 |
-| published_at | TEXT | 發布日期（ISO；清單日期不可靠，僅作顯示，**不參與新舊判斷**） |
+| title | TEXT NOT NULL | 標題（**取自清單連結文字**，通知信主旨為輔；文章頁無 h1，不依賴其標題選擇器） |
+| published_at | TEXT | 發布時間（ISO，含時分；取自文章頁 `span.post_date`；清單日期對置頂項不可靠，**不參與新舊判斷與半年截止**） |
+| id_time_ms | INTEGER | 由文章 ID 推得的建立時間（14 位數 ID 的前 13 位，epoch 毫秒）；不合規格時為 NULL |
+| id_time_ok | INTEGER NOT NULL DEFAULT 1 | 0＝ID 形態或換算時間不合理（防呆，R11）：該篇不得被判為「早於截止日」 |
+| pinned | INTEGER NOT NULL DEFAULT 0 | 1＝曾在清單的第 1、2 頁同時出現（置頂項）；置頂項不被當舊文跳過 |
 | body | TEXT | 全文；僅在 `status='fetched'` 時非空（FR-013 不寫殘缺全文） |
 | status | TEXT NOT NULL | `discovered`／`fetched`／`failed`／`abandoned`／`skipped`／`deferred`（清單看到、早於回補截止日、未抓取；只存 ID、標題、日期，`body` 為 NULL） |
 | attempts | INTEGER NOT NULL DEFAULT 0 | 累計失敗次數（達 3 → abandoned） |
@@ -39,8 +42,9 @@
 
 ### `backfill_state`（單列）
 `id=1`、`completed INTEGER`（0／1）、`next_cursor TEXT`（清單續讀位置；形式依 P1 探查而定）、
-`cutoff_date TEXT`（截止日＝回補**首次啟動日**往前六個月，ISO 日期；啟動後固定不隨日期漂移，除非 PO 用
-`--backfill-since` 放寬並重新開啟回補）、`started_at`、`updated_at`。
+`cutoff_date TEXT`（截止日＝回補**首次啟動日**往前六個月，ISO 日期）、`cutoff_ms INTEGER`（同一時點的 epoch 毫秒，
+供與 `article.id_time_ms` 比較）；啟動後固定不隨日期漂移，除非 PO 用
+`--backfill-since` 放寬並重新開啟回補、`started_at`、`updated_at`。
 
 ### `import_runs`（執行紀錄；用來強制上限與驗證 SC-004）
 `id`、`started_at`、`trigger`（`mail`／`weekly`／`backfill`／`none`）、`logged_in INTEGER`、
@@ -57,16 +61,17 @@ discovered ──取文成功──▶ fetched            （終態；不覆寫�
 discovered ──失敗──▶ failed(attempts+1) ──下次排程再試──▶ fetched
 failed ──attempts≥3──▶ abandoned + Telegram （終態；PO 介入後可手動重置為 failed）
 discovered ──標題以【公告】開頭──▶ skipped   （終態；FR-004）
-（回補時）清單日期早於截止日 ──▶ deferred    （不開啟；只存 ID、標題、日期）
+（回補時）id_time_ok=1 且 id_time_ms < cutoff_ms − 14 天，且非置頂、非公告 ──▶ deferred    （不開啟；只存 ID、標題、清單日期）
 deferred ──PO 要求補抓（放寬截止日，`--backfill-since`）──▶ discovered ──▶（走上面的流程）
 ```
-**清單日期只用於「半年內」粗篩**，不用於判斷文章新舊或是否已抓（身分只看 `article_id`）。`deferred` 的文章
+**半年截止只看 ID 推得的建立時間**，**不使用清單日期**（置頂的近期文章清單日期會顯示 2021 年）；`id_time_ok=0` 的文章
+一律不得進入 `deferred`，照常處理。判斷新舊或是否已抓仍只看 `article_id`。`deferred` 的文章
 之後若被通知信指到（理論上不會：通知信只寄新文章），直接轉 `discovered` 並抓取。
 同一次執行內：進入 `failed` 的文章**不再嘗試**（FR-012）。`fetched` 的文章再從信或清單被看到 → 無動作
 （不重新開啟，FR-003）。
 
 ## 驗證規則
-- `article_id` 必須是正整數；URL 必須符合 `^https://(www\.)?investanchors\.com/user/vip_contents/\d+$`（站內路徑才收）。
+- `article_id` 必須是正整數；`id_time_ms` 僅在 ID 為 14 位數且前 13 位換算的時間介於 2020-01-01 與「現在＋1 天」之間時設值，否則 `id_time_ok=0`；URL 必須符合 `^https://(www\.)?investanchors\.com/user/vip_contents/\d+$`（站內路徑才收）。
 - `status='fetched'` ⇔ `body` 非空且長度 ≥ 下限（防殘缺：下限由探查 P6 後定，起始 200 字）。
 - `transcription` 只含轉寫內容；「機器轉寫」標示一律在輸出時（`get_article`／`search_articles` 片段）加上，不入庫。`untranscribed` 時 `transcription` 必為 NULL（不以空白／猜測充數，FR-017）。
 - 只增不刪：store 不提供 delete 方法；放棄的文章只改 status。

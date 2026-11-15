@@ -7,12 +7,16 @@ python3 poc/kb-mcp/investanchors_import.py --data-dir <dir>
         [--dry-run] [--force-weekly] [--retranscribe] [--reset-abandoned <article_id>]
         [--backfill-since <YYYY-MM-DD>]
 ```
-- `--backfill-since <日期>`：**PO 要求補抓更早文章時**使用。把 `backfill_state.cutoff_date` 放寬到該日期、
-  `completed` 重設為 0，並把清單日期落在新舊截止日之間的 `deferred` 文章轉回 `discovered`；之後仍依每日 5 篇
+- `--backfill-since <日期>`：**PO 要求補抓更早文章時**使用。把 `backfill_state.cutoff_date`／`cutoff_ms` 放寬到該日期、
+  `completed` 重設為 0，並把 ID 建立時間落在新舊截止日之間的 `deferred` 文章轉回 `discovered`；之後仍依每日 5 篇
   上限慢慢補。只能「往前放寬」（新日期早於現有截止日），否則拒絕；**放寬回補範圍＝放寬低頻負擔，須 PO 同意**。
-- 回補清單讀取：從最新一頁往舊翻；某一頁**所有文章的清單日期都早於截止日**即停止，不再往更舊翻（比全量更
-  低頻）。清單日期只作半年粗篩，不作新舊／是否已抓的判斷（身分只看文章 ID）；截止日附近日期不可靠的文章
-  （例如置頂公告日期在未來）不影響停止判斷——公告先依標題前綴略過再看日期。
+- 回補清單讀取：從最新一頁往舊翻；某一頁**所有「非置頂、非公告」文章的 ID 建立時間都早於 截止日−14 天**即停止，
+  不再往更舊翻（比全量更低頻）。**不使用清單日期**（置頂的近期文章清單日期會顯示 2021 年）；置頂項＝同一 ID
+  在第 1、2 頁重複出現者（實測每頁頂端 5 筆），**不得被當舊文跳過、也不參與停止判斷**；不依賴清單位置，一律以 ID 為準。
+  防呆：ID 不是 14 位數或換算時間不合理 → 該篇不得判為「早於截止日」，照常處理並記 `id_time_ok=0`，累計超過 3 篇通知 PO。
+- 標題取自清單連結文字（通知信主旨為輔）；文章頁只取內文容器 `div#inves_content`、發布時間 `span.post_date`、
+  內文容器內的圖片（記 `src_url`）。圖片不帶 cookie 即可下載：登出後由 Python 以 HTTP 下載，**不算登入次數，
+  但每張之間仍隨機間隔 5～15 秒**；一篇可能只有 1 張長圖，轉寫前依 research R5 的原則切片。
 - `--data-dir` 預設 `poc/data`；指向正式庫需 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1`。
 - 流程：(1) 讀 `import_runs`：`blocked_until` 未到 或 今日登入已達 1 次 → 寫一筆 `aborted_limit`／`none` 後結束，**不登入**。
   (2) 唯讀取信（失敗＝不觸發抓取，連續失敗才通知；每週核對仍會補漏）。 (3) 決定觸發：新信／週日核對／回補未完成；
@@ -33,6 +37,7 @@ python3 poc/kb-mcp/article_probe.py --data-dir poc/data --confirm-po-present --c
   （下限 10 秒，不可由 CLI 調低）。
 - 實作狀態（2026-11-15）：`article_probe.py`＋`scraper/investanchors_scraper.js`（probe 模式）＋
   `tests/test_article_probe.py` 已完成並通過測試；**尚未對真實網站執行**。
+- **純信箱模式（不登入定錨網站、不啟動瀏覽器）**：`article_probe.py --mail-only --confirm-mail-read [--mail-days 30] [--list-report <第二次探查報告>]`。只讀 `stnd-statement-import` 的 Gmail 憑證（不讀 `stnd-investanchors`），唯讀、`BODY.PEEK`、不標已讀、不跟隨任何連結；沒有 `--confirm-mail-read` 即拒絕且不讀憑證。輸出 `mail-<時間>.json`：每封信的寄達日期（換成台北日期）、連結分類、站內連結**路徑形態**（數字換成 `#`）、查詢參數**名稱**（不含值）、信中長數字（疑似文章 ID）的個數，以及它們有幾個對得上清單上的 ID（**只回數量**）；並與第二次探查的清單逐項日期做**只比日期、不記標題**的比對（每日信件數 vs 文章數、無信文章數、一封信含多篇的封數）。置頂項用 ID 推得的建立日期。
 - 探查前先找伺服器端登出機制；找不到即停止、不開任何文章、報告 `no_logout_mechanism`。
 - 登入表單：以第一個**可見**密碼欄位所屬 form 為準，其餘欄位與送出鈕限定在該 form 內；該 form 看起來像註冊表單
   （文字欄位 >2 或密碼欄位 ≠1）或找不到 form → `ambiguous_login_form`，不送出。
