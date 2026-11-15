@@ -37,7 +37,8 @@ MAX_RETRIES = 2                       # 429／500／529／504 最多再試 2 次
 RETRY_STATUSES = (429, 500, 529, 504)
 BACKOFF_SECONDS = (2, 5)
 ABORT_STATUSES = (401, 402, 403)
-_QUOTA_HINTS = ("credit", "billing", "spend", "usage limit", "spending limit", "quota", "balance", "limit")
+_QUOTA_HINTS = ("credit", "billing", "spend", "usage limit", "spending limit", "quota", "balance")
+# 2026-11-15 審查：不可含單獨的 "limit"——圖片超過大小限制等非帳務 400 也含此字，會誤判而整次 abort
 
 OUTPUT_SCHEMA = {
     "type": "object",

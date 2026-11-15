@@ -222,6 +222,112 @@ class ImportFlowTest(unittest.TestCase):
         self.assertEqual(e.server.requests[0][1]["model"], "claude-test-next")
 
 
+class BackfillTest(unittest.TestCase):
+    """2026-11-15 審查：夜間補轉先前未轉寫的圖＋失敗次數上限。"""
+
+    def _seed(self, e, n_articles=1, per=1, start=2001):
+        s = article_store.ArticleStore(e.h.tmp)
+        for aid in range(start, start + n_articles):
+            s.upsert_discovered(aid, "https://investanchors.com/user/vip_contents/%d" % aid, "t%d" % aid)
+            s.mark_fetched(aid, "內文。" * 100)
+            for seq in range(1, per + 1):
+                s.add_image(aid, seq, "http://127.0.0.1/%d-%d.png" % (aid, seq))
+                rel = os.path.join("articles_images", str(aid), "%d.png" % seq)
+                os.makedirs(os.path.join(e.h.tmp, os.path.dirname(rel)), exist_ok=True)
+                with open(os.path.join(e.h.tmp, rel), "wb") as f:
+                    f.write(e.png)
+                s.set_image_file(aid, seq, rel)
+        s.close()
+
+    def _attempts(self, e):
+        return [r[0] for r in e.h.store().conn.execute(
+            "SELECT transcribe_attempts FROM article_image ORDER BY article_id, seq")]
+
+    def test_enabled_nightly_run_backfills_at_most_ten_old_images(self):
+        e = Env(self)
+        self._seed(e, n_articles=4, per=4)                             # 16 張舊圖
+        e.run(["--enable-transcription"])
+        self.assertEqual(e.run(), 0)                                   # 無觸發也補轉
+        done = [x for x in e.statuses() if x[2] == "done"]
+        self.assertEqual(len(done), I.BACKFILL_TRANSCRIBE_PER_RUN)
+        self.assertEqual(e.requests(), 10)
+        self.assertEqual(done[0][:2], (2001, 1))                       # 依 article_id／seq
+        self.assertEqual(e.h.store().transcription_counts()["untranscribed"], 6)
+        self.assertEqual(e.run(), 0)                                   # 下一輪補完剩下的
+        self.assertEqual(e.h.store().transcription_counts()["untranscribed"], 0)
+
+    def test_backfill_runs_after_new_article_with_trigger_and_skips_images_just_tried(self):
+        e = Env(self, responses=[(500, {"error": {"message": "boom"}})])
+        self._seed(e, n_articles=1, per=1)
+        e.run(["--enable-transcription"])
+        self.assertEqual(e.import_article(1001, images=1), 0)          # 新圖失敗＋舊圖補轉失敗
+        by = dict(((a, q), n) for (a, q), n in zip([(2001, 1), (1001, 1)], [
+            e.h.store().conn.execute("SELECT transcribe_attempts FROM article_image WHERE article_id=?",
+                                     (a,)).fetchone()[0] for a in (2001, 1001)]))
+        self.assertEqual(by, {(2001, 1): 1, (1001, 1): 1})             # 新圖本次只計 1 次（不被補轉重複試）
+
+    def test_failures_stop_auto_backfill_at_cap_but_retranscribe_still_tries(self):
+        e = Env(self, responses=[(500, {"error": {"message": "boom"}})])
+        self._seed(e)
+        e.run(["--enable-transcription"])
+        for i in range(I.MAX_TRANSCRIBE_ATTEMPTS):
+            e.run()
+            self.assertEqual(self._attempts(e), [i + 1])
+        del e.server.requests[:]
+        e.run()                                                        # 達上限：不再自動補轉
+        self.assertEqual((e.requests(), self._attempts(e)), (0, [3]))
+        self.assertEqual(e.h.store().transcription_counts(), {"untranscribed": 1, "exhausted": 1})
+        e.run(["--retranscribe"])                                      # 手動仍會試
+        self.assertGreater(e.requests(), 0)
+        self.assertEqual(self._attempts(e), [4])
+
+    def test_reset_attempts_flag_makes_exhausted_image_auto_backfill_again(self):
+        e = Env(self, responses=[(401, {"error": {"message": "invalid x-api-key"}})])
+        self._seed(e)
+        s = article_store.ArticleStore(e.h.tmp)
+        s.conn.execute("UPDATE article_image SET transcribe_attempts=3")
+        s.conn.commit()
+        s.close()
+        e.run(["--enable-transcription"])
+        e.run()
+        self.assertEqual(e.requests(), 0)                              # 達上限：夜間不碰
+        self.assertEqual(e.run(["--retranscribe", "--reset-transcribe-attempts"]), 1)   # 401 abort
+        self.assertEqual(self._attempts(e), [0])                       # abort 沒送出：歸零後不計次
+        e.server.responses[:] = [ok_resp(True, "補轉|1")]
+        e.run()
+        self.assertEqual([x[2] for x in e.statuses()], ["done"])
+
+    def test_reset_flag_only_valid_with_retranscribe(self):
+        e = Env(self)
+        for argv in (["--reset-transcribe-attempts"], ["--enable-transcription", "--reset-transcribe-attempts"]):
+            self.assertEqual(e.run(argv), 2)
+        self.assertIn("只能與 --retranscribe 併用", e.h.out.getvalue())
+        self.assertIsNone(e.h.store().get_setting("transcribe_enabled"))
+
+    def test_switch_off_no_backfill_no_counting_no_key_read(self):
+        e = Env(self)
+        self._seed(e, n_articles=2, per=2)
+        self.assertEqual(e.run(), 0)
+        self.assertEqual((e.requests(), e.vision_calls, self._attempts(e)), (0, 0, [0, 0, 0, 0]))
+        self.assertEqual([x[2] for x in e.statuses()], ["untranscribed"] * 4)
+
+    def test_abort_stops_backfill_and_does_not_count(self):
+        e = Env(self, responses=[(401, {"error": {"message": "invalid x-api-key"}})])
+        self._seed(e, n_articles=1, per=3)
+        e.run(["--enable-transcription"])
+        e.run()
+        self.assertEqual(e.requests(), 1)                              # abort 後本次停止
+        self.assertEqual(self._attempts(e), [0, 0, 0])
+
+    def test_backfill_orders_by_fewest_attempts_first(self):
+        e = Env(self)
+        self._seed(e, n_articles=1, per=2)
+        s = article_store.ArticleStore(e.h.tmp)
+        s.bump_transcribe_attempts(2001, 1)
+        self.assertEqual([i["seq"] for i in s.images_to_backfill(10)], [2, 1])
+        s.close()
+
+
 class SampleTest(unittest.TestCase):
     def _fill(self, e, specs):
         """specs: [(aid, seq, png_bytes)]，直接寫入庫與磁碟（不經匯入）。"""

@@ -32,6 +32,7 @@ URL_RE = re.compile(r"^https://(www\.)?investanchors\.com/user/vip_contents/\d+$
 
 STATUSES = ("discovered", "fetched", "failed", "abandoned", "skipped", "deferred")
 PENDING_STATUSES = ("discovered", "failed")
+MAX_TRANSCRIBE_ATTEMPTS = 3     # 2026-11-15 審查決定：自動補轉的失敗次數上限；超過只有 --retranscribe 才會再試
 TRANSCRIPTION_STATUSES = ("done", "untranscribed", "not_table")
 
 SCHEMA = """
@@ -64,6 +65,7 @@ CREATE TABLE IF NOT EXISTS article_image (
     transcription_status TEXT NOT NULL DEFAULT 'untranscribed',
     transcription TEXT,
     transcribed_model TEXT,
+    transcribe_attempts INTEGER NOT NULL DEFAULT 0,
     UNIQUE(article_id, seq)
 );
 
@@ -150,6 +152,10 @@ class ArticleStore(object):
             self.conn.execute("ALTER TABLE import_runs ADD COLUMN login_ok INTEGER")
         if "list_pages" not in cols:        # 每週核對判定用：本次讀到幾頁清單
             self.conn.execute("ALTER TABLE import_runs ADD COLUMN list_pages INTEGER NOT NULL DEFAULT 0")
+
+        icols = [r[1] for r in self.conn.execute("PRAGMA table_info(article_image)")]
+        if "transcribe_attempts" not in icols:   # 2026-11-15 審查：夜間補轉的失敗累計次數
+            self.conn.execute("ALTER TABLE article_image ADD COLUMN transcribe_attempts INTEGER NOT NULL DEFAULT 0")
 
     def close(self):
         self.conn.close()
@@ -427,6 +433,45 @@ class ArticleStore(object):
         return [dict(r) for r in self.conn.execute(
             "SELECT * FROM article_image WHERE file_path IS NOT NULL "
             "AND transcription_status='untranscribed' ORDER BY article_id, seq")]
+
+    def bump_transcribe_attempts(self, article_id, seq):
+        """實際送出轉寫嘗試但仍未轉寫時 +1。"""
+        self.conn.execute("UPDATE article_image SET transcribe_attempts = transcribe_attempts + 1 "
+                          "WHERE article_id=? AND seq=?", (article_id, seq))
+        self.conn.commit()
+
+    def reset_transcribe_attempts(self):
+        """把所有未轉寫圖的失敗次數歸零，回傳受影響張數。"""
+        cur = self.conn.execute("UPDATE article_image SET transcribe_attempts=0 "
+                                "WHERE transcription_status='untranscribed' AND transcribe_attempts>0")
+        self.conn.commit()
+        return cur.rowcount
+
+    def images_to_backfill(self, limit, exclude=()):
+        """夜間補轉候選：status=fetched 文章、有本機檔、未轉寫、失敗次數未達上限；
+        失敗次數少的先，再依 article_id／seq。`exclude` 為 (article_id, seq) 集合（本次已試過者）。"""
+        rows = self.conn.execute(
+            "SELECT i.* FROM article_image i JOIN article a ON a.article_id=i.article_id "
+            "WHERE a.status='fetched' AND i.file_path IS NOT NULL AND i.transcription_status='untranscribed' "
+            "AND i.transcribe_attempts < ? ORDER BY i.transcribe_attempts, i.article_id, i.seq",
+            (MAX_TRANSCRIBE_ATTEMPTS,))
+        out = []
+        for r in rows:
+            if (r["article_id"], r["seq"]) in exclude:
+                continue
+            out.append(dict(r))
+            if len(out) >= limit:
+                break
+        return out
+
+    def transcription_counts(self):
+        """健康檢查用：僅計 status=fetched 文章的圖。exhausted＝未轉寫且已達自動補轉上限。"""
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(i.transcribe_attempts >= ?), 0) AS ex "
+            "FROM article_image i JOIN article a ON a.article_id=i.article_id "
+            "WHERE a.status='fetched' AND i.transcription_status='untranscribed'",
+            (MAX_TRANSCRIBE_ATTEMPTS,)).fetchone()
+        return {"untranscribed": row["n"], "exhausted": int(row["ex"])}
 
     # ------------------------------------------------------------------ 通知信線索
 

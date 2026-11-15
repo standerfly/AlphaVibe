@@ -123,6 +123,7 @@ cookie 即可下載（200 image/png），但網址要從登入後的文章頁取
 夜間排程就會在抽查通過前開始轉寫。關閉時圖片照常下載、標 `untranscribed`、不呼叫模型 API。上線流程：部署（開關關閉）→ 回補累積圖片
 （≥10 張且含長圖）→ PO 存金鑰 → `--transcribe-sample 10`（只轉寫抽樣、不寫 DB）→ PO 逐格確認 → 通過才 `--enable-transcription` →
 `--retranscribe` 補轉積壓；不通過則升級模型再抽 10 張。
+**夜間補轉（2026-11-15 審查決定）**：開關開啟時，每次執行在新文章轉寫後另補轉最多 `BACKFILL_TRANSCRIBE_PER_RUN`（10）張先前 `untranscribed` 的圖；單張累計送出失敗達 `MAX_TRANSCRIBE_ATTEMPTS`（3）次即不再自動補轉（只剩手動 `--retranscribe`，可加 `--reset-transcribe-attempts` 歸零）；abort（缺金鑰／401 等）未送出不計次。另 `_QUOTA_HINTS` 不含單獨的 `limit`，圖片過大等非帳務 400 只讓該張失敗、不中止。
 **上線前抽查（FR-018／SC-007；PO 決定 2026-11-15）**：從 P6 取得的真實表格抽 **10 張**，轉寫結果由 **PO 本人逐格
 確認**，PO 認可才採用目前模型；**PO 不認可則升級模型、再抽 10 張**（逐級升）。**不設百分比門檻**。補轉寫：`investanchors_import.py --retranscribe` 只讀本機
 圖片檔、不登入網站（FR-017）。

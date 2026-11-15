@@ -302,6 +302,40 @@ class RunsAndAlertsTest(Base):
         self.addCleanup(s2.close)
         self.assertIn("login_ok", [r[1] for r in s2.conn.execute("PRAGMA table_info(import_runs)")])
 
+    def test_old_article_image_without_transcribe_attempts_is_migrated(self):
+        import sqlite3
+        tmp = tempfile.mkdtemp(prefix="articles-old-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        conn = sqlite3.connect(os.path.join(tmp, "articles.db"))
+        conn.execute("CREATE TABLE article_image (id INTEGER PRIMARY KEY AUTOINCREMENT, article_id INTEGER NOT NULL, "
+                     "seq INTEGER NOT NULL, src_url TEXT, file_path TEXT, is_table INTEGER, "
+                     "transcription_status TEXT NOT NULL DEFAULT 'untranscribed', transcription TEXT, "
+                     "transcribed_model TEXT, UNIQUE(article_id, seq))")
+        conn.execute("INSERT INTO article_image (article_id, seq) VALUES (7, 1)")
+        conn.commit()
+        conn.close()
+        s2 = A.ArticleStore(tmp)
+        self.addCleanup(s2.close)
+        self.assertIn("transcribe_attempts", [r[1] for r in s2.conn.execute("PRAGMA table_info(article_image)")])
+        self.assertEqual(s2.conn.execute("SELECT transcribe_attempts FROM article_image").fetchone()[0], 0)
+        A.ArticleStore(tmp).close()                                    # 再開一次不會重複 ALTER 而出錯
+
+    def test_transcription_counts_only_fetched_articles(self):
+        self.assertEqual(self.s.transcription_counts(), {"untranscribed": 0, "exhausted": 0})
+        self.add(1)
+        self.s.mark_fetched(1, "內文。" * 100)
+        self.add(2)                                                    # 未 fetched：不計
+        for aid in (1, 2):
+            for seq in (1, 2):
+                self.s.add_image(aid, seq, "http://x/%d-%d.png" % (aid, seq))
+                self.s.set_image_file(aid, seq, "f/%d-%d.png" % (aid, seq))
+        self.s.set_transcription(1, 2, "not_table", is_table=False)    # 已處理：不計
+        for _ in range(A.MAX_TRANSCRIBE_ATTEMPTS):
+            self.s.bump_transcribe_attempts(1, 1)
+        self.assertEqual(self.s.transcription_counts(), {"untranscribed": 1, "exhausted": 1})
+        self.s.reset_transcribe_attempts()
+        self.assertEqual(self.s.transcription_counts(), {"untranscribed": 1, "exhausted": 0})
+
     def test_logins_today_uses_taipei_date_boundaries(self):
         self.clock[0] = T(15, 23, 0)
         r = self.s.start_run("mail")

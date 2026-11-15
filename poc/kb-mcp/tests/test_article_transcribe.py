@@ -190,6 +190,25 @@ class HttpErrorTest(Base):
         self.assertEqual(r["status"], "untranscribed")
         self.assertFalse(r["abort"])
 
+    def test_size_limit_400_is_not_quota_and_next_image_still_sent(self):
+        # 2026-11-15 審查：訊息含 limit 但非帳務的 400 只讓該張圖失敗，不得 abort
+        msg = "image exceeds the maximum size limit of 5 MB"
+        s = self.serve([(400, {"type": "error", "error": {"type": "invalid_request_error", "message": msg}}),
+                        ok_resp(True, "ok|1")])
+        r1 = self.run_img(s)
+        self.assertEqual(r1["status"], "untranscribed")
+        self.assertFalse(r1["abort"])
+        r2 = self.run_img(s)                                   # 下一張仍會被送出
+        self.assertEqual(r2["status"], "transcribed")
+        self.assertEqual(len(s.requests), 2)
+        self.assertNotIn("limit", at._QUOTA_HINTS)
+
+    def test_billing_style_400_variants_still_abort(self):
+        for msg in ("Your credit balance is too low", "billing issue", "usage limit reached",
+                    "monthly quota exceeded"):
+            s = self.serve([(400, {"type": "error", "error": {"type": "invalid_request_error", "message": msg}})])
+            self.assertTrue(self.run_img(s)["abort"], msg)
+
     def test_429_retry_then_success(self):
         s = self.serve([(429, {}), (529, {}), ok_resp(True, "ok")])
         r = self.run_img(s)

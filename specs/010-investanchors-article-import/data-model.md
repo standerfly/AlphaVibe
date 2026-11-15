@@ -34,6 +34,7 @@
 | file_path | TEXT | 相對 `data_dir` 的本機路徑；下載失敗為 NULL（標記缺，下次補抓） |
 | is_table | INTEGER | 1／0／NULL（模型判斷；未判斷為 NULL） |
 | transcription_status | TEXT NOT NULL | `done`／`untranscribed`／`not_table` |
+| transcribe_attempts | INTEGER NOT NULL DEFAULT 0 | 轉寫嘗試「送出後仍維持 `untranscribed`」的累計次數（成功或 `not_table` 不再計；abort 未送出不計）；達 `MAX_TRANSCRIBE_ATTEMPTS`＝3 不再自動補轉，`--retranscribe` 不受限；舊表由 `_ensure_columns` 自動補欄位 |
 | transcription | TEXT | **只存轉寫內容**，不含任何標示或路徑（標示由輸出層加，避免 LIKE 搜尋被標示用字命中所有文章） |
 | transcribed_model | TEXT | 例：`claude-haiku-5-5`（升級模型時可辨識哪些要重轉） |
 
@@ -77,6 +78,7 @@ deferred ──PO 要求補抓（放寬截止日，`--backfill-since`）──�
 ## 驗證規則
 - `article_id` 必須是正整數；`id_time_ms` 僅在 ID 為 14 位數且前 13 位換算的時間介於 2020-01-01 與「現在＋1 天」之間時設值，否則 `id_time_ok=0`；URL 必須符合 `^https://(www\.)?investanchors\.com/user/vip_contents/\d+$`（站內路徑才收）。
 - `status='fetched'` ⇔ `body` 非空且長度 ≥ 下限（防殘缺：下限由探查 P6 後定，起始 200 字）。
+- 常數（`investanchors_import.py`／`article_store.py`，2026-11-15 審查決定）：`BACKFILL_TRANSCRIBE_PER_RUN=10`（夜間每次最多補轉幾張舊圖）、`MAX_TRANSCRIBE_ATTEMPTS=3`。補轉順序：`transcribe_attempts` 少的先，再依 article_id／seq；僅 `status=fetched` 文章。`ArticleStore.transcription_counts()` 回 `{"untranscribed", "exhausted"}`（供 T050 健康檢查）。
 - `transcription` 只含轉寫內容；「機器轉寫」標示一律在輸出時（`get_article`／`search_articles` 片段）加上，不入庫。`untranscribed` 時 `transcription` 必為 NULL（不以空白／猜測充數，FR-017）。
 - 只增不刪：store 不提供 delete 方法；放棄的文章只改 status。
 - 日誌／`last_error`／通知 **不得含** 帳密、cookie、全文（以單元測試對日誌輸出做負向斷言）。

@@ -39,6 +39,10 @@ WEEKLY_MIN_GAP_DAYS = 6
 WEEKLY_OVERDUE_DAYS = 8          # 週日那次因睡眠錯過時的保底：超過 8 天沒核對就補
 HALT_SETTING = "halted_reason"
 TRANSCRIBE_SETTING = "transcribe_enabled"   # 無此列＝關閉（預設）；不得以鑰匙圈有無金鑰當開關（T038）
+# 2026-11-15 審查決定：夜間排程除了新文章的圖，每次再補轉最多 N 張先前未轉寫的圖；
+# 單張累計失敗達 MAX_TRANSCRIBE_ATTEMPTS 次就不再自動補轉（只剩手動 --retranscribe）。
+BACKFILL_TRANSCRIBE_PER_RUN = 10
+MAX_TRANSCRIBE_ATTEMPTS = article_store.MAX_TRANSCRIBE_ATTEMPTS
 SAMPLE_DIRNAME = "articles_probe"
 RECENT_ARTICLE_DAYS = 7           # 建立時間（由 ID 推得）在此天數內才逐篇通知，更早的合併成一則摘要
 
@@ -105,6 +109,8 @@ def build_parser():
     g.add_argument("--disable-transcription", action="store_true", help="關閉表格圖轉寫（冪等，只改設定）")
     ap.add_argument("--retranscribe", action="store_true",
                     help="只讀本機圖片補轉寫（未轉寫、或換模型後重轉）；不登入；轉寫開關關閉時拒絕")
+    ap.add_argument("--reset-transcribe-attempts", action="store_true",
+                    help="只能與 --retranscribe 併用：把達上限的未轉寫圖失敗次數歸零後重試")
     ap.add_argument("--transcribe-sample", type=int, default=None, metavar="N",
                     help="只讀本機圖片隨機抽 N 張（至少含 1 張長圖）轉寫，結果寫 <data-dir>/articles_probe/；"
                          "不寫資料庫、不登入；開關關閉時仍可執行")
@@ -132,6 +138,7 @@ class Importer(object):
         self.tile_tmp_root = tile_tmp_root
         self.sample_rng = sample_rng or random.Random()
         self.transcribe_aborted = False
+        self.attempted_this_run = set()           # 本次已送出轉寫嘗試的 (article_id, seq)，補轉時不重複試
         self.notifier = notifier or _default_notifier
         self.sleeper = sleeper
         self.rng = rng
@@ -174,6 +181,9 @@ class Importer(object):
             args.data_dir = article_data_guard.resolve_data_dir(args.data_dir)
         except article_data_guard.DataDirRefused as e:
             self.say("拒絕執行：%s" % e)
+            return 2
+        if args.reset_transcribe_attempts and not args.retranscribe:
+            self.say("拒絕執行：--reset-transcribe-attempts 只能與 --retranscribe 併用")
             return 2
         if args.enable_transcription or args.disable_transcription:
             return self._toggle_transcription()
@@ -232,12 +242,18 @@ class Importer(object):
                 if self.sleeper is not None:
                     kw["sleeper"] = self.sleeper
                 r = self.transcribe(tiles, **kw)
+            if r.get("abort"):
+                return True                           # 缺金鑰／401 等：視為沒有送出，不計次
+            self.attempted_this_run.add((aid, seq))
             if r.get("status") == "transcribed":
                 if r.get("is_table") is False:
                     store.set_transcription(aid, seq, "not_table", is_table=False)
-                elif (r.get("text") or "").strip():
+                    return False
+                if (r.get("text") or "").strip():
                     store.set_transcription(aid, seq, "done", text=r["text"], model=r.get("model"), is_table=True)
-            return bool(r.get("abort"))
+                    return False
+            store.bump_transcribe_attempts(aid, seq)  # 送出了但仍未轉寫
+            return False
         except Exception:
             return False
 
@@ -250,11 +266,22 @@ class Importer(object):
             if self._transcribe_one(store, img):
                 self.transcribe_aborted = True
 
+    def _backfill_transcribe(self, store):
+        """開關開啟時補轉先前未轉寫的圖（最多 BACKFILL_TRANSCRIBE_PER_RUN 張）；關閉時什麼都不做。"""
+        if not self.transcription_enabled(store) or self.transcribe_aborted:
+            return
+        for img in store.images_to_backfill(BACKFILL_TRANSCRIBE_PER_RUN, exclude=self.attempted_this_run):
+            if self._transcribe_one(store, img):
+                self.transcribe_aborted = True
+                return
+
     def _retranscribe(self, store):
         """只讀本機圖片：補轉 untranscribed，並重轉「模型不同於目前設定」的已轉寫圖。不登入、不啟動 scraper。"""
         if not self.transcription_enabled(store):
             self.say("拒絕執行：轉寫開關未開（先用 --enable-transcription 開啟）")
             return 2
+        if self.args.reset_transcribe_attempts:
+            self.say("已歸零失敗次數：%d 張" % store.reset_transcribe_attempts())
         todo = store.images_to_transcribe()
         todo += [dict(r) for r in store.conn.execute(
             "SELECT * FROM article_image WHERE file_path IS NOT NULL AND transcription_status='done' "
@@ -431,8 +458,11 @@ class Importer(object):
             run = store.start_run("none")
             store.finish_run(run, None, 0, 0, "ok", None)
             self.say("無觸發，未登入")
+            self._backfill_transcribe(store)
             return 0
-        return self._run_site(store, guard, triggers, unprocessed)
+        rc = self._run_site(store, guard, triggers, unprocessed)
+        self._backfill_transcribe(store)          # 新文章的轉寫之後再補轉舊圖（純本機，不需登入）
+        return rc
 
     # ---------------------------------------------------------------- 登入、抓取、套用結果
     def _run_site(self, store, guard, triggers, unprocessed):
