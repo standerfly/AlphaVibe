@@ -15,3 +15,6 @@ poc/data-test/
 
 # app/ 骨架的虛擬環境（2026-08-21 新建，見 app/requirements.txt）
 .venv/
+
+# 手動對真實定錨網站測試用的獨立資料目錄（010 tasks T023／T048；絕不使用正式庫 poc/data）
+poc/data-test-articles/

@@ -12,6 +12,7 @@
 | article_id | INTEGER PK | `/user/vip_contents/<數字>` 的數字（唯一身分，FR-003）；實測為 14 位數，SQLite 64 位整數足夠 |
 | url | TEXT NOT NULL | 完整原文網址 |
 | title | TEXT NOT NULL | 標題（**取自清單連結文字**，通知信主旨為輔；文章頁無 h1，不依賴其標題選擇器） |
+| list_date | TEXT | 清單上顯示的日期（**僅供顯示與 `deferred` 紀錄**，不參與新舊判斷或半年截止） |
 | published_at | TEXT | 發布時間（ISO，含時分；取自文章頁 `span.post_date`；清單日期對置頂項不可靠，**不參與新舊判斷與半年截止**） |
 | id_time_ms | INTEGER | 由文章 ID 推得的建立時間（14 位數 ID 的前 13 位，epoch 毫秒）；不合規格時為 NULL |
 | id_time_ok | INTEGER NOT NULL DEFAULT 1 | 0＝ID 形態或換算時間不合理（防呆，R11）：該篇不得被判為「早於截止日」 |
@@ -47,7 +48,7 @@
 `--backfill-since` 放寬並重新開啟回補、`started_at`、`updated_at`。
 
 ### `import_runs`（執行紀錄；用來強制上限與驗證 SC-004）
-`id`、`started_at`、`trigger`（`mail`／`weekly`／`backfill`／`none`）、`logged_in INTEGER`、
+`id`、`started_at`、`finished_at`、`trigger`（`mail`／`weekly`／`backfill`／`none`）、`logged_in INTEGER`、
 `articles_attempted`、`articles_fetched`、`result`（`ok`／`partial`／`login_failed`／`blocked`／`structure_changed`／`aborted_limit`）、
 `logged_out INTEGER`（**必為 1 才算合格**）、`blocked_until TEXT`（被擋後下一次最早時間）。
 
