@@ -1,0 +1,137 @@
+{
+ "note": "跨語言一致性語料：Python（article_id_time）與 JS（scraper/id_filter.js）對每筆 id 的「延後」判定必須相同。門檻由 defer_thresholds 算出。",
+ "cutoff_ms": 1778428800000,
+ "now_ms": 1794409200000,
+ "thresholds": {
+  "defer_below_id": 17772192000000,
+  "valid_id_min": 15778368000000,
+  "valid_id_max": 17944956000009
+ },
+ "cases": [
+  {
+   "id": "17772191999999",
+   "note": "邊界 -1（最後一個延後）",
+   "expect_defer": true
+  },
+  {
+   "id": "17772192000000",
+   "note": "邊界 0（剛好等於門檻，不延後）",
+   "expect_defer": false
+  },
+  {
+   "id": "17772192000001",
+   "note": "邊界 +1",
+   "expect_defer": false
+  },
+  {
+   "id": "17772191999990",
+   "note": "邊界 -1 毫秒（延後）",
+   "expect_defer": true
+  },
+  {
+   "id": "17746272000000",
+   "note": "遠早於門檻但仍合理（延後）",
+   "expect_defer": true
+  },
+  {
+   "id": "15778368000000",
+   "note": "合理下限（2020-01-01，延後）",
+   "expect_defer": true
+  },
+  {
+   "id": "15778367999999",
+   "note": "低於下限（不延後）",
+   "expect_defer": false
+  },
+  {
+   "id": "17944956000009",
+   "note": "合理上限（現在+1天，近期不延後）",
+   "expect_defer": false
+  },
+  {
+   "id": "17944956000010",
+   "note": "超過上限（未來，不延後）",
+   "expect_defer": false
+  },
+  {
+   "id": "17944092000003",
+   "note": "正常近期",
+   "expect_defer": false
+  },
+  {
+   "id": "17941500000007",
+   "note": "三天前近期",
+   "expect_defer": false
+  },
+  {
+   "id": "1612580077558",
+   "note": "13 位（真實公告形態）",
+   "expect_defer": false
+  },
+  {
+   "id": "161258007755800",
+   "note": "14 位但值太小（2021 的 13 位後補 0）",
+   "expect_defer": false
+  },
+  {
+   "id": "12345",
+   "note": "短 ID",
+   "expect_defer": false
+  },
+  {
+   "id": "1794140636476A",
+   "note": "含字母（14 字元）",
+   "expect_defer": false
+  },
+  {
+   "id": "abcdefghijklmn",
+   "note": "全字母",
+   "expect_defer": false
+  },
+  {
+   "id": "1794140636476",
+   "note": "13 位",
+   "expect_defer": false
+  },
+  {
+   "id": "179414063647612",
+   "note": "15 位",
+   "expect_defer": false
+  },
+  {
+   "id": "00772191999999",
+   "note": "前導零 14 位",
+   "expect_defer": false
+  },
+  {
+   "id": "017772191999999",
+   "note": "前導零 15 位",
+   "expect_defer": false
+  },
+  {
+   "id": "9999999999999999999999999999999999999999",
+   "note": "超長字串",
+   "expect_defer": false
+  },
+  {
+   "id": "",
+   "note": "空字串",
+   "expect_defer": false
+  },
+  {
+   "id": "1794 140636476",
+   "note": "含空白",
+   "expect_defer": false
+  },
+  {
+   "id": "-7772191999999",
+   "note": "負號開頭",
+   "expect_defer": false
+  },
+  {
+   "id": "17941406364.5",
+   "note": "含小數點",
+   "expect_defer": false
+  }
+ ]
+}

@@ -21,6 +21,7 @@ import tempfile
 import shutil
 
 import article_data_guard
+import article_id_time
 import article_image_tiles
 import article_images
 import article_store
@@ -44,6 +45,11 @@ TRANSCRIBE_SETTING = "transcribe_enabled"   # 無此列＝關閉（預設）；�
 BACKFILL_TRANSCRIBE_PER_RUN = 10
 MAX_TRANSCRIBE_ATTEMPTS = article_store.MAX_TRANSCRIBE_ATTEMPTS
 SAMPLE_DIRNAME = "articles_probe"
+BACKFILL_FIRST_CURSOR = 2         # 回補游標＝「下次要讀的頁碼」；第 1 頁每次都讀（新文章與置頂），游標從第 2 頁起
+BACKFILL_STOP_PAGES = 2           # 連續幾頁「非置頂、非公告」項目全部早於門檻才算清單掃完（停止規則，research R11）
+ID_ANOMALY_ALERT_OVER = 3         # id_time_ok=0 累計超過這個篇數 → 通知 PO（規律可能失效）
+DETERMINISTIC_TILE_REASONS = ("too_many_tiles", "tile_too_small", "unsupported_or_corrupt_image",
+                              "tile_bytes_too_large")   # 切片的確定性失敗：重試也不會變，計入補轉失敗次數
 RECENT_ARTICLE_DAYS = 7           # 建立時間（由 ID 推得）在此天數內才逐篇通知，更早的合併成一則摘要
 
 ALERT_TEXTS = {
@@ -55,6 +61,8 @@ ALERT_TEXTS = {
     "logout_unverified": ("⚠️ 定錨匯入：登出未驗證。探查的登入狀態可能仍留在網站伺服器端，PO 在自己的裝置登出無法清除；"
                           "請勿再次執行，先回報。"),
     "mailbox_failure": "⚠️ 定錨匯入：信箱讀取連續失敗（不影響每週核對）。",
+    "cutoff_mismatch": ("⚠️ 定錨匯入：回補的「太舊不開啟」判定在瀏覽器端與主程式不一致，"
+                        "本次未標記任何延後、回補游標不前進。請回報。"),
     "id_time_anomaly": "⚠️ 定錨匯入：文章 ID 的時間規律出現多篇異常，半年截止判斷可能失效，請回報。",
 }
 
@@ -83,8 +91,9 @@ def weekly_due(now, last_weekly):
 
 
 def backfill_active(store):
-    """US4（T042）才會讓回補成為觸發；目前永遠為 False。"""
-    return False
+    """回補是否仍需登入：已啟動（backfill_state 有列）且尚未完成。完成後永遠為 False。"""
+    state = store.get_backfill_state()
+    return state is not None and not state["completed"]
 
 
 def _default_notifier(text):
@@ -104,6 +113,9 @@ def build_parser():
     ap.add_argument("--reset-abandoned", type=int, default=None, metavar="ARTICLE_ID",
                     help="PO 介入後把已放棄的文章重置為可重試")
     ap.add_argument("--resume", action="store_true", help="帳號停用等狀況排除後，恢復排程")
+    ap.add_argument("--backfill-since", default=None, metavar="YYYY-MM-DD",
+                    help="PO 要求補抓更早的文章：把回補截止日往前放寬到該日（只能更早，否則拒絕）。"
+                         "放寬範圍須 PO 同意；放寬後仍受每日 5 篇上限，慢慢補")
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--enable-transcription", action="store_true", help="開啟表格圖轉寫（預設關閉；冪等，只改設定）")
     g.add_argument("--disable-transcription", action="store_true", help="關閉表格圖轉寫（冪等，只改設定）")
@@ -122,7 +134,7 @@ class Importer(object):
                  notifier=None, get_secret=None, now=None, sleeper=None, rng=None, delay_ms=None,
                  image_hosts=None, base_url=None, timeout_ms=30000, out=None,
                  transcribe_api_url=None, transcribe_model=None, transcribe_timeout=None,
-                 tiles_runner=None, tile_tmp_root=None, sample_rng=None):
+                 tiles_runner=None, tile_tmp_root=None, sample_rng=None, auto_backfill=True):
         self.args = args
         self.out = out or sys.stdout
         self.now = now or _default_now
@@ -149,6 +161,8 @@ class Importer(object):
         self.timeout_ms = timeout_ms
         self.secrets = []
         self.older_fetched = 0
+        self.auto_backfill = auto_backfill        # False＝首次登入不自動啟動回補（只給既有的非回補測試用）
+        self._bf = None                           # 本次登入的回補脈絡（cutoff_ms、now_ms、resume 游標）
 
     # ---------------------------------------------------------------- 預設依賴
     def _default_fetch_mail(self):
@@ -185,6 +199,8 @@ class Importer(object):
         if args.reset_transcribe_attempts and not args.retranscribe:
             self.say("拒絕執行：--reset-transcribe-attempts 只能與 --retranscribe 併用")
             return 2
+        if args.backfill_since is not None:
+            return self._backfill_since()
         if args.enable_transcription or args.disable_transcription:
             return self._toggle_transcription()
         if args.transcribe_sample is not None:
@@ -204,6 +220,45 @@ class Importer(object):
                 self.say("已恢復排程")
                 return 0
             return self._execute(store)
+        finally:
+            store.close()
+
+    # ---------------------------------------------------------------- 放寬回補範圍（T044）
+    def _backfill_since(self):
+        """PO 要求補抓更早文章：只改資料庫（不取信、不登入、不讀金鑰）。只能往前放寬。"""
+        a = self.args
+        if (a.retranscribe or a.reset_transcribe_attempts or a.transcribe_sample is not None or a.dry_run
+                or a.resume or a.reset_abandoned is not None or a.force_weekly
+                or a.enable_transcription or a.disable_transcription or a.max_articles is not None):
+            self.say("拒絕執行：--backfill-since 不可與其他動作旗標併用")
+            return 2
+        try:
+            new_day = datetime.date.fromisoformat(a.backfill_since)
+        except ValueError:
+            self.say("拒絕執行：--backfill-since 必須是 YYYY-MM-DD 日期")
+            return 2
+        store = article_store.ArticleStore(a.data_dir, now=self.now)
+        try:
+            state = store.get_backfill_state()
+            if state is None:
+                self.say("拒絕執行：回補尚未啟動（第一次登入時才會寫入截止日），沒有可放寬的截止日")
+                return 2
+            new_date, new_ms = article_id_time.cutoff_from_date(new_day)
+            if new_ms >= int(state["cutoff_ms"]):
+                self.say("拒絕執行：新截止日 %s 不早於現有截止日 %s（只能往前放寬）；放寬範圍須 PO 同意"
+                         % (new_date, state["cutoff_date"]))
+                return 2
+            store.widen_cutoff(new_date, new_ms, now=self.now())
+            store.update_backfill(next_cursor=str(BACKFILL_FIRST_CURSOR), completed=False, list_done=False,
+                                  now=self.now())
+            back = 0
+            for r in store.deferred_rows():          # ID 時間落在新舊截止日之間者（不再早於新門檻）轉回待抓
+                if r.get("id_time_ok") and not article_id_time.is_before_cutoff(r["article_id"], new_ms):
+                    if store.reactivate_deferred(r["article_id"]):
+                        back += 1
+            self.say("已放寬回補截止日：%s → %s；%d 篇延後文章轉回待抓；仍受每日 %d 篇上限，慢慢補（放寬範圍須 PO 同意）"
+                     % (state["cutoff_date"], new_date, back, investanchors_limits.MAX_ARTICLES_PER_RUN))
+            return 0
         finally:
             store.close()
 
@@ -234,6 +289,9 @@ class Importer(object):
             path = os.path.join(store.data_dir, img["file_path"])
             with article_image_tiles.open_tiles(path, runner=self.tiles_runner, tmp_root=self.tile_tmp_root) as ts:
                 if ts.status != "ok":
+                    if ts.reason in DETERMINISTIC_TILE_REASONS:   # 確定性失敗：計次，累計達上限後不再自動補轉
+                        self.attempted_this_run.add((aid, seq))
+                        store.bump_transcribe_attempts(aid, seq)
                     return False                      # 保持 untranscribed，原因為固定代碼、不進任何輸出
                 tiles = [b for _i, b, _mt in ts.iter_tile_bytes()]
                 kw = {"get_secret": self.get_secret, "api_url": self.transcribe_api_url,
@@ -468,7 +526,6 @@ class Importer(object):
     def _run_site(self, store, guard, triggers, unprocessed):
         cap = guard.cap_for_run(self.args.max_articles)
         run_id = store.start_run("+".join(triggers))
-        pending = [r["article_id"] for r in store.list_pending(limit=cap)]
         try:
             email = self.get_secret("email", service=keychain_secrets.INVESTANCHORS_SERVICE)
             password = self.get_secret("password", service=keychain_secrets.INVESTANCHORS_SERVICE)
@@ -477,10 +534,13 @@ class Importer(object):
             self.say("無法讀取登入憑證（請依 quickstart 存入鑰匙圈）")
             return 1
         self.secrets.extend([email, password])
+        extra = self._backfill_context(store)
+        pending = self._pending_ids(store, cap)
         payload = {"mode": "import", "email": email, "password": password, "base_url": self.base_url,
                    "known_ids": sorted(store.known_ids()), "pending_ids": pending,
                    "max_list_pages": investanchors_limits.MAX_LIST_PAGES, "max_articles": cap,
                    "delay_ms": self.delay_ms, "timeout_ms": self.timeout_ms}
+        payload.update(extra)
         store.mark_login_started(run_id)               # **啟動登入前**先扣當日額度
         try:
             objs = self.run_scraper(payload)
@@ -489,15 +549,96 @@ class Importer(object):
             self.say("scraper 執行失敗：%s" % investanchors_redact.safe_error(e, self.secrets))
         return self._apply(store, guard, run_id, triggers, unprocessed, objs)
 
+    # ---------------------------------------------------------------- 回補（T042／T043）
+    def _backfill_context(self, store):
+        """第一次真正登入時寫入截止日（啟動日往前六個月，之後固定）；回傳要併進 scraper payload 的欄位。
+
+        Python 是「太舊不開啟」判定的唯一權威：只把三個整數門檻交給 scraper（article_id_time.defer_thresholds）；
+        resume_cursor＝下次要讀的清單頁碼（回補未完成且清單尚未掃完才有）。"""
+        self._bf = None
+        state = store.get_backfill_state()
+        if state is None and self.auto_backfill:
+            day = self.now().astimezone(TZ8).date()
+            cutoff_date, cutoff_ms = article_id_time.cutoff_for(day)
+            store.start_backfill(cutoff_date, cutoff_ms, now=self.now())
+            store.update_backfill(next_cursor=str(BACKFILL_FIRST_CURSOR), now=self.now())
+            state = store.get_backfill_state()
+        if state is None:
+            return {}
+        now_ms = int(self.now().timestamp() * 1000)
+        resume = None
+        if not state["completed"] and not state["list_done"]:
+            resume = int(state["next_cursor"] or BACKFILL_FIRST_CURSOR)
+        self._bf = {"cutoff_ms": int(state["cutoff_ms"]), "now_ms": now_ms, "resume": resume}
+        extra = article_id_time.defer_thresholds(state["cutoff_ms"], now_ms)
+        extra["resume_cursor"] = resume
+        return extra
+
+    def _pending_ids(self, store, cap):
+        """待抓清單。回補已啟動時，Python 先把「ID 時間早於門檻」的待辦（discovered）標 deferred，不交給 scraper。"""
+        rows = store.list_pending()
+        out = []
+        for r in rows:
+            aid = r["article_id"]
+            if self._bf and r["status"] == "discovered" and \
+                    article_id_time.is_before_cutoff(aid, self._bf["cutoff_ms"], now_ms=self._bf["now_ms"]):
+                store.mark_deferred(aid)
+                continue
+            out.append(aid)
+        return out[:cap]
+
+    def _apply_progress(self, store, items, mismatched, empty_pages=()):
+        """依本次讀到的清單推進回補進度：游標、停止規則、完成。有對帳不一致時什麼都不推進。"""
+        bf = self._bf
+        if bf is None or mismatched:
+            return
+        state = store.get_backfill_state()
+        if state is None or state["completed"]:
+            return
+        list_done = bool(state["list_done"])
+        if bf["resume"] is not None:
+            by_page = {}
+            for it in items:
+                pg = int(it.get("page") or 1)
+                if pg >= BACKFILL_FIRST_CURSOR:
+                    by_page.setdefault(pg, []).append(it)
+            for pg in empty_pages:                      # 載入成功但空白＝翻過最後一頁，視為「沒有更新的了」
+                if pg >= BACKFILL_FIRST_CURSOR:
+                    by_page.setdefault(pg, [])
+            if by_page:
+                store.update_backfill(next_cursor=str(max(int(state["next_cursor"] or 0), max(by_page) + 1)),
+                                      now=self.now())
+
+            def page_all_old(pg):
+                for it in by_page[pg]:
+                    if it.get("is_announcement") or it.get("pinned"):
+                        continue
+                    if not article_id_time.is_before_cutoff(it["article_id"], bf["cutoff_ms"], now_ms=bf["now_ms"]):
+                        return False
+                return True        # 沒有任何一般項目（只剩置頂、或空白的最後一頁）也算「沒有更新的了」
+            old = set(pg for pg in by_page if page_all_old(pg))
+            if any(pg in old and pg + 1 in old for pg in old):
+                list_done = True
+                store.update_backfill(list_done=True, now=self.now())
+        if list_done and not store.list_pending():
+            store.update_backfill(completed=True, now=self.now())
+
+    def _check_id_anomalies(self, store):
+        if self._bf is not None and store.count_id_time_anomalies() > ID_ANOMALY_ALERT_OVER:
+            self.alert(store, "id_time_anomaly", "any")
+
     def _apply(self, store, guard, run_id, triggers, unprocessed, objs):
         summary = None
         items, articles, errors = [], [], []
+        empty_pages = []                                # 載入成功但沒有任何項目的清單頁（翻過最後一頁）
         for o in objs:
             t = o.get("type")
             if t == "summary":
                 summary = o
             elif t == "list_item":
                 items.append(o)
+            elif t == "list_page" and not o.get("items"):
+                empty_pages.append(int(o["page"]))
             elif t == "article":
                 articles.append(o)
             elif t == "article_error":
@@ -522,9 +663,14 @@ class Importer(object):
             login_ok = bool(summary.get("logged_in"))
         via = triggers[0]
         if login_ok:
-            self._apply_list(store, items, via)
+            mismatched = self._apply_list(store, items, via)
+            if mismatched:                              # 兩端判定不一致：不寫延後（上面已略過）、不推進、通知
+                self.alert(store, "cutoff_mismatch")
+                result, failed_run = "cutoff_mismatch", True
+            self._check_id_anomalies(store)
             self.older_fetched = 0
             ok_n, fail_n = self._apply_articles(store, articles, errors)
+            self._apply_progress(store, items, mismatched, empty_pages)
             if self.older_fetched:                     # 較早的文章合併成一則，不列標題
                 try:
                     self.notifier("📰 定錨補抓：已補抓 %d 篇較早的文章" % self.older_fetched)
@@ -535,7 +681,7 @@ class Importer(object):
                 result, failed_run = "blocked", True
                 blocked_until = guard.block_until()
                 self.alert(store, "blocked")
-            elif fail_n:
+            elif fail_n and result == "ok":
                 result, failed_run = "partial", True
             if counters.get("list_pages"):
                 store.mark_mail_processed([c["message_id"] for c in unprocessed])
@@ -557,13 +703,27 @@ class Importer(object):
         return 1 if failed_run else 0
 
     def _apply_list(self, store, items, via):
+        """登記清單項目。回補已啟動時，用 Python 自己的 article_id_time 重算每項「延後」判定並與 scraper 回報對帳：
+        一致且早於門檻 → 標 deferred（只存 ID、標題、清單日期）；不一致 → 不寫 deferred，回傳不一致的 ID 清單。"""
+        bf = self._bf
+        mismatched = []
         for it in items:
             aid = int(it["article_id"])
+            ann = bool(it.get("is_announcement"))
+            item_via = "backfill" if (bf and bf["resume"] is not None and int(it.get("page") or 1) > 1) else via
             store.upsert_discovered(aid, CANON_URL % aid, it.get("title") or "(無標題)",
-                                    list_date=it.get("date"), via=via, pinned=bool(it.get("pinned")),
+                                    list_date=it.get("date"), via=item_via, pinned=bool(it.get("pinned")),
                                     now=self.now())
-            if it.get("is_announcement"):
+            if ann:
                 store.mark_skipped(aid)
+            if bf:
+                mine = article_id_time.is_before_cutoff(aid, bf["cutoff_ms"], now_ms=bf["now_ms"])
+                if mine != bool(it.get("defer")):
+                    if aid not in mismatched:
+                        mismatched.append(aid)
+                elif mine and not ann:
+                    store.mark_deferred(aid)
+        return mismatched
 
     def _apply_articles(self, store, articles, errors):
         ok_n = fail_n = 0

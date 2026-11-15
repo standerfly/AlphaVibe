@@ -83,7 +83,8 @@ CREATE TABLE IF NOT EXISTS backfill_state (
     cutoff_date TEXT,
     cutoff_ms INTEGER,
     started_at TEXT,
-    updated_at TEXT
+    updated_at TEXT,
+    list_done INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS import_runs (
@@ -152,6 +153,10 @@ class ArticleStore(object):
             self.conn.execute("ALTER TABLE import_runs ADD COLUMN login_ok INTEGER")
         if "list_pages" not in cols:        # 每週核對判定用：本次讀到幾頁清單
             self.conn.execute("ALTER TABLE import_runs ADD COLUMN list_pages INTEGER NOT NULL DEFAULT 0")
+
+        bcols = [r[1] for r in self.conn.execute("PRAGMA table_info(backfill_state)")]
+        if "list_done" not in bcols:        # T042：清單已掃完（停止規則成立），之後只清待辦、不再往舊翻
+            self.conn.execute("ALTER TABLE backfill_state ADD COLUMN list_done INTEGER NOT NULL DEFAULT 0")
 
         icols = [r[1] for r in self.conn.execute("PRAGMA table_info(article_image)")]
         if "transcribe_attempts" not in icols:   # 2026-11-15 審查：夜間補轉的失敗累計次數
@@ -274,6 +279,15 @@ class ArticleStore(object):
             sql += " LIMIT ?"
             params.append(int(limit))
         return [dict(r) for r in self.conn.execute(sql, params)]
+
+    def count_id_time_anomalies(self):
+        """推不出建立時間（id_time_ok=0）的文章數；公告（skipped，真實公告 ID 只有 13 位）不算。"""
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM article WHERE id_time_ok=0 AND status != 'skipped'").fetchone()[0]
+
+    def deferred_rows(self):
+        return [dict(r) for r in self.conn.execute(
+            "SELECT * FROM article WHERE status='deferred' ORDER BY article_id")]
 
     def known_ids(self):
         return set(r[0] for r in self.conn.execute("SELECT article_id FROM article"))
@@ -509,7 +523,7 @@ class ArticleStore(object):
             (cutoff_date, int(cutoff_ms), ts, ts))
         self.conn.commit()
 
-    def update_backfill(self, next_cursor=None, completed=None, now=None):
+    def update_backfill(self, next_cursor=None, completed=None, list_done=None, now=None):
         if self.get_backfill_state() is None:
             raise ValueError("回補尚未啟動")
         sets, params = ["updated_at=?"], [_iso(now or self.now())]
@@ -519,6 +533,9 @@ class ArticleStore(object):
         if completed is not None:
             sets.append("completed=?")
             params.append(1 if completed else 0)
+        if list_done is not None:
+            sets.append("list_done=?")
+            params.append(1 if list_done else 0)
         self.conn.execute("UPDATE backfill_state SET %s WHERE id=1" % ", ".join(sets), params)
         self.conn.commit()
 
@@ -531,7 +548,7 @@ class ArticleStore(object):
             raise ValueError("新截止日必須早於現有截止日（只能往前放寬）")
         self.conn.execute(
             "UPDATE backfill_state SET cutoff_date=?, cutoff_ms=?, completed=0, next_cursor=NULL, "
-            "updated_at=? WHERE id=1", (cutoff_date, int(cutoff_ms), _iso(now or self.now())))
+            "list_done=0, updated_at=? WHERE id=1", (cutoff_date, int(cutoff_ms), _iso(now or self.now())))
         self.conn.commit()
 
     # ------------------------------------------------------------------ 設定

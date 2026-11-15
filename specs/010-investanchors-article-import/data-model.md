@@ -47,6 +47,14 @@
 `cutoff_date TEXT`（截止日＝回補**首次啟動日**往前六個月，ISO 日期）、`cutoff_ms INTEGER`（同一時點的 epoch 毫秒，
 供與 `article.id_time_ms` 比較）；啟動後固定不隨日期漂移，除非 PO 用
 `--backfill-since` 放寬並重新開啟回補、`started_at`、`updated_at`。
+`next_cursor` 為「下次要讀的清單頁碼」（整數字串，初始 `2`；第 1 頁每次都讀）；`list_done INTEGER`（0／1，T042 新增：連續 2 頁
+「非置頂、非公告」項目全早於 `cutoff−14 天` 才為 1，之後只清待辦、不再往舊翻）；`completed=1` ＝ `list_done=1` 且待抓清單為空。
+`--backfill-since` 放寬時 `completed=0`、`list_done=0`、`next_cursor='2'`。
+
+**附件：延後判定的跨語言語料**（`poc/kb-mcp/tests/fixtures/id_time_corpus.json`）：Python `article_id_time.is_before_cutoff` 與瀏覽器端
+`scraper/id_filter.js`（只比較整數門檻、不含時間常數）對同一份語料逐筆判定必須相同。語料含：非 14 位、含字母／符號／空白、
+過小（低於 2020-01-01）、未來值（現在＋1 天以上）、`defer_below_id` 邊界 −1／0／+1、正常近期、前導零、超長字串。
+形態判定一律只看字串本身（剛好 14 個 ASCII 數字，不剝空白、不正規化前導零）。
 
 ### `import_runs`（執行紀錄；用來強制上限與驗證 SC-004）
 `id`、`started_at`、`finished_at`、`trigger`（`mail`／`weekly`／`backfill`／`none`）、`logged_in INTEGER`（**已嘗試登入**，用來計當日額度，只升不降；密碼錯誤等失敗的嘗試也算）、`login_ok INTEGER`（登入是否成功；沒嘗試為 NULL）、

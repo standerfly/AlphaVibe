@@ -76,6 +76,7 @@ class FakeSite(object):
         self.sessions = set()
         self.read = set()
         self.log = []
+        self.page_log = []            # 清單頁被請求的頁碼（?page=N；沒帶＝1），回補翻頁測試用
         self.lock = threading.Lock()
         self.server = None
 
@@ -220,6 +221,7 @@ class FakeSite(object):
                         if site.list_mode == "forbidden":
                             return self._send("forbidden", 403)
                         page = int((parse_qs(u.query).get("page") or ["1"])[0])
+                        site.page_log.append(page)
                         return self._send(self._list_page(page))
                     parts = u.path.rsplit("/", 1)
                     if parts[-1].isdigit():

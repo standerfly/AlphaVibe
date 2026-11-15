@@ -30,12 +30,12 @@ def parse_article_id(value):
 
 
 def id_time_ms(article_id, now_ms=None):
-    """14 位數 ID 的前 13 位 → epoch 毫秒；形態不符或換算時間不合理回 None。"""
-    n = parse_article_id(article_id)
-    if n is None:
-        return None
-    s = str(n)
-    if len(s) != ID_DIGITS:
+    """14 位數 ID 的前 13 位 → epoch 毫秒；形態不符或換算時間不合理回 None。
+
+    形態判定只看字串本身：必須剛好是 14 個 ASCII 數字（不剝空白、不正規化前導零——
+    與瀏覽器端 id_filter.js 逐筆一致，見 tests/fixtures/id_time_corpus.json）。整數輸入先轉十進位字串。"""
+    s = str(article_id) if article_id is not None else ""
+    if len(s) != ID_DIGITS or not all(c in "0123456789" for c in s):
         return None
     ms = int(s[:13])
     if ms < EARLIEST_MS or ms > _now_ms(now_ms) + FUTURE_SLACK_MS:
@@ -58,11 +58,15 @@ def six_months_before(day):
     return datetime.date(year, month, min(day.day, last))
 
 
-def cutoff_for(start_day):
-    """回補截止：(ISO 日期, 該日 00:00 台北時間的 epoch 毫秒)。"""
-    d = six_months_before(start_day)
+def cutoff_from_date(d):
+    """指定截止日：(ISO 日期, 該日 00:00 台北時間的 epoch 毫秒)。`--backfill-since` 與 cutoff_for 共用。"""
     ms = int(datetime.datetime(d.year, d.month, d.day, tzinfo=TZ8).timestamp() * 1000)
     return d.isoformat(), ms
+
+
+def cutoff_for(start_day):
+    """回補截止：(ISO 日期, 該日 00:00 台北時間的 epoch 毫秒)。"""
+    return cutoff_from_date(six_months_before(start_day))
 
 
 def is_before_cutoff(article_id, cutoff_ms, margin_days=MARGIN_DAYS, now_ms=None):
@@ -71,3 +75,17 @@ def is_before_cutoff(article_id, cutoff_ms, margin_days=MARGIN_DAYS, now_ms=None
     if ms is None:
         return False
     return ms < int(cutoff_ms) - int(margin_days) * 24 * 3600 * 1000
+
+
+def defer_thresholds(cutoff_ms, now_ms=None, margin_days=MARGIN_DAYS):
+    """把「ID 時間」判定換成純整數門檻交給 scraper（Python 是唯一權威，瀏覽器端不含任何時間常數）。
+
+    14 位數 ID 的前 13 位是毫秒，所以「毫秒 m 滿足 a <= m <= b」等價於 ID 落在 [a*10, b*10+9]；
+    「m < c」等價於 ID < c*10。瀏覽器端只做：14 位純數字、valid_id_min <= ID <= valid_id_max、
+    且 ID < defer_below_id → 延後（不開啟）。與 `is_before_cutoff` 逐筆等價（tests/fixtures/id_time_corpus.json 守門）。
+    """
+    return {
+        "defer_below_id": (int(cutoff_ms) - int(margin_days) * 24 * 3600 * 1000) * 10,
+        "valid_id_min": EARLIEST_MS * 10,
+        "valid_id_max": (_now_ms(now_ms) + FUTURE_SLACK_MS) * 10 + 9,
+    }

@@ -17,6 +17,7 @@
 const {
   launchSession, ENTRY_PATH, step, emit, fact, readStdin,
 } = require('./investanchors_session');
+const { shouldDefer, thresholdsFrom } = require('./id_filter');
 
 const HARD = { logins: 1, listPages: 3, articles: 2, navigations: 12 };
 const IMPORT_HARD = { logins: 1, listPages: 3, articles: 5, navigations: 12 };
@@ -340,7 +341,11 @@ async function probe(cfg) {
 
 // ---------------------------------------------------------------- import 模式（T013／T014）
 // stdin：{mode:"import", email, password, base_url, known_ids:[…], pending_ids:[…], max_list_pages,
-//         max_articles, delay_ms:[a,b], timeout_ms}
+//         max_articles, delay_ms:[a,b], timeout_ms,
+//         回補（T043，可省略）：defer_below_id／valid_id_min／valid_id_max（整數門檻，由 Python 算好）、
+//         resume_cursor（頁碼，≥2 才進入回補翻頁）}
+// 回補翻頁：第 1 頁（新文章與置頂）＋從 resume_cursor 起以 ?page=N 直接跳頁，合計不超過 max_list_pages（≤3）；
+// 每個 list_item 帶 page（真實頁碼）與 defer（依整數門檻，不開啟）；延後項目不列入目標。
 // stdout JSONL：fact(login)／list_item／targets／article／article_error／summary
 // 硬規約：登入 1 次、清單 ≤3 頁、文章 ≤5 篇；結束一定先伺服器端登出並驗證；內文過短或缺容器不輸出殘缺內文。
 async function importMode(cfg) {
@@ -349,6 +354,9 @@ async function importMode(cfg) {
                                IMPORT_HARD.articles);
   const known = new Set((cfg.known_ids || []).map(String));
   const pending = (cfg.pending_ids || []).map(String);
+  const th = thresholdsFrom(cfg);
+  const resume = (th && Number.isInteger(cfg.resume_cursor) && cfg.resume_cursor >= 2) ? cfg.resume_cursor : null;
+  const isDeferred = (id) => shouldDefer(id, th);
   const sess = await launchSession(cfg, {
     navigationCap: IMPORT_HARD.navigations,
     counters: { list_pages: 0, articles_opened: 0 },
@@ -437,45 +445,69 @@ async function importMode(cfg) {
     st.logged_in = true;
     st.login_at = new Date().toISOString();
 
-    // ---- 清單：第 1 頁（登入後已在清單頁就直接用，否則再導覽一次）；必要時往後翻
-    const pages = [];
-    let pageNo = 1;
+    // ---- 清單：第 1 頁（登入後已在清單頁就直接用，否則再導覽一次）；必要時往後翻（回補時改為跳到游標頁）
+    const pages = [];                       // { no: 真實頁碼, items }
     let onList = new URL(page.url()).pathname === ENTRY_PATH && !new URL(page.url()).search;
+    let nextUrl = null;
+    let pageNo = 1;
     for (;;) {
       step('list-' + pageNo);
-      if (!onList) await go(pageNo === 1 ? baseUrl + ENTRY_PATH : pages.nextUrl, 'list');
+      if (!onList) await go(pageNo === 1 ? baseUrl + ENTRY_PATH : nextUrl, 'list');
       onList = false;
       counters.list_pages += 1;
       const items = await extractListItems();
-      const prevIds = new Set(pageNo > 1 ? pages[pageNo - 2].map((i) => i.article_id) : []);
-      pages.push(items);
+      const prev = pages.length ? pages[pages.length - 1] : null;
+      const prevIds = new Set(prev ? prev.items.map((i) => i.article_id) : []);
+      pages.push({ no: pageNo, items });
+      if (resume !== null) break;           // 回補模式：第 1 頁讀完就改走游標頁
       const unknownNonPinned = items.filter(
-        (i) => !i.is_announcement && !known.has(i.article_id) && !prevIds.has(i.article_id));
+        (i) => !i.is_announcement && !known.has(i.article_id) && !prevIds.has(i.article_id)
+          && !isDeferred(i.article_id));
       const href = await nextHref();
       if (!unknownNonPinned.length || !href || pageNo >= maxPages) break;
-      pages.nextUrl = new URL(href, baseUrl).toString();
+      nextUrl = new URL(href, baseUrl).toString();
       pageNo += 1;
     }
-    // 置頂＝同一 ID 在相鄰頁重複出現
-    pages.forEach((items, idx) => {
-      const neighbours = new Set();
-      if (idx > 0) pages[idx - 1].forEach((i) => neighbours.add(i.article_id));
-      if (idx < pages.length - 1) pages[idx + 1].forEach((i) => neighbours.add(i.article_id));
-      items.forEach((i) => { i.pinned = neighbours.has(i.article_id); });
-    });
-    pages.forEach((items, idx) => items.forEach((i) => emit({
-      type: 'list_item', page: idx + 1, article_id: Number(i.article_id), title: i.title, date: i.date,
-      is_announcement: i.is_announcement, read_state: i.read_state, pinned: i.pinned,
-    })));
-
-    // ---- 目標：清單上所有未入庫（含置頂）＋待重試的，新文章在前，受每次篇數上限
-    const fresh = [];
-    for (const items of pages) {
-      for (const i of items) {
-        if (!i.is_announcement && !known.has(i.article_id) && !fresh.includes(i.article_id)) fresh.push(i.article_id);
+    if (resume !== null) {
+      for (let k = 0; pages.length < maxPages; k += 1) {
+        const no = resume + k;
+        step('list-' + no);
+        try {
+          await go(baseUrl + ENTRY_PATH + '?page=' + no, 'list');
+        } catch (e) {
+          if (st.blocked || sess.isAborting()) throw e;
+          break;                            // 單頁逾時：不再往後翻，已讀到的照常輸出
+        }
+        counters.list_pages += 1;
+        pages.push({ no, items: await extractListItems() });
       }
     }
-    const targets = fresh.concat(pending.filter((id) => !fresh.includes(id))).slice(0, maxArticles);
+    // 置頂＝同一 ID 在本次讀到的其他頁重複出現（回補時第 1 頁與游標頁不相鄰，所以不只看相鄰頁）
+    pages.forEach((pg) => {
+      const others = new Set();
+      pages.forEach((q) => { if (q !== pg) q.items.forEach((i) => others.add(i.article_id)); });
+      pg.items.forEach((i) => { i.pinned = others.has(i.article_id); });
+    });
+    pages.forEach((pg) => emit({ type: 'list_page', page: pg.no, items: pg.items.length }));
+    pages.forEach((pg) => pg.items.forEach((i) => emit({
+      type: 'list_item', page: pg.no, article_id: Number(i.article_id), title: i.title, date: i.date,
+      is_announcement: i.is_announcement, read_state: i.read_state, pinned: i.pinned,
+      defer: isDeferred(i.article_id),
+    })));
+
+    // ---- 目標：清單上所有未入庫（含置頂）＋待重試的，新文章在前，受每次篇數上限；延後（ID 太舊）者不開啟
+    // 回補模式順序：第 1 頁的新文章 → 先前未抓完的待辦 → 游標頁新發現的（新文章優先於回補）
+    const eligible = (i) => !i.is_announcement && !known.has(i.article_id) && !isDeferred(i.article_id);
+    const fresh = [];
+    const freshLater = [];
+    for (const pg of pages) {
+      for (const i of pg.items) {
+        if (!eligible(i) || fresh.includes(i.article_id) || freshLater.includes(i.article_id)) continue;
+        (resume !== null && pg.no > 1 ? freshLater : fresh).push(i.article_id);
+      }
+    }
+    const pend = pending.filter((id) => !fresh.includes(id) && !freshLater.includes(id));
+    const targets = fresh.concat(pend, freshLater).slice(0, maxArticles);
     fact('targets', { article_ids: targets.map(Number) });
 
     for (const id of targets) {

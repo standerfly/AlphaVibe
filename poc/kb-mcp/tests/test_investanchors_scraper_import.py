@@ -1,4 +1,5 @@
 """T013／T014：scraper `import` 模式（清單讀取＋文章擷取）——本機假網站＋真瀏覽器，無瀏覽器時 skip。"""
+import datetime
 import os
 import shutil
 import sys
@@ -7,8 +8,9 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import article_id_time  # noqa: E402
 import article_probe  # noqa: E402
-from fake_investanchors_site import EMAIL, PASSWORD, FakeSite  # noqa: E402
+from fake_investanchors_site import EMAIL, PASSWORD, FakeSite, fake_id  # noqa: E402
 
 
 def _browser_available():
@@ -172,6 +174,111 @@ class ImportModeLoginTest(unittest.TestCase):
         self.assertTrue(out["summary"]["logged_out"] and out["summary"]["logout_verified"])
         self.assertEqual(site.sessions, set())
         self.assertNotIn(PASSWORD, str(out["raw"]))
+
+
+# ====================================================================== T043：回補清單翻頁
+
+TZ8 = article_id_time.TZ8
+NOW = datetime.datetime(2026, 11, 11, 23, 0, tzinfo=TZ8)
+CUT_DATE, CUT_MS = article_id_time.cutoff_for(NOW.date())
+NOW_MS = int(NOW.timestamp() * 1000)
+THRESH = article_id_time.defer_thresholds(CUT_MS, NOW_MS)
+
+
+def _aid(days_ago, n=1):
+    return fake_id(NOW - datetime.timedelta(days=days_ago), n)
+
+
+def _items(days):
+    return [{"id": _aid(d, i % 10), "title": "T%d" % d, "date": "2026-11-01"} for i, d in enumerate(days)]
+
+
+def run_backfill(test, site, cursor=2, **overrides):
+    payload = dict(THRESH)
+    payload["resume_cursor"] = cursor
+    payload.update(overrides)
+    return run_import(test, site, **payload)
+
+
+@unittest.skipUnless(_browser_available(), "需要 node＋playwright＋瀏覽器")
+class BackfillListPagingTest(unittest.TestCase):
+    def test_jumps_to_cursor_pages_by_url_and_stops_after_page_cap(self):
+        site = FakeSite(items=_items(range(1, 25)), per_page=4, pinned=[], announcement=False)
+        out = run_backfill(self, site, cursor=3)
+        self.assertEqual(site.page_log, [1, 3, 4])                          # 第 1 頁＋游標起 2 頁；不逐頁走、不碰第 2、5 頁
+        self.assertEqual(out["summary"]["counters"]["list_pages"], 3)
+        self.assertEqual(sorted(set(i["page"] for i in out["list_item"])), [1, 3, 4])
+        self.assertTrue(out["summary"]["logout_verified"])
+        self.assertEqual(site.sessions, set())
+
+    def test_total_pages_never_exceed_max_list_pages(self):
+        site = FakeSite(items=_items(range(1, 25)), per_page=4, pinned=[], announcement=False)
+        run_backfill(self, site, cursor=3, max_list_pages=2)
+        self.assertEqual(site.page_log, [1, 3])
+        site2 = FakeSite(items=_items(range(1, 25)), per_page=4, pinned=[], announcement=False)
+        run_backfill(self, site2, cursor=3, max_list_pages=99)
+        self.assertEqual(site2.page_log, [1, 3, 4])                         # 硬上限 3 頁
+
+    def test_all_old_pages_do_not_make_it_walk_further_or_open_deferred(self):
+        site = FakeSite(items=_items(range(230, 260)), per_page=4, pinned=[], announcement=False)
+        out = run_backfill(self, site, cursor=2)
+        self.assertEqual(site.page_log, [1, 2, 3])                          # 停在頁數上限，不往更舊翻
+        self.assertTrue(all(i["defer"] for i in out["list_item"]))
+        self.assertEqual(site.article_requests(), [])                       # 延後的一篇都不開啟
+        targets = [f for f in out["fact"] if f["step"] == "targets"][0]["data"]["article_ids"]
+        self.assertEqual(targets, [])
+
+    def test_defer_flag_follows_integer_thresholds_and_deferred_are_not_targets(self):
+        recent, old = _aid(10, 1), _aid(300, 2)
+        site = FakeSite(items=[{"id": recent, "title": "近", "date": "2026-11-01"},
+                               {"id": old, "title": "舊", "date": "2026-11-01"}],
+                        per_page=6, pinned=[], announcement=False)
+        out = run_backfill(self, site, cursor=2)
+        flags = dict((i["article_id"], i["defer"]) for i in out["list_item"])
+        self.assertEqual(flags, {recent: False, old: True})
+        self.assertEqual(site.article_requests(), [recent])
+
+    def test_pinned_with_old_list_date_but_recent_id_is_deduped_across_non_adjacent_pages_and_opened_once(self):
+        pinned = [{"id": _aid(2, 3), "title": "置頂", "date": "2021-02-06"}]
+        site = FakeSite(items=_items(range(1, 25)), per_page=4, pinned=pinned, announcement=False)
+        out = run_backfill(self, site, cursor=4)
+        rows = [i for i in out["list_item"] if i["article_id"] == pinned[0]["id"]]
+        self.assertEqual(sorted(r["page"] for r in rows), [1, 4, 5])
+        self.assertTrue(all(r["pinned"] and not r["defer"] for r in rows))
+        self.assertEqual(site.article_requests().count(pinned[0]["id"]), 1)
+        self.assertIn(pinned[0]["id"], site.article_requests())
+
+    def test_malformed_future_and_tiny_ids_are_never_deferred(self):
+        future = fake_id(NOW + datetime.timedelta(days=30))
+        tiny = 16000000000000 // 10                                          # 13 位，過小
+        items = [{"id": 1001, "title": "短", "date": "2019-01-01"},
+                 {"id": future, "title": "未來", "date": "2019-01-01"},
+                 {"id": tiny, "title": "小", "date": "2019-01-01"}]
+        site = FakeSite(items=items, per_page=6, pinned=[], announcement=False)
+        out = run_backfill(self, site, cursor=2)
+        self.assertFalse(any(i["defer"] for i in out["list_item"]))
+        self.assertEqual(sorted(site.article_requests()), sorted([1001, future, tiny]))
+
+    def test_targets_order_new_first_then_pending_then_cursor_pages(self):
+        site = FakeSite(items=_items(range(1, 9)), per_page=2, pinned=[], announcement=False)
+        ids = [i["id"] for i in site.items]
+        out = run_backfill(self, site, cursor=3, pending_ids=[424242], max_articles=4)
+        self.assertEqual([f for f in out["fact"] if f["step"] == "targets"][0]["data"]["article_ids"],
+                         [ids[0], ids[1], 424242, ids[4]])
+
+    def test_known_ids_are_not_reopened_on_cursor_pages(self):
+        site = FakeSite(items=_items(range(1, 9)), per_page=2, pinned=[], announcement=False)
+        ids = [i["id"] for i in site.items]
+        run_backfill(self, site, cursor=3, known_ids=ids[4:6])
+        self.assertNotIn(ids[4], site.article_requests())
+        self.assertNotIn(ids[5], site.article_requests())
+
+    def test_cursor_page_past_the_end_still_reads_and_reports_only_pinned_items(self):
+        pinned = [{"id": _aid(2, 3), "title": "置頂", "date": "2021-02-06"}]
+        site = FakeSite(items=_items(range(1, 5)), per_page=4, pinned=pinned, announcement=False)
+        out = run_backfill(self, site, cursor=9)
+        self.assertEqual(site.page_log, [1, 9, 10])
+        self.assertEqual(set(i["article_id"] for i in out["list_item"] if i["page"] >= 9), {pinned[0]["id"]})
 
 
 if __name__ == "__main__":

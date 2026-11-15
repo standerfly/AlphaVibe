@@ -84,7 +84,8 @@ class Harness(object):
     def run(self, argv=None, **over):
         deps = dict(fetch_mail=self._mail, run_scraper=self._scraper, download_images=self._dl,
                     notifier=self.notes.append, get_secret=self._secret, now=lambda: self.clock[0],
-                    sleeper=lambda s: None, delay_ms=[10, 20], image_hosts=("127.0.0.1",), out=self.out)
+                    sleeper=lambda s: None, delay_ms=[10, 20], image_hosts=("127.0.0.1",), out=self.out,
+                    auto_backfill=False)
         deps.update(over)
         return I.run(["--data-dir", self.tmp] + (argv or []), **deps)
 
