@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS import_runs (
     finished_at TEXT,
     trigger TEXT NOT NULL,
     logged_in INTEGER NOT NULL DEFAULT 0,
+    login_ok INTEGER,
     articles_attempted INTEGER NOT NULL DEFAULT 0,
     articles_fetched INTEGER NOT NULL DEFAULT 0,
     result TEXT,
@@ -135,8 +136,14 @@ class ArticleStore(object):
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._ensure_columns()
         self.conn.commit()
         # 刻意不寫入任何資料列
+
+    def _ensure_columns(self):
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(import_runs)")]
+        if "login_ok" not in cols:          # 早期測試目錄建立的舊表
+            self.conn.execute("ALTER TABLE import_runs ADD COLUMN login_ok INTEGER")
 
     def close(self):
         self.conn.close()
@@ -390,16 +397,22 @@ class ArticleStore(object):
         return cur.lastrowid
 
     def mark_login_started(self, run_id):
-        """**啟動登入前**呼叫：就算之後當機，這次也已計入當日登入次數。"""
+        """**啟動登入前**呼叫：就算之後當機，這次也已計入當日登入次數。
+
+        `logged_in` 的意思是「**已嘗試登入**」（用來計當日額度），只會由 0 變 1，`finish_run` 不得調回 0——
+        密碼錯誤、帳號停用、被擋在登入頁這類「有嘗試但失敗」的情況，重複嘗試正是要避免的。
+        「登入是否成功」另存 `login_ok`。"""
         self.conn.execute("UPDATE import_runs SET logged_in=1 WHERE id=?", (run_id,))
         self.conn.commit()
 
-    def finish_run(self, run_id, logged_in, attempted, fetched, result, logged_out,
+    def finish_run(self, run_id, login_ok, attempted, fetched, result, logged_out,
                    blocked_until=None, now=None):
+        """`login_ok`：登入是否成功（None＝沒嘗試登入）。`logged_in`（已嘗試）只升不降：成功必然代表嘗試過。"""
         self.conn.execute(
-            "UPDATE import_runs SET finished_at=?, logged_in=?, articles_attempted=?, "
-            "articles_fetched=?, result=?, logged_out=?, blocked_until=? WHERE id=?",
-            (_iso(now or self.now()), 1 if logged_in else 0, attempted, fetched, result,
+            "UPDATE import_runs SET finished_at=?, logged_in=MAX(logged_in, ?), login_ok=?, "
+            "articles_attempted=?, articles_fetched=?, result=?, logged_out=?, blocked_until=? WHERE id=?",
+            (_iso(now or self.now()), 1 if login_ok else 0, None if login_ok is None else (1 if login_ok else 0),
+             attempted, fetched, result,
              None if logged_out is None else (1 if logged_out else 0),
              _iso(blocked_until) if blocked_until else None, run_id))
         self.conn.commit()

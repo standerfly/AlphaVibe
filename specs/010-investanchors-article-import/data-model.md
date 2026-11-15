@@ -48,7 +48,7 @@
 `--backfill-since` 放寬並重新開啟回補、`started_at`、`updated_at`。
 
 ### `import_runs`（執行紀錄；用來強制上限與驗證 SC-004）
-`id`、`started_at`、`finished_at`、`trigger`（`mail`／`weekly`／`backfill`／`none`）、`logged_in INTEGER`、
+`id`、`started_at`、`finished_at`、`trigger`（`mail`／`weekly`／`backfill`／`none`）、`logged_in INTEGER`（**已嘗試登入**，用來計當日額度，只升不降；密碼錯誤等失敗的嘗試也算）、`login_ok INTEGER`（登入是否成功；沒嘗試為 NULL）、
 `articles_attempted`、`articles_fetched`、`result`（`ok`／`partial`／`login_failed`／`blocked`／`structure_changed`／`aborted_limit`）、
 `logged_out INTEGER`（**必為 1 才算合格**）、`blocked_until TEXT`（被擋後下一次最早時間）。
 

@@ -43,6 +43,17 @@ class LimitsTest(unittest.TestCase):
         self.clock[0] = T(16, 0, 30)                                 # 隔天放行
         self.assertEqual(self.guard.may_login(), (True, "ok"))
 
+    def test_failed_login_attempt_still_refuses_second_login_same_day(self):
+        # 密碼錯誤／帳號停用／被擋在登入頁：有嘗試但失敗，同一天不得再登入一次
+        run = self.store.start_run("mail")
+        self.store.mark_login_started(run)
+        self.store.finish_run(run, False, 0, 0, "login_failed", None)
+        ok, reason = self.guard.may_login()
+        self.assertFalse(ok)
+        self.assertEqual(reason, "daily_login_limit")
+        self.clock[0] = T(16, 0, 30)
+        self.assertEqual(self.guard.may_login(), (True, "ok"))
+
     def test_blocked_until_refuses_until_it_passes(self):
         run = self.store.start_run("mail")
         self.store.finish_run(run, True, 0, 0, "blocked", True, blocked_until=self.guard.block_until())

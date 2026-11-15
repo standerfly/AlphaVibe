@@ -19,6 +19,7 @@ from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # 讓 `python3 -m unittest tests.test_article_probe` 也能 import 共用假網站
 
 import article_probe  # noqa: E402
 import keychain_secrets  # noqa: E402

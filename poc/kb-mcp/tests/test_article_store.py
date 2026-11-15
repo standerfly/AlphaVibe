@@ -270,6 +270,38 @@ class RunsAndAlertsTest(Base):
         self.s.finish_run(r2, False, 0, 0, "ok", None)
         self.assertEqual(self.s.logins_today(T(15)), 1)
 
+    def test_failed_login_attempt_still_counts_and_finish_run_cannot_lower_it(self):
+        r = self.s.start_run("mail")
+        self.s.mark_login_started(r)
+        self.s.finish_run(r, False, 0, 0, "login_failed", None)       # 密碼錯：有嘗試但失敗
+        row = self.s.recent_runs(1)[0]
+        self.assertEqual((row["logged_in"], row["login_ok"]), (1, 0))
+        self.assertEqual(self.s.logins_today(T(15)), 1)
+        r2 = self.s.start_run("mail")
+        self.s.mark_login_started(r2)
+        self.s.finish_run(r2, True, 1, 1, "ok", True)
+        self.assertEqual(self.s.recent_runs(1)[0]["login_ok"], 1)
+        self.assertEqual(self.s.logins_today(T(15)), 2)
+        r3 = self.s.start_run("none")
+        self.s.finish_run(r3, None, 0, 0, "ok", None)                  # 沒嘗試登入
+        row3 = self.s.recent_runs(1)[0]
+        self.assertEqual((row3["logged_in"], row3["login_ok"]), (0, None))
+
+    def test_old_table_without_login_ok_is_migrated(self):
+        import sqlite3
+        tmp = tempfile.mkdtemp(prefix="articles-old-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        conn = sqlite3.connect(os.path.join(tmp, "articles.db"))
+        conn.execute("CREATE TABLE import_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, "
+                     "finished_at TEXT, trigger TEXT NOT NULL, logged_in INTEGER NOT NULL DEFAULT 0, "
+                     "articles_attempted INTEGER NOT NULL DEFAULT 0, articles_fetched INTEGER NOT NULL DEFAULT 0, "
+                     "result TEXT, logged_out INTEGER, blocked_until TEXT)")
+        conn.commit()
+        conn.close()
+        s2 = A.ArticleStore(tmp)
+        self.addCleanup(s2.close)
+        self.assertIn("login_ok", [r[1] for r in s2.conn.execute("PRAGMA table_info(import_runs)")])
+
     def test_logins_today_uses_taipei_date_boundaries(self):
         self.clock[0] = T(15, 23, 0)
         r = self.s.start_run("mail")
