@@ -74,7 +74,7 @@ discovered ──取文成功──▶ fetched            （終態；不覆寫�
 discovered ──失敗──▶ failed(attempts+1) ──下次排程再試──▶ fetched
 failed ──attempts≥3──▶ abandoned + Telegram （終態；PO 介入後可手動重置為 failed）
 discovered ──標題以【公告】開頭──▶ skipped   （終態；FR-004）
-（回補時）id_time_ok=1 且 id_time_ms < cutoff_ms − 14 天，且非置頂、非公告 ──▶ deferred    （不開啟；只存 ID、標題、清單日期）
+（回補時）id_time_ok=1 且 id_time_ms < cutoff_ms − 14 天 ──▶ deferred    （不開啟；只存 ID、標題、清單日期；置頂項不因清單日期顯示較舊而被跳過，是否延後一律只看 ID 門檻；公告另走 skipped）
 deferred ──PO 要求補抓（放寬截止日，`--backfill-since`）──▶ discovered ──▶（走上面的流程）
 ```
 **半年截止只看 ID 推得的建立時間**，**不使用清單日期**（置頂的近期文章清單日期會顯示 2021 年）；`id_time_ok=0` 的文章

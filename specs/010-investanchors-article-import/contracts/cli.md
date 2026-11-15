@@ -65,6 +65,7 @@ python3 poc/kb-mcp/article_probe.py --data-dir poc/data --confirm-po-present --c
 ## 3. 核對工具 `poc/kb-mcp/article_reconcile.py`（回補完成後，唯讀）
 - 讀「總覽」清單到「整頁都早於截止日」為止（受同樣上限與間隔約束，可分多次），與 `article`（排除公告）
   中發布日期在半年內者逐篇比對，輸出缺漏／重複清單（SC-001）；早於截止日的只確認為 `deferred`。不寫入 `article`；只輸出報告。
+  定義（2026-11-16 補）：**重複**＝不同 ID 但正規化網址相同，或標題＋清單日期相同；`not_fetched`（庫內有紀錄但尚未抓到內文）另列、不計缺漏；`older_not_deferred`（早於截止日卻未標延後）只列提示；進度檔 `<data-dir>/articles_probe/reconcile-state.json`（游標與已見 ID，不放 setting 表、不碰 `backfill_state`），截止日放寬或 `--restart` 即作廢重掃；**只有手動 CLI、無排程**。完全空白的清單頁（連置頂都沒有）視為讀取異常：不計入、進度不越過，報告註記 `blank_page`（不通知、不寫 DB）。
 
 ## 4. Scraper 協定 `scraper/investanchors_scraper.js`
 - **import 模式（T013／T014 已實作）**：stdin `{"mode":"import","email":…,"password":…,"base_url":…,"known_ids":[…],"pending_ids":[…],"max_list_pages":≤3,"max_articles":≤5,"delay_ms":[30000,90000],"timeout_ms":N}`；單一登入 session 內：讀清單第 1 頁（必要時往後翻到「一頁內非置頂、非公告項目全部已知」為止）→ 目標＝清單上所有未入庫的 ID（含置頂）＋`pending_ids`，新文章在前、受 `max_articles` → 逐篇開啟 → 登出並驗證。stdout JSONL：`fact(login)`、`list_item{page,article_id,title,date,is_announcement,read_state,pinned}`、`fact(targets)`、`article{article_id,published_at,body,images[{seq,src_url}]}`、`article_error{article_id,reason:structure|short|timeout}`、`summary`。內文過短（<200 字）或缺 `div#inves_content` 一律輸出 `article_error`，**不輸出殘缺內文**；`pinned`＝同一 ID 在相鄰頁重複出現。

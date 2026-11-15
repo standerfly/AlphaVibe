@@ -46,6 +46,8 @@ BACKFILL_TRANSCRIBE_PER_RUN = 10
 MAX_TRANSCRIBE_ATTEMPTS = article_store.MAX_TRANSCRIBE_ATTEMPTS
 SAMPLE_DIRNAME = "articles_probe"
 BACKFILL_FIRST_CURSOR = 2         # 回補游標＝「下次要讀的頁碼」；第 1 頁每次都讀（新文章與置頂），游標從第 2 頁起
+BLANK_PAGE_ALERT_AFTER = 3        # 同一游標位置連續幾次登入都拿到完全空白頁 → 通知 PO（不自動標完成）
+BLANK_STREAK_SETTING = "backfill_blank_streak"   # 值 "<游標>:<連續次數>"；無此鍵或游標不符＝0
 BACKFILL_STOP_PAGES = 2           # 連續幾頁「非置頂、非公告」項目全部早於門檻才算清單掃完（停止規則，research R11）
 ID_ANOMALY_ALERT_OVER = 3         # id_time_ok=0 累計超過這個篇數 → 通知 PO（規律可能失效）
 DETERMINISTIC_TILE_REASONS = ("too_many_tiles", "tile_too_small", "unsupported_or_corrupt_image",
@@ -63,6 +65,8 @@ ALERT_TEXTS = {
     "mailbox_failure": "⚠️ 定錨匯入：信箱讀取連續失敗（不影響每週核對）。",
     "cutoff_mismatch": ("⚠️ 定錨匯入：回補的「太舊不開啟」判定在瀏覽器端與主程式不一致，"
                         "本次未標記任何延後、回補游標不前進。請回報。"),
+    "backfill_blank_pages": ("⚠️ 定錨匯入：回補讀到的清單頁連續多次登入都是空白，回補暫停在原位置、未標記完成。"
+                             "請到網站確認清單頁是否正常。"),
     "id_time_anomaly": "⚠️ 定錨匯入：文章 ID 的時間規律出現多篇異常，半年截止判斷可能失效，請回報。",
 }
 
@@ -602,12 +606,16 @@ class Importer(object):
                 pg = int(it.get("page") or 1)
                 if pg >= BACKFILL_FIRST_CURSOR:
                     by_page.setdefault(pg, []).append(it)
-            for pg in empty_pages:                      # 載入成功但空白＝翻過最後一頁，視為「沒有更新的了」
-                if pg >= BACKFILL_FIRST_CURSOR:
-                    by_page.setdefault(pg, [])
+            # 完全沒有任何項目（連置頂都沒有）的頁＝讀取異常，不是「沒有更舊的了」：
+            # 不計入連續頁判斷、游標不越過它；有置頂但無一般項目的頁仍照常參與判斷。
+            blanks = sorted(pg for pg in empty_pages if pg >= BACKFILL_FIRST_CURSOR and pg not in by_page)
+            first_blank = blanks[0] if blanks else None
+            if first_blank is not None:
+                by_page = dict((pg, v) for pg, v in by_page.items() if pg < first_blank)
             if by_page:
                 store.update_backfill(next_cursor=str(max(int(state["next_cursor"] or 0), max(by_page) + 1)),
                                       now=self.now())
+            self._track_blank_streak(store, bf["resume"], first_blank, bool(by_page))
 
             def page_all_old(pg):
                 for it in by_page[pg]:
@@ -615,13 +623,32 @@ class Importer(object):
                         continue
                     if not article_id_time.is_before_cutoff(it["article_id"], bf["cutoff_ms"], now_ms=bf["now_ms"]):
                         return False
-                return True        # 沒有任何一般項目（只剩置頂、或空白的最後一頁）也算「沒有更新的了」
+                return True        # 沒有任何一般項目（只剩置頂或公告）也算「該頁沒有更舊的文章」；完全空白的頁在上面已排除
             old = set(pg for pg in by_page if page_all_old(pg))
             if any(pg in old and pg + 1 in old for pg in old):
                 list_done = True
                 store.update_backfill(list_done=True, now=self.now())
         if list_done and not store.list_pending():
             store.update_backfill(completed=True, now=self.now())
+
+    def _track_blank_streak(self, store, resume, first_blank, has_nonblank):
+        """同一游標位置連續空白頁計數；達 BLANK_PAGE_ALERT_AFTER 通知一次（同日去重），不標完成。"""
+        raw = store.get_setting(BLANK_STREAK_SETTING)
+        n = 0
+        if raw and ":" in raw:
+            cur, _, cnt = raw.partition(":")
+            if cur == str(resume) and cnt.isdigit():
+                n = int(cnt)
+        if has_nonblank:                                # 游標前進或讀到非空頁：歸零
+            if raw is not None:
+                store.set_setting(BLANK_STREAK_SETTING, "%d:0" % resume)
+            return
+        if first_blank is None or first_blank != resume:
+            return                                      # 本次沒讀到游標頁（逾時等）：計數不變
+        n += 1
+        store.set_setting(BLANK_STREAK_SETTING, "%d:%d" % (resume, n))
+        if n >= BLANK_PAGE_ALERT_AFTER:
+            self.alert(store, "backfill_blank_pages")
 
     def _check_id_anomalies(self, store):
         if self._bf is not None and store.count_id_time_anomalies() > ID_ANOMALY_ALERT_OVER:

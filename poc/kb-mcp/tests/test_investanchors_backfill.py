@@ -394,8 +394,8 @@ class StopRuleTest(unittest.TestCase):
     def recent_page(self, n):
         return [mk(20 + 3 * n + k, k) for k in range(3)]
 
-    def drive(self, pages, days):
-        ls = ListScraper(pages=pages, announcement=False)
+    def drive(self, pages, days, pinned=()):
+        ls = ListScraper(pages=pages, announcement=False, pinned=pinned)
         h = BF(self, ls)
         states = []
         for d in range(days):
@@ -409,7 +409,7 @@ class StopRuleTest(unittest.TestCase):
     def test_one_old_page_is_not_enough_two_consecutive_old_pages_are(self):
         pages = {2: self.recent_page(2), 3: self.old_page(3), 4: self.recent_page(4)[:1] + self.old_page(4)[:2],
                  5: self.old_page(5), 6: self.old_page(6)}
-        h, ls, states = self.drive(pages, 1)
+        h, ls, states = self.drive(pages, 1, pinned=PINNED[:1])   # 尾端頁只有置頂（真實網站每頁都有置頂）才算「沒有更舊的」
         self.assertEqual(ls.read_pages[-1], [1, 2, 3])
         self.assertEqual(states[-1][:2], ("4", 0))                        # 只有第 3 頁全舊 → 繼續
         h.day(1)
@@ -417,7 +417,7 @@ class StopRuleTest(unittest.TestCase):
         self.assertEqual(ls.read_pages[-1], [1, 4, 5])
         self.assertEqual((h.state()["next_cursor"], h.state()["list_done"]), ("6", 0))
         h.day(2)
-        h.run()                                                           # 第 6 頁全舊＋第 7 頁沒有東西（尾端）→ 連續 2 頁
+        h.run()                                                           # 第 6 頁全舊＋第 7 頁只有置頂（尾端）→ 連續 2 頁
         self.assertEqual(ls.read_pages[-1], [1, 6, 7])
         self.assertEqual(h.state()["list_done"], 1)
 
@@ -566,7 +566,7 @@ class CutoffMismatchTest(unittest.TestCase):
 class BackfillSinceTest(unittest.TestCase):
     def setup_state(self):
         old_a, old_b = mk(210, 1, title="剛好舊一"), mk(300, 2, title="很舊")
-        ls = ListScraper(pages={2: [mk(10), old_a, old_b]}, announcement=False)
+        ls = ListScraper(pages={2: [mk(10), old_a, old_b]}, announcement=False, pinned=PINNED[:1])
         h = BF(self, ls, clues=[clue()])
         h.run()
         self.assertEqual(h.status_of(old_a["id"]), "deferred")
@@ -593,7 +593,7 @@ class BackfillSinceTest(unittest.TestCase):
     def test_widened_backfill_is_still_capped_at_five_per_run(self):
         within = [mk(d, 1) for d in range(1, 10)]
         mid = [mk(d, 2) for d in range(215, 224)]
-        ls = ListScraper(pages={2: within, 3: mid}, announcement=False)
+        ls = ListScraper(pages={2: within, 3: mid}, announcement=False, pinned=PINNED[:1])
         h = BF(self, ls, clues=[clue()])
         run_until_completed(h)
         self.assertEqual(len(h.store().deferred_rows()), len(mid))
@@ -716,6 +716,130 @@ class TileFailureCountingTest(unittest.TestCase):
 
 
 # ====================================================================== 端到端（真 scraper＋假網站＋假時鐘）
+
+class BlankPageTest(unittest.TestCase):
+    """2026-11-16 審查修正 3：完全空白（連置頂都沒有）的清單頁＝讀取異常，不是「沒有更舊的了」。"""
+
+    def old_page(self, n):
+        return [mk(250 + 10 * k + n, k) for k in range(3)]
+
+    def world(self, pinned=(), pages=None):
+        ls = ListScraper(pages=pages if pages is not None else {2: self.old_page(2)},
+                         pinned=pinned, announcement=False)
+        return BF(self, ls, clues=[clue()]), ls
+
+    def blank_alerts(self, h):
+        return [n for n in h.notes if n == I.ALERT_TEXTS["backfill_blank_pages"]]
+
+    def test_blank_page_does_not_count_toward_two_consecutive_pages_and_cursor_stays_but_logout_is_normal(self):
+        h, ls = self.world()                                              # 第 2 頁全舊、第 3 頁完全空白（無置頂）
+        self.assertEqual(h.run(), 0)
+        self.assertEqual(ls.read_pages[-1], [1, 2, 3])
+        st = h.state()
+        self.assertEqual((st["next_cursor"], st["list_done"], st["completed"]), ("3", 0, 0))   # 游標停在空白頁、不算掃完
+        self.assertIn("登出已驗證", h.out.getvalue())
+        self.assertEqual(h.store().recent_runs(1)[0]["result"], "ok")     # 不是錯誤中止
+
+    def test_pinned_only_page_has_no_older_articles_and_does_participate(self):
+        h, ls = self.world(pinned=PINNED)                                 # 第 3 頁只有置頂 → 「該頁沒有更舊的文章」
+        h.run()
+        st = h.state()
+        self.assertEqual((st["list_done"], st["next_cursor"]), (1, "4"))
+
+    def test_blank_in_the_middle_stops_cursor_before_it_and_later_pages_are_not_counted(self):
+        pages = {2: self.old_page(2), 3: [], 4: self.old_page(4)}         # 第 3 頁空白、第 4 頁全舊
+        h, ls = self.world(pages=pages)
+        h.run()
+        st = h.state()
+        self.assertEqual((st["next_cursor"], st["list_done"]), ("3", 0))
+
+    def test_three_consecutive_blank_logins_at_same_cursor_alert_once_and_never_mark_completed(self):
+        h, ls = self.world()
+        h.run()                                                           # 第 0 天：第 2 頁非空 → 游標到 3，計數未起算
+        for d, want in ((1, "3:1"), (2, "3:2")):
+            h.day(d)
+            h.run()
+            self.assertEqual(h.store().get_setting(I.BLANK_STREAK_SETTING), want)
+            self.assertEqual(self.blank_alerts(h), [])
+        h.day(3)
+        h.run()
+        self.assertEqual(h.store().get_setting(I.BLANK_STREAK_SETTING), "3:3")
+        self.assertEqual(len(self.blank_alerts(h)), 1)
+        st = h.state()
+        self.assertEqual((st["completed"], st["list_done"], st["next_cursor"]), (0, 0, "3"))
+        self.assertEqual(I.BLANK_PAGE_ALERT_AFTER, 3)
+
+    def test_alert_text_is_fixed_and_has_no_details(self):
+        text = I.ALERT_TEXTS["backfill_blank_pages"]
+        self.assertFalse(any(c.isdigit() for c in text))                  # 不含頁碼、次數等任何數字細節
+        self.assertNotIn("http", text)
+
+    def test_same_day_dedupe_for_further_blank_logins_and_next_day_follows_existing_rule(self):
+        h, ls = self.world()
+        h.run()
+        imp = I.Importer(I.build_parser().parse_args(["--data-dir", h.tmp, "--dry-run"]),
+                         now=lambda: h.clock[0], notifier=h.notes.append)
+        st = h.store()
+        h.store().set_setting(I.BLANK_STREAK_SETTING, "3:2")
+        imp._track_blank_streak(st, 3, 3, False)                          # 第 3 次 → 通知
+        imp._track_blank_streak(st, 3, 3, False)                          # 第 4 次（同日）→ 不重複
+        imp._track_blank_streak(st, 3, 3, False)
+        self.assertEqual(len(self.blank_alerts(h)), 1)
+        self.assertEqual(st.get_setting(I.BLANK_STREAK_SETTING), "3:5")
+        h.day(1)                                                          # 隔天：沿用既有同日去重規則 → 可再通知一次
+        imp2 = I.Importer(I.build_parser().parse_args(["--data-dir", h.tmp, "--dry-run"]),
+                          now=lambda: h.clock[0], notifier=h.notes.append)
+        imp2._track_blank_streak(st, 3, 3, False)
+        self.assertEqual(len(self.blank_alerts(h)), 2)
+
+    def test_cursor_advance_or_nonblank_page_resets_the_count_and_old_key_for_other_cursor_is_zero(self):
+        h, ls = self.world()
+        h.run()
+        for d in (1, 2):
+            h.day(d)
+            h.run()
+        self.assertEqual(h.store().get_setting(I.BLANK_STREAK_SETTING), "3:2")
+        ls.explicit[3] = [mk(30, 3)]                                      # 網站恢復：第 3 頁有近期文章
+        h.day(3)
+        h.run()
+        self.assertEqual(h.state()["next_cursor"], "4")                   # 讀了 3（有文章）、4（空白）→ 游標前進到 4
+        self.assertTrue(h.store().get_setting(I.BLANK_STREAK_SETTING).endswith(":0"))
+        h.day(4)
+        h.run()                                                           # 游標 4 開始又全空白 → 從 1 起算，不沿用舊的 2
+        self.assertEqual(h.store().get_setting(I.BLANK_STREAK_SETTING), "4:1")
+        self.assertEqual(self.blank_alerts(h), [])
+
+    def test_missing_setting_in_an_old_db_counts_as_zero(self):
+        h, ls = self.world()
+        h.run()
+        s = h.store()
+        self.assertIsNone(s.get_setting(I.BLANK_STREAK_SETTING))          # 舊庫沒有這個鍵
+        h.day(1)
+        h.run()
+        self.assertEqual(s.get_setting(I.BLANK_STREAK_SETTING), "3:1")
+
+
+@unittest.skipUnless(_browser_available(), "需要 node＋playwright＋瀏覽器")
+class RealScraperBlankPageTest(unittest.TestCase):
+    def test_blank_page_with_real_scraper_does_not_finish_backfill_and_logs_out(self):
+        within = [{"id": aid_at(d, i), "title": "近%d" % d, "date": "2026-11-01"}
+                  for i, d in enumerate([2, 12, 25, 40])]
+        pinned = [{"id": aid_at(1, 5), "title": "置頂", "date": "2021-02-06"}]
+        site = FakeSite(items=within, per_page=4, pinned=pinned, announcement=False, blank_pages={3})
+        h = BFE2E(self, site, clues=[clue()])
+        for d in range(0, 3):
+            h.clock[0] = WED + datetime.timedelta(days=d)
+            self.assertIn(h.go(), (0, 1), h.out.getvalue())
+            self.assertEqual(site.sessions, set())                        # 每次都登出
+        st = h.store().get_backfill_state()
+        self.assertEqual(st["next_cursor"], "3")                          # 第 2 頁（置頂無一般項目）算過；第 3 頁空白不越過
+        self.assertEqual((st["list_done"], st["completed"]), (0, 0))
+        self.assertEqual(h.store().get_setting(I.BLANK_STREAK_SETTING), "3:2")
+        site.blank_pages = set()                                          # 網站恢復：第 3 頁置頂 → 連續 2 頁無更舊 → 掃完
+        h.clock[0] = WED + datetime.timedelta(days=3)
+        self.assertIn(h.go(), (0, 1), h.out.getvalue())
+        self.assertEqual(h.store().get_backfill_state()["list_done"], 1)
+
 
 class BFE2E(E2E):
     def go(self, argv=None, **over):

@@ -327,6 +327,37 @@ class ReadOnlyAndLimitsTest(unittest.TestCase):
             self.assertNotIn(bad, blob)
 
 
+class BlankPageTest(unittest.TestCase):
+    """2026-11-16 審查修正 3：完全空白（連置頂都沒有）的清單頁不算「掃完」，不推進進度、報告註記 blank_page。"""
+
+    def world(self, pinned=()):
+        recent1 = [titled(6 + k, 1 + k) for k in range(3)]
+        old2 = [titled(215 + k, 1 + k) for k in range(2)]
+        return ListScraper(pages={1: recent1, 2: old2}, pinned=pinned, announcement=False)
+
+    def test_blank_page_is_not_counted_cursor_stays_and_report_notes_it(self):
+        h = RH(self, self.world())                                # 第 1、2 頁有資料；第 3 頁以後完全空白
+        h.run()                                                   # 庫內沒有這些文章 → 回報缺漏（rc=1）與本測試無關
+        self.assertEqual((h.report["next_cursor"], h.report["scan_complete"], h.report["blank_page"]),
+                         (3, False, True))
+        h.day(1)
+        h.run()                                                   # 游標 3：第 3、4 頁都空白 → 仍不掃完、不前進
+        self.assertEqual((h.report["next_cursor"], h.report["scan_complete"], h.report["blank_page"]),
+                         (3, False, True))
+        self.assertIn("空白", h.out.getvalue())
+
+    def test_pinned_only_pages_still_count_and_no_blank_flag(self):
+        h = RH(self, self.world(pinned=PINNED[:1]))               # 第 3 頁起只有置頂＝「沒有更舊的文章」
+        h.run()
+        self.assertEqual((h.report["scan_complete"], h.report["blank_page"]), (True, False))
+
+    def test_blank_page_does_not_touch_db_or_send_notifications(self):
+        h = RH(self, self.world())
+        before = snapshot(h.tmp)
+        h.run()
+        self.assertEqual(snapshot(h.tmp), before)
+
+
 class DataDirGuardTest(unittest.TestCase):
     def test_production_dir_refused_without_flag_and_nothing_runs(self):
         called = []

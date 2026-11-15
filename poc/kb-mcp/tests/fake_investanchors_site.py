@@ -57,7 +57,7 @@ class FakeSite(object):
     def __init__(self, logout_mode="link", register_first=False, post_login_pw_field=False,
                  hidden_register_first=False, items=None, per_page=6, pinned=None,
                  announcement=True, article_modes=None, default_article_mode="normal",
-                 list_mode=None, timeout_sleep=6.0, email=EMAIL, password=PASSWORD):
+                 list_mode=None, timeout_sleep=6.0, email=EMAIL, password=PASSWORD, blank_pages=()):
         self.logout_mode = logout_mode
         self.register_first = register_first
         self.hidden_register_first = hidden_register_first
@@ -70,6 +70,7 @@ class FakeSite(object):
         self.article_modes = dict(article_modes or {})
         self.default_article_mode = default_article_mode
         self.list_mode = list_mode
+        self.blank_pages = set(blank_pages)   # 這些頁碼回完全空白的清單（連置頂都沒有）；可在測試中途改動
         self.timeout_sleep = timeout_sleep
         self.email = email
         self.password = password
@@ -158,11 +159,11 @@ class FakeSite(object):
                         % (CSRF, LOGOUT_HTML[site.logout_mode], extra))
 
             def _list_page(self, page):
-                rows = [(p["id"], p["title"], p["date"]) for p in site.pinned]
-                if page == 1 and site.announcement:
+                rows = [] if page in site.blank_pages else [(p["id"], p["title"], p["date"]) for p in site.pinned]
+                if page == 1 and page not in site.blank_pages and site.announcement:
                     rows.append((9999, "【公告】SECRETTITLE公告", "2027-01-01"))
                 start = (page - 1) * site.per_page
-                chunk = site.items[start:start + site.per_page]
+                chunk = [] if page in site.blank_pages else site.items[start:start + site.per_page]
                 rows += [(i["id"], i["title"], i["date"]) for i in chunk]
                 trs = "".join(
                     '<tr><td><a href="/user/vip_contents/%d" style="font-weight:%s">%s</a>'

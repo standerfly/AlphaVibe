@@ -121,6 +121,7 @@ class Reconciler(object):
     def __init__(self, args, run_scraper=None, get_secret=None, now=None, delay_ms=None, base_url=None,
                  timeout_ms=30000, out=None):
         self.args = args
+        self.blank_page = False                  # 本次是否讀到完全空白的清單頁（讀取異常）
         self.out = out or sys.stdout
         self.now = now or (lambda: datetime.datetime.now(TZ8))
         self.get_secret = get_secret or keychain_secrets.get_secret
@@ -211,7 +212,8 @@ class Reconciler(object):
         result = compare(store, st["seen"], cutoff_ms, now_ms, st["complete"])
         body = {"generated_at": _aware(self.now()).isoformat(), "cutoff_date": bf["cutoff_date"],
                 "scan_complete": bool(st["complete"]), "next_cursor": st["next_cursor"],
-                "backfill_completed": bool(bf["completed"]), "seen_count": len(st["seen"])}
+                "backfill_completed": bool(bf["completed"]), "seen_count": len(st["seen"]),
+                "blank_page": bool(self.blank_page)}
         body.update(result)
         path = self._write_report(body)
         self.report = body
@@ -307,10 +309,13 @@ class Reconciler(object):
             by_page.setdefault(int(it.get("page") or 1), []).append(it)
             st["seen"][str(int(it["article_id"]))] = {"a": bool(it.get("is_announcement"))}
         cursor_pages = set(p for p in by_page if p >= FIRST_CURSOR)
-        for pg, n in page_counts.items():                         # 載入成功但空白＝翻過最後一頁
-            if pg >= FIRST_CURSOR and n == 0:
-                cursor_pages.add(pg)
-                by_page.setdefault(pg, [])
+        # 完全空白的頁（連置頂都沒有）＝讀取異常：不計入、進度不越過它，報告註記 blank_page（不通知、不寫 DB）
+        blanks = sorted(pg for pg, n in page_counts.items()
+                        if pg >= FIRST_CURSOR and n == 0 and pg not in by_page)
+        if blanks:
+            self.blank_page = True
+            self.say("讀到完全空白的清單頁（第 %d 頁），視為讀取異常：進度不越過、請稍後重試" % blanks[0])
+            cursor_pages = set(p for p in cursor_pages if p < blanks[0])
         if cursor_pages:
             st["next_cursor"] = max(int(st["next_cursor"]), max(cursor_pages) + 1)
         cutoff_ms = int(st["cutoff_ms"])
