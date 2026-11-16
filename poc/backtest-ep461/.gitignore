@@ -1,0 +1,6 @@
+# 下載的 FinMind 資料、回測輸出、token 都不進版控
+data/
+out/
+finmind_token.txt
+__pycache__/
+*.pyc
