@@ -97,3 +97,14 @@ sqlite3 -readonly $DB "select count(*), coalesce(sum(i.transcribe_attempts>=3),0
 # 轉寫開關（無此列＝關）
 sqlite3 -readonly $DB "select value from setting where key='transcribe_enabled';"
 ```
+
+## 11. 備份與圖片重抓（2026-11-16，PO 決定）
+
+- **決定**：`articles.db` 納入每日備份（`poc/kb-mcp/backup_databases.py` 的 `OPTIONAL_DATABASES`；庫尚不存在時略過、不算失敗、不建檔；輪替與既有庫相同：每日留 30、每月 1 號收進 monthly 留 24）。**`articles_images/` 不備份**（圖片只是備份用途，需要時回定錨網站重抓）。
+- **「對指定文章重抓圖片／表格」：目前沒有此能力，需另開。** 讀程式的結論：
+  - `article_images.download_images` 只下載 `file_path` 為空的圖（`article_images.py:58-59`，`if img.get("file_path"): continue`）。圖檔被刪但資料庫 `file_path` 仍有值時，**不會**被補抓。
+  - 「下載失敗保留 NULL、下次補抓」只在註解中承諾（`article_images.py:8`、`investanchors_import.py:815`）；`ArticleStore.images_missing_file()`（`article_store.py:426-428`）除測試外**沒有任何呼叫端**（grep `poc/kb-mcp/*.py` 僅此定義）。下載圖片的唯一入口是 `_images`（`investanchors_import.py:809-814`），只在文章剛抓取成功後呼叫（`:773`）。
+  - 已抓取（`fetched`）的文章不會被重抓：處理迴圈只接受 `PENDING_STATUSES = ("discovered", "failed")`（`article_store.py:34`；`investanchors_import.py:760-762`）；`--reset-abandoned` 只把 `abandoned` 重置為 `failed`（`article_store.py:245-251`），不適用 `fetched`。
+  - `--retranscribe` 只讀本機圖片、不登入、不下載（`investanchors_import.py:341-342`；說明見 `:126-127`），且只處理 `file_path IS NOT NULL` 的圖（`:350`、`article_store.py:469`），圖檔不在就無從轉寫。
+  - 重抓文章本身需登入網站，且受每日 1 次／每次 5 篇限制（`investanchors_limits.MAX_ARTICLES_PER_RUN`，見 `--max-articles` 說明 `investanchors_import.py:113-114`）。
+  - 最接近的現有行為：只有「剛抓取成功的那次」會下載圖片。若要支援，需新增「對 `fetched` 文章重置並重抓」或「依 `images_missing_file`／檔案不存在補抓」的功能，並由 PO 決定受限流約束。

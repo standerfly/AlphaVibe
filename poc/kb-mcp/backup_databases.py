@@ -39,6 +39,11 @@ DATABASES = ("alphavibe.db", "us_stocks.db", "flights.db")
 # 2026-09-23 上線以來一直不在既有每日自動備份範圍。本次要對
 # flights.db 做 schema 遷移，順手補上——低成本，直接保護這次異動。
 
+# 可選資料庫（2026-11-16，010 定錨文章匯入）：來源檔不存在時略過（記一行、
+# 不算失敗、不建檔、不影響 exit code）；存在時與 DATABASES 完全同一套
+# 備份＋輪替。articles_images/ 刻意不備份（見 specs/010-.../quickstart.md）。
+OPTIONAL_DATABASES = ("articles.db",)
+
 
 def _log(msg):
     print("[%s] %s" % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), msg),
@@ -128,8 +133,11 @@ def main(argv=None):
     _log("開始備份：%s → %s%s" % (data_dir, args.dest, "（dry-run）" if args.dry_run else ""))
 
     failures = []
-    for db_name in DATABASES:
+    for db_name in DATABASES + OPTIONAL_DATABASES:
         src_path = os.path.join(data_dir, db_name)
+        if db_name in OPTIONAL_DATABASES and not os.path.exists(src_path):
+            _log("  - %s 略過（尚未建立）" % db_name)
+            continue
         ok, detail = backup_one(src_path, daily_dir, stamp, args.dry_run)
         if ok:
             _log("  ✓ %s" % detail)
@@ -143,7 +151,7 @@ def main(argv=None):
             _log("  ✗ %s" % detail)
             failures.append(detail)
 
-    for db_name in DATABASES:
+    for db_name in DATABASES + OPTIONAL_DATABASES:
         base = db_name[:-3]
         gone = prune(daily_dir, base, DAILY_KEEP, args.dry_run)
         if gone:

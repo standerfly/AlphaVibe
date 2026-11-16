@@ -36,7 +36,7 @@
 | `docs/spec-intake/index.md` | +1 列 investanchors-import | 純文件 | 低 |
 | `poc/kb-mcp/tests/test_pnl.py`／`test_traceability.py`／`test_us_stock_mcp_server.py`／`test_claude_ai_connector.py`／`test_check_scheduled_jobs.py` | 工具數 48→50、29→31；美股工具集合 8→10；連接器加 2 個 `assertIn`；新增巡檢測試類 | 這些修改是**因新增工具而必要的守門數字更新**，且方向一致（加不減），既有斷言（含「不混入台股工具」）未被刪弱 | 低；審查者可核對 `git diff` 確認沒有任何 `assertEqual` 被放寬為 `assertGreaterEqual` |
 
-另：`poc/kb-mcp/backup_databases.py`（每日備份）**沒有被修改**，其 `DATABASES = ("alphavibe.db", "us_stocks.db", "flights.db")`（`backup_databases.py:37`）**不含 `articles.db`**——見 §6 風險 1。
+另：`poc/kb-mcp/backup_databases.py` 已於 2026-11-16 依 PO 決定修改：新增 `OPTIONAL_DATABASES = ("articles.db",)`，`articles.db` 納入每日備份（來源不存在時略過、不算失敗）；`DATABASES` 三個既有庫行為不變。測試：`poc/kb-mcp/tests/test_backup_databases.py`。**`articles_images/` 不備份**（見 §6 風險 1、`quickstart.md` 第 11 節）。
 
 ### 1.3 新增檔案（76 個，依類別；每檔一行用途）
 
@@ -119,7 +119,7 @@ git diff --name-status ab5de1c~1 HEAD | grep -v '^A'   # 列出 14 個修改檔
   mkdir -p ~/Library/LaunchAgents/backup-pre-010
   cp ~/Library/LaunchAgents/com.alphavibe.*.plist ~/Library/LaunchAgents/backup-pre-010/
   ```
-- `articles.db` 此時**尚不存在**，沒有東西要備份；**上線後它不在每日備份範圍**（§6 風險 1），建議合併前決定是否把 `"articles.db"` 加進 `DATABASES`（一行改動，黃區，需 PO 同意；本文件不改）。
+- `articles.db` 此時**尚不存在**，沒有東西要備份；備份腳本遇不存在的 `articles.db` 會記「略過（尚未建立）」且 exit 0（`backup_databases.py` 的 `OPTIONAL_DATABASES` 分支）。**已決定（PO，2026-11-16）：`articles.db` 納入每日備份、`articles_images/` 不備份。**上線後 `articles.db` 建立的隔天備份起即涵蓋。
 
 ### 2.3 `deploy.sh` 會做什麼（逐步，行號為 `ops/deploy.sh`）
 
@@ -206,7 +206,7 @@ launchctl print gui/$(id -u)/com.alphavibe.investanchorsimport | head -20   # �
    cd /Users/stander/My_project/AlphaVibe-prod && git fetch origin function/alphavibe && bash <(git show origin/function/alphavibe:ops/deploy.sh) c9b99f4
    ```
    （`c9b99f4` 為 010 合併前的 `function/alphavibe` 頂端，出處 §1.1；若部署時 `OLD` 與此不同，以實際印出者為準。此指令會自動 kickstart reportserver，使連接器回到 48／29／8。）
-3. **資料回滾**：`alphavibe.db`／`us_stocks.db`／`flights.db` 不受 010 影響（§2.2），一般不需還原；若要還原以 §2.2 的備份為準，且先停服務。010 自己的資料只有 `<data>/articles.db`、`articles_images/`、`articles_probe/`——**要完全撤銷就刪這三者**（刪除前請 PO 同意；它們是匯入的成果，且不在每日備份內，§6 風險 1）。不要動 `poc/data-test-articles/`（測試庫，`quickstart.md:67` 要求保留）。
+3. **資料回滾**：`alphavibe.db`／`us_stocks.db`／`flights.db` 不受 010 影響（§2.2），一般不需還原；若要還原以 §2.2 的備份為準，且先停服務。010 自己的資料只有 `<data>/articles.db`、`articles_images/`、`articles_probe/`——**要完全撤銷就刪這三者**（刪除前請 PO 同意；`articles.db` 已納入每日備份，`articles_images/` 與 `articles_probe/` 不在備份內，§6 風險 1）。不要動 `poc/data-test-articles/`（測試庫，`quickstart.md:67` 要求保留）。
 4. 回滾後驗證：§2.4 的 `curl` 預期 404、工具數預期 48／29／8（回到舊版）。
 
 ---
@@ -255,7 +255,7 @@ launchctl print gui/$(id -u)/com.alphavibe.investanchorsimport | head -20   # �
 
 ## 6. 審查中發現的風險與疑慮
 
-1. **articles.db 不在每日備份範圍（中）**：`backup_databases.py:37` 的 `DATABASES` 不含 `articles.db`，010 的 diff 也未改它。上線後文章與（花錢取得的）轉寫文字若損壞無回復手段；`articles_images/` 本就不屬 sqlite 備份。建議合併前決定是否加入（一行、黃區、需 PO 同意）；至少上線後第一次備份前手動 `cp` 或 `sqlite3 .backup`。這與 2026-09-24 flights.db 同樣的缺口（`specs/007-trip-day-range/quickstart.md:70-78`）重複發生。
+1. **已決定（PO，2026-11-16）：articles.db 納入每日備份；articles_images/ 不備份（原風險已處理）**：以 `OPTIONAL_DATABASES` 納入，沿用 `Connection.backup()`＋`integrity_check`＋gzip 與同一套輪替（每日留 30、每月 1 號收進 monthly 留 24）。圖片只是備份用途、需要時回定錨網站重抓——但**現有工具沒有「對指定文章重抓圖片」的能力**（`quickstart.md` 第 11 節），這是接受的殘餘風險：圖檔遺失後，圖片本身無現成還原路徑（轉寫文字在 `articles.db`，已備份）。`check_scheduled_jobs.check_backups` 只看 `alphavibe-*`，未新增 articles 備份缺漏／過舊檢查（待主對話決定）。
 2. **`deploy.sh` 無資料備份、無工具數驗證（低～中）**：健康檢查只看 `/mcp/wrong`=404（行 66），不證明新工具已載入；請務必加做 §2.4 的工具數檢查。
 3. **`keychain_secrets.py` 被 009 共用（中）**：已上線的 009 對帳單匯入也呼叫 `get_secret`；改動向後相容（預設 service 不變），但請審查者實跑 009 相關測試確認（本文件未驗證）。
 4. **`app/article_deps.py` 未接線（低）**：含完整防呆但沒有 router 使用，屬待用程式碼；不影響上線，但審查者可決定是否保留。
