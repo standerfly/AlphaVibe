@@ -47,6 +47,8 @@ class USConnectorGatewayTest(unittest.TestCase):
         self.assertEqual(names, {t["name"] for t in us_stock_mcp_server.TOOLS})
         self.assertIn("get_us_holdings", names)
         self.assertNotIn("get_holdings", names)  # 不混入台股工具
+        self.assertIn("search_articles", names)  # 010：文章查詢台美各一份
+        self.assertIn("get_article", names)
 
     def test_default_module_is_still_tw(self):
         names = self._tool_names(None)

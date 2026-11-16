@@ -249,16 +249,17 @@ class ServerToolsTest(unittest.TestCase):
         self.server.store.close()
         shutil.rmtree(self.tmp)
 
-    def test_tools_list_has_forty_eight(self):
+    def test_tools_list_has_fifty(self):
         """2026-08-19：40→43。save_position_plan／get_position_plan（加碼
         計畫總額度）＋check_auto_score（Score自動化四項評分）。
         2026-09-02：43→45。get_position_pnl／get_price_position
         （001-entry-exit-foundation 階段A，FR-001~FR-012）。
         2026-09-03：45→47。save_exit_threshold／get_exit_threshold
         （002-entry-exit-signals 階段B，FR-001~FR-004）。
-        2026-10-28：47→48。get_today_highlights（claude.ai 連接器讀今日重點）。"""
+        2026-10-28：47→48。get_today_highlights（claude.ai 連接器讀今日重點）。
+        2026-11：48→50。search_articles／get_article（010 定錨文章查詢，唯讀）。"""
         names = [t["name"] for t in server.TOOLS]
-        self.assertEqual(len(names), 48)
+        self.assertEqual(len(names), 50)
         for expected in ("save_snapshot", "get_snapshots",
                          "save_holdings", "get_holdings",
                          "save_stock_alias", "get_stock_alias",
@@ -280,7 +281,8 @@ class ServerToolsTest(unittest.TestCase):
                          "parse_and_save_trade_ledger",
                          "parse_and_save_trade_csv",
                          "save_position_plan", "get_position_plan",
-                         "check_auto_score"):
+                         "check_auto_score",
+                         "search_articles", "get_article"):
             self.assertIn(expected, names)
 
     def test_check_laoyutou_signal_tool_dispatch_wires_args(self):

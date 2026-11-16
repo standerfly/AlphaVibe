@@ -13,6 +13,14 @@ import subprocess
 SERVICE = "stnd-statement-import"
 ACCOUNTS = ("gmail-address", "gmail-app-password", "pdf-password")
 
+INVESTANCHORS_SERVICE = "stnd-investanchors"
+INVESTANCHORS_ACCOUNTS = ("email", "password", "vision-api-key")
+
+_ACCOUNTS_BY_SERVICE = {
+    SERVICE: ACCOUNTS,
+    INVESTANCHORS_SERVICE: INVESTANCHORS_ACCOUNTS,
+}
+
 
 class SecretNotFound(Exception):
     """鑰匙圈裡找不到指定項目（或 security 指令不可用）。訊息只含 account 名稱。"""
@@ -22,18 +30,19 @@ def _default_runner(args):
     return subprocess.run(args, capture_output=True, text=True, timeout=30)
 
 
-def get_secret(account, runner=None):
-    """回傳鑰匙圈中 `stnd-statement-import`／`account` 的值（去除結尾換行）。"""
-    if account not in ACCOUNTS:
+def get_secret(account, runner=None, service=None):
+    """回傳鑰匙圈中 `service`（預設 `stnd-statement-import`）／`account` 的值（去除結尾換行）。"""
+    service = service or SERVICE
+    if account not in _ACCOUNTS_BY_SERVICE.get(service, ()):
         raise ValueError("未知的鑰匙圈項目：%s" % account)
     runner = runner or _default_runner
     try:
         proc = runner(["security", "find-generic-password",
-                       "-s", SERVICE, "-a", account, "-w"])
+                       "-s", service, "-a", account, "-w"])
     except (OSError, subprocess.SubprocessError):
         raise SecretNotFound("無法執行 security 指令讀取鑰匙圈項目 %s" % account)
     value = (proc.stdout or "").rstrip("\n")
     if proc.returncode != 0 or not value:
         raise SecretNotFound(
-            "鑰匙圈找不到 %s（service %s），請依 quickstart.md 存入" % (account, SERVICE))
+            "鑰匙圈找不到 %s（service %s），請依 quickstart.md 存入" % (account, service))
     return value

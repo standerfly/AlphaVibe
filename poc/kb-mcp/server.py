@@ -26,6 +26,7 @@ import screener  # noqa: E402
 import tpex_client  # noqa: E402
 import trade_ledger_parser  # noqa: E402
 import trade_text_parser  # noqa: E402
+import article_tools  # noqa: E402
 from kb_store import KBStore  # noqa: E402
 
 SUPPORTED_PROTOCOL_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18")
@@ -879,7 +880,7 @@ TOOLS = [
             "required": ["text"],
         },
     },
-]
+] + article_tools.ARTICLE_TOOL_SCHEMAS  # 010 US2：定錨文章查詢（唯讀，與美股連接器共用）
 
 
 def _default_data_dir():
@@ -914,6 +915,9 @@ class Server:
     # ---- 工具實作 ----
 
     def call_tool(self, name, args):
+        if name in article_tools.ARTICLE_TOOL_NAMES:
+            # 唯讀開 <data_dir>/articles.db（mode=ro），不碰 alphavibe.db
+            return article_tools.call_article_tool(self.data_dir, name, args)
         if name == "save_stance":
             return self.store.save_stance(
                 code=args["code"], stance=args["stance"],
