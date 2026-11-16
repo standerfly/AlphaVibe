@@ -522,5 +522,59 @@ class InvestanchorsImportCheckTest(unittest.TestCase):
         self.assertIn("investanchors_import", names)
 
 
+class ArticlesBackupCheckTest(unittest.TestCase):
+    """010：articles.db 備份檢查——存在才檢查、缺漏／過舊 warning、未上線不報、不影響 alphavibe 備份檢查。"""
+
+    def setUp(self):
+        self.data = tempfile.mkdtemp(prefix="alphavibe-art-data-")
+        self.bk = tempfile.mkdtemp(prefix="alphavibe-art-bk-")
+        self.addCleanup(shutil.rmtree, self.data, True)
+        self.addCleanup(shutil.rmtree, self.bk, True)
+
+    def _db(self):
+        with open(os.path.join(self.data, "articles.db"), "wb") as f:
+            f.write(b"x")
+
+    def _bk(self, name, hours_ago=1):
+        path = os.path.join(self.bk, name)
+        with gzip.open(path, "wb") as f:
+            f.write(os.urandom(1024))
+        ts = (datetime.datetime.now() - datetime.timedelta(hours=hours_ago)).timestamp()
+        os.utime(path, (ts, ts))
+
+    def test_not_online_reports_nothing(self):
+        self.assertEqual(checker.check_articles_backup(self.data, self.bk), [])
+
+    def test_existing_db_without_backup_is_warning(self):
+        self._db()
+        f = checker.check_articles_backup(self.data, self.bk)
+        self.assertEqual(f[0][0], "warning")
+        self.assertEqual(f[0][1], "articles_backup")
+
+    def test_existing_db_with_stale_backup_is_warning(self):
+        self._db()
+        self._bk("articles-20260101-033000.db.gz", hours_ago=checker.BACKUP_STALE_HOURS + 5)
+        f = checker.check_articles_backup(self.data, self.bk)
+        self.assertEqual(f[0][0], "warning")
+        self.assertIn("小時前", f[0][2])
+
+    def test_existing_db_with_fresh_backup_is_ok(self):
+        self._db()
+        self._bk("articles-20260101-033000.db.gz", hours_ago=2)
+        self.assertEqual(checker.check_articles_backup(self.data, self.bk)[0][0], "ok")
+
+    def test_alphavibe_backup_does_not_satisfy_articles_check(self):
+        self._db()
+        self._bk("alphavibe-20260101-033000.db.gz", hours_ago=1)      # 只有 alphavibe 備份
+        self.assertEqual(checker.check_articles_backup(self.data, self.bk)[0][0], "warning")
+
+    def test_articles_backup_does_not_change_alphavibe_check(self):
+        self._bk("articles-20260101-033000.db.gz", hours_ago=1)       # 只有 articles 備份
+        self.assertEqual(checker.check_backups(self.bk)[0][0], "critical")   # 與既有行為相同：找不到 alphavibe 備份
+
+    def test_registered_in_checks_and_run_all_tolerates_missing_db(self):
+        self.assertIn("articles_backup", [c[0] for c in checker.CHECKS])
+
+
 if __name__ == "__main__":
     unittest.main()

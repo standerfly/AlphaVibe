@@ -249,7 +249,9 @@ launchctl print gui/$(id -u)/com.alphavibe.investanchorsimport | head -20   # �
 | `test_check_scheduled_jobs` 單檔 3 個既有 error | 由呼叫者告知；我在 repo 文件中**找不到**這項記載（`tasks.md:20` 的基準只列上面 5 個），單檔跑與整體 discover 結果可能不同，**未驗證**，請審查者實跑單檔確認這 3 個與 010 無關（`git diff` 對該檔只新增 `InvestanchorsImportCheckTest`，未改既有測試） | 呼叫者訊息；`git diff ab5de1c~1 HEAD -- poc/kb-mcp/tests/test_check_scheduled_jobs.py` |
 | `app/` smoke test | `app.tests.test_smoke` 依 CLAUDE.md 的重建步驟需獨立測試庫；T052 已勾選；本文件未重跑 | `tasks.md:156`；`CLAUDE.md`「STND（app/）驗證」 |
 | 通知信只當觸發、約一半信搜得到 | PO 表示每篇都寄信，實測只搜到約一半；設計上信漏搜只延後觸發 | `research.md:36`（P4）；`tasks.md:174` |
-| T048 狀態 | `tasks.md:143` 已勾選 `[x]`，但**未附實測結果**（T023 有）；`quickstart.md:73`、`CLAUDE.md` 仍寫「T048 待 PO」。文件需同步 | 上述三處 |
+| T048 狀態 | **已完成（2026-11-16）**：`tasks.md` T048 已勾選並附結果；`CLAUDE.md`、`quickstart.md` 已同步；篇間隔下限防呆已於 `52133a2` 提交（頁／篇 30 秒、圖片 5 秒） | `tasks.md` T048；提交 `52133a2` |
+| 下載失敗的圖沒有補抓路徑（2026-11-16 PO 決定上線前不做） | `file_path` 為 NULL 的圖（下載失敗）目前無任何補抓：`ArticleStore.images_missing_file` 除測試外無呼叫端，`download_images` 只在文章剛抓成功時呼叫；已列為 `tasks.md` **T064**（下一次登入時順帶補抓；新設計，須遵守低頻並經審查與獨立驗收）。轉寫文字在已備份的 `articles.db`，圖檔本身不備份（見 §6 風險 1） | `article_images.py:58-59`；`article_store.py` `images_missing_file`；`tasks.md` T064 |
+| articles 備份健檢 | `check_scheduled_jobs.check_articles_backup`（2026-11-16 新增）：articles.db 存在才檢查；找不到 articles 備份或超過 `BACKUP_STALE_HOURS`（30 小時）→ warning；未上線不報；不影響 alphavibe 備份檢查；測試 `ArticlesBackupCheckTest` | `check_scheduled_jobs.py`；`test_check_scheduled_jobs.py` |
 
 ---
 

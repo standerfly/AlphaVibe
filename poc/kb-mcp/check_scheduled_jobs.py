@@ -154,6 +154,26 @@ def check_backups(backup_dir=DEFAULT_BACKUP_DIR):
              "正常（%.0f 小時前，%.1f MB，共 %d 份）" % (hours, size_mb, len(files)))]
 
 
+def check_articles_backup(data_dir, backup_dir=DEFAULT_BACKUP_DIR):
+    """定錨文章庫 articles.db 的備份有沒有照常產生（010，2026-11-16 PO 決定納入每日備份）。
+
+    - articles.db 不存在（未上線／測試環境）→ 不報（備份腳本對它也是「略過」，見
+      backup_databases.OPTIONAL_DATABASES）；
+    - 存在但找不到任何 articles 備份、或最新一份超過 BACKUP_STALE_HOURS（與 alphavibe 備份同標準）→ warning；
+    - 只管 articles-*.db.gz，不影響 `check_backups` 對 alphavibe 備份的判斷。"""
+    if not os.path.exists(os.path.join(os.path.abspath(data_dir), "articles.db")):
+        return []
+    files = glob.glob(os.path.join(backup_dir, "articles-*.db.gz"))
+    if not files:
+        return [("warning", "articles_backup", "articles.db 已存在但找不到任何 articles 備份：%s" % backup_dir)]
+    newest = max(files, key=os.path.getmtime)
+    hours = _hours_since(datetime.datetime.fromtimestamp(os.path.getmtime(newest)))
+    if hours > BACKUP_STALE_HOURS:
+        return [("warning", "articles_backup",
+                 "articles 最新備份是 %.0f 小時前（%s）" % (hours, os.path.basename(newest)))]
+    return [("ok", "articles_backup", "正常（%.0f 小時前，共 %d 份）" % (hours, len(files)))]
+
+
 def check_web_service(url=DEFAULT_SERVICE_URL, attempts=3, gap_seconds=5):
     """STND 網頁服務本身還活著嗎（2026-09-17 架構體檢 B4 追加）。
 
@@ -334,6 +354,7 @@ CHECKS = (
     ("statement_import", check_statement_import, True),
     ("investanchors_import", check_investanchors_import, True),
     ("backup", check_backups, False),
+    ("articles_backup", check_articles_backup, True),
     ("web_service", check_web_service, False),
 )
 
