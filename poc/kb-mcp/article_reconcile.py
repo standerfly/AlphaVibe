@@ -126,8 +126,9 @@ class Reconciler(object):
         self.now = now or (lambda: datetime.datetime.now(TZ8))
         self.get_secret = get_secret or keychain_secrets.get_secret
         self.run_scraper = run_scraper or self._default_run_scraper
-        self.delay_ms = list(delay_ms) if delay_ms else [
-            investanchors_limits.DELAY_RANGE[0] * 1000, investanchors_limits.DELAY_RANGE[1] * 1000]
+        # 下限防呆：低於 30 秒一律夾到 30 秒（測試環境變數除外，見 investanchors_limits）。
+        self.delay_ms = investanchors_limits.clamp_delay_ms(delay_ms if delay_ms else [
+            investanchors_limits.DELAY_RANGE[0] * 1000, investanchors_limits.DELAY_RANGE[1] * 1000])
         self.base_url = base_url or "https://investanchors.com"
         self.timeout_ms = timeout_ms
         self.report = None

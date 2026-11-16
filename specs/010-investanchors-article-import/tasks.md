@@ -140,7 +140,7 @@
 - [x] T045 [P] [US4] 建立 `poc/kb-mcp/article_reconcile.py` 與 `poc/kb-mcp/tests/test_article_reconcile.py`（SC-001）：唯讀，讀「總覽」清單到「整頁都早於截止日」為止（同樣受頁數上限與間隔約束，可分多次），與 `article`（排除公告）中建立時間在半年內者逐篇比對，輸出缺漏／重複清單；早於截止日者只確認為 `deferred`；不寫入 `article`。測試用假網站：缺漏、重複、置頂、延後各一例。
 - [x] T046 [US4] 建立多日回補模擬測試 `poc/kb-mcp/tests/test_investanchors_backfill_e2e.py`（假網站＋假時鐘，每「天」跑一次）：約 12 篇半年內＋6 篇更早＋置頂 4 篇 → 每日 ≤5 篇、第二天中斷後第三天接續、更早的只有 `deferred`、完成後 `completed=1`、再跑不登入；`article_reconcile` 回報 0 缺漏 0 重複。
 - [x] T047 [GATE] [US4] 提交推送 T042～T046 並通知主對話審查；通過後由全新 agent 獨立驗收 US4 驗收情境 1～5、FR-005、SC-001 的程式行為（含置頂與 ID 防呆的否決條件；只給驗收條件與否決條件）。**審查與驗收通過前不得執行下一個任務的真實網站手動回補。**
-- [x] T048 [GATE] [PO] [US4] 對真實網站手動試跑一次回補（**PO 在場、電腦瀏覽器已登出、只留手機一台登入、在對話親自確認；T047 已審過**）：`python3 poc/kb-mcp/investanchors_import.py --data-dir poc/data-test-articles --max-articles 5`（**獨立測試資料目錄 `poc/data-test-articles/`，不是正式庫**；此時回補在該測試庫首次啟動）。只執行一次、不重跑；確認置頂文章被正確處理、`deferred` 標記、`logged_out=1`、無外洩；結果回報主對話。此任務在部署（T055）之前，**正式排程尚未安裝，不受通用規則 8 影響**；若日後有人在排程安裝後重做此類手動回補，須先依規則 8 處理當日額度。
+- [x] T048 [GATE] [PO] [US4] 對真實網站手動試跑一次回補（**PO 在場、電腦瀏覽器已登出、只留手機一台登入、在對話親自確認；T047 已審過**）：`python3 poc/kb-mcp/investanchors_import.py --data-dir poc/data-test-articles --max-articles 5`（**獨立測試資料目錄 `poc/data-test-articles/`，不是正式庫**；此時回補在該測試庫首次啟動）。只執行一次、不重跑；確認置頂文章被正確處理、`deferred` 標記、`logged_out=1`、無外洩；結果回報主對話。此任務在部署（T055）之前，**正式排程尚未安裝，不受通用規則 8 影響**；若日後有人在排程安裝後重做此類手動回補，須先依規則 8 處理當日額度。**結果（2026-11-16）**：exit 0、登入 1 次、讀 3 頁、抓 5 篇（篇間隔為推論一致，非直接量測）、logged_out=1、未被擋；backfill_state 啟動（cutoff 2026-05-16、next_cursor 4、completed 0）；外洩掃描 0 違規；PO 確認手機定錨仍在登入、Telegram 收到「已補抓 1 篇較早的文章」摘要（逐篇通知則數 PO 未逐一回報）。
 
 **Checkpoint**：US4 完成——半年回補可中斷續跑、完成即停。
 
@@ -154,8 +154,8 @@
 - [x] T050 [P] 在 `poc/kb-mcp/check_scheduled_jobs.py` 新增 `check_investanchors_import(data_dir)` 並補 `poc/kb-mcp/tests/test_check_scheduled_jobs.py`（比照 `check_statement_import`）：讀 `import_runs`，標出 `logged_out=0` 的執行（嚴重）、超過 N 天沒有任何執行紀錄、`blocked_until` 仍生效、`abandoned` 文章數、`id_time_ok=0` 累計、轉寫開關狀態。測試涵蓋各狀態的輸出。
 - [x] T051 [P] 文件收尾：更新根目錄 `CLAUDE.md`（SPECKIT 區塊改指向本功能現況與接手指引、新增教訓紀錄：置頂項清單日期不可靠、ID＝建立時間的觀察與防呆、Playwright 預設訊號處理會先關瀏覽器、通知信連結是追蹤轉址不可跟隨、報告不得含 token、開文章會改已讀、轉寫由預設關閉的開關控制）、`specs/010-.../quickstart.md` 回填實測與上線步驟，並在 quickstart 加**唯讀查詢範例**（`sqlite3 -readonly poc/data/articles.db "select …"`：累積圖片張數、長圖張數〔以抽查工具判定〕、`import_runs` 摘要）供 T057 使用。`docs/spec-intake/` 不動（由主對話維護）。
 - [x] T052 完整回歸：`python3 -m unittest discover -s poc/kb-mcp/tests` 與 `ALPHAVIBE_DATA_DIR=<獨立測試庫> .venv/bin/python3 -m app.tests.test_smoke`（依 CLAUDE.md 的重建步驟），結果對照通用規則 3 的基準：**只允許既有 5 個失敗／錯誤**，貼總數與失敗名單。
-- [ ] T053 [GATE] 全面獨立驗收（全新 agent，非實作者）：對照 spec **全部** User Story 驗收情境（US3 為程式層）、FR-001～020、SC-001～008（SC-001／SC-007 的真實驗證在上線後，此處驗程式行為）、Edge Cases；只給驗收條件與否決條件（含「測試其實沒跑」「宣稱處理 X 但檔案裡找不到」「轉寫開關預設不是關閉」），不給實作過程。FAIL 的條目修好後重驗。
-- [ ] T054 [GATE] 提交推送並通知主對話做**上線前最後審查**。通過後才可進入 T055。
+- [x] T053 [GATE] 全面獨立驗收（全新 agent，非實作者）：對照 spec **全部** User Story 驗收情境（US3 為程式層）、FR-001～020、SC-001～008（SC-001／SC-007 的真實驗證在上線後，此處驗程式行為）、Edge Cases；只給驗收條件與否決條件（含「測試其實沒跑」「宣稱處理 X 但檔案裡找不到」「轉寫開關預設不是關閉」），不給實作過程。FAIL 的條目修好後重驗。
+- [x] T054 [GATE] 提交推送並通知主對話做**上線前最後審查**。通過後才可進入 T055。
 - [ ] T055 [GATE] [PO] 部署與安裝排程：依序提交推送 → 備份（`ops/deploy.sh` 慣例）→ 部署到 `AlphaVibe-prod`（改過 `poc/kb-mcp/*.py` 與 `app/` 需重啟對應正式服務，確認 MCP 連接器已套用）→ 安裝 plist（`launchctl bootstrap`）→ 用 launchd 實跑驗證一次。**部署、安裝與實跑需 PO 在場同意**（涉及正式資料與常駐設定）；**正式庫的轉寫開關維持預設關閉**；回報實際結果，不假設已上線。依賴 T049、T050、T054。
 - [ ] T056 [PO] **PO 待辦**：在 Mac 的 `~/.claude` stock-researcher 白名單手動加入 `search_articles`／`get_article`（不在 repo，agent 不修改 `~/.claude` 設定）。依賴 T055。
 

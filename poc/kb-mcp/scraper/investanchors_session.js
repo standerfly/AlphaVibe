@@ -21,6 +21,25 @@ const LOGOUT_RE_SRC = '登出|log\\s*-?out|sign\\s*-?out';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rnd = (a, b) => a + Math.random() * (b - a);
+
+// 間隔下限（低頻是硬性要求；與 Python 端 investanchors_limits.MIN_PAGE_DELAY_MS 一致）。
+// cfg.delay_ms 低於下限一律夾到下限。唯一繞過：環境變數 INVESTANCHORS_TEST_ALLOW_SHORT_DELAY=1，
+// 僅供假網站測試——正式環境（launchd plist、CLI）不得設定，也沒有任何命令列旗標可調降。
+const MIN_DELAY_MS = 30000;
+const MIN_IMAGE_DELAY_MS = 5000;
+const TEST_ALLOW_SHORT_DELAY_ENV = 'INVESTANCHORS_TEST_ALLOW_SHORT_DELAY';
+function shortDelayAllowed(env) {
+  return ((env || process.env)[TEST_ALLOW_SHORT_DELAY_ENV]) === '1';
+}
+function clampDelay(range, env, minMs) {
+  const min = minMs == null ? MIN_DELAY_MS : minMs;
+  let lo = Number(range && range[0]);
+  let hi = Number(range && range[1]);
+  if (!Number.isFinite(lo)) lo = 30000;
+  if (!Number.isFinite(hi)) hi = Math.max(lo, 90000);
+  if (!shortDelayAllowed(env)) lo = Math.max(lo, min);
+  return [lo, Math.max(hi, lo)];
+}
 const step = (name) => process.stderr.write('[probe] ' + name + '\n');
 const emit = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
 const fact = (name, data) => emit({ type: 'fact', step: name, data });
@@ -74,7 +93,7 @@ async function launchSession(cfg, opts) {
   const baseUrl = String(cfg.base_url || 'https://investanchors.com').replace(/\/+$/, '');
   const baseHost = new URL(baseUrl).host;
   const timeoutMs = cfg.timeout_ms || 30000;
-  const delayRange = cfg.delay_ms || [30000, 90000];
+  const delayRange = clampDelay(cfg.delay_ms || [30000, 90000]);
   const counters = Object.assign({ logins: 0, navigations: 0 }, opts.counters || {});
   const st = {
     blocked: false, logged_in: false, logout_found: false, logged_out: false,
@@ -107,7 +126,7 @@ async function launchSession(cfg, opts) {
   function emitSummary() {
     if (summaryEmitted) return;
     summaryEmitted = true;
-    emit({ type: 'summary', counters, ...st });
+    emit({ type: 'summary', counters, effective_delay_ms: delayRange, ...st });
   }
 
   // 每次（前進用的）導覽都經過這裡：計數、上限、禮貌間隔、被擋偵測。
@@ -364,6 +383,6 @@ async function launchSession(cfg, opts) {
 }
 
 module.exports = {
-  launchSession, ENTRY_PATH, sleep, rnd, step, emit, fact, readStdin, findChromium,
+  launchSession, clampDelay, shortDelayAllowed, MIN_DELAY_MS, MIN_IMAGE_DELAY_MS, ENTRY_PATH, sleep, rnd, step, emit, fact, readStdin, findChromium,
   PW_SEL, EMAIL_SEL, TEXT_INPUT_SEL, BLOCK_URL_RE,
 };

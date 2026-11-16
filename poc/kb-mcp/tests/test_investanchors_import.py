@@ -10,6 +10,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 import article_store  # noqa: E402
+import fake_investanchors_site  # noqa: F401,E402  僅為帶上測試用短間隔環境變數
 import investanchors_import as I  # noqa: E402
 import investanchors_limits  # noqa: E402
 import investanchors_redact  # noqa: E402

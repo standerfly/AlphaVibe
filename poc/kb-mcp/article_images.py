@@ -63,7 +63,8 @@ def download_images(store, article_id, data_dir, sleeper=time.sleep, rng=None, t
             result["failed"].append((img["seq"], "host_not_allowed"))
             continue
         if not first:
-            sleeper(rng.uniform(*investanchors_limits.IMAGE_DELAY_RANGE))
+            sleeper(investanchors_limits.clamp_image_delay_seconds(
+                rng.uniform(*investanchors_limits.IMAGE_DELAY_RANGE)))
         first = False
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})

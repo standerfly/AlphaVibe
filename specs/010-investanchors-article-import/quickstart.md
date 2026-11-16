@@ -70,7 +70,7 @@
 - **T023 真實單篇執行（已完成）**：登入 1 次、讀清單 3 頁；discovered 44、fetched 1、skipped 1（公告）；`logged_out=1`；
   圖片 1 張（1653×993）；外洩檢查 0。資料在 `poc/data-test-articles/`（測試庫，非正式庫）。
 - **程式進度**：T033～T047 程式完成；US3（轉寫）與 US4（回補）已通過全新 agent 獨立驗收（程式行為；真實轉寫模型與
-  真實回補尚未驗證）。T048 真實回補試跑待 PO 在場。T049～T051（plist、巡檢 `check_investanchors_import`、文件）完成後，
+  真實回補尚未驗證）。T048 真實回補試跑已於 2026-11-16 完成（5 篇、logged_out=1、外洩 0）。T049～T051（plist、巡檢 `check_investanchors_import`、文件）完成後，
   剩 T052～T056。
 
 ## 9. 上線步驟（T055，PO 在場同意後依序執行）

@@ -60,7 +60,7 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 全新無持久化 profile 的 Playwright 登入取文、跑完即登出、獨立 `articles.db`、表格圖視覺模型轉寫、
 台股／美股連接器共用唯讀 `search_articles`／`get_article`；需求基線
 `docs/spec-intake/investanchors-import/`，2026-11-14 Accepted）**2026-11-16 現況：T001～T047 程式完成並通過
-獨立驗收；T023 已真實單篇執行；T048 真實回補試跑待 PO；尚未部署、尚未安裝排程**（plist 已備於
+獨立驗收；T023 單篇與 T048 回補試跑（5 篇）已真實執行；尚未部署、尚未安裝排程**（plist 已備於
 `ops/launchd/com.alphavibe.investanchorsimport.plist`，每晚 23:00，T055 才安裝）。
 接手前先讀 `specs/010-investanchors-article-import/quickstart.md` 與 `tasks.md`；
 `setup-plan.sh` 在此分支要加 `SPECIFY_FEATURE=010-investanchors-article-import`。

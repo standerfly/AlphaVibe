@@ -6,6 +6,7 @@
 僅標準庫，Python 3.9 相容。
 """
 import datetime
+import os
 import random
 
 MAX_ARTICLES_PER_RUN = 5
@@ -13,8 +14,31 @@ MAX_LOGINS_PER_DAY = 1
 DELAY_RANGE = (30, 90)            # 篇與篇之間（秒）
 IMAGE_DELAY_RANGE = (5, 15)       # 圖片下載之間（秒）
 MAX_ATTEMPTS_PER_ARTICLE = 3
+# 間隔下限（低頻是硬性要求；Python 與 scraper JS 各自強制，兩邊數值須一致）：
+MIN_PAGE_DELAY_MS = 30000         # 頁／篇之間下限（毫秒）
+MIN_IMAGE_DELAY_SECONDS = 5       # 圖片之間下限（秒）
+# 僅測試用，正式環境（launchd plist、CLI）不得設定：設為 "1" 時略過上述下限，讓假網站測試用小間隔。
+TEST_SHORT_DELAY_ENV = "INVESTANCHORS_TEST_ALLOW_SHORT_DELAY"
 BLOCK_BACKOFF_DAYS = 1
 MAX_LIST_PAGES = 3
+
+
+def short_delay_allowed(environ=None):
+    return (environ if environ is not None else os.environ).get(TEST_SHORT_DELAY_ENV) == "1"
+
+
+def clamp_delay_ms(delay_ms, environ=None):
+    """把 [a,b] 毫秒間隔的兩端夾到 MIN_PAGE_DELAY_MS（有測試環境變數時原樣回傳）。b 不得小於 a。"""
+    lo, hi = int(delay_ms[0]), int(delay_ms[1])
+    if short_delay_allowed(environ):
+        return [lo, hi]
+    lo = max(lo, MIN_PAGE_DELAY_MS)
+    return [lo, max(hi, lo)]
+
+
+def clamp_image_delay_seconds(seconds, environ=None):
+    return seconds if short_delay_allowed(environ) else max(seconds, MIN_IMAGE_DELAY_SECONDS)
+
 
 TZ8 = datetime.timezone(datetime.timedelta(hours=8))
 
@@ -50,7 +74,7 @@ class LimitGuard(object):
 
     def image_delay_seconds(self, rng=None):
         rng = rng or random
-        return rng.uniform(*IMAGE_DELAY_RANGE)
+        return clamp_image_delay_seconds(rng.uniform(*IMAGE_DELAY_RANGE))
 
     def block_until(self, now=None):
         base = now or self.now()

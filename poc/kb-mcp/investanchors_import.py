@@ -158,8 +158,9 @@ class Importer(object):
         self.notifier = notifier or _default_notifier
         self.sleeper = sleeper
         self.rng = rng
-        self.delay_ms = list(delay_ms) if delay_ms else [
-            investanchors_limits.DELAY_RANGE[0] * 1000, investanchors_limits.DELAY_RANGE[1] * 1000]
+        # 下限防呆：低於 30 秒一律夾到 30 秒（測試環境變數除外，見 investanchors_limits）。
+        self.delay_ms = investanchors_limits.clamp_delay_ms(delay_ms if delay_ms else [
+            investanchors_limits.DELAY_RANGE[0] * 1000, investanchors_limits.DELAY_RANGE[1] * 1000])
         self.image_hosts = image_hosts or article_images.DEFAULT_ALLOWED_HOSTS
         self.base_url = base_url or "https://investanchors.com"
         self.timeout_ms = timeout_ms

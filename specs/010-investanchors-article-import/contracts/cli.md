@@ -85,3 +85,10 @@ python3 poc/kb-mcp/article_probe.py --data-dir poc/data --confirm-po-present --c
 - 較早的文章（>7 天）：每次執行合併一則 `📰 定錨補抓：已補抓 N 篇較早的文章`，不列標題。
 - 需介入：`⚠️ 定錨匯入：<類別>`＋一句行動建議（登入失敗／帳號停用／被阻擋已延後／單篇放棄 <id>／頁面結構改變）。不含內文、帳密、cookie。
 - 以 `alert_once(kind,key)` 同日去重。
+
+## 間隔下限防呆（低頻硬性要求）
+
+- 頁／篇間隔下限 **30 秒**（`investanchors_limits.MIN_PAGE_DELAY_MS`＝scraper JS `MIN_DELAY_MS`）、圖片間隔下限 **5 秒**（`MIN_IMAGE_DELAY_SECONDS`／JS `MIN_IMAGE_DELAY_MS`）。低於下限的值一律**夾到下限**，不是拒絕；兩端（Python 與 JS）各自強制。
+- Python：`Importer`／`Reconciler` 建構時夾 `delay_ms`；`article_images.download_images` 實際睡眠夾 ≥5 秒。JS：`investanchors_session.js` 的 `clampDelay()`，生效值寫在 summary 事件的 `effective_delay_ms`。
+- **命令列沒有任何可調降間隔的旗標**（`investanchors_import.py`／`article_probe.py`／`article_reconcile.py`；測試以 parser 旗標斷言守住）。`Importer` 建構子的 `delay_ms` 注入僅供測試。
+- 唯一繞過：環境變數 `INVESTANCHORS_TEST_ALLOW_SHORT_DELAY=1`，**僅測試用，正式環境（launchd plist、shell、CLI）不得設定**；測試端由 `tests/fake_investanchors_site.py` 與 `test_investanchors_import.py` 在 import 時設定並由 scraper 子行程繼承；plist 不含此變數（`test_investanchors_delay_floor.py` 斷言）。

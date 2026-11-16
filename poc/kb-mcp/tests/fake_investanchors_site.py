@@ -6,10 +6,15 @@
 登出模式（沿用四種）。請求紀錄在 `site.log`，另有幾個斷言用的輔助方法。
 """
 import datetime
+import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+
+# 僅測試用：假網站測試要用毫秒級間隔，需略過 30 秒／5 秒下限（正式路徑不得設定此變數）。
+# import 本模組或 test_investanchors_import 的測試行程會自動帶上，並由子行程（scraper）繼承。
+os.environ["INVESTANCHORS_TEST_ALLOW_SHORT_DELAY"] = "1"
 
 EMAIL = "po@example.com"
 PASSWORD = "pw-secret-123"
