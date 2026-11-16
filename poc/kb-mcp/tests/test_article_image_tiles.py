@@ -88,7 +88,9 @@ class SizeReadingTest(unittest.TestCase):
         self.assertIsNone(T.image_size(b"\x89PNG\r\n\x1a\n" + b"\x00" * 3))
         self.assertIsNone(T.image_size(b"\xff\xd8\xff\xe0\x00"))
 
-    def test_real_sample_is_short_image_local_only(self):
+    def test_real_samples_size_readable_and_long_image_rule_consistent_local_only(self):
+        """只讀本機真實樣本的尺寸（不送任何網路）。不假設樣本是短圖或長圖——回補會讓樣本變動，
+        只斷言「尺寸讀得出來」且「長圖判定與定義（高/寬≥1.5 且高≥2000）一致」。"""
         found = []
         if os.path.isdir(REAL_SAMPLE_GLOB_DIR):
             for d in sorted(os.listdir(REAL_SAMPLE_GLOB_DIR)):
@@ -97,11 +99,12 @@ class SizeReadingTest(unittest.TestCase):
                     found.append(p)
         if not found:
             self.skipTest("沒有本機真實樣本")
-        with open(found[0], "rb") as f:                       # 唯讀，只讀尺寸
-            size = T.image_size(f.read())
-        self.assertIsNotNone(size)
-        self.assertFalse(T.is_long_image(*size))
-        self.assertTrue(T.fits_model_limits(*size))
+        for path in found:
+            with open(path, "rb") as f:                       # 唯讀，只讀尺寸
+                size = T.image_size(f.read())
+            self.assertIsNotNone(size)
+            w, h = size
+            self.assertEqual(T.is_long_image(w, h), (h / float(w) >= 1.5 and h >= 2000))
 
 
 class LimitsTest(unittest.TestCase):
