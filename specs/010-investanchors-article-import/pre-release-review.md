@@ -41,7 +41,7 @@
 ### 1.3 新增檔案（76 個，依類別；每檔一行用途）
 
 **ops（1）**
-- `ops/launchd/com.alphavibe.investanchorsimport.plist` — 每晚 23:00 排程；無 RunAtLoad／KeepAlive；帶 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1`；**尚未安裝**（檔內註解）。
+- `ops/launchd/com.alphavibe.investanchorsimport.plist` — 每日 12:30 與 23:00 排程（2026-11-17 起，Q-026）；無 RunAtLoad／KeepAlive；帶 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1`；**尚未安裝**（檔內註解）。
 
 **app（2）**
 - `app/article_deps.py` — 文章庫 FastAPI dependency（未接線）。

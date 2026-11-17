@@ -948,7 +948,7 @@ class RealScraperBackfillTest(unittest.TestCase):
         for r in s.recent_runs(20):
             self.assertLessEqual(r["articles_fetched"], 5)
         self.assertEqual(max(len(set(site.page_log[i:i + 3])) for i in range(0, len(site.page_log), 3)), 3)
-        self.assertEqual(len(site.login_posts()), done + 1)               # 每「天」最多登入 1 次
+        self.assertEqual(len(site.login_posts()), done + 1)               # 此測試的每個「模擬日」只執行一次，故每日登入 1 次
         before = len(site.login_posts())
         h.clock[0] = WED + datetime.timedelta(days=done + 1)
         self.assertEqual(h.go(), 0)

@@ -442,7 +442,7 @@ class RealScraperReconcileTest(unittest.TestCase):
                 break
         self.assertIsNotNone(done, h.out.getvalue())
         self.assertEqual(site.article_requests(), [])             # 一篇文章頁都沒開
-        self.assertEqual(len(site.login_posts()), done + 1)       # 每「天」1 次
+        self.assertEqual(len(site.login_posts()), done + 1)       # 每模擬日 1 次
         self.assertLessEqual(max(len(set(site.page_log[i:i + 3])) for i in range(0, len(site.page_log), 3)), 3)
         self.assertEqual(h.report["missing"], [])
         self.assertEqual(h.report["duplicates"], [])

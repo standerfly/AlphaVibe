@@ -58,7 +58,7 @@ class MultiDayBackfillWithReconcileTest(unittest.TestCase):
                 done = d
                 break
         self.assertIsNotNone(done, h.out.getvalue())
-        # 每「天」登入至多 1 次、每日至多 5 篇
+        # 此 e2e 每個「模擬日」只執行一次：登入 1 次、至多 5 篇（每日上限 2 次見 test_investanchors_limits）
         self.assertTrue(all(n <= 1 for n in daily_logins), daily_logins)
         steps = [fetched_after[0]] + [b - a for a, b in zip(fetched_after, fetched_after[1:])]
         self.assertTrue(all(0 <= s <= 5 for s in steps), steps)
