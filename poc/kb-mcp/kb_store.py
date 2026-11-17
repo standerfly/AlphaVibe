@@ -1027,8 +1027,9 @@ class KBStore:
         `refresh_price_and_valuation`→`auto_score_review`（月營收加速也要
         同一份序列）。沒有快取的話同一份資料一天抓兩次，31 檔就是 62 次
         FinMind 呼叫（CLAUDE.md 2026-07-28 教訓：匿名額度是全域共用池，
-        打光會連累當晚排程）。TTL 預設 20 小時：足以涵蓋同一次排程的兩條
-        路徑，又保證隔天一定重抓（月營收約每月10日更新，日更綽綽有餘）。"""
+        打光會連累當晚排程）。TTL 預設 26 小時（2026-11 由 20 調高：20 < 24 小時排程週期，等於
+        每天必 miss）：涵蓋同一次排程兩條路徑與隔日排程的時間抖動，
+        仍遠短於月營收更新週期（約每月10日更新）。"""
         if not code:
             raise ValueError("code 為必填")
         fetched_at = _now()
@@ -1039,7 +1040,7 @@ class KBStore:
         self.conn.commit()
         return {"saved": True, "code": code, "fetched_at": fetched_at}
 
-    def get_revenue_yoy_cache(self, code, max_age_hours=20):
+    def get_revenue_yoy_cache(self, code, max_age_hours=26):
         row = self.conn.execute(
             "SELECT payload, fetched_at FROM revenue_yoy_cache WHERE code = ?",
             (code,)).fetchone()

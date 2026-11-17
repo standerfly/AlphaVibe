@@ -828,6 +828,9 @@ class FinMindClientTest(unittest.TestCase):
         self.assertIn("hint", out)
 
     def test_get_stock_info_parses_mocked_payload(self):
+        # get_stock_info 有進程內快取，測試前後都要清，避免與其他測試順序相依
+        finmind_client.clear_stock_info_cache()
+        self.addCleanup(finmind_client.clear_stock_info_cache)
         payload = [
             {"industry_category": "半導體業", "stock_id": "2330",
              "stock_name": "台積電", "type": "twse", "date": "2026-07-18"},
@@ -846,6 +849,9 @@ class FinMindClientTest(unittest.TestCase):
         self.assertEqual(out["stocks"][0]["stock_name"], "台積電")
 
     def test_get_stock_info_api_failure(self):
+        finmind_client.clear_stock_info_cache()
+        self.addCleanup(finmind_client.clear_stock_info_cache)
+
         def fail(dataset, stock_id, start_date, token, end_date=None):
             return {"error": "FinMind 呼叫失敗（%s）：模擬斷網" % dataset}
 
