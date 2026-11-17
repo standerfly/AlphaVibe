@@ -27,15 +27,16 @@ def _p(x):
 def _group_md(rows, horizons, title):
     lines = ["### %s" % title, "",
              "| 方向 | 狀態 | 訊號數 | 獨立事件 | 檔數 | " + " | ".join("%d日 超額均值(n)" % h for h in horizons)
-             + " | 20日 報酬均值 vs 基準 |", "|" + "---|" * (6 + len(horizons))]
+             + " | 20日 報酬均值 vs 基準 | 20日 超額 − 無條件超額 |", "|" + "---|" * (7 + len(horizons))]
     for r in rows:
         if r["n"] == 0:
             continue
         cells = ["%s (%d)" % (_p(r["mean_ex%d" % h]), r["n%d" % h]) for h in horizons]
         d20 = "%s vs %s" % (_p(r["mean_ret20"]), _p(r["base_mean_ret20"])) if "mean_ret20" in r else ""
-        lines.append("| %s | %s | %d | %d | %d | %s | %s |" % (
+        dx = "%s（無條件 %s）" % (_p(r.get("delta_ex20")), _p(r.get("base_mean_ex20"))) if "delta_ex20" in r else ""
+        lines.append("| %s | %s | %d | %d | %d | %s | %s | %s |" % (
             DIR_LABEL[r["direction"]], STATE_LABEL[r["state"]], r["n"], r["indep"], r["stocks"],
-            " | ".join(cells), d20))
+            " | ".join(cells), d20, dx))
     return lines + [""]
 
 
@@ -67,11 +68,12 @@ def build_summary(ctx):
     s = ctx["sens_summary"]
     if s:
         L += ["### 敏感度（N∈10/20/60、量比∈1.5/2/3、量縮∈0.5/0.7/0.9；20日超額均值，全期）", "",
-              "| 方向 | 狀態 | 參數組數 | 最小 | 最大 | 正負號一致？ |", "|---|---|---|---|---|---|"]
+              "| 方向 | 狀態 | 參數組數 | 最小 | 最大 | 正負號一致？ | 扣無條件超額後 最小～最大 | 一致？ |", "|---|---|---|---|---|---|---|---|"]
         for r in s:
-            L.append("| %s | %s | %d | %s | %s | %s |" % (
+            L.append("| %s | %s | %d | %s | %s | %s | %s～%s | %s |" % (
                 DIR_LABEL[r["direction"]], STATE_LABEL[r["state"]], r["combos"], _p(r["min"]),
-                _p(r["max"]), "是" if r["same_sign"] else "否（不穩定）"))
+                _p(r["max"]), "是" if r["same_sign"] else "否（不穩定）",
+                _p(r.get("dmin")), _p(r.get("dmax")), "是" if r.get("dsame") else "否（不穩定）"))
         L.append("")
     L += ["### 資料品質", ""]
     for q in ctx["quality"]:

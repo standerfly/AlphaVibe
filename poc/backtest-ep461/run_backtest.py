@@ -24,15 +24,20 @@ def _sha(path):
 
 
 def sens_summary(sens_rows):
-    groups = {}
+    groups, dgroups = {}, {}
     for r in sens_rows:
         if r["period"] != "all" or r["mean_ex"] is None:
             continue
         groups.setdefault((r["direction"], r["state"]), []).append(r["mean_ex"])
+        if r.get("delta_ex") is not None:
+            dgroups.setdefault((r["direction"], r["state"]), []).append(r["delta_ex"])
     out = []
     for (d, st), v in sorted(groups.items()):
+        dv = dgroups.get((d, st)) or [None]
+        dv = [x for x in dv if x is not None] or [0.0]
         out.append({"direction": d, "state": st, "combos": len(v), "min": min(v), "max": max(v),
-                    "same_sign": min(v) > 0 or max(v) < 0})
+                    "same_sign": min(v) > 0 or max(v) < 0,
+                    "dmin": min(dv), "dmax": max(dv), "dsame": min(dv) > 0 or max(dv) < 0})
     return out
 
 

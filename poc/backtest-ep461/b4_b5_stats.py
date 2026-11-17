@@ -73,6 +73,9 @@ def group_table(sigs, base, horizons, cutoff=None, period="all"):
                 bm = bs[h]["ret"]["mean"]
                 row["base_mean_ret%d" % h] = bm
                 row["delta_ret%d" % h] = (r["mean"] - bm) if (r["mean"] is not None and bm is not None) else None
+                bx = bs[h]["ex"]["mean"]  # 同批個股、同期間所有日子的無條件超額
+                row["base_mean_ex%d" % h] = bx
+                row["delta_ex%d" % h] = (e["mean"] - bx) if (e["mean"] is not None and bx is not None) else None
             row["mean_mfe"] = summarize([s["mfe"] for s in g])["mean"]
             row["mean_mae"] = summarize([s["mae"] for s in g])["mean"]
             rows.append(row)
@@ -152,5 +155,6 @@ def sensitivity(series, bmap, base_params, grid_n, grid_vr, grid_shrink, cutoff,
                                     "signals": r["n"], "indep": r["indep"],
                                     "mean_ret": r["mean_ret%d" % h], "mean_ex": r["mean_ex%d" % h],
                                     "median_ex": r["median_ex%d" % h],
+                                    "delta_ex": r["delta_ex%d" % h],
                                     "base_mean_ret": r["base_mean_ret%d" % h]})
     return out
