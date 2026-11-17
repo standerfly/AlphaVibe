@@ -8,15 +8,111 @@ data_dir/finmind_token.txt。無 token 時仍嘗試呼叫（FinMind 匿名有低
 import datetime
 import json
 import os
+import tempfile
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
+try:  # 跨行程檔案鎖（排程與服務可能同時寫計數檔）；非 POSIX 平台退化為只靠原子替換
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None
+
 API_URL = "https://api.finmindtrade.com/api/v4/data"
 TIMEOUT = 15
 
+# ---- 呼叫計數器（2026-11 FinMind 呼叫量優化）-------------------------------
+# 動機：2026-07-28 密集呼叫打光匿名額度，卻沒有任何數字可看「一天到底打了幾次」。
+# 落地：<data_dir>/finmind_call_counts.json，格式
+#   {"YYYY-MM-DD": {"dataset": {"ok": n, "err": n}}}
+# data_dir 傳遞取捨：_fetch 的簽章被大量測試 mock（固定位置參數），不能加參數，
+# 所以用模組層級目錄：set_call_log_dir() 明確指定（優先）；未指定時，公開函式
+# 經 _read_token(data_dir) 順手記住第一個非空 data_dir，既有呼叫端零改動即可生效。
+# 只記 dataset 與成功/失敗次數，絕不記 token、URL 或錯誤內文。寫入失敗一律吞掉。
+CALL_COUNTS_FILENAME = "finmind_call_counts.json"
+_call_log_dir = None
+_call_log_dir_explicit = False
+_call_log_lock = threading.Lock()
+
+
+def set_call_log_dir(data_dir):
+    """明確指定計數檔所在目錄（優先於隱式記住的 data_dir）。傳 None 則還原為未指定。"""
+    global _call_log_dir, _call_log_dir_explicit
+    _call_log_dir = data_dir or None
+    _call_log_dir_explicit = bool(data_dir)
+
+
+def _remember_data_dir(data_dir):
+    global _call_log_dir
+    if data_dir and not _call_log_dir_explicit and not _call_log_dir:
+        _call_log_dir = data_dir
+
+
+def _record_call(dataset, ok):
+    """把一次實際 API 呼叫累加進計數檔。任何錯誤都靜默吞掉，不影響查詢。"""
+    directory = _call_log_dir
+    if not directory:
+        return
+    lock_fh = None
+    tmp_path = None
+    try:
+        path = os.path.join(directory, CALL_COUNTS_FILENAME)
+        today = datetime.date.today().isoformat()
+        with _call_log_lock:
+            if fcntl is not None:
+                lock_fh = open(path + ".lock", "a")
+                fcntl.flock(lock_fh, fcntl.LOCK_EX)
+            counts = {}
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    loaded = json.load(fh)
+                if isinstance(loaded, dict):
+                    counts = loaded
+            except (OSError, ValueError):
+                counts = {}
+            bucket = counts.setdefault(today, {}).setdefault(
+                str(dataset), {"ok": 0, "err": 0})
+            key = "ok" if ok else "err"
+            bucket[key] = int(bucket.get(key, 0)) + 1
+            fd, tmp_path = tempfile.mkstemp(
+                prefix=".finmind_counts.", dir=directory)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(counts, fh, ensure_ascii=False, sort_keys=True)
+            os.replace(tmp_path, path)
+            tmp_path = None
+    except Exception:
+        pass
+    finally:
+        if tmp_path:
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+        if lock_fh is not None:
+            try:
+                lock_fh.close()
+            except Exception:
+                pass
+
+# ---- TaiwanStockInfo 進程內快取 -------------------------------------------
+# 全市場靜態參考表，模組D 每天約 44 次重複查詢。只快取成功且有資料的結果；
+# error／無資料不快取（避免把暫時性失敗固化 24 小時）。key 含 data_dir 與
+# stock_id，不含 token（token 不影響資料內容，也不該進 key）。
+STOCK_INFO_TTL_SECONDS = 24 * 3600
+_stock_info_cache = {}
+_stock_info_cache_lock = threading.Lock()
+
+
+def clear_stock_info_cache():
+    """清除 get_stock_info 快取（測試用，或需要強制重抓時）。"""
+    with _stock_info_cache_lock:
+        _stock_info_cache.clear()
+
 
 def _read_token(data_dir):
+    _remember_data_dir(data_dir)
     token = os.environ.get("FINMIND_TOKEN", "").strip()
     if token:
         return token
@@ -40,6 +136,12 @@ def _fetch(dataset, stock_id, start_date, token, end_date=None):
         params["token"] = token
     url = API_URL + "?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, headers={"User-Agent": "alphavibe-kb-poc"})
+    result = _fetch_raw(req, dataset)
+    _record_call(dataset, "error" not in result)
+    return result
+
+
+def _fetch_raw(req, dataset):
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
@@ -59,6 +161,7 @@ def _days_ago(days):
 
 def get_fundamentals(stock_id, data_dir=None, token=None):
     """回傳個股近期估值指標（PER/PBR/殖利率）與近 6 個月營收。"""
+    _remember_data_dir(data_dir)
     token = token or _read_token(data_dir)
     result = {"stock_id": stock_id, "token_used": bool(token), "errors": []}
 
@@ -119,7 +222,19 @@ def get_stock_info(stock_id=None, data_dir=None, token=None):
 
     TaiwanStockInfo 是靜態參考表，非時間序列，不需要 start_date。
     """
+    _remember_data_dir(data_dir)
     token = token or _read_token(data_dir)
+    cache_key = (data_dir or "", stock_id or "")
+    now = time.time()
+    with _stock_info_cache_lock:
+        hit = _stock_info_cache.get(cache_key)
+        if hit and now - hit[0] < STOCK_INFO_TTL_SECONDS:
+            cached = hit[1]
+            # 回傳深一層的拷貝，避免呼叫端改動污染快取
+            return {"stock_id": cached["stock_id"],
+                    "token_used": bool(token),
+                    "errors": [],
+                    "stocks": [dict(r) for r in cached["stocks"]]}
     result = {"stock_id": stock_id, "token_used": bool(token), "errors": []}
 
     info = _fetch("TaiwanStockInfo", stock_id, None, token)
@@ -136,6 +251,10 @@ def get_stock_info(stock_id=None, data_dir=None, token=None):
             }
             for row in info["data"]
         ]
+        with _stock_info_cache_lock:
+            _stock_info_cache[cache_key] = (time.time(), {
+                "stock_id": result["stock_id"],
+                "stocks": [dict(r) for r in result["stocks"]]})
     else:
         result["errors"].append("TaiwanStockInfo 無資料（代碼是否正確？）")
     return result
@@ -143,6 +262,7 @@ def get_stock_info(stock_id=None, data_dir=None, token=None):
 
 def get_stock_price_history(stock_id, start_date=None, end_date=None, data_dir=None, token=None):
     """查個股股價歷史（OHLC）。start_date 預設近 90 天，end_date 預設今天。"""
+    _remember_data_dir(data_dir)
     token = token or _read_token(data_dir)
     start_date = start_date or _days_ago(90)
     end_date = end_date or datetime.date.today().isoformat()
@@ -194,6 +314,7 @@ def get_revenue_yoy(stock_id, data_dir=None, token=None):
     同一檔可算出 14 筆 YoY，趨勢判斷與「年增率是否加速」才有資料基礎。
     每次仍只打一次 API，不增加 FinMind 額度消耗（見 CLAUDE.md 2026-07-28 教訓）。
     """
+    _remember_data_dir(data_dir)
     token = token or _read_token(data_dir)
     result = {"stock_id": stock_id, "token_used": bool(token), "errors": []}
 
@@ -240,6 +361,7 @@ FOREIGN_INVESTOR_NAMES = ("Foreign_Investor", "Foreign_Dealer_Self")
 
 def get_institutional_trading(stock_id, start_date=None, end_date=None, data_dir=None, token=None):
     """查三大法人買賣超（長表格式：一列一個投資人類別），外加外資淨買賣超加總。"""
+    _remember_data_dir(data_dir)
     token = token or _read_token(data_dir)
     start_date = start_date or _days_ago(30)
     end_date = end_date or datetime.date.today().isoformat()
@@ -282,6 +404,7 @@ def get_per_history(stock_id, days=730, data_dir=None, token=None):
     近期才掛牌的新股資料點會偏少，由呼叫端（review_engine）自行判斷資料
     是否足夠評估，本函式不臆測、不補值。
     """
+    _remember_data_dir(data_dir)
     token = token or _read_token(data_dir)
     result = {"stock_id": stock_id, "token_used": bool(token), "errors": []}
 
@@ -310,6 +433,7 @@ def get_equity_attributable_to_owners(stock_id, data_dir=None, token=None):
     抓近 730 天（財報為季/半年頻率，確保至少涵蓋到最新一期）。取 date 最大
     的一筆當最新值；查無資料回傳 equity=None 並在 errors 說明，不臆測。
     """
+    _remember_data_dir(data_dir)
     token = token or _read_token(data_dir)
     result = {"stock_id": stock_id, "token_used": bool(token), "errors": [],
               "equity": None, "equity_date": None}
@@ -355,6 +479,7 @@ def get_financial_metrics(stock_id, data_dir=None, token=None):
 
     回傳 quarters 依日期升冪；任一資料集失敗時該部分欄位為 None，不臆測。
     """
+    _remember_data_dir(data_dir)
     token = token or _read_token(data_dir)
     result = {"stock_id": stock_id, "token_used": bool(token), "errors": [],
               "quarters": []}
