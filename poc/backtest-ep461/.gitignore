@@ -4,3 +4,4 @@ out/
 finmind_token.txt
 __pycache__/
 *.pyc
+sources/
