@@ -49,7 +49,7 @@ BACKUP_STALE_HOURS = 30
 STATEMENT_STALE_HOURS = 30
 # 單次執行正常幾分鐘內結束；開始超過 1 小時仍沒有結果＝被中斷或卡住
 STATEMENT_UNFINISHED_HOURS = 1
-# 定錨文章匯入（010）排程每晚 23:00 跑；超過這麼多天沒有任何執行紀錄＝排程沒在跑（容許 Mac 睡眠漏跑 2 晚）
+# 定錨文章匯入（010）排程每日 12:30、23:00 各跑一次（2026-11-17 起）；超過這麼多天沒有任何執行紀錄＝排程沒在跑（容許 Mac 睡眠漏跑 2 晚）
 INVESTANCHORS_STALE_DAYS = 3
 
 
@@ -315,6 +315,12 @@ def check_investanchors_import(data_dir):
                 findings.append(("critical", "investanchors_import",
                                  "超過 %d 天沒有任何執行紀錄（最後一次：%s）"
                                  % (INVESTANCHORS_STALE_DAYS, last["started_at"])))
+            import investanchors_limits
+            logins = store.logins_today()
+            if logins > investanchors_limits.MAX_LOGINS_PER_DAY:
+                findings.append(("critical", "investanchors_import",
+                                 "今日登入 %d 次，超過每日上限 %d 次（額度守衛可能失效，請立即停用排程查明）"
+                                 % (logins, investanchors_limits.MAX_LOGINS_PER_DAY)))
             blocked = store.blocked_until()
             if blocked is not None:
                 if blocked.tzinfo is not None:
@@ -343,8 +349,8 @@ def check_investanchors_import(data_dir):
             store.conn.close()
     except sqlite3.OperationalError:
         return [("ok", "investanchors_import", "尚未上線（沒有匯入資料表）")]
-    summary = ("最後執行 %s；轉寫開關 %s；未轉寫 %d 張、已達上限 %d 張；回補 %s"
-               % (last["started_at"], "開" if enabled else "關",
+    summary = ("最後執行 %s；今日登入 %d 次；轉寫開關 %s；未轉寫 %d 張、已達上限 %d 張；回補 %s"
+               % (last["started_at"], logins, "開" if enabled else "關",
                   tc["untranscribed"], tc["exhausted"], bf_text))
     return findings + [("ok", "investanchors_import", summary)]
 

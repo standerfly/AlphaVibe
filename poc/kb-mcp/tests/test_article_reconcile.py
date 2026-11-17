@@ -232,15 +232,29 @@ class ReadOnlyAndLimitsTest(unittest.TestCase):
         self.assertLessEqual(scraper.max_pages_seen, 3)
         self.assertEqual(p["resume_cursor"], 2)
 
-    def test_one_login_per_day_second_run_same_day_is_refused_without_scraper(self):
+    def test_second_run_right_after_first_is_refused_by_min_gap_without_scraper(self):
         scraper, recent, old = two_page_world()
         h = RH(self, scraper)
         h.seed(recent)
         self.assertIn(h.run(), (0, 1))
         self.assertEqual(h.run(), 2)
-        self.assertIn("daily_login_limit", h.out.getvalue())
+        self.assertIn("min_gap", h.out.getvalue())                # 每日 2 次放寬後，緊接著的第二次先被「間隔 6 小時」擋下
         self.assertEqual(len(h.payloads), 1)
         self.assertEqual(h.logins(), 1)                           # 登入計入當日額度（走同一個 LimitGuard）
+
+    def test_two_logins_per_day_third_refused_with_daily_limit_reason(self):
+        scraper, recent, old = two_page_world()
+        h = RH(self, scraper)
+        h.seed(recent)
+        day = WED + datetime.timedelta(days=1)                    # 隔天 00:00（台北）起算
+        for hour, expect_rc_ok in ((6, True), (12, True)):
+            h.clock[0] = day.replace(hour=hour, minute=0)
+            self.assertIn(h.run(), (0, 1))
+        self.assertEqual(len(h.payloads), 2)
+        h.clock[0] = day.replace(hour=20, minute=0)               # 同日第 3 次（間隔足夠，額度用完）
+        self.assertEqual(h.run(["--restart"]), 2)                 # 第二次已掃完；要重掃（需登入）才碰到守衛
+        self.assertIn("daily_login_limit", h.out.getvalue())
+        self.assertEqual(len(h.payloads), 2)
 
     def test_login_shares_the_daily_quota_with_the_importer(self):
         scraper, recent, old = two_page_world()

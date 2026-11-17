@@ -58,7 +58,7 @@
 - `article_reconcile.py` — 與網站清單逐篇核對的唯讀工具（T062 用）。
 - `article_probe.py` — Phase 0 網站探查工具。
 - `investanchors_import.py` — 匯入主流程與 CLI（含回補、轉寫開關、抽查、補轉）。
-- `investanchors_limits.py` — 低頻守衛（每日登入上限、冷卻）。
+- `investanchors_limits.py` — 低頻守衛（每日登入上限、兩次登入最小間隔、冷卻；2026-11-17 起每日 2 次＋間隔 6 小時）。
 - `investanchors_mailbox.py` — Gmail 通知信只當觸發。
 - `investanchors_redact.py` — 輸出脫敏（token 等）。
 - （修改檔見 §1.2）
@@ -182,7 +182,7 @@ launchctl print gui/$(id -u)/com.alphavibe.investanchorsimport | head -20   # �
 ### 3.2 首次用 launchd 實跑驗證一次
 
 - 觸發：`launchctl kickstart gui/$(id -u)/com.alphavibe.investanchorsimport`（不加 `-k`，避免殺掉執行中行程）。
-- **通用規則 8（`tasks.md:25`）**：正式庫的「每日登入 ≤1 次」記在正式庫內。**若在 23:00 前手動 kickstart 實跑，當晚 23:00 排程會被低頻守衛拒絕（同日第二次登入）**——這正是預期的保護，而非錯誤；但要在驗證後告知 PO「今晚排程不會再登入」。反過來：若選擇讓 23:00 的排程當作首次實跑，則不要再手動 kickstart。
+- **通用規則 8（`tasks.md:25`）**：正式庫的「每日登入」額度記在正式庫內（2026-11-17 起上限為 2 次、間隔 ≥6 小時；以下為 1 次時代的敘述，現在須同時考慮間隔：手動實跑後 6 小時內的排程會被 `min_gap` 拒絕，當日已登入 2 次則被 `daily_login_limit` 拒絕）。**若在 23:00 前手動 kickstart 實跑，當晚 23:00 排程會被低頻守衛拒絕（原 1 次上限時為同日第二次登入）**——這正是預期的保護，而非錯誤；但要在驗證後告知 PO「今晚排程不會再登入」。反過來：若選擇讓 23:00 的排程當作首次實跑，則不要再手動 kickstart。
 - 需要的人為條件：PO 在場同意；電腦瀏覽器已登出；通知信（Gmail IMAP 唯讀）觸發或回補未完成才會登入（plist 註解）。**正式庫首次執行時回補啟動，會用掉當日登入額度、讀清單、抓 ≤5 篇**（`--max-articles` 預設值未在 plist 指定；每次 ≤5 篇出自 `tasks.md:22`）。
 - 預期（唯讀檢視，出處 quickstart §10 `quickstart.md:84-99`）：
   ```bash
@@ -208,6 +208,35 @@ launchctl print gui/$(id -u)/com.alphavibe.investanchorsimport | head -20   # �
    （`c9b99f4` 為 010 合併前的 `function/alphavibe` 頂端，出處 §1.1；若部署時 `OLD` 與此不同，以實際印出者為準。此指令會自動 kickstart reportserver，使連接器回到 48／29／8。）
 3. **資料回滾**：`alphavibe.db`／`us_stocks.db`／`flights.db` 不受 010 影響（§2.2），一般不需還原；若要還原以 §2.2 的備份為準，且先停服務。010 自己的資料只有 `<data>/articles.db`、`articles_images/`、`articles_probe/`——**要完全撤銷就刪這三者**（刪除前請 PO 同意；`articles.db` 已納入每日備份，`articles_images/` 與 `articles_probe/` 不在備份內，§6 風險 1）。不要動 `poc/data-test-articles/`（測試庫，`quickstart.md:67` 要求保留）。
 4. 回滾後驗證：§2.4 的 `curl` 預期 404、工具數預期 48／29／8（回到舊版）。
+
+### 3.4 每日 2 次放寬（2026-11-17，PO 決定，Phase 9）部署與回滾（全部未執行）
+
+內容：`MAX_LOGINS_PER_DAY` 1→2、新增 `MIN_LOGIN_GAP_HOURS=6`、plist 排程 12:30＋23:00、健檢「當日登入 >2」critical（見 clarification-log Q-026、tasks Phase 9）。分支 `claude/stnd-investanchors-po-fptqws`，**尚未合併、尚未部署**。
+
+**部署**（PO 在場同意後；程式與排程兩步缺一不可）：
+1. 合併進 `function/alphavibe` 後以 `ops/deploy.sh` 部署（CLAUDE.md「正式環境」節的指令）。排程行程每次執行都重新讀磁碟，程式更新自動生效，無需重啟服務。
+2. **plist 必須重新載入**（`StartCalendarInterval` 改成陣列，launchd 不會自動重讀已 bootstrap 的檔案）：
+   ```bash
+   PLIST=com.alphavibe.investanchorsimport.plist
+   cp /Users/stander/My_project/AlphaVibe-prod/ops/launchd/$PLIST ~/Library/LaunchAgents/$PLIST
+   plutil -lint ~/Library/LaunchAgents/$PLIST
+   launchctl bootout gui/$(id -u)/com.alphavibe.investanchorsimport
+   launchctl bootstrap gui/$(id -u)/ ~/Library/LaunchAgents/$PLIST   # 檢查結束碼；非 0 就先 launchctl print 看狀態，不要盲目重試
+   launchctl print gui/$(id -u)/com.alphavibe.investanchorsimport | grep -A12 "calendar"   # 預期兩個時間點：12:30、23:00
+   ```
+3. 驗證：當天第一個時間點後用唯讀 sqlite 看 `import_runs`（登入次數、`logged_out=1`）；`check_scheduled_jobs.py` 摘要含「今日登入 N 次」。拒絕原因看 `~/Library/Logs/alphavibe-investanchors.log` 的「拒絕登入：daily_login_limit／min_gap:…」。
+- 注意：若當天已用手動 kickstart 登入過，6 小時內的排程時間點會被 `min_gap` 拒絕（預期的保護，不是錯誤）。
+
+**回滾**（改回每日 1 次與單一時間點 23:00）：
+1. 還原程式：`investanchors_limits.py` 的 `MAX_LOGINS_PER_DAY=1`（`MIN_LOGIN_GAP_HOURS` 可留著，1 次上限時無作用），或以 `deploy.sh` 回到 Phase 9 之前的 commit（`bash <(git show origin/function/alphavibe:ops/deploy.sh) <舊 commit>`）。
+2. 還原 plist 為單一時間點（`StartCalendarInterval` 為 dict：Hour 23、Minute 0），重新載入：
+   ```bash
+   launchctl bootout gui/$(id -u)/com.alphavibe.investanchorsimport
+   cp /Users/stander/My_project/AlphaVibe-prod/ops/launchd/com.alphavibe.investanchorsimport.plist ~/Library/LaunchAgents/
+   launchctl bootstrap gui/$(id -u)/ ~/Library/LaunchAgents/com.alphavibe.investanchorsimport.plist
+   ```
+   （順序：先改回程式與 plist 檔案內容，再 bootout／bootstrap；兩步都要檢查結束碼。）
+3. 健檢門檻會隨 `MAX_LOGINS_PER_DAY` 自動回到「當日 >1 為 critical」。資料庫結構未變動，不需資料回滾。
 
 ---
 

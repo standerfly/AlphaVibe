@@ -18,12 +18,12 @@
 **執行前**：PO 把電腦上的定錨網站**先登出**，只保留手機一台登入（網站規定同帳號最多兩台，探查瀏覽器算一台；
 同時登入第三台可能導致帳號被停用）。探查期間不要在電腦開定錨、不要額外做登入測試。結束後確認手機是否仍在線。
 `python3 poc/kb-mcp/article_probe.py --data-dir poc/data --confirm-po-present`；把輸出的結構事實回填
-`research.md` R0 的 P1～P7。PO 已決定（2026-11-14／15）：(a) 排程**每晚 23:00 一天一次**、(b) 表格圖送第三方
+`research.md` R0 的 P1～P7。PO 已決定（2026-11-14／15）：(a) 排程**每晚 23:00 一天一次**（2026-11-17 PO 放寬為每日 2 次：12:30 與 23:00，兩次至少間隔 6 小時，見 clarification-log Q-026）、(b) 表格圖送第三方
 模型 API **已同意**（Q-016）、(c) 轉寫抽查**抽 10 張、由 PO 本人逐格確認、無百分比門檻**。探查後還需回報 PO：
 半年內篇數、每頁篇數與以每天 5 篇回補所需天數（P1／P8；PO 預估約 50～130 篇、11～26 天）、登出機制與名額釋放行為（P2／P2a／P2b）。
 
 ## 3. 轉寫抽查與啟用（**部署後**，FR-018；轉寫開關預設關閉）
-真實圖片要等部署後回補累積（每天最多 5 篇）。累積 ≥10 張且含長圖後：PO 存金鑰（存了不會啟動轉寫）→ `investanchors_import.py --transcribe-sample 10`（只轉寫抽樣的圖、不寫 DB）→ **PO 本人逐格確認**；PO 認可才採用目前模型，不認可則升級模型再抽 10 張，不設百分比門檻 → 通過後 `--enable-transcription` → `--retranscribe` 補轉積壓。結果寫入本檔「實測」節。
+真實圖片要等部署後回補累積（每次最多 5 篇，每日最多 2 次）。累積 ≥10 張且含長圖後：PO 存金鑰（存了不會啟動轉寫）→ `investanchors_import.py --transcribe-sample 10`（只轉寫抽樣的圖、不寫 DB）→ **PO 本人逐格確認**；PO 認可才採用目前模型，不認可則升級模型再抽 10 張，不設百分比門檻 → 通過後 `--enable-transcription` → `--retranscribe` 補轉積壓。結果寫入本檔「實測」節。
 
 ## 4. 回補
 排程啟用後，每次至多 5 篇、分多天自動進行，**只補最近半年**（預估約 11～26 天），更早的標記為 `deferred`；
@@ -106,5 +106,5 @@ sqlite3 -readonly $DB "select value from setting where key='transcribe_enabled';
   - 「下載失敗保留 NULL、下次補抓」只在註解中承諾（`article_images.py:8`、`investanchors_import.py:815`）；`ArticleStore.images_missing_file()`（`article_store.py:426-428`）除測試外**沒有任何呼叫端**（grep `poc/kb-mcp/*.py` 僅此定義）。下載圖片的唯一入口是 `_images`（`investanchors_import.py:809-814`），只在文章剛抓取成功後呼叫（`:773`）。
   - 已抓取（`fetched`）的文章不會被重抓：處理迴圈只接受 `PENDING_STATUSES = ("discovered", "failed")`（`article_store.py:34`；`investanchors_import.py:760-762`）；`--reset-abandoned` 只把 `abandoned` 重置為 `failed`（`article_store.py:245-251`），不適用 `fetched`。
   - `--retranscribe` 只讀本機圖片、不登入、不下載（`investanchors_import.py:341-342`；說明見 `:126-127`），且只處理 `file_path IS NOT NULL` 的圖（`:350`、`article_store.py:469`），圖檔不在就無從轉寫。
-  - 重抓文章本身需登入網站，且受每日 1 次／每次 5 篇限制（`investanchors_limits.MAX_ARTICLES_PER_RUN`，見 `--max-articles` 說明 `investanchors_import.py:113-114`）。
+  - 重抓文章本身需登入網站，且受每日 2 次（間隔 ≥6 小時）／每次 5 篇限制（`investanchors_limits.MAX_ARTICLES_PER_RUN`，見 `--max-articles` 說明 `investanchors_import.py:113-114`）。
   - 最接近的現有行為：只有「剛抓取成功的那次」會下載圖片。若要支援，需新增「對 `fetched` 文章重置並重抓」或「依 `images_missing_file`／檔案不存在補抓」的功能，並由 PO 決定受限流約束。

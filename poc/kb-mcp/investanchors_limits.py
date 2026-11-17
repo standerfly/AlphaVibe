@@ -1,7 +1,9 @@
 """低頻上限常數與守衛（010 FR-007／FR-012，spec 驗收（a））。
 
-**放寬任何一項都須 PO 同意**（寫進 tasks.md 通用規則 5）。本模組刻意不 import `article_store`
-（`LimitGuard` 只要求傳入的 store 有 `logins_today()` 與 `blocked_until()` 兩個方法），
+**放寬任何一項都須 PO 同意**（寫進 tasks.md 通用規則 5）。2026-11-17 PO 決定每日登入上限由 1 次放寬為 2 次
+（只放寬登入次數；每次 ≤5 篇與頁／篇間隔下限不變），並新增「兩次登入至少間隔 6 小時」（Phase 9）。
+本模組刻意不 import `article_store`
+（`LimitGuard` 只要求傳入的 store 有 `logins_today()`、`last_login_started_at()` 與 `blocked_until()` 三個方法），
 這樣 `article_store` 可以反過來引用這裡的常數而不會循環 import。
 僅標準庫，Python 3.9 相容。
 """
@@ -10,7 +12,8 @@ import os
 import random
 
 MAX_ARTICLES_PER_RUN = 5
-MAX_LOGINS_PER_DAY = 1
+MAX_LOGINS_PER_DAY = 2            # 2026-11-17 PO 決定由 1 放寬為 2（排程 12:30、23:00）
+MIN_LOGIN_GAP_HOURS = 6           # 兩次登入（以實際登入開始時間，即 logged_in=1 的 run 的 started_at）至少相隔
 DELAY_RANGE = (30, 90)            # 篇與篇之間（秒）
 IMAGE_DELAY_RANGE = (5, 15)       # 圖片下載之間（秒）
 MAX_ATTEMPTS_PER_ARTICLE = 3
@@ -60,6 +63,11 @@ class LimitGuard(object):
             return False, "blocked_until:%s" % until.isoformat()
         if self.store.logins_today(now) >= MAX_LOGINS_PER_DAY:
             return False, "daily_login_limit"
+        last = self.store.last_login_started_at()
+        if last is not None:
+            earliest = last + datetime.timedelta(hours=MIN_LOGIN_GAP_HOURS)
+            if now < earliest:                    # 剛好滿 6 小時（now == earliest）放行
+                return False, "min_gap:%s" % earliest.isoformat()
         return True, "ok"
 
     def cap_for_run(self, requested=None):

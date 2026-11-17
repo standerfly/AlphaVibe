@@ -26,7 +26,7 @@ JSON Lines 溝通、獨立 store＋`_deps.py` 資料目錄守衛、鑰匙圈取�
 **Testing**: `python3 -m unittest discover -s poc/kb-mcp/tests`；新增 `test_article_store.py`／`test_investanchors_*.py`；以注入 fake（IMAP／scraper／模型／notifier／時鐘）測試，不連真網站；以獨立 `tempfile` data-dir
 **Target Platform**: macOS（PO 的 MacBook，launchd；部署於 `AlphaVibe-prod` worktree，`ops/deploy.sh`）
 **Project Type**: 排程 CLI ＋ 兩個 MCP 唯讀工具（無 STND 網頁頁面，spec 明列不在範圍）
-**Performance Goals**: 無吞吐目標；反向目標——每次 ≤5 篇、每日 ≤1 次登入（每晚 23:00）、篇間隔 30～90 秒隨機（FR-007）；歷史回補只補最近半年（PO 2026-11-15）、最多每天 5 篇，預估約 11～26 天
+**Performance Goals**: 無吞吐目標；反向目標——每次 ≤5 篇、每日 ≤2 次登入（12:30、23:00，兩次至少間隔 6 小時；2026-11-17 由 1 次放寬，見 clarification-log Q-026）、篇間隔 30～90 秒隨機（FR-007）；歷史回補只補最近半年（PO 2026-11-15）、每次 ≤5 篇（每日最多 2 次登入，即每天最多 10 篇），預估約 6～26 天
 **Constraints**: 每次執行結束必登出；不留 cookie／storageState 檔；日誌／通知不含帳密、cookie、全文；失敗同次不重試；被擋→整次中止並延後 ≥1 天
 **Scale/Scope**: 1 位使用者；文章總數待探查（預期數百～數千篇）；單篇約數十 KB 文字＋數張圖
 

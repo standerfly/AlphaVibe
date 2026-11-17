@@ -5,7 +5,7 @@
     <key>Label</key>
     <string>com.alphavibe.investanchorsimport</string>
     <!-- 定錨產業筆記文章自動匯入（specs/010）。正式環境跑獨立 worktree AlphaVibe-prod（見 ops/deploy.sh）；
-         帳密／金鑰一律從鑰匙圈讀取，這裡不放任何秘密。每晚一天一次，只在有新文章線索或回補未完成時才登入。
+         帳密／金鑰一律從鑰匙圈讀取，這裡不放任何秘密。每日兩次（12:30、23:00），每次都只在有新文章線索或回補未完成時才登入。
          尚未安裝：T055 由 PO 在場同意後才 launchctl bootstrap。 -->
     <key>ProgramArguments</key>
     <array>
@@ -26,15 +26,24 @@
         <key>ALPHAVIBE_ALLOW_PRODUCTION_WRITE</key>
         <string>1</string>
     </dict>
-    <!-- 每晚 23:00（PO 決定）。避開既有排程：02:00、03:30、03:45、04:00、06:00、07:45、09:30、17:00、20:15、23:15、週一 10:00。
-         刻意不設 RunAtLoad／KeepAlive：安裝或開機時不得立即登入。 -->
+    <!-- 每日 12:30 與 23:00（2026-11-17 PO 決定：每日登入上限 1→2 次，兩次登入至少間隔 6 小時，守衛在 investanchors_limits.py；
+         每次仍 ≤5 篇、頁／篇間隔下限不變）。避開既有排程：02:00、03:30、03:45、04:00、06:00、07:45、09:30、17:00、20:15、23:15、週一 10:00。
+         刻意不設 RunAtLoad／KeepAlive：安裝或開機時不得立即登入。Mac 睡眠補跑若使兩次間隔不足 6 小時，後一次會被守衛拒絕（aborted_limit）。 -->
     <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>23</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+    <array>
+        <dict>
+            <key>Hour</key>
+            <integer>12</integer>
+            <key>Minute</key>
+            <integer>30</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>23</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
     <key>StandardOutPath</key>
     <string>/Users/stander/Library/Logs/alphavibe-investanchors.log</string>
     <key>StandardErrorPath</key>

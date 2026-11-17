@@ -19,7 +19,7 @@
 2. **不讀鑰匙圈內容**：只用 `keychain_secrets.get_secret()` 在程式內取用；排查只能用「存在與否」（`find-generic-password … >/dev/null && echo ok`），**禁止** `dump-keychain`、`-w`、`-g`。agent 不自行讀取鑰匙圈值。
 3. **每個任務完成的證據**：該任務的測試實跑通過（貼指令與結果摘要）。整體回歸基準（2026-11-15）：`python3 -m unittest discover -s poc/kb-mcp/tests` 共 1407 個測試，**既有 5 個失敗／錯誤與本功能無關**（`test_us_stock_price_client.GetQuoteFallbackTest` 4 個、`test_flight_search.SampleDatesTest.test_covers_requested_number_of_months` 1 個）；不得新增失敗。
 4. **日誌、通知、`last_error`、報告一律不含**帳密、cookie、登入狀態、CSRF token、追蹤 token、文章全文（FR-020、安全與隱私）。
-5. **低頻是硬性要求**（FR-007）：每次 ≤5 篇、每日登入 ≤1 次、頁面間隔 30～90 秒、圖片下載間隔 5～15 秒、被擋後下一次執行延後 ≥1 天；放寬任一項須 PO 同意。
+5. **低頻是硬性要求**（FR-007）：每次 ≤5 篇、每日登入 ≤2 次且兩次至少間隔 6 小時（2026-11-17 PO 由 1 次放寬，Phase 9；歷史任務 T009 等保留原文）、頁面間隔 30～90 秒、圖片下載間隔 5～15 秒、被擋後下一次執行延後 ≥1 天；放寬任一項須 PO 同意。
 6. **推送與審查流程**：每個階段結束時提交、`git pull --rebase origin claude/admiring-ptolemy-1jaw79`、推送，並通知主對話審查（內容：commit、檔案、測試結果、需 PO 決定的事）。不建立或切換分支。
 7. 改了 `poc/kb-mcp/*.py` 後，正式服務要重新部署才生效（`ops/deploy.sh`）；測試通過 ≠ 已上線。
 8. **每日登入上限記在各自的資料庫裡**：手動對真實網站執行時用的是獨立測試資料目錄，與正式庫各算各的。**凡「正式排程已安裝」之後的任何手動真實網站執行**（例如 T062 的逐篇核對、日後的 `--backfill-since`），當天**必須先確認當晚排程不會再登入**（例如當天先停用該 launchd job，或其他方式佔用當日額度），並由 PO 知情同意，否則同一天會登入兩次。T023 與 T048 發生在部署（T055）之前，不受影響。
@@ -163,7 +163,7 @@
 
 ## Phase 8: 上線後——回補累積、轉寫啟用與驗證期
 
-**目的**：部署後回補隨排程自動開始（每天最多 5 篇），圖片逐漸累積；累積到 ≥10 張且含長圖後，才由 PO 存金鑰、抽查、通過後打開轉寫開關並補轉積壓。**轉寫在這之前一律關閉。**
+**目的**：部署後回補隨排程自動開始（每次最多 5 篇，2026-11-17 起每日最多 2 次），圖片逐漸累積；累積到 ≥10 張且含長圖後，才由 PO 存金鑰、抽查、通過後打開轉寫開關並補轉積壓。**轉寫在這之前一律關閉。**
 
 - [ ] T057 [PO] 部署後確認回補已開始並觀察圖片累積：用 quickstart 的唯讀查詢（T051）每隔幾天檢視 `import_runs`（登入次數、`logged_out`、是否被擋）與已下載圖片張數；回補約 20 天完成、圖片隨之累積。**目標：≥10 張且含 ≥1 張長圖**（`--transcribe-sample` 會回報目前數量與是否含長圖）。未達標前不進下一步。依賴 T055。
 - [ ] T058 [PO] **PO 待辦**：累積達標後，把視覺模型 API 金鑰存進鑰匙圈（`security add-generic-password -U -s stnd-investanchors -a vision-api-key -w`，`-a` 後是固定名稱、`-w` 後不接任何東西、互動輸入）；用「存在與否」指令驗證。agent 不讀取其值。**存金鑰不會啟動轉寫**（開關仍關閉，通用規則 10）。依賴 T057。
@@ -213,7 +213,7 @@ T023（首次真實執行）、T048（真實手動回補試跑）、T055（部�
 
 ### 上線與轉寫啟用（分段，轉寫最後才開）
 - **部署前**：US1、US2、US4 與 US3 的**程式**全部通過審查與獨立驗收，再做全面驗收與最後審查，才部署（T055）。部署時轉寫開關**維持關閉**：圖片照常下載、標 `untranscribed`、不呼叫模型。
-- **部署後**：回補隨排程自動開始（每天最多 5 篇，約 20 天），圖片逐漸累積。累積 ≥10 張且含長圖後，PO 存金鑰（不會啟動轉寫）→ 抽樣 10 張轉寫並逐格確認 → 通過才打開開關 → `--retranscribe` 補轉積壓。不通過則升級模型再抽。
+- **部署後**：回補隨排程自動開始（每次最多 5 篇；2026-11-17 起每日 2 次，約 10 天），圖片逐漸累積。累積 ≥10 張且含長圖後，PO 存金鑰（不會啟動轉寫）→ 抽樣 10 張轉寫並逐格確認 → 通過才打開開關 → `--retranscribe` 補轉積壓。不通過則升級模型再抽。
 - 這樣 PO 存金鑰與模型準確度驗證之間不會有「夜間排程偷偷開始轉寫」的空窗。
 
 ### 風險提醒
@@ -239,3 +239,16 @@ T023（首次真實執行）、T048（真實手動回補試跑）、T055（部�
 | 9 | T062 | 回補完成後的 SC-001 逐篇核對：在場、只留手機一台、**當天先停用夜間排程再執行**（通用規則 8） | 回補完成後 |
 | 10 | T063 | 上線驗證期（≥2 週）觀察與回報；必要時調整每週核對頻率（R12）或加時間窗守衛 | 上線後 |
 | 11 | T034 | （條件式）若切片實作需新增 Pillow 等依賴，由 PO 決定 | US3 程式階段 |
+
+---
+
+## Phase 9: 每日登入 2 次放寬（2026-11-17，PO 決定，clarification-log Q-026）
+
+**範圍**：只放寬登入次數（1→2）並新增兩次登入至少間隔 6 小時；每次 ≤5 篇、頁／篇間隔下限、被擋延後、回補完成條件、游標、deferred、reconcile 語意不變。**不部署、不安裝 plist**（部署與回滾見 `pre-release-review.md` §3.4）。
+
+- [x] T065 `investanchors_limits.py`：`MAX_LOGINS_PER_DAY=2`、新增 `MIN_LOGIN_GAP_HOURS=6`；`LimitGuard.may_login()` 新增間隔檢查（原因 `daily_login_limit`／`min_gap:<最早可登入時間>` 可區分；剛好滿 6 小時放行；跨日也算）；`ArticleStore.last_login_started_at()`（`logged_in=1` 的 run 的 `started_at`，被拒的執行不算）。測試：`test_investanchors_limits.py`（第 3 次拒絕、5h59 拒絕／6h00 放行、跨午夜、失敗登入同樣計入、被拒執行不重設間隔、換日重置、假 scraper 計數）、`test_article_store.py`。
+- [x] T066 plist 改兩個時間點 12:30、23:00（`StartCalendarInterval` 陣列，無 RunAtLoad／KeepAlive），註解更新；與既有排程（02:00、03:30、03:45、04:00、06:00、07:45、09:30、17:00、20:15、23:15、週一 10:00）不衝突。測試：`test_investanchors_plist.py`（兩時間點、間隔與次數符合守衛常數、與 ops/launchd 其他 plist 無相同時間）。
+- [x] T067 `check_scheduled_jobs.check_investanchors_import`：當日登入 >`MAX_LOGINS_PER_DAY` 為 critical；摘要含「今日登入 N 次」；既有 `logged_out=0` critical、3 天無執行 critical 不變。測試：`test_check_scheduled_jobs.py`。
+- [x] T068 回補／匯入行為測試：`test_investanchors_backfill.TwiceDailyTest`（同日兩次游標連續前進不重複不漏抓、每次 ≤5 篇、第三次被拒、6 小時內被拒不登入、換日重置、兩個時間點無新信且回補完成皆不登入）、`test_article_reconcile`（核對共用守衛：緊接第二次 `min_gap`、第 3 次 `daily_login_limit`）。
+- [x] T069 文件同步：clarification-log Q-026（Q-019 註明已更新）、spec／plan／research（R4、R8 更新段）／quickstart／tasks 通用規則 5、pre-release-review（§3.4、通用規則 8 註記）、CLAUDE.md 010 段落；歷史決策紀錄保留原文並註明。
+- [ ] T070 [GATE] [PO] 同意部署 Phase 9（重新 bootout／bootstrap plist），驗證首日兩次登入各 `logged_out=1`。

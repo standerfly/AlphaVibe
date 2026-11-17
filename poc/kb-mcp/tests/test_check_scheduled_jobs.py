@@ -448,6 +448,22 @@ class InvestanchorsImportCheckTest(unittest.TestCase):
         self.assertEqual(self._sev(), ["critical"])
         self.assertIn("未確認登出", self._text())
 
+    def test_two_logins_today_ok_three_critical_and_summary_has_count(self):
+        self._run(0.02)
+        self._run(0.01)
+        findings = self._check()
+        self.assertEqual([f[0] for f in findings], ["ok"])
+        self.assertIn("今日登入 2 次", findings[0][2])
+        self._run(0.0)                                            # 當日第 3 次登入（額度守衛失效的徵兆）
+        self.assertEqual(self._sev(), ["critical"])
+        self.assertIn("今日登入 3 次，超過每日上限 2 次", self._text())
+
+    def test_runs_without_login_do_not_count_toward_daily_logins(self):
+        for h in (0.03, 0.02, 0.01, 0.0):
+            self._run(h, logged_in=0, logged_out=None)
+        self.assertEqual(self._sev(), [])
+        self.assertIn("今日登入 0 次", self._text())
+
     def test_no_login_logged_out_zero_not_flagged(self):
         self._run(5, logged_in=0, logged_out=0)
         self.assertEqual(self._sev(), [])
