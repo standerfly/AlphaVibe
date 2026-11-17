@@ -109,7 +109,7 @@ def main():
         lines.append("結論：沒有任何組合完全吻合。依規格的註記，先查資料（規格那組是手抄的）再查程式；"
                      "把本檔貼回給 Claude。")
     # 資訊：用還原後資料（含配息調整）訊號會不會變
-    adj, _, _ = b1_adjust.load_series(C.BENCH, adjust=True)
+    adj, _ = b1_adjust.load_series(C.BENCH, adjust=True)
     adj_rows = [r for r in adj if START <= r["date"] <= END]
     if adj_rows:
         mode, strict = matched or ("counted", False)

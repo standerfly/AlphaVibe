@@ -11,7 +11,7 @@ DIR_LABEL = {"breakout": "突破", "breakdown": "跌破"}
 
 
 def c3_signals(rows, n=20, vr_min=1.5, vr_win=5, cooldown=5, confirm=5, shrink=0.7,
-               shrink_win=3, cooldown_mode="counted", cooldown_strict=False):
+               shrink_win=3, cooldown_mode="counted", cooldown_strict=True):
     """找出 C3 強訊號。
 
     - 關卡：前 n 日（不含當天）收盤的最高 Level／最低 Floor。收盤>Level 突破、<Floor 跌破。
