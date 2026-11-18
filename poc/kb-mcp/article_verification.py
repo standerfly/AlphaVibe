@@ -37,7 +37,9 @@ MAX_ISSUES_PER_IMAGE = 200
 MAX_WHERE, MAX_FOUND, MAX_EXPECTED = 80, 200, 200
 STORED_CELL_TEXT = 80               # 資料庫 flagged_cells 內 found／expected 的長度（摘要，不存大量文字）
 STORED_CELLS_MAX = 50
-ISSUE_KINDS = ("truncated", "wrong-number", "missing", "extra", "other")
+ISSUE_KINDS = ("truncated", "wrong-number", "missing", "extra", "other", "source-typo")
+SOURCE_TYPO_KIND = "source-typo"      # 原圖本身的筆誤、轉寫已忠實照抄：全部都是它時視同 ok（不 flagged），但留記錄並在 get_article 顯示
+MAX_SOURCE_TYPO_PER_IMAGE = 20
 VERIFIER_RE = re.compile(r"[A-Za-z0-9-]{1,40}")        # 一律 fullmatch
 MAX_REVIEW_IDS = 200
 AUDIT_KIND_IMPORT = "transcription_verification_import"
@@ -73,7 +75,8 @@ def validate_verification(path, store):
     """嚴格驗證 verification.json 並對照資料庫。回傳 plan：
     {verifier, method, entries:[{image_id, verdict, method, verifier, note, cells, transcription_sha256}],
      details:[(image_id, outcome_kind, n_issues)], skipped:{reason:[image_id]},
-     outcome:{"cross_checked":[ids], "flagged":[ids], "partial":[ids]}}
+     outcome:{"cross_checked":[ids], "flagged":[ids], "partial":[ids]}, typo:[ids]}
+    （一張圖的 issues 若**全部**是 source-typo，verdict 視同 ok 並帶 typos 記錄；只要有任何一項不是 source-typo 就照舊 flagged）
     （partial＝ok 但數字／文字兩個檢核家族尚未都通過，狀態不會變成 cross_checked）
     entries 只含「實際要寫」的筆；skipped 含預覽時就可判定略過的（非表格 ok、reviewed、flagged 須 PO 核對）。
     任何問題 → VerificationError（整批拒絕、不寫任何東西）。store 可為唯讀。"""
@@ -98,7 +101,7 @@ def validate_verification(path, store):
     manifest_shas = M._load_manifest_shas(path)
     manifest_tshas = _load_manifest_tshas(path) if manifest_shas is not None else {}
 
-    entries, details, skipped, seen = [], [], {}, set()
+    entries, details, skipped, seen, typo_ids = [], [], {}, set(), []
     outcome = {"cross_checked": [], "flagged": [], "partial": []}
     for idx, it in enumerate(results, 1):
         tag = "第 %d 筆" % idx
@@ -134,6 +137,8 @@ def validate_verification(path, store):
                 _fail("%s：issues 最多 %d 項" % (tag, MAX_ISSUES_PER_IMAGE))
             for j, iss in enumerate(issues, 1):
                 _check_issue(iss, "%s 的第 %d 項疑慮" % (tag, j))
+            if sum(1 for iss in issues if iss["kind"] == SOURCE_TYPO_KIND) > MAX_SOURCE_TYPO_PER_IMAGE:
+                _fail("%s：source-typo 每張圖最多 %d 項" % (tag, MAX_SOURCE_TYPO_PER_IMAGE))
 
         img = store.get_image_by_id(iid)
         if img is None:
@@ -157,6 +162,13 @@ def validate_verification(path, store):
         if article_store.transcription_sha256(img.get("transcription")) != tsha:
             _fail("%s：轉寫在抽查後已被改寫（或抽查的文字尚未匯入資料庫），須重新抽查" % tag)
 
+        typos = None
+        if verdict == "issues" and all(iss["kind"] == SOURCE_TYPO_KIND for iss in issues):
+            # 只有原圖筆誤：轉寫忠實，視同 ok（家族記為通過），但留下記錄（get_article 會顯示提示）
+            typos = [dict({"where": iss["where"], "found": iss["found"][:STORED_CELL_TEXT]},
+                          **({"expected": iss["expected"][:STORED_CELL_TEXT]} if iss.get("expected") else {}))
+                     for iss in issues[:MAX_SOURCE_TYPO_PER_IMAGE]]
+            verdict, issues = "ok", []
         if img["transcription_status"] == "not_table" and verdict == "ok":
             skipped.setdefault("not-table-ok", []).append(iid)         # 非表格圖沒有轉寫文字可「驗證通過」
             continue
@@ -169,10 +181,13 @@ def validate_verification(path, store):
         outcome[kind].append(iid)
         entries.append({"image_id": iid, "verdict": verdict, "method": method, "verifier": verifier,
                         "note": _build_note(issues, method, verifier) if issues else None,
-                        "cells": _build_cells(issues) if issues else None, "transcription_sha256": tsha})
+                        "cells": _build_cells(issues) if issues else None, "transcription_sha256": tsha,
+                        "typos": typos})
+        if typos:
+            typo_ids.append(iid)
         details.append((iid, kind, len(issues)))
     return {"verifier": verifier, "method": method, "entries": entries, "details": details,
-            "skipped": skipped, "outcome": outcome}
+            "skipped": skipped, "outcome": outcome, "typo": typo_ids}
 
 
 def _load_manifest_tshas(results_path):
@@ -230,8 +245,9 @@ def _audit_key_for(plan, now):
 
     def key(result):
         skipped = sum(len(v) for v in result["skipped"].values())
-        return "%s method=%s cross_checked=%d partial=%d flagged=%d skipped=%d" % (
-            stamp, plan["method"], len(result["cross_checked"]), len(result["partial"]), len(result["flagged"]), skipped)
+        return "%s method=%s cross_checked=%d partial=%d flagged=%d source_typo=%d skipped=%d" % (
+            stamp, plan["method"], len(result["cross_checked"]), len(result["partial"]), len(result["flagged"]),
+            len(result["typo"]), skipped)
     return key
 
 
@@ -305,7 +321,7 @@ def build_verify_guide():
    - **每一個數字**都要核對：位數、小數點、千位逗號、正負號／括號、百分號、單位。
    - 檢查有沒有漏列、多出的列、欄位錯位（數字跑到隔壁欄）。
 3. **看不清楚就不要猜**：無法確定的格子，該圖的 `verdict` 必須是 `issues`（**不可寫 ok**），那一項寫 `kind=other`、`found` 以 `uncertain：` 開頭說明原因。
-4. **不得擅自更正原圖的明顯筆誤**：轉寫要忠實於原圖。若你認為原圖本身有筆誤，轉寫照原圖就是對的；請另外寫一項 `kind=other` 說明「原圖筆誤」（這會讓該圖維持待 PO 確認，是刻意的）。
+4. **不得擅自更正原圖的明顯筆誤**：轉寫要忠實於原圖。若你認為原圖本身有筆誤，轉寫照原圖就是對的；請另外寫一項 `kind=source-typo` 說明位置與筆誤（條件與反例見下方 `issues[].kind` 說明）。
 5. 每張圖給一個結論：
    - `"verdict": "ok"`：**整張圖**每一列每一格你都核對過、沒有任何疑慮。只要有任何一格沒核對或有疑問，就不是 ok。
    - `"verdict": "issues"`：列出你發現的每一項問題（上限 200 項）。
@@ -334,7 +350,9 @@ def build_verify_guide():
 - **限制（請知悉）**：`verifier` 與 `method` 是自報字串，系統無法證明你真的逐格檢查了；因此 reviewed 只能由 PO 設定，PO 頭兩週會逐張核對。請誠實：沒有逐格看完就不要寫 ok。
 - `issues[].where` ≤ 80 字；`found`（轉寫現況）≤ 200 字；`expected`（原圖應為，可省略）≤ 200 字；
   **單行、不得含換行或控制字元**；不得出現任何看起來像金鑰或 token 的字串。
-- `issues[].kind` 只能是：`truncated`（被截斷）、`wrong-number`（數字錯）、`missing`（漏列或漏格）、`extra`（多出的內容）、`other`（其他，含 uncertain 與原圖筆誤）。
+- `issues[].kind` 只能是：`truncated`（被截斷）、`wrong-number`（數字錯）、`missing`（漏列或漏格）、`extra`（多出的內容）、`other`（其他，含 uncertain）、`source-typo`（原圖本身的筆誤，見下）。
+- **`source-typo` 的使用條件（很嚴格）**：只有在「**轉寫與原圖逐字一致**，但**原圖本身顯然有錯**」時才用，例如原圖把名稱欄與代碼欄對調、有明顯錯字。這代表轉寫是對的，所以若**這張圖的所有 issues 都是 `source-typo`**，這張圖視同 ok（不會被標有疑慮），但系統會留下記錄，`get_article` 會在該圖旁顯示「原圖可能有筆誤，請對照原圖」，PO 也會看到。每張圖最多 20 項。
+- **反例（一律不是 source-typo）**：轉寫與原圖**不一致**（漏字、截斷、數字讀錯、多出內容）——這些是轉寫錯誤，請用 `truncated`／`wrong-number`／`missing`／`extra`。**不確定是不是原圖筆誤、或看不清楚，就用 `other`（uncertain），寧可讓它被標有疑慮。** 只要這張圖有任何一項不是 `source-typo`，整張圖照舊標有疑慮。不要為了讓圖通過而把轉寫錯誤改標成 source-typo——這會被 PO 逐張核對時抓出。
 - 不要加其他欄位、不要輸出 manifest 沒有的 `image_id`、不要重複同一個 `image_id`（會整批被拒收）。
 - 寫完後請 PO 預覽匯入（預設只預覽、不寫入）：
   `python3 poc/kb-mcp/investanchors_import.py --data-dir <資料目錄> --import-verification <本資料夾>/verification.json`

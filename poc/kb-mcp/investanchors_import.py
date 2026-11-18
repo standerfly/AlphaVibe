@@ -365,7 +365,8 @@ class Importer(object):
             store.close()
         self.say("已寫入（單一交易）：cross_checked %d 張、僅通過單一家族（維持未驗證／flagged）%d 張、新標 flagged %d 張；略過 %d 張。" % (
             len(result["cross_checked"]), len(result["partial"]), len(result["flagged"]),
-            sum(len(v) for v in result["skipped"].values())))
+            sum(len(v) for v in result["skipped"].values())) + (
+            "（其中 %d 張含原圖筆誤提示）" % len(result["typo"]) if result["typo"] else ""))
         return 0
 
     def _say_verification_plan(self, plan, head):
@@ -373,6 +374,9 @@ class Importer(object):
         self.say("%s：將設為 cross_checked %d 張、僅通過單一家族（尚不納入搜尋）%d 張、flagged %d 張；略過 %d 張（method=%s，verifier=%s）" % (
             head, len(oc["cross_checked"]), len(oc["partial"]), len(oc["flagged"]),
             sum(len(v) for v in sk.values()), plan["method"], plan["verifier"]))
+        if plan["typo"]:
+            self.say("  其中 %d 張只有「原圖筆誤」（source-typo）：視同 ok、不標 flagged，但留下記錄並在 get_article 顯示提示：image_id=%s"
+                     % (len(plan["typo"]), ",".join(str(i) for i in plan["typo"])))
         label = {"cross_checked": "cross_checked", "partial": "單一家族通過（未納入搜尋）", "flagged": "flagged"}
         for iid, kind, n in plan["details"]:
             self.say("  image_id=%d → %s%s" % (iid, label[kind], "（疑慮 %d 項）" % n if n else ""))

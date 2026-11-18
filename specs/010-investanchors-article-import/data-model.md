@@ -75,6 +75,7 @@
 | note | TEXT | flagged：疑慮摘要（數量與 kind 分布、來源）；cross_checked：由 flagged 轉入的記錄；**不含文章標題與全文** |
 | flagged_cells | TEXT（JSON） | flagged：`[{where, kind, found, expected?}]`，最多 50 項、found／expected 各截 80 字 |
 | checks_passed | TEXT | 已通過的檢核家族（`numeric`／`text`／`numeric,text`；NULL＝無）。**兩家族都通過才是 `cross_checked`**；只過一個家族時 `status` 維持 `unverified`（或 `flagged`），這欄記進度；任何 issues 會清空 |
+| source_typos | TEXT（JSON） | 「原圖本身筆誤」位置摘要 `[{where, found, expected?}]`（最多 20 項；跨多次 ok 以 where 去重合併；`get_article` 顯示提示；轉寫重置時隨列刪除）；舊庫缺此欄時視為無 |
 | flag_history | TEXT（JSON） | 曾標過疑慮的 method 清單（僅供追蹤記錄，不參與狀態轉換判斷；轉寫重置時隨列刪除） |
 | checked_at | TEXT | ISO 時間（台北時區） |
 | updates | INTEGER NOT NULL DEFAULT 1 | 該列被更新的累計次數 |

@@ -545,7 +545,7 @@ class EmitVerificationTest(Base):
         import hashlib
         self.assertEqual(pl["results"], [{"image_id": 1, "sha256": "a" * 64, "verdict": "ok",
                                           "transcription_sha256": hashlib.sha256(tbl(BASE).encode("utf-8")).hexdigest()}])
-        self.assertIn("驗證檔 ok 1／issues 0／未輸出 0", out)
+        self.assertIn("驗證檔 ok 1／issues 0／inconclusive 0／未配對 0", out)
 
     def test_high_or_mid_suspect_gives_issues_with_fields(self):
         c = [r[:] for r in BASE]
@@ -559,29 +559,79 @@ class EmitVerificationTest(Base):
         self.assertIn("C1", iss["where"])
         self.assertLessEqual(len(iss["where"]), 80)
 
-    def test_numbers_only_on_one_side_give_issues(self):
+    def test_numbers_only_on_one_side_is_inconclusive_not_issues(self):
+        """只在單邊的數字（C 的結構差異）不是疑慮：不輸出，維持 unverified。"""
         c = BASE + [["新增列", "999,999", "888,888"]]
+        code, out, _e, pl = self.emit({1: tbl(BASE)}, {1: tbl(c)})
+        self.assertEqual(code, 0)
+        self.assertIsNone(pl)
+        self.assertIn("ok 0／issues 0／inconclusive 1／未配對 0", out)
+        self.assertRegex(self.report(), "驗證分類：inconclusive：只在單邊的數字 2 個，無高中疑似錯置")
+
+    def test_issues_list_never_contains_one_sided_numbers(self):
+        c = [r[:] for r in BASE] + [["新增列", "999,999", "888,888"]]
+        c[1][1] = "244,170"
         _c, _o, _e, pl = self.emit({1: tbl(BASE)}, {1: tbl(c)})
         r = self.by_id(pl)[1]
         self.assertEqual(r["verdict"], "issues")
-        self.assertIn("missing", {i["kind"] for i in r["issues"]})
+        self.assertEqual({i["kind"] for i in r["issues"]}, {"wrong-number"})
+        self.assertFalse(any("999" in i["found"] + i.get("expected", "") for i in r["issues"]))
 
-    def test_shape_differs_without_alignment_gives_issues(self):
-        c = [["完全", "不同"], ["x", "1"], ["y", "2"]]
+    def test_cell_level_difference_with_same_multiset_gives_issues(self):
+        c = [r[:] for r in BASE]
+        c[1][1], c[1][2] = c[1][2], c[1][1]               # 兩格互換：數值集合相同、逐格不同
         _c, _o, _e, pl = self.emit({1: tbl(BASE)}, {1: tbl(c)})
-        self.assertEqual(self.by_id(pl)[1]["verdict"], "issues")
+        r = self.by_id(pl)[1]
+        self.assertEqual(r["verdict"], "issues")
+        self.assertRegex(self.report(), "驗證分類：issues：高疑似錯置 0、中疑似錯置 0、逐格數字差異 2、D 存疑格 0")
+
+    def test_two_sources_both_identical_gives_ok_and_one_clean_one_high_gives_issues(self):
+        dres = self.make_d({1: tbl(BASE)})
+        c1 = self.make_c({1: tbl(BASE)}, name="c1.md")
+        c2 = self.make_c({1: tbl(BASE)}, name="c2.md", modes=("table_pipeline",))
+        out = self.path("v.json")
+        code, _o, err = self.run_cli("--d-results", dres, "--c-report", c1, "--c-report", c2, "--out", self.out,
+                                     "--emit-verification", out)
+        self.assertEqual(self.by_id(self.load(out))[1]["verdict"], "ok")
+        bad = [r[:] for r in BASE]
+        bad[1][1] = "244,170"
+        c3 = self.make_c({1: tbl(bad)}, name="c3.md")
+        out2 = self.path("v2.json")
+        self.run_cli("--d-results", dres, "--c-report", c1, "--c-report", c3, "--out", self.out, "--emit-verification", out2)
+        self.assertEqual(self.by_id(self.load(out2))[1]["verdict"], "issues")
+
+    def test_one_clean_source_and_one_inconclusive_source_gives_ok(self):
+        dres = self.make_d({1: tbl(BASE)})
+        c1 = self.make_c({1: tbl(BASE)}, name="c1.md")
+        c2 = self.make_c({1: tbl(BASE + [["雜", "777,777", "666,666"]])}, name="c2.md")      # 這個來源有只在單邊的數字
+        out = self.path("v.json")
+        self.run_cli("--d-results", dres, "--c-report", c1, "--c-report", c2, "--out", self.out, "--emit-verification", out)
+        self.assertEqual(self.by_id(self.load(out))[1]["verdict"], "ok")
+
+    def test_shape_differs_and_header_alignment_fails_is_inconclusive(self):
+        c = [["完全", "不同"], ["x", "1"], ["y", "2"]]
+        code, out, _e, pl = self.emit({1: tbl(BASE)}, {1: tbl(c)})
+        self.assertIsNone(pl)
+        self.assertIn("inconclusive 1", out)
+
+    def test_same_numbers_but_shape_differs_and_alignment_fails_is_inconclusive(self):
+        """多重集合相同，但形狀不同又對齊失敗（標頭文字對不上）→ 不輸出。"""
+        c = [["甲", "2023", "2024"], ["x", "24,417.0", "30,000"], ["y", "20.8%", "21.5%"], ["z", "(1,234)", "5,678"], ["w", "", ""]]
+        code, out, _e, pl = self.emit({1: tbl(BASE)}, {1: tbl(c)})
+        self.assertIsNone(pl)
+        self.assertRegex(self.report(), "驗證分類：inconclusive：形狀不同且標頭對齊失敗")
 
     def test_shape_differs_but_headers_align_and_agree_gives_ok(self):
         c = BASE + [["雜項", "", ""]]            # 多一列但標頭對齊成功、數字一致
         _c, _o, _e, pl = self.emit({1: tbl(BASE)}, {1: tbl(c)})
         self.assertEqual(self.by_id(pl)[1]["verdict"], "ok")
 
-    def test_low_level_format_only_difference_is_not_a_concern(self):
+    def test_format_only_difference_in_same_shape_is_cell_level_difference_so_issues(self):
         c = [r[:] for r in BASE]
-        c[1][1] = "24417"                         # 僅格式（低）
-        _c, _o, _e, pl = self.emit({1: tbl(BASE)}, {1: tbl(c)})
-        # 低等級疑似不納入「高／中」判定，但這是「只在單邊」的數字（24417.0 vs 24417 key 不同）→ 仍視為有疑慮
+        c[1][1] = "24417"                         # 逐格比對下數值 token 不同（24,417.0 vs 24417）→ 逐格數字差異
+        _c, out, _e, pl = self.emit({1: tbl(BASE)}, {1: tbl(c)})
         self.assertEqual(self.by_id(pl)[1]["verdict"], "issues")
+        self.assertRegex(self.report(), "逐格數字差異 1")
 
     def test_d_marked_uncertain_cell_gives_issues(self):
         d = [r[:] for r in BASE]
@@ -615,18 +665,35 @@ class EmitVerificationTest(Base):
     def test_failed_or_unmatched_image_not_emitted(self):
         code, out, _e, pl = self.emit({1: tbl(BASE), 2: tbl(BASE)}, {1: tbl(BASE), 2: tbl(BASE)}, statuses={2: "timeout"})
         self.assertEqual(sorted(self.by_id(pl)), [1])
-        self.assertIn("未輸出 1", out)
+        self.assertIn("ok 1／issues 0／inconclusive 0／未配對 1", out)
         # 全部都比對失敗 → 不產生檔案
         code, out, _e, pl = self.emit({1: tbl(BASE)}, {1: tbl(BASE)}, statuses={1: "timeout"}, name="none.json")
         self.assertIsNone(pl)
         self.assertIn("無可輸出的圖", out)
+        self.assertIn("未配對 1", out)
 
-    def test_d_not_table_but_c_has_content_gives_issues(self):
-        code, _o, err, pl = self.emit({1: ""}, {1: tbl(BASE)}, is_table={1: False})
+    def test_stdout_summary_has_four_counts_for_mixed_images(self):
+        bad = [r[:] for r in BASE]
+        bad[1][1] = "244,170"
+        extra = BASE + [["新增列", "999,999", "888,888"]]
+        code, out, _e, pl = self.emit({1: tbl(BASE), 2: tbl(BASE), 3: tbl(BASE), 4: tbl(BASE)},
+                                      {1: tbl(BASE), 2: tbl(bad), 3: tbl(extra), 4: tbl(BASE)}, statuses={4: "timeout"})
+        self.assertIn("ok 1／issues 1／inconclusive 1／未配對 1", out)
+        self.assertEqual(sorted(self.by_id(pl)), [1, 2])
+
+    def test_d_not_table_but_c_has_content_is_inconclusive_with_report_note(self):
+        code, out, err, pl = self.emit({1: ""}, {1: tbl(BASE)}, is_table={1: False})
         self.assertEqual(code, 0, err)
-        r = self.by_id(pl)[1]
-        self.assertEqual(r["verdict"], "issues")
-        self.assertEqual(r["issues"][0]["kind"], "missing")
+        self.assertIsNone(pl)                                        # 非表格圖不輸出（例如柱狀圖被 C 轉出座標軸文字）
+        self.assertIn("inconclusive 1", out)
+        self.assertRegex(self.report(), "驗證分類：inconclusive：D 判為非表格，不輸出驗證記錄（1 個 C 來源轉出了內容")
+
+    def test_report_has_classification_line_without_title_or_content(self):
+        dres = self.make_d({1: tbl(BASE)})
+        c = self.make_c({1: tbl(BASE)})
+        code, _o, _e = self.run_cli("--d-results", dres, "--c-report", c, "--out", self.out)
+        rep = self.report()
+        self.assertRegex(rep, "驗證分類：ok：C1 與 D 的數值完全一致（只在單邊的數字 0）；僅數字層，不含文字截斷檢查")
 
     def test_d_not_table_and_c_empty_not_emitted(self):
         _c, _o, _e, pl = self.emit({1: ""}, {1: ""}, is_table={1: False})

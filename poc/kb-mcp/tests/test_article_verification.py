@@ -768,7 +768,7 @@ class ImportVerificationTest(VBase):
         self.assertEqual(rc, 0, out)
         rows = self.store().conn.execute("SELECT kind, key FROM alert_log WHERE kind=?", (V.AUDIT_KIND_IMPORT,)).fetchall()
         self.assertEqual(len(rows), 1)
-        self.assertRegex(rows[0]["key"], r"^\d{6} method=agent-spot-check cross_checked=0 partial=1 flagged=1 skipped=0$")
+        self.assertRegex(rows[0]["key"], r"^\d{6} method=agent-spot-check cross_checked=0 partial=1 flagged=1 source_typo=0 skipped=0$")
         self.assertNotIn("機密", rows[0]["key"])
         self.assertEqual(self.store().conn.execute("SELECT COUNT(*) FROM import_runs").fetchone()[0], 0)
 
@@ -1521,6 +1521,127 @@ class ManifestTranscriptionShaTest(VBase):
             path = self.vfile(self.vpayload([self.vitem(self.a)]), folder=folder)
             rc, out = self.run_cli(["--import-verification", path])
             self.assertEqual(rc, 0, (value, out))
+
+
+# ====================================================================== 原圖筆誤（source-typo）
+
+class SourceTypoTest(VBase):
+    TYPO = {"where": "第 3 列第 1 欄", "found": "台績電（代碼欄與名稱欄對調）", "expected": "原圖本身筆誤", "kind": "source-typo"}
+
+    def imp(self, iid, issues, method="agent-spot-check", extra=()):
+        item = self.vitem(iid, "issues", issues)
+        return self.vimport(self.vpayload([item], method=method), ["--apply"] + list(extra))
+
+    def test_all_source_typo_counts_as_ok_family_passes_not_flagged_and_is_visible(self):
+        rc, out = self.imp(self.a, [self.TYPO])
+        self.assertEqual(rc, 0, out)
+        v = self.ver(self.a)
+        self.assertEqual((v["status"], v["checks_passed"]), ("unverified", "text"))      # 文字家族通過，不是 flagged
+        self.assertIsNone(v["flagged_cells"])
+        self.assertEqual(json.loads(v["source_typos"])[0]["where"], "第 3 列第 1 欄")
+        self.assertIn("含原圖筆誤提示", out)
+        rc, out = self.vimport(self.vpayload([self.vitem(self.a)], method="compare-d-c", verifier="tool-x"), ["--apply"])
+        v = self.ver(self.a)
+        self.assertEqual(v["status"], "cross_checked")
+        self.assertIsNotNone(v["source_typos"])                                             # 後續 ok 不會抹掉記錄
+        self.assertEqual(len(self.ro().search_articles("98765")), 1)                        # cross_checked 才納入搜尋
+        text = T.get_article_text(self.ro(), 1)
+        self.assertIn("【原圖可能有筆誤（轉寫已照原圖抄寫），請對照原圖：第 3 列第 1 欄（台績電（代碼欄與名稱欄對調）；疑似應為：原圖本身筆誤）】", text)
+        self.assertNotIn(T.UNVERIFIED_WARNING, text)
+        self.assertNotIn(TITLE, text.split("【原圖可能有筆誤")[1])
+
+    def test_typo_hint_shown_for_every_level_and_connectors_identical(self):
+        self.imp(self.a, [self.TYPO])
+        tw = server.Server(data_dir=self.data)
+        us = us_stock_mcp_server.Server(data_dir=self.data)
+        self.addCleanup(tw.store.close)
+        self.addCleanup(us.store.conn.close)
+        a = tw.call_tool("get_article", {"article_id": 1})
+        self.assertEqual(a, us.call_tool("get_article", {"article_id": 1}))
+        self.assertIn("【原圖可能有筆誤", a)
+        self.assertIn(T.UNVERIFIED_WARNING, a)                       # 單一家族：仍是未驗證，兩種提示並存
+        self.store().apply_mark_reviewed([self.a])
+        self.assertIn("【原圖可能有筆誤", T.get_article_text(self.ro(), 1))
+
+    def test_source_typo_plus_any_other_kind_is_flagged(self):
+        for other in ("truncated", "wrong-number", "missing", "extra", "other"):
+            self.store().set_transcription(1, 1, "done", text="營收 98765 百萬\n毛利率 31%", model="manual:claude-code", is_table=True)
+            rc, out = self.imp(self.a, [self.TYPO, {"where": "第 1 列", "found": "x", "kind": other}])
+            self.assertEqual(rc, 0, out)
+            v = self.ver(self.a)
+            self.assertEqual(v["status"], "flagged", other)
+            self.assertIsNone(v["source_typos"])
+
+    def test_other_alone_is_still_flagged(self):
+        rc, out = self.imp(self.a, [{"where": "第 1 列", "found": "uncertain：看不清楚", "kind": "other"}])
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.status(self.a), "flagged")
+
+    def test_source_typo_limit_is_20_per_image(self):
+        mk = lambda n: [dict(self.TYPO, where="第 %d 列" % i) for i in range(1, n + 1)]
+        rc, out = self.imp(self.a, mk(21))
+        self.assertEqual(rc, 2)
+        self.assertIn("source-typo 每張圖最多 20 項", out)
+        self.assertIsNone(self.ver(self.a))
+        rc, out = self.imp(self.a, mk(20))
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(len(json.loads(self.ver(self.a)["source_typos"])), 20)
+        # 混合時 source-typo 超過 20 一樣拒收
+        rc, out = self.imp(self.b, mk(21) + [{"where": "w", "found": "f", "kind": "other"}])
+        self.assertEqual(rc, 2)
+
+    def test_where_length_limit_unchanged_for_source_typo(self):
+        rc, out = self.imp(self.a, [dict(self.TYPO, where="w" * 81)])
+        self.assertEqual(rc, 2)
+
+    def test_old_verification_json_without_source_typo_still_works(self):
+        rc, out = self.vimport(self.vpayload([self.vitem(self.a, "issues"), self.vitem(self.b)]), ["--apply"])
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.status(self.a), "flagged")
+        self.assertEqual(self.ver(self.b)["checks_passed"], "text")
+        self.assertNotIn("原圖筆誤", out)
+
+    def test_preview_and_audit_count_source_typo(self):
+        item = self.vitem(self.a, "issues", [self.TYPO])
+        before = self.db_bytes()
+        rc, out = self.vimport(self.vpayload([item]))
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.db_bytes(), before)
+        self.assertIn("1 張只有「原圖筆誤」（source-typo）", out)
+        self.assertNotIn("台績電", out)
+        rc, out = self.vimport(self.vpayload([item]), ["--apply"])
+        key = self.store().conn.execute("SELECT key FROM alert_log WHERE kind=?", (V.AUDIT_KIND_IMPORT,)).fetchone()[0]
+        self.assertRegex(key, r"^\d{6} method=agent-spot-check cross_checked=0 partial=1 flagged=0 source_typo=1 skipped=0$")
+        self.assertNotIn("台績電", key)
+
+    def test_rewrite_clears_typo_record_and_flagged_row_keeps_it_out_of_ok_path(self):
+        self.imp(self.a, [self.TYPO])
+        self.store().set_transcription(1, 1, "done", text="新內容 1", model="manual:x", is_table=True)
+        self.assertIsNone(self.ver(self.a))
+        self.verify(self.b, "issues")                                   # flagged 的圖收到 typo-only（視同 ok）→ 照 flagged 規則略過
+        rc, out = self.imp(self.b, [self.TYPO])
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.status(self.b), "flagged")
+        self.assertIsNone(self.ver(self.b)["source_typos"])
+
+    def test_old_table_without_source_typos_column_reads_fine(self):
+        s = self.store()
+        s.apply_verification_batch([{"image_id": self.a, "verdict": "ok", "method": "agent-spot-check", "verifier": "x",
+                                     "note": None, "cells": None, "transcription_sha256": self.tsha(self.a)}])
+        s.conn.execute("ALTER TABLE transcription_verification RENAME TO tv_old")
+        s.conn.execute("CREATE TABLE transcription_verification AS SELECT image_id,status,method,verifier,note,"
+                       "flagged_cells,flag_history,checks_passed,checked_at,updates FROM tv_old")
+        s.conn.execute("DROP TABLE tv_old")
+        s.conn.commit()
+        s.close()
+        ro = self.ro()
+        self.assertEqual(ro.get_verification(self.a)["status"], "unverified")
+        self.assertNotIn("原圖可能有筆誤", T.get_article_text(ro, 1))
+
+    def test_guide_defines_source_typo_conditions_and_counterexamples(self):
+        g = V.build_verify_guide()
+        for need in ("source-typo", "逐字一致", "反例", "寧可讓它被標有疑慮", "最多 20 項"):
+            self.assertIn(need, g)
 
 
 # ====================================================================== CLI 互斥與防呆
