@@ -68,3 +68,13 @@ Anthropic執行長Dario Amodei於2026-09-12發表長文，主張前沿AI實驗�
 ## 六、操作結論（2026-09-15當下）
 
 不需要因這篇文章調整現有台美股部位（AVGO、世芯-KY、及台股半導體矽含量族群的邏輯不變）。CRWD/PANW資安變現題材列入觀察名單，等財報實際拆分ARR數字再決定是否建倉。最需要提高警覺的訊號不是再一篇論述文章，而是：雲端資本支出指引第一次轉向下修，或出口管制/國際協議出現具體立法動作。
+
+## 追蹤更新（2026-11-01）
+
+> 本次掃描「五、後續追蹤指標」7項，僅第6項出現材料變化（明確、可查證、與本文件原記錄不同的新事實）；其餘6項（四大雲端capex guidance方向、客製ASIC出貨佔比、世芯-KY產能鎖定量、BIS出口管制、CRWD/PANW agent security ARR拆分、中美Level 3談判）截至掃描當下僅為既有趨勢延續或法人推估，未達材料變化門檻，不展開記錄。
+
+**指標6（METR等第三方評估機構是否已取得Anthropic承諾的常駐存取權並公開發布評估結果）：已兌現，從「承諾」進入「實際執行且有產出」階段**
+
+- Anthropic於2026-10-15宣布，已讓METR團隊6名研究員取得與公司內部風險評估團隊同等的「員工級」存取權限（內部工具、辦公空間、設備），屬三層評估者授權架構中權限最高的第三層，並明文賦予METR發布權——Anthropic對報告內容無否決權，僅可就少數窄範圍類別（如客戶資料、架構細節）要求刪節（[Security Magazine](https://www.securitymagazine.com/articles/102665-anthropic-gives-metr-team-employee-like-access)）
+- METR已在此架構下於2026-10-20公開發布第一份評估報告——對Anthropic《2026年8月風險報告》「高風險情境下的失準行為」（Misalignment in high-stakes settings）章節的獨立審查。METR結論：同意涵蓋模型的災難性失準風險目前偏低，但強調這個判斷主要建立在模型「現有能力限制」上，而非對Anthropic安全機制能可靠偵測/防止危險行為有信心，明確寫道「現有整體做法不足以確信排除嚴重失準」；本次發布Anthropic未要求任何刪節（[METR部落格原文](https://metr.org/blog/2026-10-20-misalignment-risk-report-august-2026-review)、[PDF報告](https://metr.org/assets/misalignment-risk-report-august-2026-review.pdf)）
+- 對應本文件「核心目標」段落所述駐點評估機制承諾：存取權的授予與不可否決的發布權已從文件原本記錄的「待驗證承諾」變成有具體日期、具體產出的既成事實，但METR報告本身對Anthropic安全機制的保留態度，意味著「自律治理框架公信力已確立」的結論仍不成立，需持續觀察後續評估報告內容與是否出現被要求大幅刪節的案例
