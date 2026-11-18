@@ -377,10 +377,10 @@ def check_investanchors_import(data_dir):
     except sqlite3.OperationalError:
         return [("ok", "investanchors_import", "尚未上線（沒有匯入資料表）")]
     summary = ("最後執行 %s；今日登入 %d 次；轉寫開關 %s；未轉寫 %d 張、已達上限 %d 張；"
-               "未驗證轉寫 %d 張、有疑慮 %d 張、已驗證 %d 張、PO 已核對 %d 張；回補 %s"
+               "未驗證轉寫 %d 張（其中僅通過單一家族 %d 張）、有疑慮 %d 張、已驗證 %d 張、PO 已核對 %d 張；回補 %s"
                % (last["started_at"], logins, "開" if enabled else "關",
                   tc["untranscribed"], tc["exhausted"],
-                  vc["unverified"], vc["flagged"], vc["cross_checked"], vc["reviewed"], bf_text))
+                  vc["unverified"], vc["single_family"], vc["flagged"], vc["cross_checked"], vc["reviewed"], bf_text))
     return findings + [("ok", "investanchors_import", summary)]
 
 

@@ -69,11 +69,12 @@
 | 欄位 | 型別 | 說明 |
 |---|---|---|
 | image_id | INTEGER PK → article_image.id | |
-| status | TEXT NOT NULL | `unverified`（保留值，實務上不寫列）／`flagged`／`cross_checked`／`reviewed` |
+| status | TEXT NOT NULL | `unverified`（沒有列＝unverified；只過單一家族時才會有此值的列）／`flagged`／`cross_checked`（數字＋文字兩家族都通過）／`reviewed`（只由 PO 指令寫入） |
 | method | TEXT | 驗證來源（白名單：`compare-d-c`／`agent-spot-check`／`arithmetic`／`body-crosscheck`；`reviewed` 為 `po-review`）；cross_checked 可累計多個（逗號分隔） |
 | verifier | TEXT | agent／工具名稱（英數連字號）；reviewed 為 `po` |
 | note | TEXT | flagged：疑慮摘要（數量與 kind 分布、來源）；cross_checked：由 flagged 轉入的記錄；**不含文章標題與全文** |
 | flagged_cells | TEXT（JSON） | flagged：`[{where, kind, found, expected?}]`，最多 50 項、found／expected 各截 80 字 |
+| checks_passed | TEXT | 已通過的檢核家族（`numeric`／`text`／`numeric,text`；NULL＝無）。**兩家族都通過才是 `cross_checked`**；只過一個家族時 `status` 維持 `unverified`（或 `flagged`），這欄記進度；任何 issues 會清空 |
 | flag_history | TEXT（JSON） | 曾標過疑慮的 method 清單（防洗白用，只增不減，轉寫重置時才隨列刪除） |
 | checked_at | TEXT | ISO 時間（台北時區） |
 | updates | INTEGER NOT NULL DEFAULT 1 | 該列被更新的累計次數 |
@@ -103,6 +104,7 @@ deferred ──PO 要求補抓（放寬截止日，`--backfill-since`）──�
 - `article_id` 必須是正整數；`id_time_ms` 僅在 ID 為 14 位數且前 13 位換算的時間介於 2020-01-01 與「現在＋1 天」之間時設值，否則 `id_time_ok=0`；URL 必須符合 `^https://(www\.)?investanchors\.com/user/vip_contents/\d+$`（站內路徑才收）。
 - `status='fetched'` ⇔ `body` 非空且長度 ≥ 下限（防殘缺：下限由探查 P6 後定，起始 200 字）。
 - 常數（`investanchors_import.py`／`article_store.py`，2026-11-15 審查決定）：`BACKFILL_TRANSCRIBE_PER_RUN=10`（夜間每次最多補轉幾張舊圖）、`MAX_TRANSCRIBE_ATTEMPTS=3`。補轉順序：`transcribe_attempts` 少的先，再依 article_id／seq；僅 `status=fetched` 文章。`ArticleStore.transcription_counts()` 回 `{"untranscribed", "exhausted"}`（供 T050 健康檢查）。
+- 轉寫驗證（Q-028）：檢核家族——數字家族＝`compare-d-c`／`arithmetic`／`body-crosscheck`，文字家族＝`agent-spot-check`（compare 只比數字，抓不到文字截斷）；驗證匯入的每筆結論帶 `transcription_sha256`（轉寫文字 UTF-8 的 SHA-256，無轉寫文字以空字串計），寫入交易內再核對一次，不符丟 `TranscriptionChanged` 整批 rollback。批次寫入（驗證、核對、轉寫）以 `BEGIN IMMEDIATE` 取得寫入鎖。
 - 轉寫驗證（Q-028）：寫入轉寫（`_write_transcription`，含單筆、整批、`--overwrite`、`--retranscribe`）在同一交易內刪除該圖的驗證列；`reviewed` 只由 `apply_mark_reviewed` 寫入；狀態轉換規則集中於 `article_store.plan_verification_transition`。
 - `transcription` 只含轉寫內容；「機器轉寫」標示一律在輸出時（`get_article`／`search_articles` 片段）加上，不入庫。`untranscribed` 時 `transcription` 必為 NULL（不以空白／猜測充數，FR-017）。
 - 只增不刪：store 不提供 delete 方法；放棄的文章只改 status。

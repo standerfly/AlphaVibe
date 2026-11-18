@@ -542,7 +542,9 @@ class EmitVerificationTest(Base):
         code, out, err, pl = self.emit({1: tbl(BASE)}, {1: tbl(BASE)})
         self.assertEqual(code, 0, err)
         self.assertEqual((pl["version"], pl["method"], pl["verifier"]), (1, "compare-d-c", "compare-transcriptions"))
-        self.assertEqual(pl["results"], [{"image_id": 1, "sha256": "a" * 64, "verdict": "ok"}])
+        import hashlib
+        self.assertEqual(pl["results"], [{"image_id": 1, "sha256": "a" * 64, "verdict": "ok",
+                                          "transcription_sha256": hashlib.sha256(tbl(BASE).encode("utf-8")).hexdigest()}])
         self.assertIn("驗證檔 ok 1／issues 0／未輸出 0", out)
 
     def test_high_or_mid_suspect_gives_issues_with_fields(self):
@@ -701,11 +703,39 @@ class EmitVerificationTest(Base):
         st.set_transcription(7, 1, "done", text=tbl(BASE), model="manual:test", is_table=True)
         iid = st.conn.execute("SELECT id FROM article_image").fetchone()[0]
         payload = {"version": 1, "verifier": "compare-transcriptions", "method": "compare-d-c",
-                   "results": [{"image_id": iid, "sha256": sha, "verdict": "ok"}]}
+                   "results": [{"image_id": iid, "sha256": sha, "verdict": "ok",
+                                "transcription_sha256": article_store.transcription_sha256(tbl(BASE))}]}
         path = self.write("vv/verification.json", payload)
         plan = article_verification.validate_verification(path, st)
         st.close()
-        self.assertEqual(plan["outcome"]["cross_checked"], [iid])
+        self.assertEqual(plan["outcome"]["partial"], [iid])      # compare 只是數字家族；尚缺文字抽查
+        self.assertEqual(plan["outcome"]["cross_checked"], [])
+
+    def test_hash_binds_to_d_text_and_import_rejects_if_db_text_differs(self):
+        """D 文字尚未（或不同於）匯入資料庫時，驗證匯入拒收。"""
+        import article_store
+        import article_verification
+        import hashlib
+        data = os.path.join(self.d, "data2")
+        os.makedirs(os.path.join(data, "articles_images", "7"))
+        raw = b"\x89PNG-fake-bytes"
+        with open(os.path.join(data, "articles_images", "7", "1.png"), "wb") as f:
+            f.write(raw)
+        st = article_store.ArticleStore(data)
+        st.upsert_discovered(7, "https://investanchors.com/user/vip_contents/7", "T", list_date="2026-11-10")
+        st.mark_fetched(7, "內文。" * 100, published_at="2026-11-10T08:00:00+08:00")
+        st.add_image(7, 1, "https://img.example/7-1.png")
+        st.set_image_file(7, 1, "articles_images/7/1.png")
+        st.set_transcription(7, 1, "done", text=tbl(BASE).replace("營收", "營"), model="manual:test", is_table=True)   # 庫內是被改過的版本
+        iid = st.conn.execute("SELECT id FROM article_image").fetchone()[0]
+        sha = hashlib.sha256(raw).hexdigest()
+        _c, _o, _e, pl = self.emit({iid: tbl(BASE)}, {iid: tbl(BASE)})
+        pl["results"][0]["sha256"] = sha
+        path = self.write("vv2/verification.json", pl)
+        with self.assertRaises(article_verification.VerificationError) as cm:
+            article_verification.validate_verification(path, st)
+        self.assertIn("須重新抽查", str(cm.exception))
+        st.close()
 
 
 class MainEntryTest(Base):

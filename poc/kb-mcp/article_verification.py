@@ -42,13 +42,13 @@ MAX_REVIEW_IDS = 200
 AUDIT_KIND_IMPORT = "transcription_verification_import"
 AUDIT_KIND_REVIEWED = "transcription_mark_reviewed"
 _TOP_KEYS = {"version", "verifier", "method", "results"}
-_ITEM_KEYS_REQUIRED = {"image_id", "sha256", "verdict"}
+_ITEM_KEYS_REQUIRED = {"image_id", "sha256", "transcription_sha256", "verdict"}
 _ITEM_KEYS = _ITEM_KEYS_REQUIRED | {"issues"}
 _ISSUE_KEYS_REQUIRED = {"where", "found", "kind"}
 _ISSUE_KEYS = _ISSUE_KEYS_REQUIRED | {"expected"}
 SKIP_REASON_TEXT = {
     "reviewed": "PO 已核對（自動驗證不動它）",
-    "same-method": "防洗白：原 flagged 的來源與本次 method 相同，需換不同來源才能轉 cross_checked",
+    "same-method": "防洗白：本次 method 曾標過疑慮，需換不同來源才能重新檢核",
     "not-table-ok": "非表格圖（無轉寫文字可驗證）",
 }
 
@@ -70,8 +70,10 @@ def _bad_text(s):
 
 def validate_verification(path, store):
     """嚴格驗證 verification.json 並對照資料庫。回傳 plan：
-    {verifier, method, entries:[{image_id, verdict, method, verifier, note, cells}], details:[(image_id, verdict, n_issues)],
-     skipped:{reason:[image_id]}, outcome:{"cross_checked":[ids], "flagged":[ids]}}
+    {verifier, method, entries:[{image_id, verdict, method, verifier, note, cells, transcription_sha256}],
+     details:[(image_id, outcome_kind, n_issues)], skipped:{reason:[image_id]},
+     outcome:{"cross_checked":[ids], "flagged":[ids], "partial":[ids]}}
+    （partial＝ok 但數字／文字兩個檢核家族尚未都通過，狀態不會變成 cross_checked）
     entries 只含「實際要寫」的筆；skipped 含預覽時就可判定略過的（非表格 ok、reviewed、防洗白）。
     任何問題 → VerificationError（整批拒絕、不寫任何東西）。store 可為唯讀。"""
     data = M._load_json_file(path, "verification")
@@ -95,13 +97,13 @@ def validate_verification(path, store):
     manifest_shas = M._load_manifest_shas(path)
 
     entries, details, skipped, seen = [], [], {}, set()
-    outcome = {"cross_checked": [], "flagged": []}
+    outcome = {"cross_checked": [], "flagged": [], "partial": []}
     for idx, it in enumerate(results, 1):
         tag = "第 %d 筆" % idx
         if not isinstance(it, dict):
             _fail("%s：必須是物件" % tag)
         if set(it) - _ITEM_KEYS or _ITEM_KEYS_REQUIRED - set(it):
-            _fail("%s：欄位必須是 image_id／sha256／verdict（verdict=issues 時另有 issues）" % tag)
+            _fail("%s：欄位必須是 image_id／sha256／transcription_sha256／verdict（verdict=issues 時另有 issues）" % tag)
         iid = it["image_id"]
         if not isinstance(iid, int) or isinstance(iid, bool):
             _fail("%s：image_id 必須是整數" % tag)
@@ -112,6 +114,9 @@ def validate_verification(path, store):
         sha = it["sha256"]
         if not isinstance(sha, str) or not M.SHA256_RE.fullmatch(sha):
             _fail("%s：sha256 格式不正確（64 位小寫十六進位）" % tag)
+        tsha = it["transcription_sha256"]
+        if not isinstance(tsha, str) or not M.SHA256_RE.fullmatch(tsha):
+            _fail("%s：transcription_sha256 格式不正確（64 位小寫十六進位）" % tag)
         verdict = it["verdict"]
         if verdict not in ("ok", "issues") or not isinstance(verdict, str):
             _fail("%s：verdict 必須是 ok 或 issues" % tag)
@@ -145,6 +150,8 @@ def validate_verification(path, store):
             _fail("%s：本機圖檔不存在" % tag)
         if M.sha256_file(full) != sha:
             _fail("%s：sha256 與目前圖檔不一致（圖檔可能已變動）" % tag)
+        if article_store.transcription_sha256(img.get("transcription")) != tsha:
+            _fail("%s：轉寫在抽查後已被改寫（或抽查的文字尚未匯入資料庫），須重新抽查" % tag)
 
         if img["transcription_status"] == "not_table" and verdict == "ok":
             skipped.setdefault("not-table-ok", []).append(iid)         # 非表格圖沒有轉寫文字可「驗證通過」
@@ -154,11 +161,12 @@ def validate_verification(path, store):
         if plan["action"] == "skip":
             skipped.setdefault(plan["reason"], []).append(iid)
             continue
-        outcome[plan["status"]].append(iid)
+        kind = "flagged" if verdict == "issues" else ("cross_checked" if plan["status"] == "cross_checked" else "partial")
+        outcome[kind].append(iid)
         entries.append({"image_id": iid, "verdict": verdict, "method": method, "verifier": verifier,
                         "note": _build_note(issues, method, verifier) if issues else None,
-                        "cells": _build_cells(issues) if issues else None})
-        details.append((iid, verdict, len(issues)))
+                        "cells": _build_cells(issues) if issues else None, "transcription_sha256": tsha})
+        details.append((iid, kind, len(issues)))
     return {"verifier": verifier, "method": method, "entries": entries, "details": details,
             "skipped": skipped, "outcome": outcome}
 
@@ -208,8 +216,8 @@ def _audit_key_for(plan, now):
 
     def key(result):
         skipped = sum(len(v) for v in result["skipped"].values())
-        return "%s method=%s ok=%d flagged=%d skipped=%d" % (
-            stamp, plan["method"], len(result["cross_checked"]), len(result["flagged"]), skipped)
+        return "%s method=%s cross_checked=%d partial=%d flagged=%d skipped=%d" % (
+            stamp, plan["method"], len(result["cross_checked"]), len(result["partial"]), len(result["flagged"]), skipped)
     return key
 
 
@@ -287,7 +295,7 @@ def build_verify_guide():
 5. 每張圖給一個結論：
    - `"verdict": "ok"`：**整張圖**每一列每一格你都核對過、沒有任何疑慮。只要有任何一格沒核對或有疑問，就不是 ok。
    - `"verdict": "issues"`：列出你發現的每一項問題（上限 200 項）。
-6. manifest 內每一項都要有對應結果；`sha256` 與 `image_id` 原樣抄 manifest。
+6. manifest 內每一項都要有對應結果；`image_id`、`sha256`、`transcription_sha256` 原樣抄 manifest（`transcription_sha256` 把你的結論綁定在你檢查的那一版轉寫；轉寫在你檢查後被改寫，匯入會整批拒絕）。
 7. 這些圖片來自付費文章：輸出只留在本資料夾，**不要貼到任何公開或第三方的地方**。
 
 ## verification.json 格式（寫在本資料夾）
@@ -298,8 +306,8 @@ def build_verify_guide():
   "verifier": "<你的 agent 名稱>",
   "method": "agent-spot-check",
   "results": [
-    {"image_id": 12, "sha256": "<manifest 內該項的 sha256>", "verdict": "ok"},
-    {"image_id": 13, "sha256": "<...>", "verdict": "issues", "issues": [
+    {"image_id": 12, "sha256": "<manifest 內該項的 sha256>", "transcription_sha256": "<manifest 內該項的 transcription_sha256>", "verdict": "ok"},
+    {"image_id": 13, "sha256": "<...>", "transcription_sha256": "<...>", "verdict": "issues", "issues": [
       {"where": "第 12 列第 5 欄", "found": "廠務", "expected": "（原圖整句備註）", "kind": "truncated"},
       {"where": "第 3 列第 2 欄", "found": "9,876", "expected": "98,76", "kind": "wrong-number"}
     ]}
@@ -308,7 +316,8 @@ def build_verify_guide():
 ```
 
 - `verifier`：必填，你的 agent 名稱，只能用英文字母、數字與連字號 `-`，長度 ≤ 40（例：`cline-sonnet`、`claude-code`）。
-- `method`：寫 `agent-spot-check`。
+- `method`：寫 `agent-spot-check`。這是**文字家族**的檢核：只有「數字家族（compare-d-c、arithmetic、body-crosscheck）」與「文字家族（agent-spot-check）」都通過，轉寫才會成為 cross_checked 並納入搜尋；你的 ok 單獨不會讓它進搜尋。
+- **限制（請知悉）**：`verifier` 與 `method` 是自報字串，系統無法證明你真的逐格檢查了；因此 reviewed 只能由 PO 設定，PO 頭兩週會逐張核對。請誠實：沒有逐格看完就不要寫 ok。
 - `issues[].where` ≤ 80 字；`found`（轉寫現況）≤ 200 字；`expected`（原圖應為，可省略）≤ 200 字；
   **單行、不得含換行或控制字元**；不得出現任何看起來像金鑰或 token 的字串。
 - `issues[].kind` 只能是：`truncated`（被截斷）、`wrong-number`（數字錯）、`missing`（漏列或漏格）、`extra`（多出的內容）、`other`（其他，含 uncertain 與原圖筆誤）。
@@ -381,6 +390,7 @@ def export_verification_task(data_dir, limit=DEFAULT_EXPORT_LIMIT, only_unverifi
             "image_id": img["id"], "article_id": img["article_id"], "seq": img["seq"],
             "path": full, "sha256": digest, "width": w, "height": h, "is_long": is_long,
             "transcription_path": tpath, "line_count": len(lines),
+            "transcription_sha256": article_store.transcription_sha256(img["transcription"]),
             "transcribed_model": img.get("transcribed_model"), "current_verification": status,
             "tile_status": "not_needed", "tile_reason": None, "tiles": [], "view_files": [full],
         }
@@ -406,7 +416,7 @@ def export_verification_task(data_dir, limit=DEFAULT_EXPORT_LIMIT, only_unverifi
     manifest = {
         "version": 1,
         "created_at": (now() if now else datetime.datetime.now(TZ8)).astimezone(TZ8).isoformat(),
-        "note": "本檔不含文章標題與內文；sha256 為原圖檔的 SHA-256，verification.json 須原樣抄回。",
+        "note": "本檔不含文章標題與內文；sha256 為原圖檔的 SHA-256、transcription_sha256 為待查轉寫文字的 SHA-256，verification.json 須原樣抄回。",
         "items": items,
     }
     with open(os.path.join(out_dir, MANIFEST_NAME), "w", encoding="utf-8") as f:

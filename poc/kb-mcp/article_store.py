@@ -14,6 +14,7 @@
 * `last_error` 一律經 `investanchors_redact.safe_error`（FR-020）。
 """
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -42,6 +43,11 @@ TRANSCRIPTION_STATUSES = ("done", "untranscribed", "not_table")
 VERIFICATION_STATUSES = ("unverified", "flagged", "cross_checked", "reviewed")
 SEARCHABLE_VERIFICATION = ("cross_checked", "reviewed")
 VERIFICATION_METHODS = ("compare-d-c", "agent-spot-check", "arithmetic", "body-crosscheck")   # 驗證匯入可用的來源白名單
+# 檢核家族（2026-11-18 獨立驗收後，PO「資料錯誤最嚴重」原則）：cross_checked 需要「數字家族」與「文字家族」都通過。
+# compare 只比數字，抓不到文字截斷（例：「營收」被改成「營」仍判 ok），所以文字家族只認逐字抽查。
+NUMERIC_METHODS = ("compare-d-c", "arithmetic", "body-crosscheck")
+TEXT_METHODS = ("agent-spot-check",)
+FAMILIES = ("numeric", "text")
 PO_REVIEW_METHOD = "po-review"        # 只有 --mark-reviewed 會寫入
 VERIFICATION_TABLE = "transcription_verification"
 
@@ -132,6 +138,7 @@ CREATE TABLE IF NOT EXISTS transcription_verification (
     note TEXT,
     flagged_cells TEXT,
     flag_history TEXT,
+    checks_passed TEXT,
     checked_at TEXT,
     updates INTEGER NOT NULL DEFAULT 1
 );
@@ -178,29 +185,56 @@ def _merge_names(*parts):
     return ",".join(out)
 
 
+def transcription_sha256(text):
+    """轉寫文字的 SHA-256（UTF-8）。驗證結論綁定這個值：轉寫被改寫後，舊的驗證結論不得再套用。
+    沒有轉寫文字（not_table）以空字串計。"""
+    return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
+
+
+class TranscriptionChanged(ValueError):
+    """驗證匯入時，資料庫目前的轉寫文字與抽查時不同（已被改寫）。"""
+
+
+def method_family(method):
+    if method in NUMERIC_METHODS:
+        return "numeric"
+    if method in TEXT_METHODS:
+        return "text"
+    return None
+
+
 def plan_verification_transition(cur, verdict, method):
     """驗證匯入的狀態轉換規則（純函式；預覽與實際寫入共用，保證兩邊判斷一致）。
 
-    cur＝現有驗證列（dict）或 None（＝unverified）；verdict＝'ok'｜'issues'；method＝本次驗證來源。
-    回傳 {"action": "write", "status": ...} 或 {"action": "skip", "reason": ...}。
-    * issues → 一律 flagged（壞消息永遠優先；含把 cross_checked／reviewed 降為 flagged）；
-    * ok → 沒有驗證列或 cross_checked：cross_checked；
+    cur＝現有驗證列（dict）或 None；verdict＝'ok'｜'issues'；method＝本次驗證來源（白名單）。
+    回傳 {"action": "write", "status": ..., "checks": [已通過的家族]} 或 {"action": "skip", "reason": ...}。
+    * issues → 一律 flagged，已通過的家族清空（壞消息永遠優先；含把 cross_checked／reviewed 降為 flagged）；
+    * ok → 該 method 所屬家族記為通過；**數字家族與文字家族都通過才是 cross_checked**，只過一個家族維持
+      原狀態（unverified 或 flagged）並記錄 checks；
       reviewed：略過（PO 核對過的不被自動流程動）；
-      flagged：只有「method 不曾標過疑慮」才可轉 cross_checked（防單一路徑洗白），否則略過。
+      flagged：method 曾標過疑慮者略過（防洗白）；要轉 cross_checked 仍須兩個家族都有「疑慮之後」的新 ok。
     reviewed 絕不會由這個函式產生。"""
+    fam = method_family(method)
+    if fam is None:
+        raise ValueError("未知的驗證 method：%r" % (method,))
     cur_status = cur["status"] if cur else "unverified"
     if verdict == "issues":
-        return {"action": "write", "status": "flagged"}
+        return {"action": "write", "status": "flagged", "checks": []}
     if verdict != "ok":
         raise ValueError("未知的 verdict：%r" % (verdict,))
     if cur_status == "reviewed":
         return {"action": "skip", "reason": "reviewed"}
-    if cur_status == "flagged":
-        history = set(_json_list(cur.get("flag_history")))
-        history.update(n for n in (cur.get("method") or "").split(",") if n)
-        if method in history:
-            return {"action": "skip", "reason": "same-method"}
-    return {"action": "write", "status": "cross_checked"}
+    if cur_status == "flagged" and method in set(_json_list(cur.get("flag_history"))):
+        return {"action": "skip", "reason": "same-method"}
+    checks = set(n for n in ((cur or {}).get("checks_passed") or "").split(",") if n in FAMILIES)
+    if cur_status == "cross_checked":
+        checks = set(FAMILIES)
+    checks.add(fam)
+    if checks >= set(FAMILIES):
+        status = "cross_checked"
+    else:
+        status = "flagged" if cur_status == "flagged" else "unverified"
+    return {"action": "write", "status": status, "checks": [f for f in FAMILIES if f in checks]}
 
 
 class ArticleStore(object):
@@ -227,12 +261,21 @@ class ArticleStore(object):
         if "list_done" not in bcols:        # T042：清單已掃完（停止規則成立），之後只清待辦、不再往舊翻
             self.conn.execute("ALTER TABLE backfill_state ADD COLUMN list_done INTEGER NOT NULL DEFAULT 0")
 
+        vcols = [r[1] for r in self.conn.execute("PRAGMA table_info(transcription_verification)")]
+        if vcols and "checks_passed" not in vcols:   # 開發期建立的早期驗證表
+            self.conn.execute("ALTER TABLE transcription_verification ADD COLUMN checks_passed TEXT")
+
         icols = [r[1] for r in self.conn.execute("PRAGMA table_info(article_image)")]
         if "transcribe_attempts" not in icols:   # 2026-11-15 審查：夜間補轉的失敗累計次數
             self.conn.execute("ALTER TABLE article_image ADD COLUMN transcribe_attempts INTEGER NOT NULL DEFAULT 0")
 
     def close(self):
         self.conn.close()
+
+    def _begin_immediate(self):
+        """批次寫入先取得寫入鎖（BEGIN IMMEDIATE），之後的讀取與寫入在同一個一致的視窗內（避免多寫入者交錯）。"""
+        if not self.conn.in_transaction:
+            self.conn.execute("BEGIN IMMEDIATE")
 
     def now(self):
         return _aware(self._now())
@@ -521,7 +564,7 @@ class ArticleStore(object):
 
     def verification_counts(self):
         """健康檢查／統計用：僅計 status=fetched 文章中已轉寫（done）的圖。
-        回 {"unverified", "flagged", "cross_checked", "reviewed"}；舊庫沒有驗證表＝全部 unverified。"""
+        回 {"unverified", "flagged", "cross_checked", "reviewed", "single_family"}；舊庫沒有驗證表＝全部 unverified。"""
         total = self.conn.execute(
             "SELECT COUNT(*) FROM article_image i JOIN article a ON a.article_id=i.article_id "
             "WHERE a.status='fetched' AND i.transcription_status='done'").fetchone()[0]
@@ -534,16 +577,29 @@ class ArticleStore(object):
                 if r["st"] in out:
                     out[r["st"]] = r["n"]
         out["unverified"] = total - sum(out.values())
+        out["single_family"] = 0       # 未驗證中「只通過單一檢核家族」的張數（unverified 的子集）
+        if self._has_verification_table():
+            out["single_family"] = self.conn.execute(
+                "SELECT COUNT(*) FROM %s v JOIN article_image i ON i.id=v.image_id "
+                "JOIN article a ON a.article_id=i.article_id WHERE a.status='fetched' AND "
+                "i.transcription_status='done' AND v.status='unverified' AND v.checks_passed IS NOT NULL"
+                % VERIFICATION_TABLE).fetchone()[0]
         return out
 
     def apply_verification_batch(self, entries, audit_kind=None, audit_key=None, audit_day=None):
-        """驗證匯入：單一交易、全有或全無。entries＝[{image_id, verdict('ok'|'issues'), method, verifier,
-        note, cells(JSON 字串或 None)}]。每筆依 plan_verification_transition 在**交易內**以最新狀態判斷
-        （預覽之後狀態可能變了）。回傳 {"cross_checked":[ids], "flagged":[ids], "skipped":{reason:[ids]}}。
-        audit_key 可為字串或 callable(result)->字串（稽核只存數量與 method）。"""
-        result = {"cross_checked": [], "flagged": [], "skipped": {}}
+        """驗證匯入：單一交易（BEGIN IMMEDIATE）、全有或全無。entries＝[{image_id, verdict('ok'|'issues'), method,
+        verifier, note, cells(JSON 字串或 None), transcription_sha256}]。每筆在**交易內**以最新狀態判斷
+        （預覽之後狀態可能變了），並確認資料庫目前的轉寫文字 SHA-256 與抽查時一致，不符即丟 TranscriptionChanged
+        （整批 rollback）。回傳 {"cross_checked":[ids], "flagged":[ids], "partial":[ids], "skipped":{reason:[ids]}}；
+        partial＝ok 但兩個檢核家族尚未都通過。audit_key 可為字串或 callable(result)->字串（只存數量與 method）。"""
+        result = {"cross_checked": [], "flagged": [], "partial": [], "skipped": {}}
         try:
+            self._begin_immediate()
             for e in entries:
+                img = self.conn.execute("SELECT transcription_status, transcription FROM article_image WHERE id=?",
+                                        (e["image_id"],)).fetchone()
+                if img is None or transcription_sha256(img["transcription"]) != e["transcription_sha256"]:
+                    raise TranscriptionChanged("轉寫在抽查後已被改寫，須重新抽查")
                 cur = self.conn.execute("SELECT * FROM %s WHERE image_id=?" % VERIFICATION_TABLE,
                                         (e["image_id"],)).fetchone()
                 cur = dict(cur) if cur else None
@@ -553,29 +609,35 @@ class ArticleStore(object):
                     continue
                 status = plan["status"]
                 history = _json_list(cur.get("flag_history")) if cur else []
-                if status == "flagged":
+                checks = ",".join(plan["checks"]) or None
+                if e["verdict"] == "issues":
                     if e["method"] not in history:
                         history.append(e["method"])
                     method, verifier = e["method"], e["verifier"]
                     note, cells = e.get("note"), e.get("cells")
-                else:   # cross_checked
-                    prior_flagged = cur is not None and cur["status"] == "flagged"
-                    if cur is not None and cur["status"] == "cross_checked":
+                    kind = "flagged"
+                else:
+                    kind = "cross_checked" if status == "cross_checked" else "partial"
+                    fresh = cur is None or (cur["status"] == "flagged" and not cur.get("checks_passed"))
+                    if fresh:
+                        method, verifier = e["method"], e["verifier"]
+                    else:
                         method = _merge_names(cur.get("method"), e["method"])
                         verifier = _merge_names(cur.get("verifier"), e["verifier"])
-                    else:
-                        method, verifier = e["method"], e["verifier"]
-                    note, cells = None, None
-                    if prior_flagged:
-                        note = "原 flagged（來源：%s）經不同來源 %s 覆核，轉為 cross_checked" % (
-                            cur.get("method") or "?", e["method"])
+                    note = cells = None
+                    if cur is not None and cur["status"] == "flagged":
+                        if status == "cross_checked":
+                            note = "原 flagged（來源：%s）之後由不同來源重新檢核，數字與文字兩家族皆通過，轉為 cross_checked" % (
+                                ",".join(history) or "?")
+                        else:
+                            note, cells = cur.get("note"), cur.get("flagged_cells")      # 仍是 flagged：疑慮摘要保留
                 self.conn.execute(
                     "INSERT OR REPLACE INTO %s (image_id, status, method, verifier, note, flagged_cells, "
-                    "flag_history, checked_at, updates) VALUES (?,?,?,?,?,?,?,?,?)" % VERIFICATION_TABLE,
+                    "flag_history, checks_passed, checked_at, updates) VALUES (?,?,?,?,?,?,?,?,?,?)" % VERIFICATION_TABLE,
                     (e["image_id"], status, method, verifier, note, cells,
-                     json.dumps(history) if history else None, _iso(self.now()),
+                     json.dumps(history) if history else None, checks, _iso(self.now()),
                      (cur["updates"] + 1) if cur else 1))
-                result[status].append(e["image_id"])
+                result[kind].append(e["image_id"])
             if audit_kind:
                 key = audit_key(result) if callable(audit_key) else (audit_key or "-")
                 day = audit_day or self.now().astimezone(TZ8).date().isoformat()
@@ -592,6 +654,7 @@ class ArticleStore(object):
         圖必須存在且為 done；否則整批 rollback 並丟 ValueError。回傳 {"reviewed":[ids], "was":{status:[ids]}}。"""
         result = {"reviewed": [], "was": {}}
         try:
+            self._begin_immediate()
             for iid in image_ids:
                 img = self.conn.execute("SELECT transcription_status FROM article_image WHERE id=?", (iid,)).fetchone()
                 if img is None or img["transcription_status"] != "done":
@@ -603,9 +666,9 @@ class ArticleStore(object):
                 note = "PO 逐格核對後確認" + ("（原為 flagged，疑慮已由 PO 處理）" if was == "flagged" else "")
                 self.conn.execute(
                     "INSERT OR REPLACE INTO %s (image_id, status, method, verifier, note, flagged_cells, "
-                    "flag_history, checked_at, updates) VALUES (?,?,?,?,?,?,?,?,?)" % VERIFICATION_TABLE,
+                    "flag_history, checks_passed, checked_at, updates) VALUES (?,?,?,?,?,?,?,?,?,?)" % VERIFICATION_TABLE,
                     (iid, "reviewed", PO_REVIEW_METHOD, "po", note, None,
-                     cur.get("flag_history") if cur else None, _iso(self.now()), (cur["updates"] + 1) if cur else 1))
+                     cur.get("flag_history") if cur else None, None, _iso(self.now()), (cur["updates"] + 1) if cur else 1))
                 result["reviewed"].append(iid)
             if audit_kind:
                 key = audit_key(result) if callable(audit_key) else (audit_key or "-")
@@ -685,6 +748,7 @@ class ArticleStore(object):
         for r in rows:
             self._check_transcription(r[2], r[3])
         try:
+            self._begin_immediate()
             for aid, seq, status, text, model, is_table in rows:
                 self._write_transcription(aid, seq, status, text, model, is_table)
             if audit_kind:

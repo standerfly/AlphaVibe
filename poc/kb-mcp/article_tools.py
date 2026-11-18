@@ -57,6 +57,16 @@ def _cell_lines(v):
     return out
 
 
+def _partial_text(v):
+    """只通過單一檢核家族時的說明；cross_checked 需要數字與文字兩個家族都通過。"""
+    checks = set((v or {}).get("checks_passed", "") and v["checks_passed"].split(",") or [])
+    if checks == {"numeric"}:
+        return "檢核進度：已通過數字檢核，尚缺文字抽查（兩個家族都通過才納入搜尋）"
+    if checks == {"text"}:
+        return "檢核進度：已通過文字抽查，尚缺數字檢核（兩個家族都通過才納入搜尋）"
+    return ""
+
+
 def verification_header(img):
     """依驗證等級回傳 (標示行 list)：unverified／flagged＝醒目警告；cross_checked／reviewed＝等級與方法。"""
     status = img.get("verification_status") or "unverified"
@@ -65,6 +75,9 @@ def verification_header(img):
     if status in ("unverified", "flagged"):
         lines = [UNVERIFIED_WARNING,
                  "驗證等級：%s；來源：%s" % (VERIFICATION_LEVEL_TEXT[status], transcription_source(model))]
+        partial = _partial_text(v)
+        if partial:
+            lines.append(partial)
         if status == "flagged":
             if v.get("note"):
                 lines.append("疑慮摘要：%s" % v["note"])
@@ -125,7 +138,8 @@ def format_article(article):
         if status == "done" and img.get("transcription"):
             for hl in verification_header(img):
                 lines.append("  %s" % hl)
-            lines.append("  " + img["transcription"].replace("\n", "\n  "))
+            # 每行加固定前綴「│ 」：轉寫文字內偽造的「【…】」警告樣式行，無法與上方真正的警告標頭混淆
+            lines.append("  │ " + img["transcription"].replace("\n", "\n  │ "))
         elif status == "not_table" and img.get("verification_status") == "flagged":
             lines.append("  %s" % NOT_TABLE_FLAGGED_WARNING)
             v = img.get("verification") or {}

@@ -173,34 +173,46 @@ python3 poc/kb-mcp/compare_transcriptions.py \
 ```mermaid
 flowchart LR
   T["轉寫寫入\n（手動 D／API／--overwrite／--retranscribe）"] --> U["unverified\n（預設）"]
-  U -->|"compare_transcriptions --emit-verification\n或 獨立 agent 抽查"| IV["--import-verification"]
-  IV -->|"verdict=ok"| X["cross_checked"]
-  IV -->|"verdict=issues"| F["flagged"]
-  F -->|"換一種不同 method 的檢核通過"| X
-  X -->|"又被任一來源發現疑慮"| F
+  U -->|"數字家族 ok\ncompare-d-c／arithmetic／body-crosscheck"| P1["unverified\n僅過數字（記 checks_passed）"]
+  U -->|"文字家族 ok\nagent-spot-check"| P2["unverified\n僅過文字（記 checks_passed）"]
+  P1 -->|"文字家族 ok"| X["cross_checked\n（兩家族都通過，納入搜尋）"]
+  P2 -->|"數字家族 ok"| X
+  U -->|"任一來源 issues"| F["flagged"]
+  P1 -->|"issues"| F
+  P2 -->|"issues"| F
+  X -->|"issues"| F
+  F -->|"家族進度清空；兩家族都要有新的 ok\n且 method 不曾標過疑慮"| X
   X -->|"PO 逐格核對原圖\n--mark-reviewed"| R["reviewed"]
   F -->|"PO 處理疑慮後\n--mark-reviewed"| R
   R -->|"有新疑慮"| F
-  U -.->|"重寫轉寫內容＝驗證失效"| U
-  X -.->|"重寫轉寫內容＝驗證失效"| U
-  R -.->|"重寫轉寫內容＝驗證失效"| U
+  U -.->|"重寫轉寫內容＝驗證失效（含 transcription_sha256 不符）"| U
+  X -.->|"重寫轉寫"| U
+  R -.->|"重寫轉寫"| U
 ```
 
-| 等級 | 意義 | 怎麼來 | `search_articles` | `get_article` 單篇顯示 |
+| 等級 | 意義 | 怎麼來 | `search_articles` | `get_article` 單篇顯示（轉寫文字每行前加「│ 」） |
 |---|---|---|---|---|
-| `unverified` | 沒有任何檢核（預設） | 任何新轉寫寫入；舊庫沒有驗證表時全部視為此級 | **不納入** | 顯示轉寫＋醒目警告「【未驗證／有疑慮的圖片轉寫：數字可能有誤，不得用於投資判斷，請對照原圖】」 |
+| `unverified` | 沒有通過兩個檢核家族（預設；舊庫沒有驗證表時全部視為此級） | 任何新轉寫寫入；只過單一家族者列會記 `checks_passed` | **不納入** | 顯示轉寫＋醒目警告「【未驗證／有疑慮的圖片轉寫：數字可能有誤，不得用於投資判斷，請對照原圖】」；只過一個家族者另註「已通過數字檢核，尚缺文字抽查」或「已通過文字抽查，尚缺數字檢核」 |
 | `flagged` | 任一檢核發現疑慮 | `--import-verification` 的 `verdict=issues` | **不納入** | 同上警告＋「疑慮摘要」與前 10 項位置（不含標題） |
-| `cross_checked` | ≥1 個獨立來源檢核通過 | `--import-verification` 的 `verdict=ok` | 納入 | 標示「已交叉驗證」與方法、驗證者、時間；提醒雙來源一致不代表絕對正確 |
+| `cross_checked` | **數字家族與文字家族都通過** | 兩家族各至少一個 `verdict=ok` | 納入 | 標示「已交叉驗證」與方法、驗證者、時間；提醒雙來源一致不代表絕對正確 |
 | `reviewed` | PO 本人逐格核對確認 | **只有** `--mark-reviewed` | 納入 | 標示「PO 已逐格核對」 |
 
-台股與美股連接器輸出逐字相同；**沒有新增 MCP 工具**（台股 50／唯讀 31／美股 10 不變）。標題與內文搜尋不受影響。
+**兩個檢核家族**：數字家族＝`compare-d-c`、`arithmetic`、`body-crosscheck`（任一 ok）；文字家族＝`agent-spot-check`。為什麼要兩個：`compare` 只比數字，**抓不到文字截斷**——獨立驗收實測把 D 的「營收」改成「營」，compare 仍判 ok；備註被截成「廠務」同理。所以單靠 compare（或任何數字檢核）不會讓轉寫進搜尋，必須再有 agent 逐字抽查。這是 PO「資料錯誤最嚴重」原則的落實（Q-028）。
+
+台股與美股連接器輸出逐字相同；**沒有新增 MCP 工具**（台股 50／唯讀 31／美股 10 不變）。標題與內文搜尋不受影響。轉寫文字每行加固定前綴「│ 」，所以轉寫內容裡偽造的「【…】」警告樣式行不會與真正的警告標頭混淆（真正的標頭沒有前綴）。
 
 ### 狀態轉換規則（防呆）
 - **寫入新轉寫一律重置為 `unverified` 並清除舊疑慮記錄**（`--overwrite`、`--retranscribe` 換模型重轉、重新匯入都一樣：內容變了，舊驗證失效；與轉寫在同一交易內，整批 rollback 時驗證也不會被清掉）。被略過、內容沒變的圖，驗證維持。
+- **驗證結論綁定轉寫內容**：匯出的 manifest 每項有 `transcription_sha256`（待查轉寫文字的 SHA-256），verification.json 每筆須原樣帶回；`--import-verification` 對照資料庫**目前**轉寫的 SHA-256，不符整批拒絕（「轉寫在抽查後已被改寫，須重新抽查」），寫入交易內再核對一次。庫內尚無該圖轉寫（例如 D 還沒匯入就先匯入驗證）同樣拒收——順序是：先匯入轉寫、再驗證。
 - `reviewed` **只能**由 PO 的 `--mark-reviewed` 設定；自動流程與 `--import-verification` 都不會寫 reviewed（`method=po-review` 也不在驗證匯入白名單內）。
-- `verdict=issues` 永遠生效（含把 `cross_checked`／`reviewed` 降為 `flagged`）；`verdict=ok` **不會動 `reviewed`**（略過）。
-- **防洗白**：`flagged` 要轉 `cross_checked`，`method` 必須不同於**任何曾標過疑慮的來源**（`flag_history` 累計，不會因為換成別的來源標疑慮而被清掉）；同一路徑重跑一次「ok」不會洗掉疑慮，預覽與結果都會列出略過原因。轉換會記在 `note`。
-- 非表格圖（`not_table`）：`verdict=issues` 會標 `flagged`（例如 C 轉出了表格內容、D 判為非表格），`get_article` 會在該圖下顯示警告；`verdict=ok` 略過（沒有轉寫文字可驗證）。尚未轉寫（`untranscribed`）的圖不接受驗證，整批拒收。
+- `verdict=issues` 永遠生效（含把 `cross_checked`／`reviewed` 降為 `flagged`，並清空已通過的家族）；`verdict=ok` **不會動 `reviewed`**（略過）。
+- **防洗白**：`flagged` 的圖，`method` 曾標過疑慮者不得再 ok（`flag_history` 累計，不會因為換成別的來源標疑慮而被清掉）；**要轉 `cross_checked` 仍須兩個家族都有疑慮之後的新 ok**。同一路徑重跑一次「ok」不會洗掉疑慮；若文字家族唯一的 method（`agent-spot-check`）自己標的疑慮，只能由 PO 核對或重寫轉寫後重來。預覽與結果都會列出略過原因，轉換會記在 `note`。
+- 非表格圖（`not_table`）：`verdict=issues` 會標 `flagged`（例如 C 轉出了表格內容、D 判為非表格），`get_article` 會在該圖下顯示警告；`verdict=ok` 略過。尚未轉寫（`untranscribed`）的圖不接受驗證，整批拒收。
+- 批次寫入（驗證、核對、轉寫）以 `BEGIN IMMEDIATE` 先取得寫入鎖，避免多寫入者交錯；驗證的讀取判斷與寫入在同一個鎖內。
+
+### 已知限制與 PO 的緩解
+- `method` 與 `verifier` 是**自報字串**：系統無法證明 agent 真的逐格檢查了，也無法驗證 `verifier` 的身分。一個不誠實或偷懶的檢核者可以寫 ok。
+- 緩解：(1) `reviewed` **只能由 PO 本人**設定，agent 與自動流程都寫不了；(2) **頭兩週每張轉寫由 PO 逐格核對**（`--mark-reviewed`）；(3) 兩家族設計讓單一路徑無法進搜尋；(4) 驗證結論綁定轉寫內容，改寫後必須重驗。`VERIFY_GUIDE.md` 也對 agent 明講此限制。
 
 ### 資料層（不改既有欄位）
 新增表 `transcription_verification`（見 data-model.md）。MCP 連接器以唯讀（mode=ro）開庫，**部署後正式庫在第一次可寫連線之前可能還沒有這張表**：唯讀查詢遇到表不存在視為「全部 unverified」——搜尋不納入任何轉寫文字、`get_article` 全附警告、健檢全算未驗證，**不出錯、不建表**。表只在可寫連線（匯入排程、`--import-verification --apply`、`--mark-reviewed --apply`）建立。搜尋實作仍是 LIKE：轉寫文字那一支改為「與驗證表 JOIN、僅 `cross_checked`／`reviewed` 且 `transcription_status='done'`」，其餘（標題、全文）不變；沒有 FTS 索引或觸發器需要處理。
@@ -210,17 +222,17 @@ flowchart LR
 python3 poc/kb-mcp/compare_transcriptions.py --d-results <manual-transcribe-資料夾>/results.json \
   --c-report <paddle-eval>.md --out <輸出資料夾> --emit-verification <輸出資料夾>/verification.json
 ```
-- `method=compare-d-c`、`verifier=compare-transcriptions`。判定：該圖在**所有成功比對的 C 來源**都沒有高／中疑似錯置、沒有「只在單邊」的數字、沒有逐格數字差異、D 沒有 `[?]` 存疑格、形狀不同時標頭對齊成功 → `ok`；任何疑慮 → `issues`（`where`／`found`／`expected`／`kind` 由疑似錯置與差異摘要而成）；D 判為非表格而 C 有內容 → `issues`；比對失敗、未配對、兩邊都沒有數字可比的圖**不輸出**（維持 unverified）。
-- **雙來源一致不代表正確**：兩個引擎可能犯同樣的錯；非數字文字差異（例如備註被截斷）**不在判定內**（OCR 雜訊太多）。所以 compare 的 `ok` 只升到 `cross_checked`，文字欄位仍要靠 agent 抽查（流程二）與 PO 核對。
+- `method=compare-d-c`、`verifier=compare-transcriptions`；**只算數字家族**，每筆帶由 D results 的 `text` 計算的 `transcription_sha256`（須與匯入資料庫的文字一致，所以 D 要先 `--import-transcription --apply`，再匯入驗證）。判定：該圖在**所有成功比對的 C 來源**都沒有高／中疑似錯置、沒有「只在單邊」的數字、沒有逐格數字差異、D 沒有 `[?]` 存疑格、形狀不同時標頭對齊成功 → `ok`；任何疑慮 → `issues`（`where`／`found`／`expected`／`kind` 由疑似錯置與差異摘要而成）；D 判為非表格而 C 有內容 → `issues`；比對失敗、未配對、兩邊都沒有數字可比的圖**不輸出**（維持 unverified）。
+- **雙來源一致不代表正確**：兩個引擎可能犯同樣的錯；非數字文字差異（例如備註被截斷）**不在判定內**（OCR 雜訊太多）。所以 compare 的 `ok` 只記「數字家族通過」，**不會**讓轉寫進搜尋；文字欄位要靠 agent 抽查（流程二），兩者都通過才是 `cross_checked`，最後由 PO 核對。
 - 匯入：`python3 poc/kb-mcp/investanchors_import.py --data-dir <資料目錄> --import-verification <verification.json>`（預設只預覽；確認後加 `--apply`）。
 
 ### 流程二：用 Cline agent 做獨立抽查
 1. 匯出（唯讀、零網路、不登入）：
    `python3 poc/kb-mcp/investanchors_import.py --data-dir <資料目錄> --export-verification-task [--limit 10] [--only-unverified]`
-   產生 `<資料目錄>/articles_probe/verify-task-<時間>/`：`manifest.json`（image_id、sha256、原圖路徑、尺寸、待查轉寫檔路徑與行數）、`transcriptions/<image_id>.md`（Markdown 表格，**每行前有 `[L012]` 行號**）、`VERIFY_GUIDE.md`、長圖切片（沒有瀏覽器時降級，同方案 D）。預設含 unverified／flagged／cross_checked、不含 reviewed；`--only-unverified` 只取未驗證。**不含文章標題與內文**。
+   產生 `<資料目錄>/articles_probe/verify-task-<時間>/`：`manifest.json`（image_id、sha256、原圖路徑、尺寸、待查轉寫檔路徑與行數）、`transcriptions/<image_id>.md`（Markdown 表格，**每行前有 `[L012]` 行號**）、`VERIFY_GUIDE.md`、長圖切片（沒有瀏覽器時降級，同方案 D）。manifest 每項帶 `transcription_sha256`（待查轉寫的 SHA-256，結論綁定這一版轉寫）。預設含 unverified／flagged／cross_checked、不含 reviewed；`--only-unverified` 只取未驗證。**不含文章標題與內文**。
 2. 在 Mac 的 VS Code 開 **Cline 擴充**（用與產生轉寫的 agent 不同的模型更獨立），開啟該資料夾，一句話：「請讀 VERIFY_GUIDE.md 與 manifest.json，逐張對照原圖檢查轉寫，把結果寫成同資料夾的 verification.json」。Cline 讀圖需要它所設定的模型支援視覺輸入。
 3. agent 會**逐列逐格**核對、**逐字比對文字欄位是否截斷或漏字**、核對每個數字；看不清楚的格子不猜，該圖就記 `issues`（`found` 以 `uncertain：` 開頭）；不得修改轉寫、不得擅自更正原圖筆誤（筆誤另記 `kind=other`）。
-4. 預覽匯入（零寫入）：`python3 poc/kb-mcp/investanchors_import.py --data-dir <資料目錄> --import-verification <資料夾>/verification.json`——會列出每張圖將變成什麼等級、略過的原因（不印疑慮內容）。確認後加 `--apply`。
+4. 預覽匯入（零寫入）：`python3 poc/kb-mcp/investanchors_import.py --data-dir <資料目錄> --import-verification <資料夾>/verification.json`——會列出每張圖將變成什麼等級（agent 抽查 ok 只過文字家族，需再配合數字檢核〔如 compare 輸出〕才成為 cross_checked）、略過的原因（不印疑慮內容）。抽查後若轉寫被改寫會整批拒絕。確認後加 `--apply`。
 5. `flagged` 的圖：PO 對照原圖修正（`--import-transcription --overwrite` 重匯入，會重置為 unverified 再走一輪驗證），或確認轉寫其實正確。
 6. PO 本人逐格核對後：`python3 poc/kb-mcp/investanchors_import.py --data-dir <資料目錄> --mark-reviewed 12,13 --apply`（預覽為預設）。
 
@@ -230,6 +242,6 @@ python3 poc/kb-mcp/compare_transcriptions.py --d-results <manual-transcribe-資�
 頭兩週每張轉寫都由 PO 逐格核對（`--mark-reviewed`）；之後每 10 張抽 1 張。比例與節奏由 PO 日後決定，確認後回填 Q-028。
 
 ### 健檢與稽核
-- `check_scheduled_jobs` 的 `investanchors_import` 摘要多一段「未驗證轉寫 N 張、有疑慮 N 張、已驗證 N 張、PO 已核對 N 張」（只計已轉寫的圖；舊庫沒有驗證表時全部算未驗證）。
-- 每次 `--import-verification --apply`、`--mark-reviewed --apply` 在 `alert_log` 留一筆（`kind=transcription_verification_import`／`transcription_mark_reviewed`，key 只含時間、method 與數量，**不含 issues 內容**）。
+- `check_scheduled_jobs` 的 `investanchors_import` 摘要多一段「未驗證轉寫 N 張（其中僅通過單一家族 N 張）、有疑慮 N 張、已驗證 N 張、PO 已核對 N 張」（只計已轉寫的圖；舊庫沒有驗證表時全部算未驗證）。
+- 每次 `--import-verification --apply`、`--mark-reviewed --apply` 在 `alert_log` 留一筆（`kind=transcription_verification_import`／`transcription_mark_reviewed`，key 只含時間、method 與數量（cross_checked／partial／flagged／skipped），**不含 issues 內容**）。
 - 查詢範例（唯讀）：`sqlite3 -readonly <資料目錄>/articles.db "select status, count(*) from transcription_verification group by status;"`

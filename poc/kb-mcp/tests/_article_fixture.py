@@ -13,13 +13,18 @@ def body(text):
     return (text + "。") + "補充說明。" * 60
 
 
-def set_verification(store, article_id, seq, verdict="ok", method="compare-d-c", verifier="test-tool", note=None, cells=None):
-    """測試用：把某張圖設為 cross_checked（verdict=ok）或 flagged（verdict=issues）。回傳 apply_verification_batch 結果。"""
-    iid = store.conn.execute("SELECT id FROM article_image WHERE article_id=? AND seq=?", (article_id, seq)).fetchone()[0]
-    return store.apply_verification_batch([{
-        "image_id": iid, "verdict": verdict, "method": method, "verifier": verifier,
-        "note": note if note is not None else (None if verdict == "ok" else "發現 1 項疑慮（wrong-number×1）"),
-        "cells": cells}])
+def set_verification(store, article_id, seq, verdict="ok", method=None, verifier="test-tool", note=None, cells=None):
+    """測試用：verdict=ok 時兩個檢核家族都通過（數字 compare-d-c＋文字 agent-spot-check）→ cross_checked；
+    verdict=issues 時標 flagged。回傳最後一次 apply_verification_batch 的結果。"""
+    row = store.conn.execute("SELECT id, transcription FROM article_image WHERE article_id=? AND seq=?",
+                             (article_id, seq)).fetchone()
+    base = {"image_id": row["id"], "verifier": verifier, "cells": cells,
+            "transcription_sha256": A.transcription_sha256(row["transcription"])}
+    if verdict == "issues":
+        return store.apply_verification_batch([dict(base, verdict="issues", method=method or "compare-d-c",
+                                                    note=note or "發現 1 項疑慮（wrong-number×1）")])
+    store.apply_verification_batch([dict(base, verdict="ok", method=method or "compare-d-c", note=None)])
+    return store.apply_verification_batch([dict(base, verdict="ok", method="agent-spot-check", note=None)])
 
 
 def build(data_dir):

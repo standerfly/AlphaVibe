@@ -6,7 +6,8 @@
 
 `--emit-verification <路徑>`（010 Phase 12，Q-028）：另依比對結果輸出 verification.json（method=compare-d-c）供
 `investanchors_import.py --import-verification` 匯入。**雙來源一致不代表正確**——這只是「有一個獨立來源（C）與 D 沒有衝突」，
-所以只會讓轉寫升到 cross_checked（納入搜尋），絕不是 reviewed；任何疑慮一律 flagged；比對失敗或未配對的圖不輸出（維持 unverified）。
+且只屬「數字家族」——必須再有文字家族（agent 逐字抽查）通過才會成為 cross_checked；絕不是 reviewed；
+每筆帶 transcription_sha256（由 D results 的 text 計算，須與匯入資料庫的文字一致；D 尚未匯入資料庫的圖，匯入驗證時會被拒收）；任何疑慮一律 flagged；比對失敗或未配對的圖不輸出（維持 unverified）。
 
 純本機：不連網、不讀鑰匙圈、不登入、不碰資料庫；只讀 results.json／manifest.json／paddle-eval-*.md，
 只寫 `<out>/compare-<時間>.md`（不覆寫）。報告含轉寫片段（付費文章圖片來源，只留本機），
@@ -16,6 +17,7 @@
 import argparse
 import collections
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -856,7 +858,9 @@ def build_verification(d, matches):
         if verdict is None:
             counts["skipped"] += 1
             continue
-        row = {"image_id": it["image_id"], "sha256": sha, "verdict": verdict}
+        row = {"image_id": it["image_id"], "sha256": sha,
+               "transcription_sha256": hashlib.sha256((it["text"] or "").encode("utf-8")).hexdigest(),
+               "verdict": verdict}
         if verdict == "issues":
             seen, uniq = set(), []
             for x in issues:
@@ -883,8 +887,8 @@ def build_parser():
                     help="數值相對容差（預設 0＝必須完全相同；0.01＝相差 1%% 內視為一致）")
     ap.add_argument("--normalize-text", action="store_true", help="非數字文字比較前歸一化（去空白、小寫、簡繁字形）")
     ap.add_argument("--emit-verification", default=None, metavar="PATH",
-                    help="另輸出 verification.json（method=compare-d-c；不覆寫既有檔）。雙來源一致不代表正確：ok 只會讓轉寫升到 "
-                         "cross_checked；有任何疑慮→issues；比對失敗或未配對的圖不輸出")
+                    help="另輸出 verification.json（method=compare-d-c；不覆寫既有檔）。雙來源一致不代表正確：ok 只算數字家族通過"
+                         "（另需 agent 文字抽查才成為 cross_checked）；有任何疑慮→issues；比對失敗或未配對的圖不輸出")
     return ap
 
 

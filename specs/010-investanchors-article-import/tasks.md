@@ -108,7 +108,7 @@
 
 ## Phase 5: User Story 3 — 表格裡的數字也讀得到（P3，程式開發；真實啟用在上線後）
 
-**目標**：匯入時把內文圖（可能是很高的長圖）轉寫成文字存檔、可被搜尋；轉寫失敗標「未轉寫」、可事後補轉不需重抓網站。
+**目標**：匯入時把內文圖（可能是很高的長圖）轉寫成文字存檔（**通過驗證〔兩家族〕或 PO 核對後才可被搜尋，其餘單篇顯示附警告**，Q-028／Phase 12）；轉寫失敗標「未轉寫」、可事後補轉不需重抓網站。
 
 **本階段的範圍**：只開發、審查、獨立驗收**程式**，一律使用**合成圖與假模型**；真實模型、PO 抽查與啟用在上線後（Phase 8 的 T058～T061），因為真實圖片要等回補累積。**轉寫由預設關閉的開關控制**（通用規則 10）。
 
@@ -298,5 +298,6 @@ T023（首次真實執行）、T048（真實手動回補試跑）、T055（部�
 - [x] T093 `compare_transcriptions.py --emit-verification <路徑>`（method=compare-d-c；ok／issues／不輸出的判定、不覆寫、欄位截短與遮蔽）。測試：`test_compare_transcriptions.EmitVerificationTest`。
 - [x] T094 健檢：`check_investanchors_import` 摘要加「未驗證轉寫／有疑慮／已驗證／PO 已核對」張數（唯讀、舊庫全算未驗證）。測試：`HealthSummaryTest`。
 - [x] T095 文件：quickstart §14（Mermaid 流程、等級與顯示搜尋規則表、Cline 抽查步驟、資料外送提醒）、contracts/cli.md、data-model.md、clarification-log Q-028。
+- [x] T098 獨立驗收（有條件 PASS）後修正：驗證結論綁定轉寫內容（`transcription_sha256`，匯出 manifest／verification.json／compare 輸出／匯入核對與交易內再核對）；cross_checked 門檻改為數字＋文字兩家族都通過（`checks_passed`；單一家族維持 unverified）；`get_article` 轉寫每行加前綴「│ 」；驗證／核對／轉寫批次寫入改 `BEGIN IMMEDIATE`；spec FR-016 與 tasks T3x、mcp-tools 契約改成與 Q-028 一致；quickstart §14、data-model、contracts、Q-028 更新；健檢增列「僅通過單一家族」張數。測試：`TranscriptionBindingTest`、`DisplayPrefixTest`、`WriteTransactionTest`、`TransitionRulesTest` 各家族組合。
 - [ ] T096 [PO] 確認抽查比例（建議：頭兩週每張由 PO 核對、之後每 10 張抽 1 張；**尚未確認**），並用真實 8 張圖試跑一輪：D→compare `--emit-verification`→Cline 抽查→預覽匯入→`--mark-reviewed`；回報 Cline 實際能否看出截斷類錯誤（例：備註被截成「廠務」）。
 - [ ] T097 [PO／部署時] 部署後第一次可寫連線之前，正式庫沒有驗證表：MCP 連接器會把所有轉寫視為 unverified（搜尋不含轉寫、單篇附警告），這是預期行為；已存在的轉寫（若有）需經 §14 流程驗證後才搜得到。
