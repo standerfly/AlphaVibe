@@ -338,3 +338,6 @@ PaddleOCR 缺失、逾時或結果 inconclusive 時不輸出數字條目，這�
 
 ### 「非表格」誤判的處理（2026-11-18 首次真實試跑發現）
 首次真實試跑中，reader-1 把一張帶百分比標籤的堆疊柱狀圖判成 `not_table`（偽陰性，數字沒進庫）。處置：①提示詞明訂「有可讀數值（含帶數值標籤的長條／堆疊／折線／圓餅圖）一律 is_table=true，只有完全無數值才 false，拿不準填 true」；②新增 `transcription_pipeline.py --data-dir <dir> --reset-not-table <image_id,…>`：只把 `not_table` 的圖重置回 `untranscribed`（失敗次數歸零、清驗證列；非 not_table 一律拒絕並整批不動；不呼叫 claude；寫稽核紀錄 `transcription_pipeline_reset`），之後下一次流水線執行會重做。`not_table` 仍只由 reader-1 判斷、不經驗證者；健檢的「非表格累計」數字請 PO 偶爾對照原圖抽看。
+
+### 重做 flagged 的圖（2026-11-18）
+批次試跑中 reader-1 對「第一根柱沒標年度」的欄位自行加上「(前一年度)」（原圖沒有，真實小錯誤）。處置：提示詞加「標籤只照圖上實際印的文字抄，原圖沒有的資訊不得加註／推論，留原樣或寫 ?」；新增 `transcription_pipeline.py --data-dir <dir> --reset-flagged <image_id,…>`：只把「已轉寫且 flagged」的圖重置回 untranscribed（轉寫與疑慮記錄清除；cross_checked／reviewed／unverified 一律拒絕、整批不動；不呼叫 claude；稽核 `transcription_pipeline_reset`），**僅在 PO 確認轉寫確有錯、要重做時使用**。flagged 但 PO 核對後轉寫正確（如 OCR 誤報）則用 `--mark-reviewed`。

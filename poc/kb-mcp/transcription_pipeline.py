@@ -194,14 +194,17 @@ def parse_args(argv):
     ap.add_argument("--paddle-model-dir", default=None)
     ap.add_argument("--no-paddle", action="store_true")
     ap.add_argument("--reset-not-table", metavar="IMAGE_IDS", help="把指定 image_id（逗號分隔）中被判為 not_table 的圖重置回 untranscribed 以便重做；只動 not_table、不呼叫 claude；不能與其他動作併用")
+    ap.add_argument("--reset-flagged", metavar="IMAGE_IDS", help="把指定 image_id（逗號分隔）中「已轉寫且 flagged」的圖重置回 untranscribed 以便重做（轉寫與疑慮記錄會清除；PO 確認轉寫確有錯、要重做時才用）；不呼叫 claude；不能與其他動作併用")
     ap.add_argument("--use-restricted", action="store_true")
     ap.add_argument("--unrestricted-read", action="store_true")
     return ap.parse_args(argv)
 
 
 def _validate_args(a):
-    if a.reset_not_table and (a.dry_run or a.enable or a.disable):
-        raise PipelineRefused("--reset-not-table 不能與 --dry-run／--enable／--disable 併用")
+    if (a.reset_not_table or a.reset_flagged) and (a.dry_run or a.enable or a.disable):
+        raise PipelineRefused("--reset-not-table／--reset-flagged 不能與 --dry-run／--enable／--disable 併用")
+    if a.reset_not_table and a.reset_flagged:
+        raise PipelineRefused("--reset-not-table 與 --reset-flagged 不能同時使用")
     if sum(1 for x in (a.dry_run, a.enable, a.disable) if x) > 1:
         raise PipelineRefused("--dry-run／--enable／--disable 彼此互斥")
     if a.reader1_model == a.verifier_model:
@@ -549,16 +552,18 @@ def run(argv=None, say=print, deps=None, env=None):
             finally:
                 store.close()
 
-        if a.reset_not_table:
+        if a.reset_not_table or a.reset_flagged:
+            raw = a.reset_not_table or a.reset_flagged
             try:
-                ids = [int(x) for x in a.reset_not_table.split(",") if x.strip()]
+                ids = [int(x) for x in raw.split(",") if x.strip()]
             except ValueError:
-                say("拒絕執行：--reset-not-table 必須是逗號分隔的整數 image_id")
+                say("拒絕執行：--reset-not-table／--reset-flagged 必須是逗號分隔的整數 image_id")
                 return EXIT_REFUSED
             store = article_store.ArticleStore(a.data_dir)
             try:
-                done = store.reset_not_table(ids, audit_kind="transcription_pipeline_reset", audit_key="reset %d" % len(ids))
-                say("已把 %d 張 not_table 圖重置為 untranscribed：%s" % (len(done), ",".join(str(i) for i in done)))
+                fn = store.reset_flagged if a.reset_flagged else store.reset_not_table
+                done = fn(ids, audit_kind="transcription_pipeline_reset", audit_key="reset %d" % len(ids))
+                say("已把 %d 張%s圖重置為 untranscribed：%s" % (len(done), " flagged " if a.reset_flagged else " not_table ", ",".join(str(i) for i in done)))
                 return EXIT_OK
             except ValueError as e:
                 say("拒絕執行：%s" % e)

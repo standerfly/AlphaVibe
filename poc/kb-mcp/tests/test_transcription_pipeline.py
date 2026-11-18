@@ -1108,6 +1108,44 @@ class ResetNotTableTest(PBase):
         self.assertIn("一律 is_table 填 true", CR.TRANSCRIBE_USER_RULES)
 
 
+class ResetFlaggedTest(PBase):
+    N = 2
+
+    def setUp(self):
+        super().setUp()
+        self.assertEqual(self.run_pipe("--max-images", "2"), 0)     # 兩張都轉寫並驗證
+        self.ids = [r["id"] for r in self.rows()]
+
+    def force(self, iid, status):
+        s = self.store()
+        s.conn.execute("UPDATE transcription_verification SET status=? WHERE image_id=?", (status, iid))
+        s.conn.commit()
+        s.close()
+
+    def test_resets_only_flagged_done(self):
+        self.force(self.ids[0], "flagged")
+        calls = len(self.stub.calls())
+        self.assertEqual(self.run_pipe("--reset-flagged", str(self.ids[0])), 0)
+        r = self.rows()[0]
+        self.assertEqual((r["transcription_status"], r["transcription"], r["transcribe_attempts"]), ("untranscribed", None, 0))
+        self.assertNotIn(self.ids[0], self.ver())
+        self.assertEqual(len(self.stub.calls()), calls)
+
+    def test_refuses_non_flagged_and_rolls_back_batch(self):
+        self.force(self.ids[0], "flagged")
+        self.force(self.ids[1], "reviewed")
+        self.assertEqual(self.run_pipe("--reset-flagged", ",".join(map(str, self.ids))), 2)
+        self.assertEqual([r["transcription_status"] for r in self.rows()], ["done", "done"])
+        self.assertEqual(self.ver()[self.ids[0]]["status"], "flagged")
+
+    def test_exclusive_flags(self):
+        self.assertEqual(self.run_pipe("--reset-flagged", "1", "--reset-not-table", "1"), 2)
+        self.assertEqual(self.run_pipe("--reset-flagged", "1", "--dry-run"), 2)
+
+    def test_prompt_forbids_inventing_labels(self):
+        self.assertIn("不得自行加註", CR.TRANSCRIBE_USER_RULES)
+
+
 class AtomicityTest(PBase):
     N = 1
 
