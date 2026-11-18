@@ -210,9 +210,11 @@ def plan_verification_transition(cur, verdict, method):
     回傳 {"action": "write", "status": ..., "checks": [已通過的家族]} 或 {"action": "skip", "reason": ...}。
     * issues → 一律 flagged，已通過的家族清空（壞消息永遠優先；含把 cross_checked／reviewed 降為 flagged）；
     * ok → 該 method 所屬家族記為通過；**數字家族與文字家族都通過才是 cross_checked**，只過一個家族維持
-      原狀態（unverified 或 flagged）並記錄 checks；
+      unverified 並記錄 checks；
       reviewed：略過（PO 核對過的不被自動流程動）；
-      flagged：method 曾標過疑慮者略過（防洗白）；要轉 cross_checked 仍須兩個家族都有「疑慮之後」的新 ok。
+      **flagged：一律略過（"flagged-needs-po"）**——不同 method 的 ok 不代表原疑慮已排除（例如 compare 標了數字疑慮，
+      之後別的數字檢核通過，原疑慮仍在；agent 也可能誤報，需由 PO 仲裁）。flagged 只能經 `--mark-reviewed`（PO）
+      或轉寫被改寫（重置為 unverified 後重新走兩家族）離開。
     reviewed 絕不會由這個函式產生。"""
     fam = method_family(method)
     if fam is None:
@@ -224,16 +226,13 @@ def plan_verification_transition(cur, verdict, method):
         raise ValueError("未知的 verdict：%r" % (verdict,))
     if cur_status == "reviewed":
         return {"action": "skip", "reason": "reviewed"}
-    if cur_status == "flagged" and method in set(_json_list(cur.get("flag_history"))):
-        return {"action": "skip", "reason": "same-method"}
+    if cur_status == "flagged":
+        return {"action": "skip", "reason": "flagged-needs-po"}
     checks = set(n for n in ((cur or {}).get("checks_passed") or "").split(",") if n in FAMILIES)
     if cur_status == "cross_checked":
         checks = set(FAMILIES)
     checks.add(fam)
-    if checks >= set(FAMILIES):
-        status = "cross_checked"
-    else:
-        status = "flagged" if cur_status == "flagged" else "unverified"
+    status = "cross_checked" if checks >= set(FAMILIES) else "unverified"
     return {"action": "write", "status": status, "checks": [f for f in FAMILIES if f in checks]}
 
 
@@ -262,8 +261,13 @@ class ArticleStore(object):
             self.conn.execute("ALTER TABLE backfill_state ADD COLUMN list_done INTEGER NOT NULL DEFAULT 0")
 
         vcols = [r[1] for r in self.conn.execute("PRAGMA table_info(transcription_verification)")]
-        if vcols and "checks_passed" not in vcols:   # 開發期建立的早期驗證表
+        if vcols and "flag_history" not in vcols:    # 中間版本的驗證表
+            self.conn.execute("ALTER TABLE transcription_verification ADD COLUMN flag_history TEXT")
+        if vcols and "checks_passed" not in vcols:
             self.conn.execute("ALTER TABLE transcription_verification ADD COLUMN checks_passed TEXT")
+            # 舊規則的 cross_checked（單一檢核即可）不符新規則（需數字＋文字兩家族）：一律降為 unverified，
+            # 需重新走兩家族。reviewed／flagged 不動。只在補欄位的這一次執行。
+            self.conn.execute("UPDATE transcription_verification SET status='unverified' WHERE status='cross_checked'")
 
         icols = [r[1] for r in self.conn.execute("PRAGMA table_info(article_image)")]
         if "transcribe_attempts" not in icols:   # 2026-11-15 審查：夜間補轉的失敗累計次數
@@ -539,6 +543,10 @@ class ArticleStore(object):
 
     # ------------------------------------------------------------------ 轉寫驗證（Q-028）
 
+    def _verification_columns(self):
+        """驗證表目前有哪些欄位（中間版本的庫可能缺 checks_passed／flag_history）。"""
+        return set(r[1] for r in self.conn.execute("PRAGMA table_info(%s)" % VERIFICATION_TABLE))
+
     def _has_verification_table(self):
         """舊庫（升級前建立、唯讀開啟）可能沒有驗證表；沒有＝全部 unverified。"""
         row = self.conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
@@ -578,7 +586,7 @@ class ArticleStore(object):
                     out[r["st"]] = r["n"]
         out["unverified"] = total - sum(out.values())
         out["single_family"] = 0       # 未驗證中「只通過單一檢核家族」的張數（unverified 的子集）
-        if self._has_verification_table():
+        if self._has_verification_table() and "checks_passed" in self._verification_columns():
             out["single_family"] = self.conn.execute(
                 "SELECT COUNT(*) FROM %s v JOIN article_image i ON i.id=v.image_id "
                 "JOIN article a ON a.article_id=i.article_id WHERE a.status='fetched' AND "
@@ -618,19 +626,12 @@ class ArticleStore(object):
                     kind = "flagged"
                 else:
                     kind = "cross_checked" if status == "cross_checked" else "partial"
-                    fresh = cur is None or (cur["status"] == "flagged" and not cur.get("checks_passed"))
-                    if fresh:
+                    if cur is None:
                         method, verifier = e["method"], e["verifier"]
                     else:
                         method = _merge_names(cur.get("method"), e["method"])
                         verifier = _merge_names(cur.get("verifier"), e["verifier"])
                     note = cells = None
-                    if cur is not None and cur["status"] == "flagged":
-                        if status == "cross_checked":
-                            note = "原 flagged（來源：%s）之後由不同來源重新檢核，數字與文字兩家族皆通過，轉為 cross_checked" % (
-                                ",".join(history) or "?")
-                        else:
-                            note, cells = cur.get("note"), cur.get("flagged_cells")      # 仍是 flagged：疑慮摘要保留
                 self.conn.execute(
                     "INSERT OR REPLACE INTO %s (image_id, status, method, verifier, note, flagged_cells, "
                     "flag_history, checks_passed, checked_at, updates) VALUES (?,?,?,?,?,?,?,?,?,?)" % VERIFICATION_TABLE,

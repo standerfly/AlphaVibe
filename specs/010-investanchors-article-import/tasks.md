@@ -290,7 +290,7 @@ T023（首次真實執行）、T048（真實手動回補試跑）、T055（部�
 **範圍**：資料錯誤是最嚴重的錯——每張圖的轉寫有驗證等級，未驗證／有疑慮的不進搜尋、單篇顯示附警告；不改既有欄位（新增 `transcription_verification` 表）、不新增 MCP 工具、不連網、不讀鑰匙圈、不登入、**不部署**。
 
 - [x] T087 `ArticleStore`：新表 `transcription_verification`（`CREATE TABLE IF NOT EXISTS`，僅可寫連線建立）、`get_verification(s)`／`verification_counts`／`apply_verification_batch`（單一交易、同交易稽核）／`apply_mark_reviewed`；唯讀開庫遇表不存在＝全部 unverified（不出錯、不建表）。測試：`test_article_verification.SchemaAndDefaultTest`（含舊庫模擬）。
-- [x] T088 `plan_verification_transition`（純函式，預覽與寫入共用）：issues 永遠生效、ok 不動 reviewed、flagged 防洗白（`flag_history`，method 不同於任何曾標疑慮者才可轉 cross_checked）、reviewed 絕不由此產生。測試：`TransitionRulesTest`。
+- [x] T088 `plan_verification_transition`（純函式，預覽與寫入共用）：issues 永遠生效、ok 不動 reviewed、flagged 一律不被自動 ok 清除（T099 收緊；`flag_history` 僅記錄）、reviewed 絕不由此產生。測試：`TransitionRulesTest`。
 - [x] T089 重置規則：`_write_transcription` 同交易刪除驗證列（`--overwrite`、`--retranscribe` 換模型、重新匯入、批次 rollback 時不誤清）。測試：`ResetRulesTest`。
 - [x] T090 搜尋：轉寫文字那支改 JOIN 驗證表、僅 cross_checked／reviewed；片段亦只取已驗證者。顯示：`article_tools` 依等級附警告／標示（unverified／flagged 醒目警告＋flagged 疑慮摘要；cross_checked／reviewed 標示等級與方法）；台美逐字一致、MCP 工具數不變。既有測試的夾具改為先驗證再搜尋。測試：`SearchAndDisplayTest`、`test_article_connectors_parity`。
 - [x] T091 `article_verification.py`＋CLI `--import-verification [--apply]`：嚴格 schema、method 白名單、sha256 對圖檔與同資料夾 manifest、拒收控制／bidi／疑似金鑰、預覽零寫入、`--apply` 單一交易重新判斷、稽核只存數量與 method、輸出不印 issues。測試：`ImportVerificationTest`。
@@ -301,3 +301,4 @@ T023（首次真實執行）、T048（真實手動回補試跑）、T055（部�
 - [x] T098 獨立驗收（有條件 PASS）後修正：驗證結論綁定轉寫內容（`transcription_sha256`，匯出 manifest／verification.json／compare 輸出／匯入核對與交易內再核對）；cross_checked 門檻改為數字＋文字兩家族都通過（`checks_passed`；單一家族維持 unverified）；`get_article` 轉寫每行加前綴「│ 」；驗證／核對／轉寫批次寫入改 `BEGIN IMMEDIATE`；spec FR-016 與 tasks T3x、mcp-tools 契約改成與 Q-028 一致；quickstart §14、data-model、contracts、Q-028 更新；健檢增列「僅通過單一家族」張數。測試：`TranscriptionBindingTest`、`DisplayPrefixTest`、`WriteTransactionTest`、`TransitionRulesTest` 各家族組合。
 - [ ] T096 [PO] 確認抽查比例（建議：頭兩週每張由 PO 核對、之後每 10 張抽 1 張；**尚未確認**），並用真實 8 張圖試跑一輪：D→compare `--emit-verification`→Cline 抽查→預覽匯入→`--mark-reviewed`；回報 Cline 實際能否看出截斷類錯誤（例：備註被截成「廠務」）。
 - [ ] T097 [PO／部署時] 部署後第一次可寫連線之前，正式庫沒有驗證表：MCP 連接器會把所有轉寫視為 unverified（搜尋不含轉寫、單篇附警告），這是預期行為；已存在的轉寫（若有）需經 §14 流程驗證後才搜得到。
+- [x] T099 複驗修正：(1) 驗證表缺 `checks_passed`／`flag_history` 欄的中間版本庫，唯讀查詢（計數、取列、搜尋、get_article、健檢）照常、位元組不變，可寫升級補欄位並把舊單一檢核 `cross_checked` 降為 `unverified`；(2) manifest 的 `transcription_sha256`（若有）與 verification.json 交叉比對，不一致整批拒絕；(3) **政策收緊**：`flagged` 不得被任何自動驗證匯入轉成 cross_checked（`flagged-needs-po`），只能 PO `--mark-reviewed` 或轉寫被改寫後重驗；(4) 文件同步。測試：`LegacySchemaTest`、`ManifestTranscriptionShaTest`、`TransitionRulesTest` flagged 案例。

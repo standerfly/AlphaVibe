@@ -2,8 +2,9 @@
 
 背景：資料錯誤是最嚴重的錯。每張圖的轉寫有一個驗證等級（`transcription_verification` 表；沒有列＝unverified）：
   unverified    預設；任何新轉寫（手動 D、API）寫入時都是它
-  flagged       任一檢核發現疑慮
-  cross_checked 有 ≥1 個獨立驗證來源檢核通過（例：D 對 C 比對無高／中疑似錯置、獨立 agent 抽查無誤）
+  flagged       任一檢核發現疑慮；**自動驗證匯入不能把它轉回去**，只能由 PO `--mark-reviewed` 或轉寫被改寫後重驗
+  cross_checked 數字家族（compare-d-c／arithmetic／body-crosscheck 任一）與文字家族（agent-spot-check）都檢核通過；
+                只過一個家族維持 unverified（記 checks_passed）
   reviewed      PO 本人逐格核對確認（**只有 `--mark-reviewed` 會寫入**）
 只有 cross_checked／reviewed 的轉寫文字納入 `search_articles`；unverified／flagged 只在單篇 `get_article` 顯示並附警告。
 
@@ -48,7 +49,7 @@ _ISSUE_KEYS_REQUIRED = {"where", "found", "kind"}
 _ISSUE_KEYS = _ISSUE_KEYS_REQUIRED | {"expected"}
 SKIP_REASON_TEXT = {
     "reviewed": "PO 已核對（自動驗證不動它）",
-    "same-method": "防洗白：本次 method 曾標過疑慮，需換不同來源才能重新檢核",
+    "flagged-needs-po": "有疑慮（flagged）的轉寫須由 PO 核對（--mark-reviewed）或重新轉寫後重驗，自動驗證不能清除",
     "not-table-ok": "非表格圖（無轉寫文字可驗證）",
 }
 
@@ -74,7 +75,7 @@ def validate_verification(path, store):
      details:[(image_id, outcome_kind, n_issues)], skipped:{reason:[image_id]},
      outcome:{"cross_checked":[ids], "flagged":[ids], "partial":[ids]}}
     （partial＝ok 但數字／文字兩個檢核家族尚未都通過，狀態不會變成 cross_checked）
-    entries 只含「實際要寫」的筆；skipped 含預覽時就可判定略過的（非表格 ok、reviewed、防洗白）。
+    entries 只含「實際要寫」的筆；skipped 含預覽時就可判定略過的（非表格 ok、reviewed、flagged 須 PO 核對）。
     任何問題 → VerificationError（整批拒絕、不寫任何東西）。store 可為唯讀。"""
     data = M._load_json_file(path, "verification")
     if not isinstance(data, dict):
@@ -95,6 +96,7 @@ def validate_verification(path, store):
     if len(results) > MAX_RESULTS_ITEMS:
         _fail("一次最多 %d 筆" % MAX_RESULTS_ITEMS)
     manifest_shas = M._load_manifest_shas(path)
+    manifest_tshas = _load_manifest_tshas(path) if manifest_shas is not None else {}
 
     entries, details, skipped, seen = [], [], {}, set()
     outcome = {"cross_checked": [], "flagged": [], "partial": []}
@@ -145,6 +147,8 @@ def validate_verification(path, store):
                 _fail("%s：不在同資料夾的 manifest.json 內" % tag)
             if manifest_shas[iid] != sha:
                 _fail("%s：sha256 與 manifest 不一致" % tag)
+            if iid in manifest_tshas and manifest_tshas[iid] != tsha:      # manifest 缺此欄＝略過（相容）
+                _fail("%s：transcription_sha256 與 manifest 不一致" % tag)
         full = M._safe_join(store.data_dir, img["file_path"]) if img.get("file_path") else None
         if full is None or not os.path.isfile(full):
             _fail("%s：本機圖檔不存在" % tag)
@@ -169,6 +173,16 @@ def validate_verification(path, store):
         details.append((iid, kind, len(issues)))
     return {"verifier": verifier, "method": method, "entries": entries, "details": details,
             "skipped": skipped, "outcome": outcome}
+
+
+def _load_manifest_tshas(results_path):
+    """同資料夾 manifest.json 內有 transcription_sha256 的項目：{image_id: 值}（缺此欄者不在結果內）。"""
+    data = M._load_json_file(os.path.join(os.path.dirname(os.path.abspath(results_path)), MANIFEST_NAME), "manifest")
+    out = {}
+    for it in (data.get("items") if isinstance(data, dict) else None) or []:
+        if isinstance(it, dict) and isinstance(it.get("image_id"), int) and isinstance(it.get("transcription_sha256"), str):
+            out[it["image_id"]] = it["transcription_sha256"]
+    return out
 
 
 def _check_issue(iss, tag):

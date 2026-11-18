@@ -399,43 +399,57 @@ class TransitionRulesTest(VBase):
         v = self.ver(self.a)
         self.assertEqual((v["status"], v["method"], v["verifier"]), ("reviewed", "po-review", "po"))
 
-    def test_flagged_not_laundered_by_same_method(self):
+    def test_flagged_is_never_cleared_by_any_ok(self):
         self.verify(self.a, "issues", method="compare-d-c")
-        r = self.verify(self.a, "ok", method="compare-d-c")                 # 同一路徑再跑一次
-        self.assertEqual(r["skipped"], {"same-method": [self.a]})
-        self.assertEqual(self.status(self.a), "flagged")
-        # 同一路徑換 verifier 名稱也一樣不行（看的是 method）
-        r = self.verify(self.a, "ok", method="compare-d-c", verifier="other-name")
-        self.assertEqual(self.status(self.a), "flagged")
-
-    def test_flagged_can_be_cleared_only_by_new_ok_from_both_families_and_is_recorded(self):
-        self.verify(self.a, "issues", method="compare-d-c")
-        r = self.verify(self.a, "ok", method="agent-spot-check", verifier="cline-sonnet")      # 文字家族新 ok
-        self.assertEqual(r["partial"], [self.a])
-        self.assertEqual(self.status(self.a), "flagged")                  # 只有一個家族：仍是 flagged
-        self.assertEqual(self.ver(self.a)["checks_passed"], "text")
-        self.assertIn("發現 1 項疑慮", self.ver(self.a)["note"])           # 疑慮摘要保留
-        r = self.verify(self.a, "ok", method="arithmetic", verifier="tool-b")                  # 數字家族「不同於原 flagged」的新 ok
-        self.assertEqual(r["cross_checked"], [self.a])
+        for method in A.NUMERIC_METHODS + A.TEXT_METHODS:                    # 包含「不同 method」與同 method
+            r = self.verify(self.a, "ok", method=method, verifier="other-name")
+            self.assertEqual(r["skipped"], {"flagged-needs-po": [self.a]}, method)
+            self.assertEqual((r["cross_checked"], r["partial"]), ([], []))
         v = self.ver(self.a)
-        self.assertEqual((v["status"], v["method"], v["checks_passed"]), ("cross_checked", "agent-spot-check,arithmetic", "numeric,text"))
-        self.assertIn("原 flagged（來源：compare-d-c）", v["note"])
-        self.assertIn("兩家族皆通過", v["note"])
-        self.assertEqual(json.loads(v["flag_history"]), ["compare-d-c"])
-        self.assertEqual(v["updates"], 3)
+        self.assertEqual((v["status"], v["checks_passed"], v["updates"]), ("flagged", None, 1))      # 一個位元都沒動
+        self.assertIn("發現 1 項疑慮", v["note"])
 
-    def test_flag_clears_previously_passed_families(self):
+    def test_flagged_plus_both_families_in_every_order_stays_flagged_and_unsearchable(self):
+        for order in (("compare-d-c", "agent-spot-check"), ("agent-spot-check", "arithmetic"),
+                      ("body-crosscheck", "agent-spot-check", "compare-d-c")):
+            self.store().set_transcription(1, 1, "done", text="營收 98765 百萬\n毛利率 31%", model="manual:claude-code", is_table=True)
+            self.verify(self.a, "issues", method="arithmetic" if order[0] != "arithmetic" else "body-crosscheck")
+            for m in order:
+                self.verify(self.a, "ok", method=m)
+            self.assertEqual(self.status(self.a), "flagged", order)
+            self.assertEqual(self.ro().search_articles("98765"), [], order)
+            self.assertIn(T.UNVERIFIED_WARNING, T.get_article_text(self.ro(), 1))
+        self.assertEqual(self.ver(self.a)["updates"], 1)
+
+    def test_flagged_leaves_only_by_mark_reviewed_or_rewrite(self):
+        self.verify(self.a, "issues", method="compare-d-c")
+        self.verify_full(self.a)
+        self.assertEqual(self.status(self.a), "flagged")
+        # (a) PO 核對
+        self.store().apply_mark_reviewed([self.a])
+        self.assertEqual(self.status(self.a), "reviewed")
+        self.assertEqual(len(self.ro().search_articles("98765")), 1)
+        # (b) 重寫轉寫：重置為 unverified 後重新走兩家族
+        self.verify(self.a, "issues", method="agent-spot-check")
+        self.assertEqual(self.status(self.a), "flagged")
+        self.store().set_transcription(1, 1, "done", text="營收 98765 百萬\n毛利率 31%", model="manual:claude-code", is_table=True)
+        self.assertEqual(self.status(self.a), "unverified")
+        self.verify(self.a, "ok", method="compare-d-c")
+        self.assertEqual(self.status(self.a), "unverified")
+        self.verify(self.a, "ok", method="agent-spot-check")
+        self.assertEqual(self.status(self.a), "cross_checked")
+        self.assertEqual(len(self.ro().search_articles("98765")), 1)
+
+    def test_issues_clears_previously_passed_families(self):
         self.verify(self.a, "ok", method="agent-spot-check")
         self.verify(self.a, "ok", method="compare-d-c")
         self.assertEqual(self.status(self.a), "cross_checked")
         self.verify(self.a, "issues", method="arithmetic")
         v = self.ver(self.a)
         self.assertEqual((v["status"], v["checks_passed"]), ("flagged", None))
-        # 先前通過的家族不算數：只補一個家族仍不夠
-        self.verify(self.a, "ok", method="body-crosscheck")
-        self.assertEqual(self.status(self.a), "flagged")
-        self.verify(self.a, "ok", method="agent-spot-check")
-        self.assertEqual(self.status(self.a), "cross_checked")
+        self.assertEqual(json.loads(v["flag_history"]), ["arithmetic"])             # 歷史仍記錄（僅供追蹤，不影響轉換）
+        self.verify(self.a, "issues", method="compare-d-c")                         # 再次 issues：更新疑慮與歷史
+        self.assertEqual(json.loads(self.ver(self.a)["flag_history"]), ["arithmetic", "compare-d-c"])
 
     def test_family_combinations(self):
         """只有 numeric、只有 text、兩者（任一順序）、任一 issues。"""
@@ -480,29 +494,17 @@ class TransitionRulesTest(VBase):
         self.assertEqual(self.ro().search_articles("98765"), [])
         self.assertIn(T.UNVERIFIED_WARNING, T.get_article_text(self.ro(), 1))
 
-    def test_alternating_methods_cannot_launder_a_flag_that_each_method_raised(self):
+    def test_alternating_methods_cannot_launder_a_flag(self):
         self.verify(self.a, "issues", method="compare-d-c")
-        self.verify(self.a, "ok", method="agent-spot-check")
-        self.verify(self.a, "ok", method="arithmetic")                      # 合法洗清（兩家族、都不同於 compare-d-c）
-        self.assertEqual(self.status(self.a), "cross_checked")
-        self.verify(self.a, "issues", method="arithmetic")                  # 又被別的來源標疑慮
+        for m in ("agent-spot-check", "arithmetic", "body-crosscheck", "compare-d-c", "agent-spot-check"):
+            self.verify(self.a, "ok", method=m)
         self.assertEqual(self.status(self.a), "flagged")
-        r = self.verify(self.a, "ok", method="compare-d-c")                 # 曾標過疑慮的來源不能再洗白
-        self.assertEqual(r["skipped"], {"same-method": [self.a]})
-        r = self.verify(self.a, "ok", method="arithmetic")
-        self.assertEqual(r["skipped"], {"same-method": [self.a]})
-        self.assertEqual(self.status(self.a), "flagged")
-        self.verify(self.a, "ok", method="body-crosscheck")                 # 全新的數字來源：只有一個家族，仍 flagged
-        self.assertEqual(self.status(self.a), "flagged")
-        self.verify(self.a, "ok", method="agent-spot-check")                # 文字家族（未標過疑慮）再補一次 → 兩家族
-        self.assertEqual(self.status(self.a), "cross_checked")
 
-    def test_text_family_flagger_cannot_be_washed_by_itself(self):
-        """agent-spot-check 自己標的疑慮，自己不能再 ok 洗掉；文字家族只剩 PO 核對（或重寫轉寫後重來）。"""
+    def test_text_family_flagger_cannot_be_washed_by_itself_or_anyone_but_po(self):
         self.verify(self.a, "issues", method="agent-spot-check")
         self.verify(self.a, "ok", method="compare-d-c")
         r = self.verify(self.a, "ok", method="agent-spot-check")
-        self.assertEqual(r["skipped"], {"same-method": [self.a]})
+        self.assertEqual(r["skipped"], {"flagged-needs-po": [self.a]})
         self.assertEqual(self.status(self.a), "flagged")
         self.store().apply_mark_reviewed([self.a])
         self.assertEqual(self.status(self.a), "reviewed")
@@ -593,15 +595,20 @@ class ImportVerificationTest(VBase):
         self.assertEqual(self.status(self.a), "reviewed")
         self.assertIn("略過 1 張", out)
 
-    def test_antiwash_skip_reported_in_preview_and_apply(self):
+    def test_flagged_skip_reported_in_preview_and_apply_for_any_method(self):
         self.verify(self.a, "issues", method="agent-spot-check")
-        rc, out = self.vimport(self.vpayload([self.vitem(self.a)], method="agent-spot-check"))
-        self.assertEqual(rc, 0, out)
-        self.assertIn("防洗白", out)
-        self.assertIn("將設為 cross_checked 0 張", out)
-        rc, out = self.vimport(self.vpayload([self.vitem(self.a)], method="arithmetic"), ["--apply"])
-        self.assertEqual(self.status(self.a), "flagged")             # 數字家族新 ok：只有一個家族，仍 flagged
-        self.assertEqual(self.ver(self.a)["checks_passed"], "numeric")
+        for method in ("agent-spot-check", "arithmetic"):
+            payload = self.vpayload([self.vitem(self.a)], method=method)
+            rc, out = self.vimport(payload)
+            self.assertEqual(rc, 0, out)
+            self.assertIn("有疑慮（flagged）的轉寫須由 PO 核對（--mark-reviewed）或重新轉寫後重驗", out)
+            self.assertIn("將設為 cross_checked 0 張、僅通過單一家族（尚不納入搜尋）0 張", out)
+            before = self.db_bytes()
+            rc, out = self.vimport(payload, ["--apply"])
+            self.assertEqual(rc, 0, out)
+            self.assertIn("略過 1 張", out)
+            self.assertEqual(self.status(self.a), "flagged")
+            self.assertEqual(self.ver(self.a)["checks_passed"], None)
 
     def test_not_table_image_ok_skipped_and_untranscribed_rejected(self):
         self._add_article(3)
@@ -1408,6 +1415,112 @@ class WriteTransactionTest(VBase):
         s1.conn.rollback()
         s2._begin_immediate()
         s2.conn.rollback()
+
+
+# ====================================================================== 中間版本庫相容、manifest 交叉比對
+
+LEGACY_DDL = """
+CREATE TABLE transcription_verification (
+    image_id INTEGER PRIMARY KEY REFERENCES article_image(id),
+    status TEXT NOT NULL CHECK (status IN ('unverified','flagged','cross_checked','reviewed')),
+    method TEXT, verifier TEXT, note TEXT, flagged_cells TEXT,
+    checked_at TEXT, updates INTEGER NOT NULL DEFAULT 1)
+"""        # 0dc75f5 之前形狀的驗證表：缺 flag_history、checks_passed
+
+
+class LegacySchemaTest(VBase):
+    def make_legacy(self, rows):
+        s = self.store()
+        s.conn.execute("DROP TABLE transcription_verification")
+        s.conn.execute(LEGACY_DDL)
+        for iid, status in rows:
+            s.conn.execute("INSERT INTO transcription_verification (image_id, status, method, verifier, checked_at) "
+                           "VALUES (?,?,?,?,?)", (iid, status, "compare-d-c", "tool-a", "2026-11-18T10:00:00+08:00"))
+        s.conn.commit()
+        s.close()
+
+    def test_readonly_on_table_without_new_columns_works_and_bytes_unchanged(self):
+        self.make_legacy([(self.a, "cross_checked"), (self.b, "flagged")])
+        before = self.db_bytes()
+        ro = self.ro()
+        cols = ro._verification_columns()
+        self.assertNotIn("checks_passed", cols)
+        self.assertNotIn("flag_history", cols)
+        self.assertEqual(ro.verification_counts(),
+                         {"unverified": 0, "flagged": 1, "cross_checked": 1, "reviewed": 0, "single_family": 0})
+        self.assertEqual(ro.get_verification(self.a)["status"], "cross_checked")
+        self.assertEqual(set(ro.get_verifications([self.a, self.b])), {self.a, self.b})
+        self.assertEqual([r["article_id"] for r in ro.search_articles("98765")], [1])       # 舊 cross_checked 唯讀仍可搜尋
+        out = T.get_article_text(ro, 1)
+        self.assertIn("已交叉驗證", out)
+        self.assertIn(T.UNVERIFIED_WARNING, T.get_article_text(ro, 2))
+        self.assertEqual(self.db_bytes(), before)
+
+    def test_health_summary_not_misreported_as_not_online(self):
+        s = self.store()
+        run_id = s.start_run("mail")
+        s.finish_run(run_id, True, 0, 0, "ok", True)
+        s.close()
+        self.make_legacy([(self.a, "cross_checked")])       # 最後才改成舊形狀（之後不再開可寫連線）
+        before = self.db_bytes()
+        with mock.patch.object(checker, "_now", lambda: NOW.replace(tzinfo=None)):
+            text = "\n".join(f[2] for f in checker.check_investanchors_import(self.data))
+        self.assertNotIn("尚未上線", text)
+        self.assertIn("未驗證轉寫 1 張（其中僅通過單一家族 0 張）、有疑慮 0 張、已驗證 1 張", text)
+        self.assertEqual(self.db_bytes(), before)
+
+    def test_writable_upgrade_adds_columns_and_downgrades_old_single_check_cross_checked(self):
+        self.make_legacy([(self.a, "cross_checked"), (self.b, "reviewed")])
+        s = A.ArticleStore(self.data, now=lambda: NOW)
+        self.addCleanup(s.close)
+        self.assertTrue({"checks_passed", "flag_history"} <= s._verification_columns())
+        self.assertEqual(s.get_verification(self.a)["status"], "unverified")          # 舊規則的 cross_checked 一律降級
+        self.assertEqual(s.get_verification(self.b)["status"], "reviewed")            # reviewed 不動
+        self.assertEqual(self.ro().search_articles("98765"), [])
+        # 之後走新流程正常
+        s.apply_verification_batch([{"image_id": self.a, "verdict": "ok", "method": "compare-d-c", "verifier": "t",
+                                     "note": None, "cells": None, "transcription_sha256": self.tsha(self.a)}])
+        s.apply_verification_batch([{"image_id": self.a, "verdict": "ok", "method": "agent-spot-check", "verifier": "t",
+                                     "note": None, "cells": None, "transcription_sha256": self.tsha(self.a)}])
+        self.assertEqual(s.get_verification(self.a)["status"], "cross_checked")
+        s.close()
+        s2 = A.ArticleStore(self.data, now=lambda: NOW)                                # 再開一次不會再降級
+        self.addCleanup(s2.close)
+        self.assertEqual(s2.get_verification(self.a)["status"], "cross_checked")
+
+    def test_current_shape_table_not_downgraded_on_reopen(self):
+        self.verify_full(self.a)
+        s = A.ArticleStore(self.data, now=lambda: NOW)
+        self.addCleanup(s.close)
+        self.assertEqual(s.get_verification(self.a)["status"], "cross_checked")
+
+
+class ManifestTranscriptionShaTest(VBase):
+    def folder_with_manifest(self, tsha_value):
+        folder = os.path.join(self.tmp, "task")
+        os.makedirs(folder, exist_ok=True)
+        item = {"image_id": self.a, "sha256": self.sha(self.a)}
+        if tsha_value is not None:
+            item["transcription_sha256"] = tsha_value
+        with open(os.path.join(folder, "manifest.json"), "w") as f:
+            json.dump({"items": [item]}, f)
+        return folder
+
+    def test_manifest_zero_hash_with_current_db_value_in_verification_is_rejected(self):
+        folder = self.folder_with_manifest("0" * 64)
+        path = self.vfile(self.vpayload([self.vitem(self.a)]), folder=folder)         # verification 填庫內現值
+        for extra in ([], ["--apply"]):
+            rc, out = self.run_cli(["--import-verification", path] + extra)
+            self.assertEqual(rc, 2, extra)
+            self.assertIn("transcription_sha256 與 manifest 不一致", out)
+        self.assertIsNone(self.ver(self.a))
+
+    def test_manifest_matching_hash_ok_and_missing_field_skipped_for_compat(self):
+        for value in (self.tsha(self.a), None):
+            folder = self.folder_with_manifest(value)
+            path = self.vfile(self.vpayload([self.vitem(self.a)]), folder=folder)
+            rc, out = self.run_cli(["--import-verification", path])
+            self.assertEqual(rc, 0, (value, out))
 
 
 # ====================================================================== CLI 互斥與防呆

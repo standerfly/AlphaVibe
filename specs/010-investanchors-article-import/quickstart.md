@@ -181,7 +181,7 @@ flowchart LR
   P1 -->|"issues"| F
   P2 -->|"issues"| F
   X -->|"issues"| F
-  F -->|"家族進度清空；兩家族都要有新的 ok\n且 method 不曾標過疑慮"| X
+  F -.->|"自動驗證匯入的 ok 一律略過\n（flagged-needs-po）"| F
   X -->|"PO 逐格核對原圖\n--mark-reviewed"| R["reviewed"]
   F -->|"PO 處理疑慮後\n--mark-reviewed"| R
   R -->|"有新疑慮"| F
@@ -205,8 +205,10 @@ flowchart LR
 - **寫入新轉寫一律重置為 `unverified` 並清除舊疑慮記錄**（`--overwrite`、`--retranscribe` 換模型重轉、重新匯入都一樣：內容變了，舊驗證失效；與轉寫在同一交易內，整批 rollback 時驗證也不會被清掉）。被略過、內容沒變的圖，驗證維持。
 - **驗證結論綁定轉寫內容**：匯出的 manifest 每項有 `transcription_sha256`（待查轉寫文字的 SHA-256），verification.json 每筆須原樣帶回；`--import-verification` 對照資料庫**目前**轉寫的 SHA-256，不符整批拒絕（「轉寫在抽查後已被改寫，須重新抽查」），寫入交易內再核對一次。庫內尚無該圖轉寫（例如 D 還沒匯入就先匯入驗證）同樣拒收——順序是：先匯入轉寫、再驗證。
 - `reviewed` **只能**由 PO 的 `--mark-reviewed` 設定；自動流程與 `--import-verification` 都不會寫 reviewed（`method=po-review` 也不在驗證匯入白名單內）。
+- 舊庫相容：驗證表若缺 `checks_passed`／`flag_history` 欄（中間版本），唯讀查詢照常運作（`single_family` 視為 0）；可寫連線升級補欄位時，舊規則的單一檢核 `cross_checked` 一律降為 `unverified`，需重新走兩家族。
+- manifest 內若有 `transcription_sha256`，須與 verification.json 該筆一致（不一致整批拒絕；manifest 缺此欄則略過）。
 - `verdict=issues` 永遠生效（含把 `cross_checked`／`reviewed` 降為 `flagged`，並清空已通過的家族）；`verdict=ok` **不會動 `reviewed`**（略過）。
-- **防洗白**：`flagged` 的圖，`method` 曾標過疑慮者不得再 ok（`flag_history` 累計，不會因為換成別的來源標疑慮而被清掉）；**要轉 `cross_checked` 仍須兩個家族都有疑慮之後的新 ok**。同一路徑重跑一次「ok」不會洗掉疑慮；若文字家族唯一的 method（`agent-spot-check`）自己標的疑慮，只能由 PO 核對或重寫轉寫後重來。預覽與結果都會列出略過原因，轉換會記在 `note`。
+- **flagged 只能由 PO 清除（政策收緊）**：對 `flagged` 的圖，任何自動驗證匯入的 `verdict=ok`（不論哪個 method、哪個家族、幾個）一律略過（`flagged-needs-po`），預覽與結果文字寫明「有疑慮（flagged）的轉寫須由 PO 核對（--mark-reviewed）或重新轉寫後重驗」。離開 flagged 只有兩條路：(a) `--mark-reviewed`（PO 核對）、(b) 轉寫被改寫（重置為 unverified，再重新走兩個家族）。原因：不同 method 的 ok 不代表原疑慮已排除（例如 compare 標了數字疑慮，之後別的數字檢核通過，原疑慮仍在），且 agent 曾對 D 誤報截斷，需由 PO 仲裁。`flag_history` 欄位只記錄曾標過疑慮的 method，不再用於轉換判斷。
 - 非表格圖（`not_table`）：`verdict=issues` 會標 `flagged`（例如 C 轉出了表格內容、D 判為非表格），`get_article` 會在該圖下顯示警告；`verdict=ok` 略過。尚未轉寫（`untranscribed`）的圖不接受驗證，整批拒收。
 - 批次寫入（驗證、核對、轉寫）以 `BEGIN IMMEDIATE` 先取得寫入鎖，避免多寫入者交錯；驗證的讀取判斷與寫入在同一個鎖內。
 
@@ -233,7 +235,7 @@ python3 poc/kb-mcp/compare_transcriptions.py --d-results <manual-transcribe-資�
 2. 在 Mac 的 VS Code 開 **Cline 擴充**（用與產生轉寫的 agent 不同的模型更獨立），開啟該資料夾，一句話：「請讀 VERIFY_GUIDE.md 與 manifest.json，逐張對照原圖檢查轉寫，把結果寫成同資料夾的 verification.json」。Cline 讀圖需要它所設定的模型支援視覺輸入。
 3. agent 會**逐列逐格**核對、**逐字比對文字欄位是否截斷或漏字**、核對每個數字；看不清楚的格子不猜，該圖就記 `issues`（`found` 以 `uncertain：` 開頭）；不得修改轉寫、不得擅自更正原圖筆誤（筆誤另記 `kind=other`）。
 4. 預覽匯入（零寫入）：`python3 poc/kb-mcp/investanchors_import.py --data-dir <資料目錄> --import-verification <資料夾>/verification.json`——會列出每張圖將變成什麼等級（agent 抽查 ok 只過文字家族，需再配合數字檢核〔如 compare 輸出〕才成為 cross_checked）、略過的原因（不印疑慮內容）。抽查後若轉寫被改寫會整批拒絕。確認後加 `--apply`。
-5. `flagged` 的圖：PO 對照原圖修正（`--import-transcription --overwrite` 重匯入，會重置為 unverified 再走一輪驗證），或確認轉寫其實正確。
+5. `flagged` 的圖（自動驗證無法清除）：PO 對照原圖修正（`--import-transcription --overwrite` 重匯入，會重置為 unverified 再走一輪驗證），或確認轉寫其實正確。
 6. PO 本人逐格核對後：`python3 poc/kb-mcp/investanchors_import.py --data-dir <資料目錄> --mark-reviewed 12,13 --apply`（預覽為預設）。
 
 > **資料外送提醒**：抽查時圖片會被送到該 agent（Cline）所設定的**模型供應商**。這些是付費文章圖片——請先確認該供應商的資料政策（是否保留、是否用於訓練），不確定就不要送；本機模型或已簽資料保護條款的供應商較妥當。匯出資料夾（在 `articles_probe/`，已 gitignore）只留本機。
