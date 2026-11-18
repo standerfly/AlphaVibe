@@ -396,6 +396,28 @@ class ImportTest(Base):
                          ("not_table", None, None, 0))
         self.assertNotIn("98765", out)
 
+    def test_apply_revalidates_with_writable_store_so_late_done_is_not_overwritten(self):
+        """預覽與 --apply 之間若有人把圖設成 done，--apply 以最新狀態為準，不得蓋掉（未加 --overwrite）。"""
+        real = M.validate_results
+        calls = []
+
+        def spy(path, store, overwrite=False):
+            calls.append(store)
+            if len(calls) == 2:      # 第二次（可寫連線）之前，模擬排程剛把這張設成 done
+                store.conn.execute(
+                    "UPDATE article_image SET transcription_status='done', transcription='排程剛轉的', "
+                    "transcribed_model='claude-haiku-5-5' WHERE id=?", (self.a,))
+                store.conn.commit()
+            return real(path, store, overwrite=overwrite)
+
+        with mock.patch.object(M, "validate_results", side_effect=spy):
+            rc, out = self.imp(self.results([self.item(self.a)]), ["--apply"])
+        self.assertEqual(len(calls), 2, "--apply 應重新驗證一次")
+        self.assertIn("已寫入 0 筆", out)
+        self.assertIn("略過已轉寫 1 筆", out)
+        r = self.img_row(self.a)
+        self.assertEqual((r["transcription"], r["transcribed_model"]), ("排程剛轉的", "claude-haiku-5-5"))
+
     def test_audit_row_counts_only(self):
         self.imp(self.results([self.item(self.a)]), ["--apply"])
         rows = self.store().conn.execute("SELECT kind, key FROM alert_log").fetchall()
