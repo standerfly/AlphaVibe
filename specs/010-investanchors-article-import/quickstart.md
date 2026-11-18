@@ -138,3 +138,28 @@ sqlite3 -readonly $DB "select value from setting where key='transcribe_enabled';
 - 稽核：每次 `--apply` 在 `articles.db` 的 `alert_log` 留一筆（`kind=manual_transcription_import`，只含數量與 model，不含內容）：
   `sqlite3 -readonly <資料目錄>/articles.db "select * from alert_log where kind='manual_transcription_import';"`
 - 辨識來源：`get_article` 會標示「【圖片轉寫，手動（agent：…），可能有誤，請以原圖為準】」；資料庫 `article_image.transcribed_model` 以 `manual:` 開頭者即手動轉寫。
+
+## 13. D 與 C 比對（2026-11-18；`compare_transcriptions.py`）
+
+**是什麼**：同一批表格圖，方案 D（agent 讀圖寫的 `results.json`）與方案 C（PaddleOCR 評估報告 `paddle-eval-*.md`，見 `paddle-setup.md`）各轉寫一次，本工具把兩邊對照，**優先列出數字差異**，讓 PO 對照原圖只看有疑慮的格子。純本機、不連網、不讀鑰匙圈、不登入、不碰資料庫；只讀三種檔案、只寫一份新報告。
+
+### 操作
+```bash
+python3 poc/kb-mcp/compare_transcriptions.py \
+  --d-results <manual-transcribe-資料夾>/results.json \
+  --c-report <paddle-eval-A>.md [--c-report <paddle-eval-B>.md ...] \
+  --out <輸出資料夾> [--manifest <manifest.json>] [--numeric-tol 0.01] [--normalize-text]
+```
+- `--manifest` 預設用 results.json 同資料夾的 `manifest.json`（提供 image_id → 原圖路徑與尺寸）。
+- C 報告可多份；每份報告裡的每個模式（`ocr_grid`／`table_pipeline`）各算一個來源（C1、C2…），server／mobile 各跑一份報告即可並排。以**原圖路徑（先完整路徑、再 basename）**把 D 與 C 配對，對不上的列在報告「未配對」。
+- 輸出 `<out>/compare-<時間>.md`（不覆寫，同一秒加序號）；stdout 只印數字摘要（張數、疑似錯置高／中／低、逐格差異數、報告路徑）。錯誤輸入（壞 JSON、缺檔、`--out` 指到檔案…）以退出碼 2 乾淨結束。
+- `--numeric-tol`：數值相對容差，預設 0＝必須完全相同；`--normalize-text`：非數字文字比較前去空白、小寫、簡繁字形歸一化。
+
+### 如何解讀報告
+1. 先看「總結」表與「建議優先核對的圖」（依高→中疑似錯置、逐格數字差異、只在單邊的數字排序）。
+2. 每張圖的**疑似錯置**是核心：把一邊有、另一邊沒有的數字配成「看起來是同一個」——**高**＝小數點／千位逗號錯置（24,417.0 vs 24.417.0、20.8% vs 208%）、數量級差、正負號或括號掉了；**中**＝位數差 1（1,234 vs 1,23）或個別數字不同；**低**＝僅格式（24,417.0 vs 24417）。
+3. 形狀相同做**逐格對照**；形狀不同改用「列標籤（第 1 欄）＋欄標頭（第 1 列）」對齊；對不上就只做數值集合比對並註明原因（常見：合併儲存格展開方式不同）。
+4. `[?]`（D 指南用的 `?` 也算）與 C 的低信心格會列出位置——這些格子本來就待確認。
+5. 文字（非數字）差異標**低優先**；簡繁、空白差異用 `--normalize-text` 消掉。
+6. **一致不代表正確**：D 與 C 可能犯同樣的錯；不一致也不代表哪邊對。核對步驟：開原圖，只看列出的格子（位置＝列、欄，表頭列算第 1 列、分隔列不算），以原圖為準；D 錯就用 §12 的 `--overwrite` 重匯入。
+7. 限制：數值比較以格子文字為準，`%` 有無不單獨計差異（但 20.8% vs 208% 會抓到）；括號一律視為負數，故「(2024)」這類註記括號兩邊同樣處理、不影響比對；報告含轉寫片段（付費文章圖片來源）只留本機，**不含文章標題**（非表格文字行內容不輸出，只取其中數字）。
