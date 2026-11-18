@@ -131,10 +131,13 @@ def _make_token(sign_ch, body, pct, paren_neg, raw):
         ip, fp = body.split(".")
         if "," in fp or not fp:
             malformed = True
+    ip_part = body.split(".")[0]
+    if not malformed and "," in ip_part and not re.fullmatch(r"\d{1,3}(,\d{3})+", ip_part):
+        malformed = True            # 千位逗號分組不合法（如 12,34、2,00）：不當成合法數字，避免逗號錯置被判一致
     if malformed:
         digits = re.sub(r"\D", "", body).lstrip("0") or "0"
         value, ip, fp = None, "", ""
-        key = "~" + ("-" if negative else "") + body
+        key = "~" + ("-" if negative else "") + body + ("%" if pct else "")
         abs_key = "~" + body
     else:
         if dots == 1:
@@ -150,7 +153,7 @@ def _make_token(sign_ch, body, pct, paren_neg, raw):
         if value is not None and value == 0:
             negative = False
         abs_key = ip + ("." + fp if fp else "")
-        key = ("-" if negative else "") + abs_key
+        key = ("-" if negative else "") + abs_key + ("%" if pct else "")
     return {"key": key, "abs_key": abs_key, "neg": negative, "digits": digits, "value": value,
             "signed": (-value if (negative and value is not None) else value),
             "malformed": malformed, "raw": raw, "pct": bool(pct)}
@@ -158,14 +161,19 @@ def _make_token(sign_ch, body, pct, paren_neg, raw):
 
 def extract_numbers(text):
     """回傳 (tokens, residue)。residue＝去掉數值 token 後的文字（供非數字差異比較）。
-    括號負數 (1,234) 與 -1,234 同為 -1234；百分號保留在 token.pct 但不影響 key（20.8% 與 20.8 同 key，
-    但 20.8% 與 208% 的數字不同會被抓到）。"""
+    括號負數 (1,234) 與 -1,234 同為 -1234（括號前緊接字母／中文的代號註記如 台積電(2330) 不算負數）；
+    百分號納入 key（20.8% 與 20.8 視為不同，列「百分號有／無不同」中等；20.8% 與 208% 的數字錯置為高）；
+    千位逗號分組不合法（如 12,34）視為 malformed，不與 1,234 判為一致。"""
     s = basic_norm(text)
     tokens, out, last = [], [], 0
     for m in _NUM_RE.finditer(s):
         before = s[:m.start()].rstrip()
         after = s[m.end():].lstrip()
         paren = before.endswith("(") and after.startswith(")") and m.group(1) == ""
+        if paren:
+            lead = s[len(before) - 2:len(before) - 1] if len(before) >= 2 else ""   # 緊貼括號的前一字元（不略過空白）
+            if lead and lead.isalpha():                   # 字母／中文緊貼括號＝代號註記（台積電(2330)），不是負數
+                paren = False
         raw = m.group(0)
         tokens.append(_make_token(m.group(1), m.group(2), m.group(3), paren, ("(%s)" % raw) if paren else raw))
         out.append(s[last:m.start()])
@@ -195,6 +203,8 @@ _R_FORMAT, _R_SIGN, _R_POINT, _R_MAG, _R_LEN1, _R_SUB, _R_ED2 = range(7)
 def classify_pair(d, c):
     """D、C 兩個『不相等』的數值 token 是否看起來像同一個數字。回傳 (rule, level, reason, dist) 或 None。"""
     if d["value"] is not None and c["value"] is not None:
+        if d["neg"] == c["neg"] and d["value"] == c["value"] and d["pct"] != c["pct"]:
+            return (_R_FORMAT, LEVEL_MID, "百分號有／無不同（單位可能遺漏）", 0)
         if d["neg"] == c["neg"] and d["value"] == c["value"]:
             return (_R_FORMAT, LEVEL_LOW, "僅格式不同（小數位數／逗號）", 0)
         if d["neg"] != c["neg"] and d["value"] == c["value"]:
@@ -395,12 +405,28 @@ def compare_texts(d_text, c_text, tol=0.0, normalize_text=False):
 
 
 # ====================================================================== 輸入讀取
+MAX_INPUT_BYTES = 8 * 1024 * 1024
+
+
+def _check_input_file(path, what):
+    """輸入檔：不跟隨符號連結、不超過 8MB（先檢查再讀，避免被餵超大檔或指向別處的連結）。"""
+    if os.path.islink(path):
+        raise CompareError("%s 不可是符號連結" % what)
+    try:
+        if os.path.isfile(path) and os.path.getsize(path) > MAX_INPUT_BYTES:
+            raise CompareError("%s 檔案過大（上限 %d MB）" % (what, MAX_INPUT_BYTES // (1024 * 1024)))
+    except OSError:
+        pass
+
+
 def _read_text(path):
+    _check_input_file(path, "C 報告")
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
 
 def _load_json(path, what):
+    _check_input_file(path, what)
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -449,6 +475,9 @@ def load_d(results_path, manifest_path):
             continue
         items.append({"image_id": iid, "path": m["path"], "width": m.get("width"), "height": m.get("height"),
                       "is_table": r.get("is_table"), "text": r["text"]})
+    for it in items:
+        if it["is_table"] is False:
+            notes.append("image_id=%d 被 D 判為非表格圖（text 為空）；若 C 在該圖轉出了表格內容，請對照原圖人工確認" % it["image_id"])
     d_missing = [iid for iid in mitems if iid not in results]
     return {"model": data.get("model") if isinstance(data.get("model"), str) else "?",
             "items": items, "orphan": orphan, "d_missing": d_missing, "notes": notes}
@@ -553,6 +582,8 @@ def build_c_sources(report_paths):
             for m in s["modes"]:
                 if m not in modes:
                     modes.append(m)
+        if not modes:
+            raise CompareError("C 報告沒有任何「### 模式」區段（不是 paddle-eval 報告，或轉寫全部失敗？）")
         for m in modes:
             secs = [{"path": s["path"], "label": s["label"], "size": s["size"], "data": s["modes"][m]}
                     for s in rep["sections"] if m in s["modes"]]

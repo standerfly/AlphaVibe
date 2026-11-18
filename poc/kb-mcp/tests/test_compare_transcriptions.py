@@ -137,17 +137,42 @@ class NumberTest(unittest.TestCase):
         self.assertEqual(self.keys("1,234,567"), ["1234567"])
 
     def test_percent_and_paren_negative(self):
-        self.assertEqual(self.keys("20.8%"), ["20.8"])
+        self.assertEqual(self.keys("20.8%"), ["20.8%"])   # 百分號納入 key（20.8% 與 20.8 視為不同）
         self.assertEqual(self.keys("(1,234)"), ["-1234"])
-        self.assertEqual(self.keys("(12.5%)"), ["-12.5"])
+        self.assertEqual(self.keys("(12.5%)"), ["-12.5%"])
         self.assertEqual(self.keys("-1,234"), ["-1234"])
+
+    def test_invalid_thousands_grouping_is_malformed_not_equal(self):
+        a = ct.extract_numbers("1,234")[0][0]
+        b = ct.extract_numbers("12,34")[0][0]
+        c = ct.extract_numbers("2,00")[0][0]
+        self.assertFalse(a["malformed"])
+        self.assertTrue(b["malformed"])
+        self.assertTrue(c["malformed"])
+        self.assertNotEqual(a["key"], b["key"])
+        self.assertNotEqual(ct.extract_numbers("200")[0][0]["key"], c["key"])
+        self.assertEqual(ct.extract_numbers("1,234,567.89")[0][0]["key"], "1234567.89")   # 合法分組不受影響
+
+    def test_company_code_in_parentheses_is_not_negative(self):
+        self.assertEqual(self.keys("台積電(2330)"), ["2330"])
+        self.assertEqual(self.keys("TSMC(2330)"), ["2330"])
+        self.assertEqual(self.keys("(1,234)"), ["-1234"])              # 獨立括號仍是負數
+        self.assertEqual(self.keys("營收 (1,234)"), ["-1234"])         # 前面是空白＋中文詞後有空格：視為會計式負數
+
+    def test_percent_missing_is_flagged_mid(self):
+        d = ct.extract_numbers("20.8%")[0][0]
+        c = ct.extract_numbers("20.8")[0][0]
+        r = ct.classify_pair(d, c)
+        self.assertIsNotNone(r)
+        self.assertEqual(r[1], ct.LEVEL_MID)
+        self.assertIn("百分號", r[2])
 
     def test_fullwidth_and_minus_variants(self):
         self.assertEqual(self.keys("１，２３４．５"), ["1234.5"])
         self.assertEqual(self.keys("−5"), ["-5"])
         self.assertEqual(self.keys("－5"), ["-5"])
         self.assertEqual(self.keys("（１２）"), ["-12"])
-        self.assertEqual(self.keys("２０．８％"), ["20.8"])
+        self.assertEqual(self.keys("２０．８％"), ["20.8%"])
 
     def test_range_and_chinese_adjacent(self):
         self.assertEqual(self.keys("10-20"), ["10", "20"])         # 範圍不是負數
@@ -319,6 +344,62 @@ class CliTest(Base):
         self.assertIn("1. C1｜img1.png", rep)
         self.assertNotIn("2. C1｜img2.png", rep)
         self.assertIn("高 1", out)
+
+    def test_comma_misplacement_is_reported_not_identical(self):
+        d = [r[:] for r in BASE]
+        c = [r[:] for r in BASE]
+        d[3][2] = "1,234"
+        c[3][2] = "12,34"
+        dres = self.make_d({1: tbl(d)})
+        cr = self.make_c({1: tbl(c)})
+        code, out, err = self.run_cli("--d-results", dres, "--c-report", cr, "--out", self.out)
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("完全一致", self.report())
+        self.assertRegex(out, r"逐格數字差異 [1-9]")
+
+    def test_percent_dropped_is_reported(self):
+        c = [r[:] for r in BASE]
+        c[2][1] = "20.8"                       # BASE 的 20.8% 掉了 %
+        dres = self.make_d({1: tbl(BASE)})
+        cr = self.make_c({1: tbl(c)})
+        code, out, err = self.run_cli("--d-results", dres, "--c-report", cr, "--out", self.out)
+        self.assertEqual(code, 0, err)
+        self.assertIn("百分號", self.report())
+
+    def test_symlink_and_oversize_inputs_rejected(self):
+        dres = self.make_d({1: tbl(BASE)})
+        cr = self.make_c({1: tbl(BASE)})
+        link = self.path("link-report.md")
+        os.symlink(cr, link)
+        code, out, err = self.run_cli("--d-results", dres, "--c-report", link, "--out", self.out)
+        self.assertEqual(code, 2)
+        self.assertNotIn("Traceback", err)
+        with mock.patch.object(ct, "MAX_INPUT_BYTES", 10):
+            code, out, err = self.run_cli("--d-results", dres, "--c-report", cr, "--out", self.out)
+        self.assertEqual(code, 2)
+        self.assertNotIn("Traceback", err)
+
+    def test_c_report_without_any_mode_exits_2(self):
+        dres = self.make_d({1: tbl(BASE)})
+        cr = self.path("paddle-eval-nomode.md")
+        with open(cr, "w", encoding="utf-8") as f:
+            f.write("# PaddleOCR 轉寫評估\n\n## 1. 標籤｜100x80\n原圖：/imgs/img1.png\n狀態：transcribed\n")
+        code, out, err = self.run_cli("--d-results", dres, "--c-report", cr, "--out", self.out)
+        self.assertEqual(code, 2)
+        self.assertNotIn("Traceback", err)
+
+    def test_non_table_image_noted(self):
+        dres = self.make_d({1: tbl(BASE)})
+        with open(dres, encoding="utf-8") as f:
+            data = json.load(f)
+        data["results"][0]["is_table"] = False
+        data["results"][0]["text"] = ""
+        with open(dres, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        cr = self.make_c({1: tbl(BASE)})
+        code, out, err = self.run_cli("--d-results", dres, "--c-report", cr, "--out", self.out)
+        self.assertEqual(code, 0, err)
+        self.assertIn("非表格圖", self.report())
 
     def test_multiple_c_reports(self):
         dres = self.make_d({1: tbl(BASE)})
