@@ -24,10 +24,31 @@ class PlistTest(unittest.TestCase):
     def test_label(self):
         self.assertEqual(self.p["Label"], "com.alphavibe.investanchorsimport")
 
-    def test_schedule_2300_single(self):
+    def test_schedule_1230_and_2300(self):
         sci = self.p["StartCalendarInterval"]
-        self.assertIsInstance(sci, dict)
-        self.assertEqual((sci["Hour"], sci["Minute"]), (23, 0))
+        self.assertIsInstance(sci, list)
+        self.assertEqual([(d["Hour"], d["Minute"]) for d in sci], [(12, 30), (23, 0)])
+        for d in sci:                                  # 每個時間點只有 Hour／Minute，沒有 Weekday 等限制
+            self.assertEqual(sorted(d), ["Hour", "Minute"])
+
+    def test_schedule_gap_and_count_consistent_with_limits(self):
+        import investanchors_limits as L
+        times = sorted(d["Hour"] * 60 + d["Minute"] for d in self.p["StartCalendarInterval"])
+        self.assertLessEqual(len(times), L.MAX_LOGINS_PER_DAY)
+        gaps = [b - a for a, b in zip(times, times[1:])] + [times[0] + 24 * 60 - times[-1]]
+        self.assertTrue(all(g >= L.MIN_LOGIN_GAP_HOURS * 60 for g in gaps), gaps)
+
+    def test_schedule_does_not_collide_with_other_launchd_plists(self):
+        import glob
+        mine = set((d["Hour"], d["Minute"]) for d in self.p["StartCalendarInterval"])
+        for path in glob.glob(os.path.join(os.path.dirname(PLIST), "*.plist")):
+            if os.path.abspath(path) == os.path.abspath(PLIST):
+                continue
+            with open(path, "rb") as f:
+                other = plistlib.load(f).get("StartCalendarInterval") or []
+            other = [other] if isinstance(other, dict) else other
+            theirs = set((d.get("Hour"), d.get("Minute")) for d in other)
+            self.assertFalse(mine & theirs, path)
 
     def test_no_runatload_or_keepalive(self):
         self.assertNotIn("RunAtLoad", self.p)

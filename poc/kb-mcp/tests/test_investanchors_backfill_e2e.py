@@ -1,7 +1,7 @@
 """010 T046：多日回補模擬（真 scraper＋假網站 127.0.0.1＋假時鐘，每「天」跑一次）。
 
 情境：約 12 篇半年內＋6 篇更早＋置頂 4 篇（清單日期 2021 但 ID 近期）＋1 篇公告，每頁 4 篇。
-- 每日最多 5 篇、每日登入 1 次；
+- 每次最多 5 篇；此模擬每天只跑一次（每日 2 次的行為由 test_investanchors_backfill.TwiceDailyTest 覆蓋）；
 - 第二天因登入失敗中斷（假網站暫時改密碼），第三天接續、不重抓、不遺漏；
 - 更早的 6 篇只有 deferred 標記、從未被開啟；
 - 完成後 completed=1，再跑不登入（日期避開週日核對：完成日的隔天是週一）；
@@ -58,7 +58,7 @@ class MultiDayBackfillWithReconcileTest(unittest.TestCase):
                 done = d
                 break
         self.assertIsNotNone(done, h.out.getvalue())
-        # 每「天」登入至多 1 次、每日至多 5 篇
+        # 此 e2e 每個「模擬日」只執行一次：登入 1 次、至多 5 篇（每日上限 2 次見 test_investanchors_limits）
         self.assertTrue(all(n <= 1 for n in daily_logins), daily_logins)
         steps = [fetched_after[0]] + [b - a for a, b in zip(fetched_after, fetched_after[1:])]
         self.assertTrue(all(0 <= s <= 5 for s in steps), steps)

@@ -387,6 +387,73 @@ class ProgressTest(unittest.TestCase):
         self.assertEqual(ls.read_pages[-1], [1])
 
 
+class TwiceDailyTest(unittest.TestCase):
+    """2026-11-17：每日登入上限 1→2（12:30、23:00），兩次至少間隔 6 小時；每次仍 ≤5 篇。"""
+
+    def _h(self):
+        within = [mk(d, i) for i, d in enumerate([2, 9, 16, 23, 30, 45, 60, 80, 100, 120, 150, 180])]
+        older = [mk(d, i) for i, d in enumerate([210, 230, 250, 280, 320, 360])]
+        ls = ListScraper(items=within + older, per_page=4, pinned=[], announcement=False)
+        return BF(self, ls, clues=[clue()]), ls
+
+    def _at(self, h, day, hour, minute=0):
+        h.clock[0] = (WED + datetime.timedelta(days=day)).replace(hour=hour, minute=minute)
+
+    def test_two_runs_same_day_advance_cursor_without_refetch_or_gap_third_refused_next_day_resets(self):
+        h, ls = self._h()
+        self._at(h, 1, 12, 30)
+        h.run()
+        self.assertEqual((len(ls.payloads), len(ls.opened), h.state()["next_cursor"]), (1, 5, "4"))
+        first = list(ls.opened)
+        self._at(h, 1, 23, 0)                                             # 10.5 小時後第二次
+        h.run()
+        self.assertEqual(len(ls.payloads), 2)
+        self.assertEqual(ls.read_pages[-1], [1, 4, 5])                    # 從上次游標續讀
+        second = ls.opened[len(first):]
+        self.assertEqual(len(second), 5)                                  # 每次仍 ≤5 篇
+        self.assertEqual(len(set(ls.opened)), 10)                         # 不重複、不遺漏（連續 10 篇）
+        self.assertFalse(set(first) & set(second))
+        self.assertTrue(set(first).issubset(set(ls.payloads[-1]["known_ids"])))
+        for r in h.store().recent_runs(10):
+            self.assertLessEqual(r["articles_fetched"], 5)
+        self._at(h, 1, 23, 30)                                            # 第 3 次被拒
+        self.assertEqual(h.run(), 2)
+        self.assertIn("daily_login_limit", h.out.getvalue())
+        self.assertEqual(len(ls.payloads), 2)
+        self.assertEqual(h.store().logins_today(h.clock[0]), 2)
+        self._at(h, 2, 12, 30)                                            # 換日重置（距上次 13.5 小時）
+        h.run()
+        self.assertEqual(len(ls.payloads), 3)
+        self.assertEqual(h.store().logins_today(h.clock[0]), 1)
+
+    def test_second_run_within_six_hours_is_refused_without_login(self):
+        h, ls = self._h()
+        self._at(h, 1, 12, 30)
+        h.run()
+        for hh, mm in ((12, 31), (15, 0), (18, 29)):
+            self._at(h, 1, hh, mm)
+            self.assertEqual(h.run(), 2)
+            self.assertIn("min_gap", h.out.getvalue())
+        self.assertEqual(len(ls.payloads), 1)                             # 沒有任何第二次登入
+        self.assertEqual(len(ls.opened), 5)
+        self.assertEqual(h.store().logins_today(h.clock[0]), 1)           # 被拒的執行不計入登入次數
+        self._at(h, 1, 18, 30)                                            # 剛好滿 6 小時放行
+        h.run()
+        self.assertEqual(len(ls.payloads), 2)
+
+    def test_both_time_points_without_new_mail_or_active_backfill_do_not_login(self):
+        h, ls = self._h()
+        done_day = run_until_completed(h)
+        n = len(ls.payloads)
+        h.clues = []
+        day = done_day + 1
+        self.assertNotEqual((WED + datetime.timedelta(days=day)).weekday(), 6)   # 避開週日核對
+        for hh, mm in ((12, 30), (23, 0)):
+            self._at(h, day, hh, mm)
+            self.assertEqual(h.run(), 0)
+        self.assertEqual(len(ls.payloads), n)                             # 兩個時間點都沒有新信、回補已完成 → 都不登入
+
+
 class StopRuleTest(unittest.TestCase):
     def old_page(self, n, start=250):
         return [mk(start + 10 * k + n, k) for k in range(3)]
@@ -881,7 +948,7 @@ class RealScraperBackfillTest(unittest.TestCase):
         for r in s.recent_runs(20):
             self.assertLessEqual(r["articles_fetched"], 5)
         self.assertEqual(max(len(set(site.page_log[i:i + 3])) for i in range(0, len(site.page_log), 3)), 3)
-        self.assertEqual(len(site.login_posts()), done + 1)               # 每「天」最多登入 1 次
+        self.assertEqual(len(site.login_posts()), done + 1)               # 此測試的每個「模擬日」只執行一次，故每日登入 1 次
         before = len(site.login_posts())
         h.clock[0] = WED + datetime.timedelta(days=done + 1)
         self.assertEqual(h.go(), 0)

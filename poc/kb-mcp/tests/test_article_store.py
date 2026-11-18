@@ -270,6 +270,20 @@ class RunsAndAlertsTest(Base):
         self.s.finish_run(r2, False, 0, 0, "ok", None)
         self.assertEqual(self.s.logins_today(T(15)), 1)
 
+    def test_last_login_started_at_ignores_runs_without_login_and_spans_days(self):
+        self.assertIsNone(self.s.last_login_started_at())
+        r0 = self.s.start_run("none", now=T(15, 12, 0))               # 沒登入（被拒／無觸發）
+        self.s.finish_run(r0, None, 0, 0, "aborted_limit", None, now=T(15, 12, 0))
+        self.assertIsNone(self.s.last_login_started_at())
+        r1 = self.s.start_run("mail", now=T(15, 23, 0))
+        self.s.mark_login_started(r1)
+        r2 = self.s.start_run("none", now=T(16, 1, 0))
+        self.s.finish_run(r2, None, 0, 0, "aborted_limit", None, now=T(16, 1, 0))
+        self.assertEqual(self.s.last_login_started_at(), T(15, 23, 0))   # 跨日仍取最近一次真登入
+        r3 = self.s.start_run("mail", now=T(16, 12, 30))
+        self.s.mark_login_started(r3)
+        self.assertEqual(self.s.last_login_started_at(), T(16, 12, 30))
+
     def test_failed_login_attempt_still_counts_and_finish_run_cannot_lower_it(self):
         r = self.s.start_run("mail")
         self.s.mark_login_started(r)

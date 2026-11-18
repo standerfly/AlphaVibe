@@ -119,7 +119,7 @@ def build_parser():
     ap.add_argument("--resume", action="store_true", help="帳號停用等狀況排除後，恢復排程")
     ap.add_argument("--backfill-since", default=None, metavar="YYYY-MM-DD",
                     help="PO 要求補抓更早的文章：把回補截止日往前放寬到該日（只能更早，否則拒絕）。"
-                         "放寬範圍須 PO 同意；放寬後仍受每日 5 篇上限，慢慢補")
+                         "放寬範圍須 PO 同意；放寬後仍受每次 5 篇、每日登入至多 2 次的上限，慢慢補")
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--enable-transcription", action="store_true", help="開啟表格圖轉寫（預設關閉；冪等，只改設定）")
     g.add_argument("--disable-transcription", action="store_true", help="關閉表格圖轉寫（冪等，只改設定）")
@@ -261,7 +261,7 @@ class Importer(object):
                 if r.get("id_time_ok") and not article_id_time.is_before_cutoff(r["article_id"], new_ms):
                     if store.reactivate_deferred(r["article_id"]):
                         back += 1
-            self.say("已放寬回補截止日：%s → %s；%d 篇延後文章轉回待抓；仍受每日 %d 篇上限，慢慢補（放寬範圍須 PO 同意）"
+            self.say("已放寬回補截止日：%s → %s；%d 篇延後文章轉回待抓；仍受每次 %d 篇、每日登入至多 2 次的上限，慢慢補（放寬範圍須 PO 同意）"
                      % (state["cutoff_date"], new_date, back, investanchors_limits.MAX_ARTICLES_PER_RUN))
             return 0
         finally:
