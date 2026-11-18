@@ -14,7 +14,8 @@ SERVICE = "stnd-statement-import"
 ACCOUNTS = ("gmail-address", "gmail-app-password", "pdf-password")
 
 INVESTANCHORS_SERVICE = "stnd-investanchors"
-INVESTANCHORS_ACCOUNTS = ("email", "password", "vision-api-key")
+INVESTANCHORS_ACCOUNTS = ("email", "password", "vision-api-key",
+                          "claude-oauth-token")     # Phase 14：`claude setup-token` 產生的一年期訂閱 token（可選；沒有就用預設登入狀態）
 
 _ACCOUNTS_BY_SERVICE = {
     SERVICE: ACCOUNTS,

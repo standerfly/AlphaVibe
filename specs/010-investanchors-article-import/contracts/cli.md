@@ -107,3 +107,11 @@ python3 poc/kb-mcp/article_probe.py --data-dir poc/data --confirm-po-present --c
 - Python：`Importer`／`Reconciler` 建構時夾 `delay_ms`；`article_images.download_images` 實際睡眠夾 ≥5 秒。JS：`investanchors_session.js` 的 `clampDelay()`，生效值寫在 summary 事件的 `effective_delay_ms`。
 - **命令列沒有任何可調降間隔的旗標**（`investanchors_import.py`／`article_probe.py`／`article_reconcile.py`；測試以 parser 旗標斷言守住）。`Importer` 建構子的 `delay_ms` 注入僅供測試。
 - 唯一繞過：環境變數 `INVESTANCHORS_TEST_ALLOW_SHORT_DELAY=1`，**僅測試用，正式環境（launchd plist、shell、CLI）不得設定**；測試端由 `tests/fake_investanchors_site.py` 與 `test_investanchors_import.py` 在 import 時設定並由 scraper 子行程繼承；plist 不含此變數（`test_investanchors_delay_floor.py` 斷言）。
+
+## 6. 轉寫流水線 `poc/kb-mcp/transcription_pipeline.py`（Phase 14，Q-029）
+`transcription_pipeline.py --data-dir <dir> [--dry-run | --enable | --disable] [--max-images N] [--timeout-sec S] [--reader1-model 別名] [--verifier-model 別名] [--claude-bin 絕對路徑] [--paddle-python 路徑] [--paddle-model-dir 路徑] [--no-paddle] [--use-restricted] [--unrestricted-read]`
+- `--data-dir` 必填；正式庫需 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1`（最先檢查）；找不到 articles.db 不建庫。別名白名單 `sonnet|opus|haiku|fable`，reader-1 與驗證者必須不同（預設 sonnet／opus）；`--max-images` 1～5（預設 3；另有每日 ≤6 張、≤2 次執行的守衛）；`--timeout-sec` 夾在 30～1800（預設 600）；`--claude-bin` 須為可執行的絕對路徑（預設 `/Users/stander/.local/bin/claude`）。
+- `--dry-run`：唯讀開庫，印將處理的圖、兩種呼叫的**完整命令列**、環境白名單、待 Mac 實測假設；**不執行任何外部程式**（claude／paddle／node／鑰匙圈）、不寫庫、不建 pipeline_run。
+- `--enable`／`--disable`：寫 setting `pipeline_enabled`；`--enable` 於 `transcribe_enabled=1`（API 轉寫）時拒絕。預設關閉；未啟用時（除 `--dry-run`）拒絕執行。
+- 退出碼：0 完成（含無待處理）、1 有圖失敗、2 參數／防呆拒絕、3 未啟用或前置不符、4 因使用量上限／登入失效／登入方式不符／缺旗標而中止。stdout 只印數字與代碼（含需核對的 image_id）。
+- 命令列保證：`--setting-sources ""`、`--strict-mcp-config`、`--disable-slash-commands` 一律帶且為必要旗標（`claude --help` 缺任一即中止、零模型呼叫）；`--allowedTools` 預設路徑限定 `Read(//<暫存夾>/**)`（`--unrestricted-read` 才用不限定的 `Read`）；沒有 `--bare`、`--max-budget-usd`、`--max-turns`、任何 skip-permissions 旗標、`--mcp-config`、`--settings`；`--model` 只能是別名白名單。

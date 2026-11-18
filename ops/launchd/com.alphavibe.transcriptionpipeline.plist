@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.alphavibe.transcriptionpipeline</string>
+    <!-- 定錨表格圖「自動轉寫與驗證流水線」（specs/010 Phase 14，clarification-log Q-029）。正式環境跑獨立 worktree AlphaVibe-prod
+         （見 ops/deploy.sh）。只走 PO 的 claude.ai 訂閱（`claude -p`），**這裡不放任何 API 金鑰或訂閱 token**：
+         launchd 背景環境可直接用 claude.ai 訂閱登入（Mac 實測，不需 setup-token）；token 僅為選用備援，若有只放鑰匙圈 service stnd-investanchors／account claude-oauth-token，由程式在記憶體內取用。
+         預設關閉：articles.db 的 pipeline_enabled 為 0 時程式拒絕執行；上線門檻（Q-029）：假 claude 自動測試全綠＋Mac 實測＋第一週由 PO 看實際結果。
+         尚未安裝：由 PO 在場同意後才 launchctl bootstrap（quickstart §15）。 -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/stander/My_project/AlphaVibe-prod/poc/kb-mcp/transcription_pipeline.py</string>
+        <string>--data-dir</string>
+        <string>/Users/stander/My_project/AlphaVibe-prod/poc/data</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/stander/My_project/AlphaVibe-prod</string>
+    <!-- AlphaVibe-prod/poc/data 是指向正式資料目錄的 symlink，article_data_guard 以 realpath 判斷，所以必須明確帶
+         ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1。PATH 含 /Users/stander/.local/bin（claude）與 /opt/homebrew/bin（node 等）。
+         刻意不放 ANTHROPIC_API_KEY／ANTHROPIC_AUTH_TOKEN／CLAUDE_CODE_USE_* 等任何會改走 API 計費的變數。 -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/stander/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>ALPHAVIBE_ALLOW_PRODUCTION_WRITE</key>
+        <string>1</string>
+    </dict>
+    <!-- 每日 13:10 與 23:40：避開既有排程（02:00、03:30、03:45、04:00、06:00、07:45、09:30、12:30、17:00、20:15、23:00、23:15、週一 10:00）。
+         一次一個行程；刻意不設 RunAtLoad／KeepAlive：安裝或開機時不得立即呼叫 claude。每次最多 3 張、每日最多 6 張、每日最多 2 次執行（程式內守衛；保守預設，真實圖成本須實測後再調）。 -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Hour</key>
+            <integer>13</integer>
+            <key>Minute</key>
+            <integer>10</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>23</integer>
+            <key>Minute</key>
+            <integer>40</integer>
+        </dict>
+    </array>
+    <key>StandardOutPath</key>
+    <string>/Users/stander/Library/Logs/alphavibe-transcription.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/stander/Library/Logs/alphavibe-transcription.err.log</string>
+</dict>
+</plist>

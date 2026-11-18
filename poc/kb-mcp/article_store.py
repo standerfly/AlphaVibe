@@ -144,6 +144,22 @@ CREATE TABLE IF NOT EXISTS transcription_verification (
     checked_at TEXT,
     updates INTEGER NOT NULL DEFAULT 1
 );
+
+CREATE TABLE IF NOT EXISTS pipeline_run (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    trigger TEXT NOT NULL,
+    result TEXT,
+    images_attempted INTEGER NOT NULL DEFAULT 0,
+    images_written INTEGER NOT NULL DEFAULT 0,
+    cross_checked INTEGER NOT NULL DEFAULT 0,
+    flagged INTEGER NOT NULL DEFAULT 0,
+    unverified INTEGER NOT NULL DEFAULT 0,
+    not_table INTEGER NOT NULL DEFAULT 0,
+    failed INTEGER NOT NULL DEFAULT 0,
+    reset_hint TEXT
+);
 """
 
 
@@ -623,45 +639,7 @@ class ArticleStore(object):
         try:
             self._begin_immediate()
             for e in entries:
-                img = self.conn.execute("SELECT transcription_status, transcription FROM article_image WHERE id=?",
-                                        (e["image_id"],)).fetchone()
-                if img is None or transcription_sha256(img["transcription"]) != e["transcription_sha256"]:
-                    raise TranscriptionChanged("轉寫在抽查後已被改寫，須重新抽查")
-                cur = self.conn.execute("SELECT * FROM %s WHERE image_id=?" % VERIFICATION_TABLE,
-                                        (e["image_id"],)).fetchone()
-                cur = dict(cur) if cur else None
-                plan = plan_verification_transition(cur, e["verdict"], e["method"])
-                if plan["action"] == "skip":
-                    result["skipped"].setdefault(plan["reason"], []).append(e["image_id"])
-                    continue
-                status = plan["status"]
-                history = _json_list(cur.get("flag_history")) if cur else []
-                checks = ",".join(plan["checks"]) or None
-                typos = _merge_typos(cur.get("source_typos") if cur else None, e.get("typos"))
-                if e.get("typos"):
-                    result["typo"].append(e["image_id"])
-                if e["verdict"] == "issues":
-                    if e["method"] not in history:
-                        history.append(e["method"])
-                    method, verifier = e["method"], e["verifier"]
-                    note, cells = e.get("note"), e.get("cells")
-                    kind = "flagged"
-                else:
-                    kind = "cross_checked" if status == "cross_checked" else "partial"
-                    if cur is None:
-                        method, verifier = e["method"], e["verifier"]
-                    else:
-                        method = _merge_names(cur.get("method"), e["method"])
-                        verifier = _merge_names(cur.get("verifier"), e["verifier"])
-                    note = cells = None
-                self.conn.execute(
-                    "INSERT OR REPLACE INTO %s (image_id, status, method, verifier, note, flagged_cells, "
-                    "flag_history, checks_passed, source_typos, checked_at, updates) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
-                    % VERIFICATION_TABLE,
-                    (e["image_id"], status, method, verifier, note, cells,
-                     json.dumps(history) if history else None, checks, typos, _iso(self.now()),
-                     (cur["updates"] + 1) if cur else 1))
-                result[kind].append(e["image_id"])
+                self._apply_one_verification(e, result)
             if audit_kind:
                 key = audit_key(result) if callable(audit_key) else (audit_key or "-")
                 day = audit_day or self.now().astimezone(TZ8).date().isoformat()
@@ -672,6 +650,48 @@ class ArticleStore(object):
             self.conn.rollback()
             raise
         return result
+
+    def _apply_one_verification(self, e, result):
+        """單筆驗證寫入（呼叫端須已在交易內）；apply_verification_batch 與 apply_pipeline_image 共用，規則完全相同。"""
+        img = self.conn.execute("SELECT transcription_status, transcription FROM article_image WHERE id=?",
+                                (e["image_id"],)).fetchone()
+        if img is None or transcription_sha256(img["transcription"]) != e["transcription_sha256"]:
+            raise TranscriptionChanged("轉寫在抽查後已被改寫，須重新抽查")
+        cur = self.conn.execute("SELECT * FROM %s WHERE image_id=?" % VERIFICATION_TABLE,
+                                (e["image_id"],)).fetchone()
+        cur = dict(cur) if cur else None
+        plan = plan_verification_transition(cur, e["verdict"], e["method"])
+        if plan["action"] == "skip":
+            result["skipped"].setdefault(plan["reason"], []).append(e["image_id"])
+            return
+        status = plan["status"]
+        history = _json_list(cur.get("flag_history")) if cur else []
+        checks = ",".join(plan["checks"]) or None
+        typos = _merge_typos(cur.get("source_typos") if cur else None, e.get("typos"))
+        if e.get("typos"):
+            result["typo"].append(e["image_id"])
+        if e["verdict"] == "issues":
+            if e["method"] not in history:
+                history.append(e["method"])
+            method, verifier = e["method"], e["verifier"]
+            note, cells = e.get("note"), e.get("cells")
+            kind = "flagged"
+        else:
+            kind = "cross_checked" if status == "cross_checked" else "partial"
+            if cur is None:
+                method, verifier = e["method"], e["verifier"]
+            else:
+                method = _merge_names(cur.get("method"), e["method"])
+                verifier = _merge_names(cur.get("verifier"), e["verifier"])
+            note = cells = None
+        self.conn.execute(
+            "INSERT OR REPLACE INTO %s (image_id, status, method, verifier, note, flagged_cells, "
+            "flag_history, checks_passed, source_typos, checked_at, updates) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+            % VERIFICATION_TABLE,
+            (e["image_id"], status, method, verifier, note, cells,
+             json.dumps(history) if history else None, checks, typos, _iso(self.now()),
+             (cur["updates"] + 1) if cur else 1))
+        result[kind].append(e["image_id"])
 
     def apply_mark_reviewed(self, image_ids, audit_kind=None, audit_key=None, audit_day=None):
         """PO 本人核對後設為 reviewed（**唯一**會寫入 reviewed 的路徑）。單一交易。
@@ -785,6 +805,127 @@ class ArticleStore(object):
         except Exception:
             self.conn.rollback()
             raise
+
+    def apply_pipeline_image(self, article_id, seq, status, text, model, is_table, entries,
+                             audit_kind=None, audit_key=None, audit_day=None):
+        """轉寫流水線（Phase 14）：**單一交易**寫入一張圖的轉寫＋全部驗證條目，全有或全無。
+
+        先 `_write_transcription`（同交易刪除舊驗證列），再逐筆套用 `_apply_one_verification`（規則與
+        `--import-verification` 完全相同；每筆的 transcription_sha256 須等於剛寫入的文字，否則整批 rollback）。
+        `status`＝'done'（text 必填）或 'not_table'（entries 必須為空）。回傳驗證結果 dict（同 apply_verification_batch）。"""
+        self._check_transcription(status, text)
+        if status != "done" and entries:
+            raise ValueError("非表格圖不得帶驗證條目")
+        result = {"cross_checked": [], "flagged": [], "partial": [], "skipped": {}, "typo": []}
+        try:
+            self._begin_immediate()
+            self._write_transcription(article_id, seq, status, text, model, is_table)
+            for e in entries:
+                self._apply_one_verification(e, result)
+            if audit_kind:
+                day = audit_day or self.now().astimezone(TZ8).date().isoformat()
+                key = audit_key(result) if callable(audit_key) else (audit_key or "-")
+                self.conn.execute("INSERT OR IGNORE INTO alert_log (kind, key, day) VALUES (?,?,?)",
+                                  (audit_kind, key, day))
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return result
+
+    # ------------------------------------------------------------------ 轉寫流水線的執行紀錄（Phase 14）
+
+    def _has_pipeline_table(self):
+        row = self.conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pipeline_run'").fetchone()
+        return row is not None
+
+    def start_pipeline_run(self, trigger, now=None):
+        cur = self.conn.execute("INSERT INTO pipeline_run (started_at, trigger) VALUES (?, ?)",
+                                (_iso(now or self.now()), trigger))
+        self.conn.commit()
+        return cur.lastrowid
+
+    def finish_pipeline_run(self, run_id, result, counts=None, reset_hint=None, now=None):
+        """counts 的鍵：images_attempted／images_written／cross_checked／flagged／unverified／not_table／failed。"""
+        c = counts or {}
+        self.conn.execute(
+            "UPDATE pipeline_run SET finished_at=?, result=?, images_attempted=?, images_written=?, cross_checked=?, "
+            "flagged=?, unverified=?, not_table=?, failed=?, reset_hint=? WHERE id=?",
+            (_iso(now or self.now()), result, int(c.get("images_attempted", 0)), int(c.get("images_written", 0)),
+             int(c.get("cross_checked", 0)), int(c.get("flagged", 0)), int(c.get("unverified", 0)),
+             int(c.get("not_table", 0)), int(c.get("failed", 0)), reset_hint, run_id))
+        self.conn.commit()
+
+    def pipeline_usage_today(self, now=None):
+        """以台北日期計今天的 (執行次數, 已嘗試張數)。舊庫沒有紀錄表＝(0, 0)。"""
+        if not self._has_pipeline_table():
+            return 0, 0
+        day = _aware(now or self.now()).astimezone(TZ8).date().isoformat()
+        row = self.conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(images_attempted), 0) FROM pipeline_run WHERE substr(started_at,1,10)=?",
+            (day,)).fetchone()
+        return row[0], row[1]
+
+    def recent_pipeline_runs(self, limit=10):
+        if not self._has_pipeline_table():
+            return []
+        return [dict(r) for r in self.conn.execute(
+            "SELECT * FROM pipeline_run ORDER BY id DESC LIMIT ?", (int(limit),))]
+
+    def pipeline_pending_counts(self):
+        """流水線待處理張數（僅 status=fetched 文章、有本機檔、未轉寫）：{"pending": 未達嘗試上限, "exhausted": 已達上限}。"""
+        row = self.conn.execute(
+            "SELECT COALESCE(SUM(i.transcribe_attempts < ?), 0), COALESCE(SUM(i.transcribe_attempts >= ?), 0) "
+            "FROM article_image i JOIN article a ON a.article_id=i.article_id "
+            "WHERE a.status='fetched' AND i.file_path IS NOT NULL AND i.transcription_status='untranscribed'",
+            (MAX_TRANSCRIBE_ATTEMPTS, MAX_TRANSCRIBE_ATTEMPTS)).fetchone()
+        return {"pending": int(row[0]), "exhausted": int(row[1]), "to_verify": len(self.pipeline_images_to_verify(10 ** 6))}
+
+    PIPELINE_MODEL_LIKE = "claude-cli:%"
+    MAX_PIPELINE_VERIFY_FAILURES = 3
+
+    def pipeline_images_to_verify(self, limit):
+        """已由流水線轉寫（claude-cli:）、還沒有文字家族驗證的圖：無驗證列，或 unverified 且 checks_passed 不含 text。
+        flagged／cross_checked／reviewed 一律不選；驗證失敗已達上限者不選。依 article_id／seq。"""
+        has_v = self._has_verification_table()
+        join = "LEFT JOIN %s v ON v.image_id=i.id " % VERIFICATION_TABLE if has_v else ""
+        cond = ("AND (v.image_id IS NULL OR (v.status='unverified' AND COALESCE(v.checks_passed,'') NOT LIKE '%text%')) "
+                if has_v else "")
+        rows = self.conn.execute(
+            "SELECT i.* FROM article_image i JOIN article a ON a.article_id=i.article_id " + join +
+            "WHERE a.status='fetched' AND i.file_path IS NOT NULL AND i.transcription_status='done' "
+            "AND i.transcribed_model LIKE ? " + cond + "ORDER BY i.article_id, i.seq", (self.PIPELINE_MODEL_LIKE,))
+        out = []
+        for r in rows:
+            if self.pipeline_verify_failures(r["id"]) >= self.MAX_PIPELINE_VERIFY_FAILURES:
+                continue
+            out.append(dict(r))
+            if len(out) >= limit:
+                break
+        return out
+
+    def pipeline_extra_counts(self):
+        """健檢用（只是計數）：not_table＝status=fetched 文章中被判為非表格的圖；text_only＝流水線轉寫、文字家族已過但數字家族缺漏
+        （unverified 且 checks_passed＝text）。舊庫沒有驗證表＝text_only 0。"""
+        nt = self.conn.execute(
+            "SELECT COUNT(*) FROM article_image i JOIN article a ON a.article_id=i.article_id "
+            "WHERE a.status='fetched' AND i.transcription_status='not_table'").fetchone()[0]
+        txt = 0
+        if self._has_verification_table() and "checks_passed" in self._verification_columns():
+            txt = self.conn.execute(
+                "SELECT COUNT(*) FROM %s v JOIN article_image i ON i.id=v.image_id JOIN article a ON a.article_id=i.article_id "
+                "WHERE a.status='fetched' AND i.transcription_status='done' AND i.transcribed_model LIKE ? "
+                "AND v.status='unverified' AND v.checks_passed='text'" % VERIFICATION_TABLE,
+                (self.PIPELINE_MODEL_LIKE,)).fetchone()[0]
+        return {"not_table": nt, "text_only": txt}
+
+    def log_pipeline_verify_failure(self, image_id):
+        """驗證者呼叫失敗（逾時、壞輸出…）記一筆；累計達上限就不再自動重試。只存 image_id 與時間。"""
+        self.alert_once("pipeline_verify_fail", "%d:%s" % (image_id, self.now().strftime("%H%M%S%f")))
+
+    def pipeline_verify_failures(self, image_id):
+        return self.conn.execute("SELECT COUNT(*) FROM alert_log WHERE kind='pipeline_verify_fail' AND key LIKE ?",
+                                 ("%d:%%" % image_id,)).fetchone()[0]
 
     def get_image_by_id(self, image_id):
         """依 article_image.id 取一張圖（含所屬文章狀態）；沒有回 None。"""

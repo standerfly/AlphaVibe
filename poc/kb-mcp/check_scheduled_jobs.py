@@ -51,6 +51,10 @@ STATEMENT_STALE_HOURS = 30
 STATEMENT_UNFINISHED_HOURS = 1
 # 定錨文章匯入（010）排程每日 12:30、23:00 各跑一次（2026-11-17 起）；超過這麼多天沒有任何執行紀錄＝排程沒在跑（容許 Mac 睡眠漏跑 2 晚）
 INVESTANCHORS_STALE_DAYS = 3
+# 轉寫流水線（010 Phase 14）：排程每日兩次；啟用且有待處理圖卻超過這麼多天沒執行＝沒在跑
+PIPELINE_STALE_DAYS = 3
+# 連續幾次因訂閱使用量上限而中止就警告（單次撞限是正常的，下次排程會續做）
+PIPELINE_LIMIT_ABORT_WARN_RUNS = 3
 
 
 def _now():
@@ -384,10 +388,70 @@ def check_investanchors_import(data_dir):
     return findings + [("ok", "investanchors_import", summary)]
 
 
+def check_transcription_pipeline(data_dir):
+    """轉寫流水線（010 Phase 14）：唯讀檢視 articles.db，輸出只含數字、結果代碼與重置時間字串，不含標題／內文。
+
+    庫不存在、舊庫沒有 pipeline_run 表＝尚未上線（視為正常，不建庫）。"""
+    import article_store
+    try:
+        store = article_store.ArticleStore.open_readonly(data_dir)
+    except FileNotFoundError:
+        return [("ok", "transcription_pipeline", "尚未建立（找不到 articles.db）")]
+    try:
+        try:
+            enabled = str(store.get_setting("pipeline_enabled", "0")) == "1"
+            pending = store.pipeline_pending_counts()
+            vc = store.verification_counts()
+            runs = store.recent_pipeline_runs(10)
+            extra = store.pipeline_extra_counts()
+        finally:
+            store.conn.close()
+    except sqlite3.OperationalError:
+        return [("ok", "transcription_pipeline", "尚未上線（沒有匯入資料表）")]
+    findings = []
+    last = runs[0] if runs else None
+    if enabled and pending["pending"] + pending["to_verify"] > 0:
+        if last is None:
+            findings.append(("warning", "transcription_pipeline",
+                             "已啟用但尚未有任何執行紀錄（待處理 %d 張；排程未安裝？）" % pending["pending"]))
+        else:
+            age = _aware_age_hours(last["started_at"])
+            if age is None or age > PIPELINE_STALE_DAYS * 24:
+                findings.append(("warning", "transcription_pipeline",
+                                 "超過 %d 天沒有執行（最後一次：%s；待處理 %d 張）"
+                                 % (PIPELINE_STALE_DAYS, last["started_at"], pending["pending"] + pending["to_verify"])))
+    if last is not None:
+        if last["result"] == "aborted_auth_mode":
+            findings.append(("critical", "transcription_pipeline",
+                             "登入方式不是 claude.ai 訂閱（可能是 API 金鑰／Console，會產生費用），已中止；請立即檢查 claude auth status"))
+        elif last["result"] == "aborted_login":
+            findings.append(("warning", "transcription_pipeline",
+                             "最近一次因 claude 登入失效而中止（不會自動重試）；請在 Mac 重新登入或更新 token（quickstart §15）"))
+        elif last["result"] == "aborted_flags":
+            findings.append(("warning", "transcription_pipeline",
+                             "最近一次因 claude 版本缺少必要旗標而中止（claude 更新後旗標改名？）"))
+        streak = 0
+        for r in runs:
+            if r["result"] != "aborted_usage_limit":
+                break
+            streak += 1
+        if streak >= PIPELINE_LIMIT_ABORT_WARN_RUNS:
+            findings.append(("warning", "transcription_pipeline",
+                             "連續 %d 次因訂閱使用量上限中止（最近一次回報的重置時間：%s）；待處理 %d 張會延後，若持續請調降 --max-images"
+                             % (streak, runs[0]["reset_hint"] or "未知", pending["pending"] + pending["to_verify"])))
+    summary = ("流水線%s；最近執行 %s（結果 %s）；待轉寫 %d 張（已達嘗試上限 %d 張）、待驗證 %d 張；有疑慮待 PO 核對 %d 張；"
+               "僅通過文字家族（數字家族缺漏）%d 張；非表格累計 %d 張"
+               % ("已啟用" if enabled else "未啟用", last["started_at"] if last else "無", (last["result"] if last else "-"),
+                  pending["pending"], pending["exhausted"], pending["to_verify"], vc["flagged"],
+                  extra["text_only"], extra["not_table"]))
+    return findings + [("ok", "transcription_pipeline", summary)]
+
+
 CHECKS = (
     ("market_scan", check_market_scan, True),   # True = 需要 data_dir
     ("statement_import", check_statement_import, True),
     ("investanchors_import", check_investanchors_import, True),
+    ("transcription_pipeline", check_transcription_pipeline, True),
     ("backup", check_backups, False),
     ("articles_backup", check_articles_backup, True),
     ("web_service", check_web_service, False),
