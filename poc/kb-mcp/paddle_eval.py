@@ -40,31 +40,66 @@ _SRC_RE = re.compile(r"^原圖：(.+?)\s*$")
 
 # ── 不連網守衛 ───────────────────────────────────────────────────────────────────────
 def install_network_guard():
-    """擋掉所有對外連線（含 DNS）；允許 unix socket 與本機迴路。回傳還原函式（測試用）。"""
-    orig_connect, orig_getaddrinfo = socket.socket.connect, socket.getaddrinfo
+    """擋掉所有對外連線（含 DNS、UDP）；允許 unix socket 與本機迴路。回傳還原函式（測試用）。
+
+    注意：這只約束 Python 層；Paddle 的 C 層與子行程不受影響，真正的離線保證要靠 prepare_environment 設的
+    HF_HUB_OFFLINE 等環境變數，本守衛只是輔助（見 paddle-setup.md）。"""
+    S = socket.socket
+    orig = {
+        "connect": S.connect, "connect_ex": S.connect_ex, "sendto": S.sendto,
+        "getaddrinfo": socket.getaddrinfo, "gethostbyname": socket.gethostbyname,
+        "gethostbyname_ex": socket.gethostbyname_ex,
+    }
+    local_hosts = ("127.0.0.1", "::1", "localhost")
 
     def _is_local(address):
         if isinstance(address, (str, bytes)):          # unix socket 路徑
             return True
         host = address[0] if address else ""
-        return host in ("127.0.0.1", "::1", "localhost")
+        return host in local_hosts
+
+    def _block(what):
+        raise OSError("paddle_eval：離線模式，已阻擋%s（要下載模型請加 --allow-download）" % what)
 
     def guarded_connect(self, address):
         if not _is_local(address):
-            raise OSError("paddle_eval：離線模式，已阻擋對外連線（要下載模型請加 --allow-download）")
-        return orig_connect(self, address)
+            _block("對外連線")
+        return orig["connect"](self, address)
+
+    def guarded_connect_ex(self, address):
+        if not _is_local(address):
+            _block("對外連線")
+        return orig["connect_ex"](self, address)
+
+    def guarded_sendto(self, data, *a):
+        address = a[-1] if a else None
+        if address is not None and not _is_local(address):
+            _block("對外 UDP 傳送")
+        return orig["sendto"](self, data, *a)
 
     def guarded_getaddrinfo(host, *a, **k):
-        if host not in ("127.0.0.1", "::1", "localhost", None):
-            raise OSError("paddle_eval：離線模式，已阻擋 DNS 查詢（要下載模型請加 --allow-download）")
-        return orig_getaddrinfo(host, *a, **k)
+        if host not in local_hosts and host is not None:
+            _block(" DNS 查詢")
+        return orig["getaddrinfo"](host, *a, **k)
 
-    socket.socket.connect = guarded_connect
+    def guarded_gethostbyname(host):
+        if host not in local_hosts:
+            _block(" DNS 查詢")
+        return orig["gethostbyname"](host)
+
+    def guarded_gethostbyname_ex(host):
+        if host not in local_hosts:
+            _block(" DNS 查詢")
+        return orig["gethostbyname_ex"](host)
+
+    S.connect, S.connect_ex, S.sendto = guarded_connect, guarded_connect_ex, guarded_sendto
     socket.getaddrinfo = guarded_getaddrinfo
+    socket.gethostbyname, socket.gethostbyname_ex = guarded_gethostbyname, guarded_gethostbyname_ex
 
     def restore():
-        socket.socket.connect = orig_connect
-        socket.getaddrinfo = orig_getaddrinfo
+        S.connect, S.connect_ex, S.sendto = orig["connect"], orig["connect_ex"], orig["sendto"]
+        socket.getaddrinfo = orig["getaddrinfo"]
+        socket.gethostbyname, socket.gethostbyname_ex = orig["gethostbyname"], orig["gethostbyname_ex"]
     return restore
 
 
@@ -85,10 +120,12 @@ def load_inputs(src):
         data = json.loads(text)
         if isinstance(data, dict):
             data = data.get("images", [])
+        if not isinstance(data, list):
+            raise ValueError("清單格式不正確（需為陣列，或含 images 陣列的物件）")
         for e in data:
             if isinstance(e, str):
                 items.append({"path": e, "label": os.path.basename(e)})
-            elif isinstance(e, dict) and e.get("path"):
+            elif isinstance(e, dict) and isinstance(e.get("path"), str) and e.get("path"):
                 label = " ".join("%s=%s" % (k, e[k]) for k in ("article_id", "seq") if e.get(k) is not None)
                 items.append({"path": e["path"], "label": label or os.path.basename(e["path"])})
     elif ext == ".md":
@@ -118,7 +155,7 @@ def load_inputs(src):
 def _fmt_size(path):
     try:
         with open(path, "rb") as f:
-            size = article_image_tiles.image_size(f.read())
+            size = article_image_tiles.image_size(f.read(2 * 1024 * 1024))   # 只讀檔頭，不整檔載入
     except OSError:
         return None
     return size
@@ -213,7 +250,7 @@ def run(argv=None, transcribe=None, now=None, say=print, guard=True):
         return 2
     try:
         items = load_inputs(args.source)
-    except (OSError, ValueError) as e:
+    except (OSError, ValueError, RecursionError, TypeError, AttributeError) as e:
         say("讀取輸入失敗：%s" % type(e).__name__)
         return 2
     if not items:
@@ -254,10 +291,23 @@ def run(argv=None, transcribe=None, now=None, say=print, guard=True):
     stamp_dt = (now or datetime.datetime.now)()
     stamp = stamp_dt.strftime("%Y%m%d-%H%M%S")
     desc = "引擎 %s／%s；mode=%s" % (ap.ENGINE_NAME, args.variant, "+".join(modes))
-    os.makedirs(args.out, exist_ok=True)
-    out_path = os.path.join(args.out, "paddle-eval-%s.md" % stamp)
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write(build_report(rows, modes, desc, stamp_dt.strftime("%Y-%m-%d %H:%M:%S")))
+    try:
+        os.makedirs(args.out, exist_ok=True)
+        out_path, n = os.path.join(args.out, "paddle-eval-%s.md" % stamp), 1
+        while True:                                   # 不覆寫既有報告：同一秒重跑加序號
+            try:
+                f = open(out_path, "x", encoding="utf-8")
+                break
+            except FileExistsError:
+                n += 1
+                out_path = os.path.join(args.out, "paddle-eval-%s-%d.md" % (stamp, n))
+                if n > 1000:
+                    raise
+        with f:
+            f.write(build_report(rows, modes, desc, stamp_dt.strftime("%Y-%m-%d %H:%M:%S")))
+    except OSError as e:
+        say("寫入報告失敗：%s" % type(e).__name__)
+        return 2
     say("評估完成：%d 張 × %d 種模式，失敗 %d，報告 %s" % (len(rows), len(modes), failures, out_path))
     if aborted:
         say("引擎不可用（%s）。%s" % (aborted, ap.INSTALL_HINT if "install" in aborted else ap.MODEL_HINT))

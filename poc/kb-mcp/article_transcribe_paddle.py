@@ -420,6 +420,10 @@ def merge_grids(grids):
     return merged, warnings
 
 
+# 解碼前的像素上限（防解壓炸彈）：實際最大的文章圖 2190x5327≈1170 萬像素，上限放寬到 5000 萬
+MAX_IMAGE_PIXELS = 50000000
+
+
 # ── 影像層（numpy／PIL；可注入以便測試）──────────────────────────────────────────────
 class PilImage(object):
     """以 PIL／numpy 實作的影像處理；paddle 本來就依賴它們。"""
@@ -434,7 +438,12 @@ class PilImage(object):
         try:
             import io
             im = Image.open(io.BytesIO(data))
+            pixels = int(im.size[0]) * int(im.size[1])      # 只讀檔頭，尚未解碼
+            if pixels > MAX_IMAGE_PIXELS:
+                raise ValueError("image_too_large")
             im.load()
+        except ValueError:
+            raise
         except Exception:
             raise ValueError("image_decode_error")
         if im.mode in ("RGBA", "LA", "P"):

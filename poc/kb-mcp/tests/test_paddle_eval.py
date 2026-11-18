@@ -242,14 +242,76 @@ class RunTest(Base):
                          ("mobile", 0.9, "/m", 960, False))
 
 
+class BadInputAndOutputTest(Base):
+    def _transcribe(self, *a, **k):
+        return ok_result()
+
+    def test_bad_manifests_exit_2_without_traceback(self):
+        cases = {
+            "deep": "[" * 100000 + "]" * 100000,
+            "path_not_str": '[{"path": 5}]',
+            "images_not_list": '{"images": 5}',
+            "top_scalar": "7",
+        }
+        for name, text in cases.items():
+            p = os.path.join(self.d, "m-%s.json" % name)
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(text)
+            self.msgs.clear()
+            rc = self.run_eval([p], self._transcribe)
+            self.assertIn(rc, (2,), "%s rc=%s msgs=%s" % (name, rc, self.msgs))
+            self.assertNotIn("Traceback", " ".join(self.msgs))
+
+    def test_out_path_is_a_file_exits_2(self):
+        p = self.img_dir(1)
+        with open(self.out, "w") as f:
+            f.write("x")
+        rc = self.run_eval([p], self._transcribe)
+        self.assertEqual(rc, 2)
+
+    def test_same_second_rerun_does_not_overwrite(self):
+        p = self.img_dir(1)
+        self.run_eval([p], self._transcribe)
+        self.run_eval([p], self._transcribe)
+        names = sorted(os.listdir(self.out))
+        self.assertEqual(len(names), 2, names)
+        self.assertTrue(any(n.endswith("-2.md") for n in names), names)
+
+
 class NetworkGuardTest(Base):
     def setUp(self):
         Base.setUp(self)
-        self._c, self._g = socket.socket.connect, socket.getaddrinfo
+        S = socket.socket
+        self._saved = (S.connect, S.connect_ex, S.sendto, socket.getaddrinfo, socket.gethostbyname,
+                       socket.gethostbyname_ex)
+        self._c, self._g = S.connect, socket.getaddrinfo
         self.addCleanup(self._restore)
 
     def _restore(self):
-        socket.socket.connect, socket.getaddrinfo = self._c, self._g
+        S = socket.socket
+        (S.connect, S.connect_ex, S.sendto, socket.getaddrinfo, socket.gethostbyname,
+         socket.gethostbyname_ex) = self._saved
+
+    def test_guard_blocks_connect_ex_udp_and_gethostbyname(self):
+        restore = pe.install_network_guard()
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1)
+            with self.assertRaises(OSError):
+                s.connect_ex(("93.184.216.34", 443))
+            s.close()
+            u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            with self.assertRaises(OSError):
+                u.sendto(b"x", ("93.184.216.34", 53))
+            u.close()
+            with self.assertRaises(OSError):
+                socket.gethostbyname("example.com")
+            with self.assertRaises(OSError):
+                socket.gethostbyname_ex("example.com")
+        finally:
+            restore()
+        self.assertIs(socket.socket.connect_ex, self._saved[1])
+        self.assertIs(socket.gethostbyname, self._saved[4])
 
     def test_guard_blocks_external_and_dns(self):
         restore = pe.install_network_guard()

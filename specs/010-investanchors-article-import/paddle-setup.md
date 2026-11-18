@@ -178,3 +178,10 @@ rm -rf ~/.cache/huggingface       # 只有確定沒有其他用途時
 - paddleocr 3.7.0、paddlepaddle、paddlex：**Apache License 2.0**（`pip show paddleocr` 確認 paddleocr；其他依官方調查）。
 - 模型（PP-OCRv5 等）由 PaddlePaddle 於 Hugging Face 發佈；**模型授權條款我未逐一查證**，PO 若要長期採用請另行確認。
 - 本機推論不外送資料；唯一對外連線是「首次下載套件與模型」，且須明確傳 `--allow-download`。
+
+## 附：評估工具的離線守衛與輸入防護（2026-11-18 獨立驗收後補強）
+
+- `paddle_eval.py` 預設在 Python 層擋對外連線（connect／connect_ex／UDP sendto／DNS 查詢）；**Paddle 的 C 層與子行程不受它約束**，
+  真正的離線保證要靠 `prepare_environment` 設的 `HF_HUB_OFFLINE` 等環境變數，守衛只是輔助。要下載模型必須明確加 `--allow-download`。
+- 解碼前先檢查像素數（上限 5000 萬），超過回 `image_too_large`（防解壓炸彈）；壞清單（深層巢狀、型別錯誤）與 `--out` 指到檔案時乾淨回 exit 2；
+  報告檔同一秒重跑不覆寫（加 `-2`、`-3` 序號）。

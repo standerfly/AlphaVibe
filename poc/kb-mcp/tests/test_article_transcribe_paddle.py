@@ -774,6 +774,18 @@ class PilImageTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             ap.PilImage(b"\x89PNG\r\n\x1a\nnot really")
 
+    def test_pixel_cap_blocks_decompression_bomb_before_decode(self):
+        im = Image.new("1", (12000, 9000), 1)        # 1 位元 PNG 很小，解碼後卻是 1.08 億像素
+        data = self.png(im)
+        self.assertLess(len(data), 200000)
+        with self.assertRaises(ValueError) as cm:
+            ap.PilImage(data)
+        self.assertEqual(str(cm.exception), "image_too_large")
+
+    def test_normal_large_article_image_still_ok(self):
+        p = ap.PilImage(self.png(Image.new("RGB", (2190, 5327), "white")))
+        self.assertEqual((p.width, p.height), (2190, 5327))
+
 
 if __name__ == "__main__":
     unittest.main()
