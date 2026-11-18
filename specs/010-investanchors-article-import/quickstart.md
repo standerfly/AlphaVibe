@@ -335,3 +335,6 @@ PaddleOCR 缺失、逾時或結果 inconclusive 時不輸出數字條目，這�
 
 ### 健檢（`check_scheduled_jobs` 的 `transcription_pipeline`）
 啟用狀態、最近執行與結果、待轉寫／待驗證／已達上限張數、有疑慮待 PO 核對張數、僅通過文字家族張數、非表格累計張數（摘要只含數字）；啟用且有待處理圖卻超過 3 天沒執行＝warning；連續 3 次因使用量上限中止＝warning（含最近重置時間）；登入失效＝warning；登入方式變成 API 金鑰＝critical。
+
+### 「非表格」誤判的處理（2026-11-18 首次真實試跑發現）
+首次真實試跑中，reader-1 把一張帶百分比標籤的堆疊柱狀圖判成 `not_table`（偽陰性，數字沒進庫）。處置：①提示詞明訂「有可讀數值（含帶數值標籤的長條／堆疊／折線／圓餅圖）一律 is_table=true，只有完全無數值才 false，拿不準填 true」；②新增 `transcription_pipeline.py --data-dir <dir> --reset-not-table <image_id,…>`：只把 `not_table` 的圖重置回 `untranscribed`（失敗次數歸零、清驗證列；非 not_table 一律拒絕並整批不動；不呼叫 claude；寫稽核紀錄 `transcription_pipeline_reset`），之後下一次流水線執行會重做。`not_table` 仍只由 reader-1 判斷、不經驗證者；健檢的「非表格累計」數字請 PO 偶爾對照原圖抽看。

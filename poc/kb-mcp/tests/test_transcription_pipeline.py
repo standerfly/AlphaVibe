@@ -1075,6 +1075,39 @@ class EnableDisableTest(PBase):
         self.assertEqual(s.get_setting("pipeline_enabled"), "0")
         s.close()
 
+class ResetNotTableTest(PBase):
+    N = 2
+
+    def mark(self, seq, status):
+        s = self.store()
+        s.conn.execute("UPDATE article_image SET transcription_status=?, is_table=0, transcribe_attempts=2 WHERE seq=?", (status, seq))
+        s.conn.commit()
+        s.close()
+
+    def test_reset_only_not_table_and_calls_no_model(self):
+        self.mark(1, "not_table")
+        iid = self.rows()[0]["id"]
+        self.assertEqual(self.run_pipe("--reset-not-table", str(iid)), 0)
+        r = self.rows()[0]
+        self.assertEqual((r["transcription_status"], r["is_table"], r["transcribe_attempts"]), ("untranscribed", None, 0))
+        self.assertEqual(self.stub.calls(), [])
+
+    def test_refuses_non_not_table_and_rolls_back_whole_batch(self):
+        self.mark(1, "not_table")
+        self.mark(2, "done")
+        ids = ",".join(str(r["id"]) for r in self.rows())
+        self.assertEqual(self.run_pipe("--reset-not-table", ids), 2)
+        self.assertEqual([r["transcription_status"] for r in self.rows()], ["not_table", "done"])
+
+    def test_not_combinable_and_bad_input(self):
+        self.assertEqual(self.run_pipe("--reset-not-table", "1", "--dry-run"), 2)
+        self.assertEqual(self.run_pipe("--reset-not-table", "abc"), 2)
+
+    def test_prompt_labels_charts_with_values_as_tables(self):
+        self.assertIn("百分比標籤", CR.TRANSCRIBE_USER_RULES)
+        self.assertIn("一律 is_table 填 true", CR.TRANSCRIBE_USER_RULES)
+
+
 class AtomicityTest(PBase):
     N = 1
 
