@@ -67,6 +67,7 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 尚未部署，部署須重新 bootout／bootstrap plist，回滾見 `pre-release-review.md` §3.4。上文「每晚 23:00」為放寬前的歷史描述。
 接手前先讀 `specs/010-investanchors-article-import/quickstart.md` 與 `tasks.md`；
 `setup-plan.sh` 在此分支要加 `SPECIFY_FEATURE=010-investanchors-article-import`。
+**表格圖轉寫與驗證的操作入口（含給 Cline／Claude 讀圖 agent 的 prompt 範本）：`docs/runbooks/transcription-verification.md`**（2026-11-18 起：轉寫預設 unverified、不進搜尋；數字＋文字兩家族都通過才可搜尋；flagged 只有 PO 能清除；詳見 quickstart §12～§14）。
 
 `specs/009-cathay-tw-statement-import/plan.md`（國泰台股日對帳單 Email 自動匯入：
 Gmail IMAP 唯讀取信、qpdf＋pdftotext 解密擷取、委託書號正規化防重複、單一交易寫入成交與
