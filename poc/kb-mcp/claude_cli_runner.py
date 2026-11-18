@@ -58,7 +58,7 @@ DENY_TOOLS = ("Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch")
 FORBIDDEN_FLAGS = ("--bare", "--max-budget-usd", "--max-turns", "--dangerously-skip-permissions",
                    "--allow-dangerously-skip-permissions", "--betas", "--api-key", "--settings", "--mcp-config",
                    "--fallback-model", "--agents", "--plugin-dir", "--chrome", "--ide")
-ENV_ALLOW = ("PATH", "HOME", "LANG")        # HOME 是訂閱登入所需；其餘不必要變數一律不傳（D4）
+ENV_ALLOW = ("PATH", "HOME", "LANG", "USER", "LOGNAME")   # HOME／USER／LOGNAME 是 claude 訂閱登入偵測所需（Mac 實測缺 USER／LOGNAME 會 loggedIn＝False）；其餘不必要變數一律不傳（D4）
 BILLING_ENV_NAMES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL",
                      "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
                      "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_BEARER_TOKEN_BEDROCK",
