@@ -833,6 +833,32 @@ class ArticleStore(object):
             raise
         return result
 
+    def reset_not_table(self, image_ids, audit_kind=None, audit_key=None):
+        """把「被判為 not_table」的圖重置回 untranscribed（失敗次數歸零、驗證列清除），供流水線重做。單一交易。
+        只動 transcription_status＝'not_table' 的圖；其他狀態（含 done）一律拒絕並整批 rollback（不會碰已轉寫的資料）。"""
+        ids = [int(i) for i in image_ids]
+        if not ids:
+            raise ValueError("沒有指定 image_id")
+        try:
+            self._begin_immediate()
+            for iid in ids:
+                row = self.conn.execute("SELECT transcription_status FROM article_image WHERE id=?", (iid,)).fetchone()
+                if row is None or row["transcription_status"] != "not_table":
+                    raise ValueError("image_id=%d 不存在或不是 not_table，拒絕重置" % iid)
+                self.conn.execute("DELETE FROM transcription_verification WHERE image_id=?", (iid,))
+                self.conn.execute(
+                    "UPDATE article_image SET transcription_status='untranscribed', transcription=NULL, "
+                    "transcribed_model=NULL, is_table=NULL, transcribe_attempts=0 WHERE id=?", (iid,))
+            if audit_kind:
+                day = self.now().astimezone(TZ8).date().isoformat()
+                self.conn.execute("INSERT OR IGNORE INTO alert_log (kind, key, day) VALUES (?,?,?)",
+                                  (audit_kind, audit_key or "-", day))
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return ids
+
     # ------------------------------------------------------------------ 轉寫流水線的執行紀錄（Phase 14）
 
     def _has_pipeline_table(self):
