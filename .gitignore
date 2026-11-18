@@ -18,3 +18,7 @@ poc/data-test/
 
 # 手動對真實定錨網站測試用的獨立資料目錄（010 tasks T023／T048；絕不使用正式庫 poc/data）
 poc/data-test-articles/
+
+# 方案 C（本機 PaddleOCR）的獨立 venv 與評估輸出（010 paddle-setup.md；絕不放進正式環境）
+.venv-paddle/
+paddle_eval_out/
