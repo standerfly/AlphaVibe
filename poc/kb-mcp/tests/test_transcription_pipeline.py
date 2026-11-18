@@ -1106,6 +1106,8 @@ class ResetNotTableTest(PBase):
     def test_prompt_labels_charts_with_values_as_tables(self):
         self.assertIn("百分比標籤", CR.TRANSCRIBE_USER_RULES)
         self.assertIn("一律 is_table 填 true", CR.TRANSCRIBE_USER_RULES)
+        self.assertIn("實景照", CR.TRANSCRIBE_USER_RULES)
+        self.assertIn("照片類拿不準時填 false", CR.TRANSCRIBE_USER_RULES)
 
 
 class ResetFlaggedTest(PBase):

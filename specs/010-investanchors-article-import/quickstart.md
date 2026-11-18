@@ -341,3 +341,6 @@ PaddleOCR 缺失、逾時或結果 inconclusive 時不輸出數字條目，這�
 
 ### 重做 flagged 的圖（2026-11-18）
 批次試跑中 reader-1 對「第一根柱沒標年度」的欄位自行加上「(前一年度)」（原圖沒有，真實小錯誤）。處置：提示詞加「標籤只照圖上實際印的文字抄，原圖沒有的資訊不得加註／推論，留原樣或寫 ?」；新增 `transcription_pipeline.py --data-dir <dir> --reset-flagged <image_id,…>`：只把「已轉寫且 flagged」的圖重置回 untranscribed（轉寫與疑慮記錄清除；cross_checked／reviewed／unverified 一律拒絕、整批不動；不呼叫 claude；稽核 `transcription_pipeline_reset`），**僅在 PO 確認轉寫確有錯、要重做時使用**。flagged 但 PO 核對後轉寫正確（如 OCR 誤報）則用 `--mark-reviewed`。
+
+### 照片被當成表格轉寫的處理（2026-11-19 批次試跑發現）
+提示詞的「拿不準填 true」讓展場現場照被 reader-1 判成表格，並把招牌文字逐行抄成垃圾轉寫（驗證者正確標 flagged）。處置：提示詞改為「照片（含場景、展場、人物、產品、錄音室等實景照）、裝飾、logo、純示意圖、無數值標籤圖形一律 is_table=false、不轉寫畫面中的招牌文字；只有資料圖表才 true；圖表類拿不準填 true、照片類拿不準填 false」。已被誤判而 flagged 的圖：`--reset-flagged <id>` 重置後重跑即會判 not_table。
