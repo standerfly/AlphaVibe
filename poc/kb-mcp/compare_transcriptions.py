@@ -4,6 +4,11 @@
 負號或括號掉了…），讓 PO 對照原圖只看有疑慮的格子。
 注意：兩邊一致不代表一定正確（兩個引擎可能犯同樣的錯）；不一致也不代表哪邊對——最終以原圖為準。
 
+`--emit-verification <路徑>`（010 Phase 12，Q-028）：另依比對結果輸出 verification.json（method=compare-d-c）供
+`investanchors_import.py --import-verification` 匯入。**雙來源一致不代表正確**——這只是「有一個獨立來源（C）與 D 沒有衝突」，
+且只屬「數字家族」——必須再有文字家族（agent 逐字抽查）通過才會成為 cross_checked；絕不是 reviewed；
+每筆帶 transcription_sha256（由 D results 的 text 計算，須與匯入資料庫的文字一致；D 尚未匯入資料庫的圖，匯入驗證時會被拒收）；任何疑慮一律 flagged；比對失敗或未配對的圖不輸出（維持 unverified）。
+
 純本機：不連網、不讀鑰匙圈、不登入、不碰資料庫；只讀 results.json／manifest.json／paddle-eval-*.md，
 只寫 `<out>/compare-<時間>.md`（不覆寫）。報告含轉寫片段（付費文章圖片來源，只留本機），
 **但不含文章標題**（非表格的文字行內容一律不輸出，只輸出其中的數字）；stdout 只印數字摘要。
@@ -12,6 +17,7 @@
 import argparse
 import collections
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -19,9 +25,14 @@ import sys
 import unicodedata
 from decimal import Decimal, InvalidOperation
 
+import investanchors_redact
+
 LEVEL_HIGH, LEVEL_MID, LEVEL_LOW = "高", "中", "低"
 MAX_LIST = 40            # 報告內單一清單最多列幾項（其餘只給數量）
 MAX_CELL_CHARS = 40      # 報告內單一格子文字最多顯示幾字
+VERIFY_VERIFIER = "compare-transcriptions"
+VERIFY_METHOD = "compare-d-c"
+VERIFY_MAX_ISSUES = 200
 MAX_PAIR_CANDIDATES = 1000000   # 近似配對候選上限（n×m 超過就略過編輯距離配對並註明）
 
 # 簡繁字形歸一化（--normalize-text；只放財報表格常見字，非完整字表）
@@ -473,8 +484,9 @@ def load_d(results_path, manifest_path):
         if m is None:
             orphan.append(iid)
             continue
+        sha = m.get("sha256") if isinstance(m.get("sha256"), str) else r.get("sha256")
         items.append({"image_id": iid, "path": m["path"], "width": m.get("width"), "height": m.get("height"),
-                      "is_table": r.get("is_table"), "text": r["text"]})
+                      "is_table": r.get("is_table"), "text": r["text"], "sha256": sha})
     for it in items:
         if it["is_table"] is False:
             notes.append("image_id=%d 被 D 判為非表格圖（text 為空）；若 C 在該圖轉出了表格內容，請對照原圖人工確認" % it["image_id"])
@@ -772,6 +784,98 @@ def _detail(cmp_, it):
     return L
 
 
+# ====================================================================== 驗證檔輸出（Q-028）
+_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _vclip(s, n):
+    """驗證檔欄位：單行、去控制字元、截短；疑似金鑰字串以固定文字取代（匯入端會整批拒收這種字串）。"""
+    s = re.sub(r"[\x00-\x1f\x7f-\x9f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]", " ", str(s or ""))
+    s = " ".join(s.split())
+    if investanchors_redact.secret_like(s):
+        s = "（內容已省略）"
+    return s if len(s) <= n else s[:n - 1] + "…"
+
+
+def _issue(where, found, expected, kind):
+    it = {"where": _vclip(where, 80) or "整張圖", "found": _vclip(found, 200), "kind": kind}
+    exp = _vclip(expected, 200)
+    if exp:
+        it["expected"] = exp
+    return it
+
+
+def _compare_concerns(sid, cmp_):
+    """單一 C 來源的比對 → 疑慮清單（沒有＝空）。判定依 PO 規格：高／中疑似錯置、只在單邊的數字、
+    形狀不同而標頭對齊失敗、逐格數字差異、D 自己標了 [?]；低（僅格式）疑似與非數字文字差異**不**納入判定。"""
+    out = []
+    t = cmp_["tokens"]
+    for x in t["suspects"]:
+        if x["level"] in (LEVEL_HIGH, LEVEL_MID):
+            out.append(_issue("%s：D %s／C %s" % (sid, _pos_str(x["d"]["pos"]), _pos_str(x["c"]["pos"])),
+                              x["d"]["raw"], x["c"]["raw"], "wrong-number"))
+    for x in t["only_d"]:
+        out.append(_issue("%s：D %s" % (sid, _pos_str(x["pos"])), x["raw"], "", "extra"))
+    for x in t["only_c"]:
+        out.append(_issue("%s：C %s" % (sid, _pos_str(x["pos"])), "D 沒有對應的數字", x["raw"], "missing"))
+    for x in cmp_["num_diffs"]:
+        out.append(_issue("%s：D %s／C %s" % (sid, _pos_str(x["pos_d"]), _pos_str(x["pos_c"])),
+                          x["d"] or "（空）", x["c"] or "（空）", "wrong-number"))
+    gd, gc = cmp_["gd"], cmp_["gc"]
+    if (gd["nrows"], gd["ncols"]) != (gc["nrows"], gc["ncols"]) and cmp_["mode"] != "header":
+        out.append(_issue("%s：整張圖" % sid, "D %s／C %s，無法以標頭對齊" % (_shape(gd), _shape(gc)), "", "other"))
+    for p in cmp_["d_low"]:
+        out.append(_issue("%s：D %s" % (sid, _pos_str(p)), "[?] 存疑格（D 自己標示看不清楚）", "", "other"))
+    return out
+
+
+def build_verification(d, matches):
+    """依比對結果組 verification.json。回傳 (payload|None, {"ok":n,"issues":n,"skipped":n})。
+    * D 判為非表格而任一 C 來源有內容 → issues；其餘非表格圖不輸出（沒有轉寫文字可驗證）。
+    * 表格圖：只用比對成功的來源；沒有任何成功來源、或兩邊都沒有數字可比 → 不輸出（維持 unverified）；
+      任何成功來源有疑慮 → issues；全部成功來源皆無疑慮 → ok。
+    * 缺有效 sha256 的圖不輸出。"""
+    results, counts = [], {"ok": 0, "issues": 0, "skipped": 0}
+    for it in d["items"]:
+        sha = it.get("sha256")
+        mine = [m for m in matches if m[1] is it]
+        if not isinstance(sha, str) or not _SHA_RE.match(sha):
+            counts["skipped"] += 1
+            continue
+        issues, verdict = [], None
+        if it.get("is_table") is False:
+            filled = [m for m in mine if m[2] is not None and m[2]["data"]["status"] == "transcribed"
+                      and (m[2]["data"]["text"] or "").strip()]
+            if filled:
+                verdict = "issues"
+                issues = [_issue("%s：整張圖" % m[0]["id"], "D 判為非表格（沒有轉寫）", "C 轉出了內容", "missing") for m in filled]
+        else:
+            done = [m for m in mine if m[3] is not None]
+            if done and any(m[3]["td"] + m[3]["tc"] > 0 for m in done):
+                for m in done:
+                    issues.extend(_compare_concerns(m[0]["id"], m[3]))
+                verdict = "issues" if issues else "ok"
+        if verdict is None:
+            counts["skipped"] += 1
+            continue
+        row = {"image_id": it["image_id"], "sha256": sha,
+               "transcription_sha256": hashlib.sha256((it["text"] or "").encode("utf-8")).hexdigest(),
+               "verdict": verdict}
+        if verdict == "issues":
+            seen, uniq = set(), []
+            for x in issues:
+                key = (x["where"], x["found"], x.get("expected"), x["kind"])
+                if key not in seen:
+                    seen.add(key)
+                    uniq.append(x)
+            row["issues"] = uniq[:VERIFY_MAX_ISSUES]
+        counts[verdict] += 1
+        results.append(row)
+    if not results:
+        return None, counts
+    return {"version": 1, "verifier": VERIFY_VERIFIER, "method": VERIFY_METHOD, "results": results}, counts
+
+
 # ====================================================================== 主流程
 def build_parser():
     ap = argparse.ArgumentParser(description="方案 D（results.json）與方案 C（paddle-eval 報告）轉寫比對（本機、離線）")
@@ -782,7 +886,26 @@ def build_parser():
     ap.add_argument("--numeric-tol", type=float, default=0.0,
                     help="數值相對容差（預設 0＝必須完全相同；0.01＝相差 1%% 內視為一致）")
     ap.add_argument("--normalize-text", action="store_true", help="非數字文字比較前歸一化（去空白、小寫、簡繁字形）")
+    ap.add_argument("--emit-verification", default=None, metavar="PATH",
+                    help="另輸出 verification.json（method=compare-d-c；不覆寫既有檔）。雙來源一致不代表正確：ok 只算數字家族通過"
+                         "（另需 agent 文字抽查才成為 cross_checked）；有任何疑慮→issues；比對失敗或未配對的圖不輸出")
     return ap
+
+
+def _write_new_json(path, payload):
+    """寫驗證檔：不覆寫既有檔、不寫進符號連結。"""
+    if os.path.islink(path):
+        raise CompareError("--emit-verification 不可是符號連結")
+    if os.path.isdir(path):
+        raise CompareError("--emit-verification 必須是檔案路徑（目前指到資料夾）")
+    parent = os.path.dirname(os.path.abspath(path))
+    os.makedirs(parent, exist_ok=True)
+    try:
+        f = open(path, "x", encoding="utf-8")
+    except FileExistsError:
+        raise CompareError("--emit-verification 的檔案已存在，不覆寫")
+    with f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
 
 
 def run(argv=None, now=None, say=print):
@@ -796,6 +919,8 @@ def run(argv=None, now=None, say=print):
             raise CompareError("--numeric-tol 必須在 0 到 1 之間")
         if os.path.exists(args.out) and not os.path.isdir(args.out):
             raise CompareError("--out 必須是資料夾（目前指到檔案）")
+        if args.emit_verification and (os.path.exists(args.emit_verification) or os.path.islink(args.emit_verification)):
+            raise CompareError("--emit-verification 的路徑已存在，不覆寫")
         manifest = args.manifest or os.path.join(os.path.dirname(os.path.abspath(args.d_results)), "manifest.json")
         d = load_d(args.d_results, manifest)
         sources = build_c_sources(args.c_report)
@@ -843,6 +968,14 @@ def run(argv=None, now=None, say=print):
                     raise
         with f:
             f.write(report)
+        ver_note = ""
+        if args.emit_verification:
+            payload, vc = build_verification(d, matches)
+            if payload is None:
+                ver_note = "；驗證檔：無可輸出的圖（未輸出 %d 張，維持 unverified）" % vc["skipped"]
+            else:
+                _write_new_json(args.emit_verification, payload)
+                ver_note = "；驗證檔 ok %d／issues %d／未輸出 %d → %s" % (vc["ok"], vc["issues"], vc["skipped"], args.emit_verification)
     except CompareError as e:
         err("拒絕執行：%s" % e)
         return 2
@@ -858,7 +991,7 @@ def run(argv=None, now=None, say=print):
     unmatched = len(d["orphan"]) + len(d["d_missing"]) + sum(1 for m in matches if m[2] is None) + sum(len(v) for v in unmatched_c.values())
     say("比對完成：D %d 張、C 來源 %d 份、成功比對 %d 組、未配對／失敗 %d；疑似錯置 高 %d／中 %d／低 %d；逐格數字差異 %d；報告 %s"
         % (len(d["items"]), len(sources), len(real), unmatched + sum(1 for m in matches if m[2] is not None and m[3] is None),
-           hi, mid, lo, nd, out_path))
+           hi, mid, lo, nd, out_path) + ver_note)
     return 0
 
 

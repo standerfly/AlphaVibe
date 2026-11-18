@@ -364,6 +364,7 @@ def check_investanchors_import(data_dir):
                                  "累計 %d 篇文章 ID 推不出建立時間（id_time_ok=0）" % anomalies))
             enabled = str(store.get_setting("transcribe_enabled", "0")) == "1"
             tc = store.transcription_counts()
+            vc = store.verification_counts()       # 舊庫沒有驗證表＝全部 unverified（不報錯）
             bf = store.get_backfill_state()
             if bf is None:
                 bf_text = "未啟動"
@@ -375,9 +376,11 @@ def check_investanchors_import(data_dir):
             store.conn.close()
     except sqlite3.OperationalError:
         return [("ok", "investanchors_import", "尚未上線（沒有匯入資料表）")]
-    summary = ("最後執行 %s；今日登入 %d 次；轉寫開關 %s；未轉寫 %d 張、已達上限 %d 張；回補 %s"
+    summary = ("最後執行 %s；今日登入 %d 次；轉寫開關 %s；未轉寫 %d 張、已達上限 %d 張；"
+               "未驗證轉寫 %d 張（其中僅通過單一家族 %d 張）、有疑慮 %d 張、已驗證 %d 張、PO 已核對 %d 張；回補 %s"
                % (last["started_at"], logins, "開" if enabled else "關",
-                  tc["untranscribed"], tc["exhausted"], bf_text))
+                  tc["untranscribed"], tc["exhausted"],
+                  vc["unverified"], vc["single_family"], vc["flagged"], vc["cross_checked"], vc["reviewed"], bf_text))
     return findings + [("ok", "investanchors_import", summary)]
 
 
