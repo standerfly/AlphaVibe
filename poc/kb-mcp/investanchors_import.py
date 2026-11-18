@@ -310,13 +310,18 @@ class Importer(object):
             return 0
         store = article_store.ArticleStore(a.data_dir, now=self.now)
         try:
+            # 預覽與寫入之間可能有排程／API 轉寫剛把某圖設成 done：用可寫連線重新驗證，以最新狀態為準
+            plan = article_manual_transcribe.validate_results(a.import_transcription, store, overwrite=a.overwrite)
             article_manual_transcribe.apply_plan(store, plan, now=self.now)
+        except article_manual_transcribe.ManualTranscribeError as e:
+            self.say("拒絕執行：%s" % e)
+            return 2
         except sqlite3.Error:
             self.say("拒絕執行：寫入資料庫失敗，整批已 rollback（未寫入任何轉寫）")
             return 2
         finally:
             store.close()
-        self.say("已寫入 %d 筆（單一交易）。" % len(plan["rows"]))
+        self.say("已寫入 %d 筆（單一交易）；寫入時重新檢查後略過已轉寫 %d 筆。" % (len(plan["rows"]), len(plan["skipped_done"])))
         return 0
 
     # ---------------------------------------------------------------- 放寬回補範圍（T044）
