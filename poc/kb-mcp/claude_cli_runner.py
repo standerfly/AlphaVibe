@@ -39,27 +39,30 @@ MODEL_PREFIX = "claude-cli:"           # 寫入 article_image.transcribed_model
 TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 
 # 啟動時以 `claude --help` 檢查旗標存在性（Mac 版本 2.1.288，旗標語法以該版 help 為準）
+# D1（獨立驗收，高）：以下旗標**全部必要**——help 缺任何一個就中止（零次模型呼叫）。尤其 `--setting-sources`／`--strict-mcp-config`：
+# 缺了就會載入 ~/.claude/settings.json 的 apiKeyHelper／env／MCP 而可能走 API 計費。沒有任何「降級」或「drop 必要旗標」的後門。
 REQUIRED_FLAGS = ("--print", "--model", "--tools", "--allowedTools", "--disallowedTools", "--permission-mode",
-                  "--output-format", "--json-schema", "--no-session-persistence", "--add-dir", "--system-prompt")
-# 有就加、沒有明確降級（降級清單回報給呼叫端）：key＝旗標，value＝其參數
+                  "--output-format", "--json-schema", "--no-session-persistence", "--add-dir", "--system-prompt",
+                  "--setting-sources", "--strict-mcp-config", "--disable-slash-commands")
+# 唯一的選用旗標（有就加、沒有就略過；不影響計費路徑）
 OPTIONAL_FLAGS = (
     ("--permission-prompts", ("none",)),       # 任何需要詢問的操作一律拒絕（無人值守不能卡住）
-    ("--strict-mcp-config", ()),               # 沒給 --mcp-config ＝完全不載入 MCP
-    ("--setting-sources", ("",)),              # 空字串＝不載入任何設定來源（Mac 實測可用；傳 none 會報 Invalid setting source，有效值僅 user／project／local）
-    ("--disable-slash-commands", ()),
 )
+# 一律加入的固定旗標（都在 REQUIRED_FLAGS 內，已於 Mac 實測）：
+FIXED_SAFETY_ARGS = ("--setting-sources", "", "--strict-mcp-config", "--disable-slash-commands")
+# `--setting-sources ""`：空字串＝不載入任何設定來源（傳 none 會報 Invalid setting source，有效值僅 user／project／local）；
+# `--strict-mcp-config` 且不傳 `--mcp-config`＝完全不載入 MCP。
 # 選用強化（預設關閉，需 `--use-restricted`）：把檔案工具限制在工作目錄內。語意與其他旗標的互動未在 Mac 實測，所以不預設開。
 RESTRICTED_FLAG = "--restricted"
 DENY_TOOLS = ("Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch")
 FORBIDDEN_FLAGS = ("--bare", "--max-budget-usd", "--max-turns", "--dangerously-skip-permissions",
                    "--allow-dangerously-skip-permissions", "--betas", "--api-key", "--settings", "--mcp-config",
                    "--fallback-model", "--agents", "--plugin-dir", "--chrome", "--ide")
-ENV_ALLOW = ("PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "USER", "LOGNAME", "SHELL")
+ENV_ALLOW = ("PATH", "HOME", "LANG")        # HOME 是訂閱登入所需；其餘不必要變數一律不傳（D4）
 BILLING_ENV_NAMES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL",
                      "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
                      "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_BEARER_TOKEN_BEDROCK",
                      "GOOGLE_APPLICATION_CREDENTIALS")
-_BILLING_AUTH_RE = re.compile(r"(?i)api[_ -]?key|console|bedrock|vertex|foundry|anthropic[_ -]?auth[_ -]?token|third[_ -]?party")
 
 # 失敗分類（只在「確定是失敗」時才套用，成功的轉寫內容不會被掃描）
 _USAGE_LIMIT_RES = [re.compile(p, re.I) for p in (
@@ -201,23 +204,31 @@ def has_flag(help_text, flag):
     return re.search(r"(?<![\w-])%s(?![\w-])" % re.escape(flag), help_text or "") is not None
 
 
-def plan_flags(help_text, use_restricted=False, drop=()):
-    """依 `claude --help` 輸出決定旗標。回傳 (missing_required, active_optional_args, degraded_names)。
-    `drop`：呼叫端明確要求不用的選用旗標（只能丟選用的）。"""
-    missing = [f for f in REQUIRED_FLAGS if not has_flag(help_text, f)]
+def plan_flags(help_text, use_restricted=False):
+    """依 `claude --help` 輸出決定旗標。回傳 (missing_required, optional_args, degraded_names)。
+    必要旗標缺任何一個＝missing 非空（呼叫端必須中止）；`--use-restricted` 要求的 `--restricted` 缺了也算 missing。"""
+    required = list(REQUIRED_FLAGS) + ([RESTRICTED_FLAG] if use_restricted else [])
+    missing = [f for f in required if not has_flag(help_text, f)]
     args, degraded = [], []
-    optional = list(OPTIONAL_FLAGS) + ([(RESTRICTED_FLAG, ())] if use_restricted else [])
-    for flag, vals in optional:
-        if flag in drop:
-            degraded.append(flag + "（依指示停用）")
-        elif has_flag(help_text, flag):
+    for flag, vals in OPTIONAL_FLAGS:
+        if has_flag(help_text, flag):
             args += [flag] + list(vals)
         else:
             degraded.append(flag + "（此版本沒有）")
+    if use_restricted and RESTRICTED_FLAG not in missing:
+        args.append(RESTRICTED_FLAG)
     return missing, args, degraded
 
 
-def build_argv(claude_bin, model, workdir, optional_args=(), verify=False):
+def read_rule(workdir):
+    """D4：`--allowedTools` 的路徑限定規則 `Read(//<絕對路徑>/**)`（官方 permissions 語法：`//` 開頭＝檔案系統絕對路徑）。
+    用 realpath（macOS 的 /var 是 /private/var 的連結）。語法待 Mac 實測確認（quickstart §15）；
+    不限定的 `Read` 只有明確加 `--unrestricted-read` 才會使用。"""
+    real = os.path.realpath(workdir)
+    return "Read(/%s/**)" % real if real.startswith("/") else "Read(%s/**)" % real
+
+
+def build_argv(claude_bin, model, workdir, optional_args=(), verify=False, unrestricted_read=False):
     """固定命令列（提示詞走 stdin）。順序：可變長度參數後面一律緊接另一個旗標。verify=True 為驗證者（不同 schema 與系統提示）。"""
     schema = VERIFY_SCHEMA if verify else OUTPUT_SCHEMA
     argv = [claude_bin, "-p", "--model", model,
@@ -226,8 +237,9 @@ def build_argv(claude_bin, model, workdir, optional_args=(), verify=False):
             "--no-session-persistence",
             "--permission-mode", "dontAsk",
             "--tools", "Read",
-            "--allowedTools", "Read",
+            "--allowedTools", "Read" if unrestricted_read else read_rule(workdir),
             "--disallowedTools", " ".join(DENY_TOOLS)]
+    argv += list(FIXED_SAFETY_ARGS)
     argv += list(optional_args)
     argv += ["--system-prompt", VERIFY_SYSTEM_PROMPT if verify else SYSTEM_PROMPT, "--add-dir", workdir]
     return assert_argv_safe(argv)
@@ -302,20 +314,34 @@ def clean_reset_hint(text, secrets=()):
     return hint[:40] or None
 
 
-def classify_failure(returncode, stdout, stderr, result_obj=None, secrets=()):
-    """確定是失敗之後判斷原因。回傳 (kind, reset_hint)：kind＝usage_limit｜login｜other。
-    多重判斷：非 0 退出碼、is_error、輸出文字含 `hit your…limit`／`session|weekly limit`／`resets …`／`rate_limit`、
-    以及登入失效字句。官方未明載撞限時的確切退出碼與 JSON 欄位，所以這裡以文字樣式為主、可擴充（改上面的 pattern 清單即可）。
-    **只應在「沒有有效 structured_output」時呼叫**，避免掃到成功轉寫的內文。"""
-    parts = []
+def is_failure_signal(returncode, result_obj):
+    """D2：只有「退出碼非 0」「is_error 為 true」「subtype 非 success」才算失敗訊號。"""
+    if returncode != 0:
+        return True
     if result_obj:
-        for k in ("result", "error", "message", "subtype", "api_error_status"):
-            v = result_obj.get(k)
-            if isinstance(v, (str, int)):
-                parts.append(str(v))
-    parts.append((stderr or "")[:4000])
-    if not result_obj:
-        parts.append((stdout or "")[:4000])
+        if result_obj.get("is_error"):
+            return True
+        st = result_obj.get("subtype")
+        if st is not None and st != "success":
+            return True
+    return False
+
+
+def classify_failure(returncode, stdout, stderr, result_obj=None, secrets=()):
+    """判斷撞限／登入失效。回傳 (kind, reset_hint)：kind＝usage_limit｜login｜other。
+    **D2 規則**：只有存在失敗訊號（退出碼非 0、is_error＝true、subtype 非 success）時才會掃描回應文字欄位
+    （此時 `result` 是錯誤訊息，不是轉寫內容）；**成功回應（rc 0、無 is_error、subtype success）的 `result`／stdout 絕不掃描**
+    （轉寫內容裡的 `401`、`31%`、`limit` 不會被誤判）。stderr 無論如何都會掃描。
+    官方未明載撞限時的確切退出碼與 JSON 欄位，所以以文字樣式為主、可擴充（改 `_USAGE_LIMIT_RES`／`_LOGIN_RES` 即可）。"""
+    parts = [(stderr or "")[:4000]]
+    if is_failure_signal(returncode, result_obj):
+        if result_obj:
+            for k in ("result", "error", "message", "subtype", "api_error_status"):
+                v = result_obj.get(k)
+                if isinstance(v, (str, int)):
+                    parts.append(str(v))
+        else:
+            parts.append((stdout or "")[:4000])
     blob = "\n".join(parts)
     if any(r.search(blob) for r in _USAGE_LIMIT_RES):
         m = _RESET_RE.search(blob)
@@ -325,13 +351,20 @@ def classify_failure(returncode, stdout, stderr, result_obj=None, secrets=()):
     return "other", None
 
 
-def _debug_text(parts, secrets):
-    """失敗時保留的除錯文字：每段只取前 DEBUG_SNIPPET_CHARS 字並過遮蔽；呼叫端只在 usage_limit／login 時使用。"""
-    out = []
-    for p in parts:
-        t = " ".join(str(p or "").split())[:DEBUG_SNIPPET_CHARS]
-        out.append(investanchors_redact.safe_error(t, secrets))
-    return " | ".join(out)
+def debug_text(returncode, result_obj, stderr, secrets):
+    """D2：除錯檔只存「退出碼、subtype、欄位名清單、數值型欄位、stderr 經遮蔽且截斷的前 N 字元」；
+    **`result` 等文字欄位的內容一律不寫**；stderr 若含 result 的內容片段（≥20 字）則整段不寫。"""
+    obj = result_obj or {}
+    nums = ", ".join("%s=%s" % (k, v) for k, v in sorted(obj.items())
+                     if isinstance(v, (int, float)) and not isinstance(v, bool))
+    err = " ".join(str(stderr or "").split())
+    res = obj.get("result") if isinstance(obj.get("result"), str) else ""
+    if res and len(res.strip()) >= 20 and res.strip()[:20] in err:
+        err = "<stderr 含回應內容，已省略>"
+    err = investanchors_redact.safe_error(err[:DEBUG_SNIPPET_CHARS], secrets)
+    st = obj.get("subtype") if isinstance(obj.get("subtype"), str) and len(obj.get("subtype")) <= 40 else None
+    return "rc=%s | subtype=%s | fields=%s | numeric=%s | stderr=%s" % (
+        returncode, st, ",".join(sorted(str(k)[:30] for k in obj)), nums, err)
 
 
 def validate_structured(so):
@@ -376,13 +409,13 @@ class ClaudeCli(object):
     """`runner(argv, input_text, env, cwd, timeout)` 與 `token_getter()` 可注入（測試用假的）。"""
 
     def __init__(self, claude_bin=DEFAULT_CLAUDE_BIN, timeout_sec=DEFAULT_TIMEOUT_SEC, runner=None,
-                 token_getter=None, use_restricted=False, drop_flags=(), base_env=None):
+                 token_getter=None, use_restricted=False, unrestricted_read=False, base_env=None):
         self.claude_bin = claude_bin
         self.timeout = clamp_timeout(timeout_sec)
         self.runner = runner or default_runner
         self.token_getter = token_getter or (lambda: None)
         self.use_restricted = use_restricted
-        self.drop_flags = tuple(drop_flags)
+        self.unrestricted_read = unrestricted_read
         self.base_env = base_env
         self._token = None
         self._token_loaded = False
@@ -421,41 +454,35 @@ class ClaudeCli(object):
         except (ClaudeTimeout, OSError):
             raise ClaudeCliError("無法取得 claude --help（逾時或無法執行）")
         text = (out or "") + "\n" + (err or "")
-        missing, args, degraded = plan_flags(text, self.use_restricted, self.drop_flags)
+        missing, args, degraded = plan_flags(text, self.use_restricted)
         if missing:
             raise ClaudeCliError("此版本的 claude 缺少必要旗標：%s" % "、".join(missing))
         self.optional_args, self.degraded = args, degraded
         return args, degraded
 
     def check_auth(self, cwd):
-        """`claude auth status`（不呼叫模型）。回傳 kind：ok｜login｜auth_mode｜unknown。"""
+        """`claude auth status`（不呼叫模型）。**白名單**（D3）：只有 JSON 且 authMethod＝claude.ai、apiProvider＝firstParty、
+        loggedIn＝True、且沒有（有值的）apiKeySource 才回 ok。回傳：ok｜login（確定沒登入）｜auth_mode（其他一切不符，含缺欄位、
+        未知值、非 firstParty、無法解析）｜unknown（命令逾時或無法執行）。呼叫端對非 ok 一律中止、不呼叫模型。"""
         try:
             rc, out, err = self._run_plain(["auth", "status"], cwd)
         except (ClaudeTimeout, OSError):
             return "unknown"
-        text = ((out or "") + "\n" + (err or "")).strip()
-        obj = None
         try:
             obj = json.loads(out)
         except (ValueError, TypeError, RecursionError):
-            pass
-        method, logged = "", None
-        if isinstance(obj, dict):
-            method = str(obj.get("authMethod") or obj.get("auth_method") or "")
-            logged = obj.get("loggedIn", obj.get("logged_in"))
-            if logged is None:
-                logged = bool(method) and method.lower() not in ("none", "null")
-        else:
-            m = re.search(r"(?i)auth[ _]?method\W+([A-Za-z0-9._ -]{1,40})", text)
-            method = m.group(1).strip() if m else ""
-            logged = not re.search(r"(?i)not logged in|logged out|no auth|expired", text) and rc == 0
-        if _BILLING_AUTH_RE.search(method):
             return "auth_mode"
-        if not logged:
+        if not isinstance(obj, dict):
+            return "auth_mode"
+        if obj.get("loggedIn") is False:
             return "login"
-        if rc != 0:
-            return "unknown"
-        return "ok"
+        method, provider = obj.get("authMethod"), obj.get("apiProvider")
+        key_src = obj.get("apiKeySource")
+        if (rc == 0 and obj.get("loggedIn") is True and isinstance(method, str) and method.strip().lower() == "claude.ai"
+                and isinstance(provider, str) and provider.strip().lower() == "firstparty"
+                and key_src in (None, "", "none")):
+            return "ok"
+        return "auth_mode"
 
     # ---- 一次呼叫
     def call(self, model, workdir, file_names, tiled=False, verify_text=None):
@@ -464,7 +491,8 @@ class ClaudeCli(object):
         if self.optional_args is None:
             raise ClaudeCliError("尚未呼叫 check_flags")
         verify = verify_text is not None
-        argv = build_argv(self.claude_bin, model, workdir, self.optional_args, verify=verify)
+        argv = build_argv(self.claude_bin, model, workdir, self.optional_args, verify=verify,
+                         unrestricted_read=self.unrestricted_read)
         env = self._env()
         prompt = build_user_prompt(file_names, tiled, verify_text)
         before = sorted(os.listdir(workdir))
@@ -493,10 +521,9 @@ class ClaudeCli(object):
         kind, hint = classify_failure(rc, out, err, obj, self.secrets())
         if kind == "usage_limit":
             return CallResult("usage_limit", detail="usage_limit", reset_hint=hint,
-                              debug=_debug_text([("rc=%s" % rc), (obj or {}).get("result") if obj else out, err], self.secrets()))
+                              debug=debug_text(rc, obj, err, self.secrets()))
         if kind == "login":
-            return CallResult("login", detail="login", debug=_debug_text(
-                [("rc=%s" % rc), (obj or {}).get("result") if obj else out, err], self.secrets()))
+            return CallResult("login", detail="login", debug=debug_text(rc, obj, err, self.secrets()))
         if obj is None:
             return CallResult("bad_output", detail="not_json(rc=%s)" % rc)
         if rc == 0 and not is_err:

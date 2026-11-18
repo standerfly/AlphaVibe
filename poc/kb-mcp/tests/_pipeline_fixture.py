@@ -36,11 +36,11 @@ Options:
   --permission-mode <mode>              Permission mode
   -p, --print                           print mode
   --tools <tools...>                    Built-in tools
-"""
-HELP_OPTIONAL = """  --permission-prompts <target>         Who answers permission prompts
   --setting-sources <sources>           Comma-separated list of setting sources
   --strict-mcp-config                   Only use MCP servers from --mcp-config
   --disable-slash-commands              Disable all skills
+"""
+HELP_OPTIONAL = """  --permission-prompts <target>         Who answers permission prompts
 """
 
 STUB = r'''#!%(py)s
@@ -51,7 +51,7 @@ args = sys.argv[1:]
 if args[:1] == ["--help"]:
     sys.stdout.write(cfg["help"]); sys.exit(0)
 if args[:2] == ["auth", "status"]:
-    sys.stdout.write(cfg.get("auth", json.dumps({"loggedIn": True, "authMethod": "claude.ai"}))); sys.exit(cfg.get("auth_rc", 0))
+    sys.stdout.write(cfg.get("auth", json.dumps({"loggedIn": True, "authMethod": "claude.ai", "apiProvider": "firstParty"}))); sys.exit(cfg.get("auth_rc", 0))
 stdin = sys.stdin.read()
 model = args[args.index("--model") + 1]
 cpath = os.path.join(here, "counters.json")
@@ -84,6 +84,10 @@ elif kind == "weekly":
     result(is_error=True, subtype="error", result="You've hit your weekly limit · resets Nov 21, 9am"); sys.exit(1)
 elif kind == "limit_plain":
     sys.stderr.write("Claude usage limit reached. Your limit will reset at 3:45pm"); sys.exit(1)
+elif kind == "no_structured_trigger":
+    result(result="You've hit your session limit \u00b7 resets 3:45pm 401 Unauthorized log in again")
+elif kind == "limit_with_content":
+    result(is_error=True, subtype="error", result="You've hit your session limit \u00b7 resets 3:45pm SECRETTABLECONTENT 甲公司"); sys.stderr.write("rate limited"); sys.exit(1)
 elif kind == "limit_token":
     result(is_error=True, subtype="error", result="You've hit your session limit \u00b7 resets 3:45pm " + os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")); sys.stderr.write("tok=" + os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")); sys.exit(1)
 elif kind == "login":

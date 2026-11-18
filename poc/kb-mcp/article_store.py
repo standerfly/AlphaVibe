@@ -904,6 +904,21 @@ class ArticleStore(object):
                 break
         return out
 
+    def pipeline_extra_counts(self):
+        """健檢用（只是計數）：not_table＝status=fetched 文章中被判為非表格的圖；text_only＝流水線轉寫、文字家族已過但數字家族缺漏
+        （unverified 且 checks_passed＝text）。舊庫沒有驗證表＝text_only 0。"""
+        nt = self.conn.execute(
+            "SELECT COUNT(*) FROM article_image i JOIN article a ON a.article_id=i.article_id "
+            "WHERE a.status='fetched' AND i.transcription_status='not_table'").fetchone()[0]
+        txt = 0
+        if self._has_verification_table() and "checks_passed" in self._verification_columns():
+            txt = self.conn.execute(
+                "SELECT COUNT(*) FROM %s v JOIN article_image i ON i.id=v.image_id JOIN article a ON a.article_id=i.article_id "
+                "WHERE a.status='fetched' AND i.transcription_status='done' AND i.transcribed_model LIKE ? "
+                "AND v.status='unverified' AND v.checks_passed='text'" % VERIFICATION_TABLE,
+                (self.PIPELINE_MODEL_LIKE,)).fetchone()[0]
+        return {"not_table": nt, "text_only": txt}
+
     def log_pipeline_verify_failure(self, image_id):
         """驗證者呼叫失敗（逾時、壞輸出…）記一筆；累計達上限就不再自動重試。只存 image_id 與時間。"""
         self.alert_once("pipeline_verify_fail", "%d:%s" % (image_id, self.now().strftime("%H%M%S%f")))

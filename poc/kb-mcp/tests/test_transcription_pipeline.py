@@ -61,7 +61,7 @@ class GuardTest(unittest.TestCase):
                      "--tools", "--allowedTools", "--disallowedTools", "--add-dir", "--system-prompt"):
             self.assertIn(need, argv)
         self.assertEqual(argv[argv.index("--tools") + 1], "Read")
-        self.assertEqual(argv[argv.index("--allowedTools") + 1], "Read")
+        self.assertEqual(argv[argv.index("--allowedTools") + 1], "Read(//tmp/w/**)")
         self.assertEqual(argv[argv.index("--permission-mode") + 1], "dontAsk")
         self.assertEqual(argv[argv.index("--output-format") + 1], "json")
         self.assertEqual(argv[argv.index("--add-dir") + 1], "/tmp/w")
@@ -133,17 +133,46 @@ class GuardTest(unittest.TestCase):
         self.assertEqual(args, [])
         self.assertEqual(len(degraded), len(CR.OPTIONAL_FLAGS))
         missing, args, _ = CR.plan_flags(F.HELP_BASE + F.HELP_OPTIONAL)
-        self.assertIn("--permission-prompts", args)
-        self.assertIn("--setting-sources", args)
+        self.assertEqual(args, ["--permission-prompts", "none"])
         missing, _a, _d = CR.plan_flags(F.HELP_BASE.replace("--json-schema", "--json-schemaX"))
         self.assertEqual(missing, ["--json-schema"])
-        _m, args, deg = CR.plan_flags(F.HELP_BASE + F.HELP_OPTIONAL, drop=("--setting-sources",))
-        self.assertNotIn("--setting-sources", args)
-        self.assertTrue(any("依指示停用" in d for d in deg))
         _m, args, _d = CR.plan_flags(F.HELP_BASE + "  --restricted  x\n", use_restricted=True)
         self.assertIn("--restricted", args)
-        _m, args, _d = CR.plan_flags(F.HELP_BASE + "  --restricted  x\n", use_restricted=False)
-        self.assertNotIn("--restricted", args)
+        missing, _a, _d = CR.plan_flags(F.HELP_BASE, use_restricted=True)
+        self.assertEqual(missing, ["--restricted"])
+
+    def test_all_safety_flags_are_required_with_no_drop_backdoor(self):
+        for f in ("--setting-sources", "--strict-mcp-config", "--disable-slash-commands", "--system-prompt",
+                  "--no-session-persistence", "--permission-mode", "--tools", "--allowedTools", "--disallowedTools",
+                  "--json-schema", "--output-format"):
+            self.assertIn(f, CR.REQUIRED_FLAGS)
+            missing, _a, _d = CR.plan_flags(F.HELP_BASE.replace(f + " ", f + "X ").replace(f + ",", f + "X,"))
+            self.assertIn(f, missing, f)
+        import inspect
+        self.assertNotIn("drop", inspect.signature(CR.plan_flags).parameters)
+        self.assertNotIn("drop_flags", inspect.signature(CR.ClaudeCli.__init__).parameters)
+        self.assertNotIn("--drop-flag", _read(T.__file__).replace("--drop-flag", "--drop-flag", 0).split("def parse_args")[1].split("def _validate_args")[0])
+
+    def test_argv_always_has_setting_sources_empty_strict_mcp_and_no_slash_commands(self):
+        argv = CR.build_argv("/x/claude", "sonnet", "/tmp/w", [])
+        self.assertEqual(argv[argv.index("--setting-sources") + 1], "")
+        self.assertIn("--strict-mcp-config", argv)
+        self.assertNotIn("--mcp-config", argv)
+        self.assertIn("--disable-slash-commands", argv)
+
+    def test_allowed_tools_is_path_scoped_by_default_and_unrestricted_only_by_explicit_flag(self):
+        with tempfile.TemporaryDirectory() as d:
+            argv = CR.build_argv("/x/claude", "sonnet", d, [])
+            rule = argv[argv.index("--allowedTools") + 1]
+            self.assertEqual(rule, "Read(/%s/**)" % os.path.realpath(d))
+            self.assertTrue(rule.startswith("Read(//"))
+            self.assertNotEqual(rule, "Read")
+            argv2 = CR.build_argv("/x/claude", "sonnet", d, [], unrestricted_read=True)
+            self.assertEqual(argv2[argv2.index("--allowedTools") + 1], "Read")
+        self.assertFalse(T.parse_args(["--data-dir", "x"]).unrestricted_read)
+
+    def test_env_whitelist_is_minimal(self):
+        self.assertEqual(set(CR.ENV_ALLOW), {"PATH", "HOME", "LANG"})
 
 
 class ClassifyFailureTest(unittest.TestCase):
@@ -809,15 +838,131 @@ class SafetyGatesTest(PBase):
         self.assertEqual(self.run_pipe("--dry-run", "--enable"), 2)
         self.assertEqual(self.run_pipe("--enable", "--disable"), 2)
 
-    def test_drop_flag_only_accepts_optional_flags(self):
-        self.assertEqual(self.run_pipe("--drop-flag=--model"), 2)
-        self.assertEqual(self.run_pipe("--drop-flag=--setting-sources"), 0)
+    def test_drop_flag_backdoor_does_not_exist(self):
+        self.assertEqual(self.run_pipe("--drop-flag=--setting-sources"), 2)
+        self.assertEqual(self.stub.calls(), [])
 
     def test_default_claude_bin_and_paddle_python_constants(self):
         a = T.parse_args(["--data-dir", "x"])
         self.assertEqual(a.claude_bin, "/Users/stander/.local/bin/claude")
         self.assertEqual(a.paddle_python, os.path.expanduser("~/.venvs/paddle/bin/python"))
         self.assertEqual((a.max_images, a.reader1_model, a.verifier_model), (3, "sonnet", "opus"))
+
+
+class RequiredFlagsAbortTest(PBase):
+    N = 1
+
+    def test_missing_any_required_flag_aborts_with_zero_model_calls(self):
+        for f in ("--setting-sources", "--strict-mcp-config", "--disable-slash-commands", "--system-prompt",
+                  "--no-session-persistence", "--permission-mode", "--tools", "--allowedTools", "--disallowedTools",
+                  "--json-schema", "--output-format"):
+            self.stub.cfg["help"] = F.HELP_BASE.replace(f + " ", f + "X ").replace(f + ",", f + "X,") + F.HELP_OPTIONAL
+            self.stub.save()
+            s = self.store()
+            s.conn.execute("DELETE FROM pipeline_run")
+            s.conn.commit()
+            s.close()
+            self.assertEqual(self.run_pipe(), 4, f)
+            self.assertEqual(self.last_run()["result"], "aborted_flags", f)
+        self.assertEqual([c for c in self.stub.calls()], [])          # 連 --help 以外都沒有（stub 只記模型呼叫）
+        self.assertEqual(self.rows()[0]["transcription_status"], "untranscribed")
+
+
+class AuthWhitelistTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.stub = F.Stub(self.tmp)
+
+    def auth(self, payload, rc=0):
+        self.stub.cfg["auth"] = payload if isinstance(payload, str) else json.dumps(payload)
+        self.stub.cfg["auth_rc"] = rc
+        self.stub.save()
+        return CR.ClaudeCli(self.stub.path).check_auth(self.tmp)
+
+    def test_only_explicit_subscription_passes(self):
+        good = {"loggedIn": True, "authMethod": "claude.ai", "apiProvider": "firstParty"}
+        self.assertEqual(self.auth(good), "ok")
+        self.assertEqual(self.auth(dict(good, apiKeySource="none")), "ok")
+
+    def test_bypass_cases_all_abort(self):
+        good = {"loggedIn": True, "authMethod": "claude.ai", "apiProvider": "firstParty"}
+        cases = [
+            {k: v for k, v in good.items() if k != "authMethod"},                      # 缺 authMethod
+            dict(good, authMethod="oauth_token_x"),                                      # 未知值
+            dict(good, authMethod="Anthropic API"),
+            {k: v for k, v in good.items() if k != "apiProvider"},                      # 缺 apiProvider
+            dict(good, apiProvider="bedrock"), dict(good, apiProvider="vertex"), dict(good, apiProvider="foundry"),
+            dict(good, apiKeySource="ANTHROPIC_API_KEY"),                                # apiKeySource 存在
+            dict(good, apiKeySource="apiKeyHelper"),
+            {k: v for k, v in good.items() if k != "loggedIn"},                         # 缺 loggedIn
+            dict(good, loggedIn="yes"),
+            ["not", "a", "dict"],
+        ]
+        for c in cases:
+            self.assertEqual(self.auth(c), "auth_mode", c)
+        self.assertEqual(self.auth("authMethod: claude.ai\nloggedIn: true"), "auth_mode")       # 非 JSON 一律拒絕
+        self.assertEqual(self.auth(good, rc=1), "auth_mode")                                      # 退出碼非 0
+
+    def test_logged_out_is_login(self):
+        self.assertEqual(self.auth({"loggedIn": False}), "login")
+
+
+class FalsePositiveGuardTest(PBase):
+    """D2：成功回應的內容（即使含 401／31%／limit／resets）不得被誤判；除錯檔不含轉寫文字。"""
+    N = 1
+    NASTY = ("| 項目 | 數值 |\n| --- | --- |\n| 401 | 31% |\n| usage limit reached | resets 3:45pm |\n"
+             "| You've hit your weekly limit | log in again 401 Unauthorized |")
+
+    def test_legit_table_with_trigger_words_is_not_misclassified(self):
+        self.stub.respond("sonnet", {"kind": "ok", "text": self.NASTY})
+        self.stub.respond("opus", VOK)
+        rc = self.run_pipe("--no-paddle")
+        self.assertEqual(rc, 0, self.text())
+        self.assertEqual(self.rows()[0]["transcription"], self.NASTY)
+        self.assertEqual(self.last_run()["result"], "ok")
+        self.assertEqual(glob.glob(os.path.join(self.data, "articles_probe", "pipeline-debug-*")), [])
+
+    def test_verifier_issue_text_with_trigger_words_is_not_misclassified(self):
+        self.stub.respond("opus", vissues({"where": "第 3 列", "found": "401 limit resets 3pm", "kind": "other"}))
+        self.assertEqual(self.run_pipe("--no-paddle"), 0)
+        self.assertEqual(list(self.ver().values())[0]["status"], "flagged")
+
+    def test_success_without_structured_output_is_not_scanned(self):
+        # rc 0、非 is_error、subtype success、result 含觸發字：只是 no_structured，不是撞限
+        self.stub.respond("sonnet", {"kind": "no_structured_trigger"})
+        rc = self.run_pipe()
+        self.assertEqual(rc, 1)
+        self.assertEqual(self.last_run()["result"], "ok")
+        self.assertEqual(self.rows()[0]["transcribe_attempts"], 1)
+        self.assertIn("no_structured_output", self.text())
+
+    def test_classify_only_on_failure_signal(self):
+        ok = {"type": "result", "subtype": "success", "is_error": False, "result": "You've hit your session limit resets 3pm 401"}
+        self.assertEqual(CR.classify_failure(0, "", "", ok)[0], "other")
+        self.assertEqual(CR.classify_failure(1, "", "", ok)[0], "usage_limit")                        # rc 非 0
+        self.assertEqual(CR.classify_failure(0, "", "", dict(ok, is_error=True))[0], "usage_limit")  # is_error
+        self.assertEqual(CR.classify_failure(0, "", "", dict(ok, subtype="error_during_execution"))[0], "usage_limit")
+        self.assertEqual(CR.classify_failure(0, "", "Claude usage limit reached", ok)[0], "usage_limit")   # stderr 命中
+        self.assertEqual(CR.classify_failure(0, "401 limit", "", None)[0], "other")                   # 成功的原始 stdout 不掃
+
+    def test_debug_file_has_no_response_text(self):
+        self.stub.respond("sonnet", {"kind": "limit_with_content"})
+        self.assertEqual(self.run_pipe(), 4)
+        files = glob.glob(os.path.join(self.data, "articles_probe", "pipeline-debug-*.txt"))
+        self.assertEqual(len(files), 1)
+        text = _read(files[0])
+        for forbidden in ("甲公司", "SECRETTABLECONTENT", "hit your", "session limit"):
+            self.assertNotIn(forbidden, text)
+        for needed in ("rc=1", "subtype=error", "fields=", "reset_hint=3:45pm"):
+            self.assertIn(needed, text)
+
+    def test_debug_text_drops_stderr_that_echoes_result(self):
+        obj = {"result": "SECRETTABLECONTENT line one two three", "subtype": "error", "duration_ms": 12, "is_error": True}
+        t = CR.debug_text(1, obj, "boom SECRETTABLECONTENT line one two three", [])
+        self.assertNotIn("SECRETTABLECONTENT", t)
+        self.assertIn("duration_ms=12", t)
+        self.assertIn("fields=", t)
 
 
 class DefaultsTest(unittest.TestCase):
@@ -827,10 +972,11 @@ class DefaultsTest(unittest.TestCase):
 
     def test_optional_flag_values_match_mac_verified_combo(self):
         _m, args, _d = CR.plan_flags(F.HELP_BASE + F.HELP_OPTIONAL)
-        self.assertEqual(args[args.index("--setting-sources") + 1], "")
         self.assertEqual(args[args.index("--permission-prompts") + 1], "none")
-        self.assertIn("--disable-slash-commands", args)
-        self.assertNotIn("--effort", CR.build_argv("/x/claude", "sonnet", "/w", args))
+        full = CR.build_argv("/x/claude", "sonnet", "/w", args)
+        self.assertEqual(full[full.index("--setting-sources") + 1], "")
+        self.assertIn("--disable-slash-commands", full)
+        self.assertNotIn("--effort", full)
 
 
 class DryRunTest(PBase):
@@ -861,6 +1007,18 @@ class DryRunTest(PBase):
         self.assertNotIn(TOKEN, t)
         self.assertNotIn("測試文章", t)
         boom.assert_not_called()
+
+    def test_dry_run_steps_are_numbered_consecutively_and_scoped_read_rule_shown(self):
+        s = self.store()
+        s.set_transcription(900, 1, "done", text=TB, model="claude-cli:sonnet", is_table=True)
+        s.close()
+        T.run(["--data-dir", self.data, "--dry-run"], say=self.out.append, deps=self.deps(), env={})
+        t = self.text()
+        self.assertIn("①（已轉寫，只補驗證）；②驗證者", t)
+        self.assertIn("①reader-1", t)
+        self.assertNotIn("③驗證者", t.split("\n")[1])
+        self.assertIn("Read(//", t)
+        self.assertNotIn("--drop-flag", t)
 
     def test_dry_run_works_when_disabled_and_reports_state(self):
         self.set_setting("pipeline_enabled", "0")
@@ -1214,6 +1372,19 @@ class HealthTest(unittest.TestCase):
         self.assertIn("有疑慮待 PO 核對 1 張", text)
         self.assertIn("結果 ok", text)
 
+    def test_summary_counts_not_table_and_text_only(self):
+        self.enable()
+        s = self.store()
+        ids = [r[0] for r in s.conn.execute("SELECT id FROM article_image ORDER BY seq")]
+        s.conn.execute("UPDATE article_image SET transcription_status='not_table' WHERE id=?", (ids[0],))
+        s.conn.execute("UPDATE article_image SET transcription_status='done', transcription='x', transcribed_model='claude-cli:sonnet' WHERE id=?", (ids[1],))
+        s.apply_verification_batch([{"image_id": ids[1], "verdict": "ok", "method": "agent-spot-check", "verifier": "t", "note": None,
+                                     "cells": None, "transcription_sha256": A.transcription_sha256("x")}])
+        s.close()
+        text = self.findings()[-1][2]
+        self.assertIn("僅通過文字家族（數字家族缺漏）1 張", text)
+        self.assertIn("非表格累計 1 張", text)
+
     def test_run_all_includes_pipeline_without_breaking(self):
         with mock.patch.object(checker, "_now", lambda: NOW):
             findings = checker.run_all(self.tmp)
@@ -1256,6 +1427,10 @@ class PlistTest(unittest.TestCase):
             self.assertNotIn("sk-ant", v)
         self.assertNotIn("sk-ant", self.raw)
         self.assertNotIn(CR.TOKEN_ENV, "".join(env))
+
+    def test_no_stale_golden_eval_wording(self):
+        self.assertNotIn("golden", self.raw.lower())
+        self.assertNotIn("金標準", self.raw)
 
     def test_log_path(self):
         self.assertEqual(self.p["StandardOutPath"], "/Users/stander/Library/Logs/alphavibe-transcription.log")

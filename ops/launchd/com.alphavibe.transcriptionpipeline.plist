@@ -7,7 +7,7 @@
     <!-- 定錨表格圖「自動轉寫與驗證流水線」（specs/010 Phase 14，clarification-log Q-029）。正式環境跑獨立 worktree AlphaVibe-prod
          （見 ops/deploy.sh）。只走 PO 的 claude.ai 訂閱（`claude -p`），**這裡不放任何 API 金鑰或訂閱 token**：
          launchd 背景環境可直接用 claude.ai 訂閱登入（Mac 實測，不需 setup-token）；token 僅為選用備援，若有只放鑰匙圈 service stnd-investanchors／account claude-oauth-token，由程式在記憶體內取用。
-         預設關閉：articles.db 的 pipeline_enabled 為 0 時程式拒絕執行；啟用須先通過金標準驗收（pipeline_golden_eval.py）。
+         預設關閉：articles.db 的 pipeline_enabled 為 0 時程式拒絕執行；上線門檻（Q-029）：假 claude 自動測試全綠＋Mac 實測＋第一週由 PO 看實際結果。
          尚未安裝：由 PO 在場同意後才 launchctl bootstrap（quickstart §15）。 -->
     <key>ProgramArguments</key>
     <array>

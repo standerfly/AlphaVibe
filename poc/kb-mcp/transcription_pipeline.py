@@ -27,7 +27,7 @@ CLI（`--data-dir` 必填；正式庫需 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1`，
   --paddle-model-dir 路徑  本機模型根目錄（可選；mobile 模型約需 2GB 記憶體）
   --enable／--disable      寫入 articles.db setting `pipeline_enabled`
   --use-restricted         加 `--restricted`（把檔案工具限制在工作目錄；未在 Mac 實測，預設關）
-  --drop-flag=旗標         停用某個選用旗標（可重複；注意要用 `=` 連接）
+  --unrestricted-read      明確 fallback：`--allowedTools Read` 不加路徑限定（預設拒絕；只有路徑限定語法在 Mac 實測不通時才由 PO 決定使用）
 退出碼：0 完成（含沒有待處理的圖）、1 有圖處理失敗、2 參數／防呆拒絕、3 未啟用或前置條件不符、4 因使用量上限／登入失效／登入方式不符而中止。
 stdout 與日誌只印數字與代碼：不含標題、全文、token、圖路徑。僅標準庫，Python 3.9 相容。
 """
@@ -194,7 +194,7 @@ def parse_args(argv):
     ap.add_argument("--paddle-model-dir", default=None)
     ap.add_argument("--no-paddle", action="store_true")
     ap.add_argument("--use-restricted", action="store_true")
-    ap.add_argument("--drop-flag", action="append", default=[], metavar="FLAG")
+    ap.add_argument("--unrestricted-read", action="store_true")
     return ap.parse_args(argv)
 
 
@@ -205,9 +205,6 @@ def _validate_args(a):
         raise PipelineRefused("reader-1 與驗證者必須使用不同的模型別名")
     if a.max_images < 1 or a.max_images > HARD_MAX_IMAGES:
         raise PipelineRefused("--max-images 必須是 1～%d" % HARD_MAX_IMAGES)
-    for f in a.drop_flag:
-        if f not in [x for x, _v in CR.OPTIONAL_FLAGS] + [CR.RESTRICTED_FLAG]:
-            raise PipelineRefused("--drop-flag 只能停用選用旗標")
     if not a.data_dir:
         raise PipelineRefused("資料目錄未指定。必須明確給 --data-dir")
 
@@ -219,7 +216,8 @@ MAC_ASSUMPTIONS = (
     "真實表格圖（尤其 2190×5327 長圖切 4 片）的圖片 token 遠大於合成小圖，成本不可線性外推；需用真實圖實測後再調每日上限（預設單次 3 張、每日 2 次）",
     "撞訂閱使用量上限時的退出碼與輸出文字（本程式以文字樣式偵測：hit your…limit／session|weekly limit／resets…／rate_limit）",
     "登入過期時的輸出文字（Expired — log in again／not logged in／401…）",
-    "claude auth status 的輸出（authMethod 是否為 claude.ai；程式同時支援 JSON 與文字解析）",
+    "claude auth status 的 JSON 輸出欄位與白名單一致（authMethod＝claude.ai、apiProvider＝firstParty、loggedIn＝true、無 apiKeySource；不一致會中止並報 aborted_auth_mode）",
+    "--allowedTools \"Read(//<暫存夾絕對路徑>/**)\" 路徑限定語法（官方 permissions：`//` 開頭＝檔案系統絕對路徑）能讓 Read 讀暫存夾內圖片；不通才由 PO 決定用 --unrestricted-read",
     "長圖切片（node＋Playwright）在 launchd 環境可用，且 claude Read 多張切片的行為正確",
     "轉寫與驗證的實際品質（第一週由 PO 看 flagged 與實際結果）",
 )
@@ -383,7 +381,7 @@ class Pipeline(object):
                 self.say("降級的選用旗標：%d 項（%s）" % (len(degraded), "；".join(degraded)))
             auth = self.claude.check_auth(tempfile.gettempdir())
             if auth != "ok":
-                result = {"login": "aborted_login", "auth_mode": "aborted_auth_mode"}.get(auth, "aborted_login")
+                result = {"login": "aborted_login", "auth_mode": "aborted_auth_mode"}.get(auth, "aborted_auth_mode")
                 exit_code = EXIT_ABORTED
                 self.say("中止：登入狀態檢查結果＝%s（不重試；請依 quickstart §15 處理）" % auth)
                 return exit_code
@@ -443,6 +441,7 @@ class Pipeline(object):
     # ---- dry-run
     def dry_run(self, store):
         a = self.a
+        a_ = a
         runs_today, images_today = store.pipeline_usage_today(self.now())
         cap = max(0, min(a.max_images, HARD_MAX_IMAGES, MAX_IMAGES_PER_DAY - images_today))
         self.say("[dry-run] 不執行任何外部程式、不寫庫。pipeline_enabled＝%s；今日已執行 %d 次、已處理 %d 張。"
@@ -461,14 +460,21 @@ class Pipeline(object):
                 continue
             picked += 1
             long_ = article_image_tiles.is_long_image(*size)
-            steps = ("①reader-1 claude -p --model %s ②寫入 unverified " % a.reader1_model) if transcribe else "（已轉寫，只補驗證）"
-            self.say("[dry-run] image_id=%d（%dx%d%s）：%s③驗證者 claude -p --model %s（看得到待查轉寫）%s④以既有規則寫入驗證條目"
-                     % (img["id"], size[0], size[1], "，長圖將切片" if long_ else "", steps, a.verifier_model,
-                        "" if a.no_paddle else "；⑤PaddleOCR（mobile、離線）涵蓋判定"))
+            steps = []
+            if transcribe:
+                steps += ["reader-1 claude -p --model %s 轉寫" % a_.reader1_model, "寫入 unverified"]
+            else:
+                steps.append("（已轉寫，只補驗證）")
+            steps += ["驗證者 claude -p --model %s（看得到待查轉寫）" % a_.verifier_model, "以既有規則寫入驗證條目"]
+            if not a_.no_paddle:
+                steps.append("PaddleOCR（mobile、離線）涵蓋判定")
+            self.say("[dry-run] image_id=%d（%dx%d%s）：%s" % (img["id"], size[0], size[1], "，長圖將切片" if long_ else "",
+                                                          "；".join("%s%s" % ("①②③④⑤⑥"[k], t) for k, t in enumerate(steps))))
         self.say("[dry-run] 將處理 %d 張（單次上限 %d、今日剩餘額度 %d 張）" % (picked, min(a.max_images, HARD_MAX_IMAGES),
                                                                   MAX_IMAGES_PER_DAY - images_today))
         for label, model, verify in (("reader-1 轉寫", a.reader1_model, False), ("驗證者", a.verifier_model, True)):
-            argv = CR.build_argv(a.claude_bin, model, "<工作夾>", ["（選用旗標於實際執行時依 claude --help 決定）"], verify=verify)
+            argv = CR.build_argv(a.claude_bin, model, "/<工作夾>", ["（選用旗標於實際執行時依 claude --help 決定）"], verify=verify,
+                                 unrestricted_read=a.unrestricted_read)
             self.say("[dry-run] %s 完整命令列（提示詞走 stdin，cwd＝<工作夾>）：\n  %s" % (label, " ".join(shlex.quote(x) for x in argv)))
         self.say("[dry-run] 子行程環境只含：%s；訂閱 token（若鑰匙圈有 service stnd-investanchors／account claude-oauth-token）"
                  "以環境變數 %s 傳遞，值已遮蔽、不會印出；不含任何 ANTHROPIC_*／CLAUDE_CODE_USE_* 變數"
@@ -516,7 +522,7 @@ def run(argv=None, say=print, deps=None, env=None):
 
     claude = CR.ClaudeCli(a.claude_bin, a.timeout_sec, runner=deps.get("runner"),
                           token_getter=deps.get("token_getter") or _default_token_getter,
-                          use_restricted=a.use_restricted, drop_flags=a.drop_flag)
+                          use_restricted=a.use_restricted, unrestricted_read=a.unrestricted_read)
     paddle_batch = deps.get("paddle_batch")
     if paddle_batch is None and not a.no_paddle:
         def paddle_batch(paths):

@@ -403,6 +403,7 @@ def check_transcription_pipeline(data_dir):
             pending = store.pipeline_pending_counts()
             vc = store.verification_counts()
             runs = store.recent_pipeline_runs(10)
+            extra = store.pipeline_extra_counts()
         finally:
             store.conn.close()
     except sqlite3.OperationalError:
@@ -438,9 +439,11 @@ def check_transcription_pipeline(data_dir):
             findings.append(("warning", "transcription_pipeline",
                              "連續 %d 次因訂閱使用量上限中止（最近一次回報的重置時間：%s）；待處理 %d 張會延後，若持續請調降 --max-images"
                              % (streak, runs[0]["reset_hint"] or "未知", pending["pending"] + pending["to_verify"])))
-    summary = ("流水線%s；最近執行 %s（結果 %s）；待轉寫 %d 張（已達嘗試上限 %d 張）、待驗證 %d 張；有疑慮待 PO 核對 %d 張"
+    summary = ("流水線%s；最近執行 %s（結果 %s）；待轉寫 %d 張（已達嘗試上限 %d 張）、待驗證 %d 張；有疑慮待 PO 核對 %d 張；"
+               "僅通過文字家族（數字家族缺漏）%d 張；非表格累計 %d 張"
                % ("已啟用" if enabled else "未啟用", last["started_at"] if last else "無", (last["result"] if last else "-"),
-                  pending["pending"], pending["exhausted"], pending["to_verify"], vc["flagged"]))
+                  pending["pending"], pending["exhausted"], pending["to_verify"], vc["flagged"],
+                  extra["text_only"], extra["not_table"]))
     return findings + [("ok", "transcription_pipeline", summary)]
 
 
