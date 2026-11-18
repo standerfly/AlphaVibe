@@ -13,6 +13,15 @@ def body(text):
     return (text + "。") + "補充說明。" * 60
 
 
+def set_verification(store, article_id, seq, verdict="ok", method="compare-d-c", verifier="test-tool", note=None, cells=None):
+    """測試用：把某張圖設為 cross_checked（verdict=ok）或 flagged（verdict=issues）。回傳 apply_verification_batch 結果。"""
+    iid = store.conn.execute("SELECT id FROM article_image WHERE article_id=? AND seq=?", (article_id, seq)).fetchone()[0]
+    return store.apply_verification_batch([{
+        "image_id": iid, "verdict": verdict, "method": method, "verifier": verifier,
+        "note": note if note is not None else (None if verdict == "ok" else "發現 1 項疑慮（wrong-number×1）"),
+        "cells": cells}])
+
+
 def build(data_dir):
     s = A.ArticleStore(data_dir)
     rows = [
@@ -26,6 +35,7 @@ def build(data_dir):
         s.mark_fetched(aid, text, published_at=date + "T08:00:00+08:00")
     s.add_image(104, 1, "https://img.example/104-1.png")
     s.set_transcription(104, 1, "done", text="營收 98765 百萬元 毛利率 31%", model="m", is_table=True)
+    set_verification(s, 104, 1)        # 已交叉驗證才納入搜尋（Q-028）
     s.add_image(104, 2, "https://img.example/104-2.png")
     s.set_transcription(104, 2, "untranscribed", is_table=None)
     # 未成功匯入：不得被搜到

@@ -29,6 +29,7 @@ import article_tools  # noqa: E402
 import article_transcribe  # noqa: E402
 import investanchors_import as I  # noqa: E402
 import investanchors_redact  # noqa: E402
+import _article_fixture as F  # noqa: E402
 from test_article_image_tiles import blank_bands, make_table_png  # noqa: E402
 
 TITLE = "機密標題-緯穎觀察"
@@ -717,6 +718,10 @@ class DisplayAndSearchTest(Base):
         path = self.write_results(self.results([self.item(self.a, text)]))
         rc, out = self.run_cli(["--import-transcription", path, "--apply"])
         self.assertEqual(rc, 0, out)
+        # 轉寫要經驗證（cross_checked）才納入搜尋、顯示一般標示（Q-028）；驗證等級本身的測試在 test_article_verification.py
+        s = self.store()
+        F.set_verification(s, 1, 1)
+        F.set_verification(s, 2, 1)
 
     def test_get_article_labels_manual_vs_api_and_both_warn(self):
         self._manual_import("| 營收 | 98765 |\n| --- | --- |")

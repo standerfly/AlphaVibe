@@ -64,6 +64,22 @@
 ### `setting`（設定；單純 key/value）
 `key TEXT PRIMARY KEY`、`value TEXT`。目前只存 **`transcribe_enabled`（轉寫啟用開關；沒有此列＝關閉，預設關閉）**。關閉時圖片照常下載、一律 `untranscribed`、不呼叫模型 API、不讀取 `vision-api-key`；**不得用鑰匙圈有沒有金鑰當開關**。
 
+### `transcription_verification`（轉寫驗證等級；2026-11-18，Q-028）
+**沒有列＝`unverified`（預設）**；寫入新轉寫時該圖的列會被刪除（重置）。新增表，`CREATE TABLE IF NOT EXISTS`，**不改任何既有欄位**。
+| 欄位 | 型別 | 說明 |
+|---|---|---|
+| image_id | INTEGER PK → article_image.id | |
+| status | TEXT NOT NULL | `unverified`（保留值，實務上不寫列）／`flagged`／`cross_checked`／`reviewed` |
+| method | TEXT | 驗證來源（白名單：`compare-d-c`／`agent-spot-check`／`arithmetic`／`body-crosscheck`；`reviewed` 為 `po-review`）；cross_checked 可累計多個（逗號分隔） |
+| verifier | TEXT | agent／工具名稱（英數連字號）；reviewed 為 `po` |
+| note | TEXT | flagged：疑慮摘要（數量與 kind 分布、來源）；cross_checked：由 flagged 轉入的記錄；**不含文章標題與全文** |
+| flagged_cells | TEXT（JSON） | flagged：`[{where, kind, found, expected?}]`，最多 50 項、found／expected 各截 80 字 |
+| flag_history | TEXT（JSON） | 曾標過疑慮的 method 清單（防洗白用，只增不減，轉寫重置時才隨列刪除） |
+| checked_at | TEXT | ISO 時間（台北時區） |
+| updates | INTEGER NOT NULL DEFAULT 1 | 該列被更新的累計次數 |
+
+只有 `cross_checked`／`reviewed` 的轉寫文字納入搜尋。**唯讀連接器開啟的舊庫可能沒有這張表**：視為全部 `unverified`，不出錯；表只在可寫連線建立。
+
 ### `alert_log`（通知去重，比照 `statement_alerts`/`alert_once`）
 `kind`、`key`、`day`；同 kind+key 同日只通知一次。
 
@@ -87,6 +103,7 @@ deferred ──PO 要求補抓（放寬截止日，`--backfill-since`）──�
 - `article_id` 必須是正整數；`id_time_ms` 僅在 ID 為 14 位數且前 13 位換算的時間介於 2020-01-01 與「現在＋1 天」之間時設值，否則 `id_time_ok=0`；URL 必須符合 `^https://(www\.)?investanchors\.com/user/vip_contents/\d+$`（站內路徑才收）。
 - `status='fetched'` ⇔ `body` 非空且長度 ≥ 下限（防殘缺：下限由探查 P6 後定，起始 200 字）。
 - 常數（`investanchors_import.py`／`article_store.py`，2026-11-15 審查決定）：`BACKFILL_TRANSCRIBE_PER_RUN=10`（夜間每次最多補轉幾張舊圖）、`MAX_TRANSCRIBE_ATTEMPTS=3`。補轉順序：`transcribe_attempts` 少的先，再依 article_id／seq；僅 `status=fetched` 文章。`ArticleStore.transcription_counts()` 回 `{"untranscribed", "exhausted"}`（供 T050 健康檢查）。
+- 轉寫驗證（Q-028）：寫入轉寫（`_write_transcription`，含單筆、整批、`--overwrite`、`--retranscribe`）在同一交易內刪除該圖的驗證列；`reviewed` 只由 `apply_mark_reviewed` 寫入；狀態轉換規則集中於 `article_store.plan_verification_transition`。
 - `transcription` 只含轉寫內容；「機器轉寫」標示一律在輸出時（`get_article`／`search_articles` 片段）加上，不入庫。`untranscribed` 時 `transcription` 必為 NULL（不以空白／猜測充數，FR-017）。
 - 只增不刪：store 不提供 delete 方法；放棄的文章只改 status。
 - 日誌／`last_error`／通知 **不得含** 帳密、cookie、全文（以單元測試對日誌輸出做負向斷言）。

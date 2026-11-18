@@ -23,6 +23,7 @@ class TranscriptionSearchTest(unittest.TestCase):
             s.mark_fetched(aid, F.body("這篇內文不含任何圖表代號"), published_at="2026-11-10T08:00:00+08:00")
         s.add_image(201, 1, "https://img.example/201-1.png")
         s.set_transcription(201, 1, "done", text=TABLE_TEXT, model="m", is_table=True)
+        F.set_verification(s, 201, 1)      # 已交叉驗證才納入搜尋（Q-028）
         s.add_image(203, 1, "https://img.example/203-1.png")
         s.set_transcription(203, 1, "untranscribed")
         s.close()

@@ -28,6 +28,7 @@ import article_images
 import article_manual_transcribe
 import article_store
 import article_transcribe
+import article_verification
 import investanchors_limits
 import investanchors_mailbox
 import investanchors_redact
@@ -137,11 +138,23 @@ def build_parser():
                     help="方案 D：唯讀匯出未轉寫的圖給 agent 讀（manifest.json＋AGENT_GUIDE.md＋長圖切片），"
                          "寫到 <data-dir>/articles_probe/manual-transcribe-<時間>/；不寫資料庫、不登入、不讀鑰匙圈")
     ap.add_argument("--limit", type=int, default=None, metavar="N",
-                    help="只能與 --export-untranscribed 併用：最多匯出幾張（預設 %d，上限 %d）"
+                    help="只能與 --export-untranscribed／--export-verification-task 併用：最多匯出幾張（預設 %d，上限 %d）"
                          % (article_manual_transcribe.DEFAULT_EXPORT_LIMIT, article_manual_transcribe.MAX_EXPORT_LIMIT))
     ap.add_argument("--import-transcription", default=None, metavar="RESULTS_JSON",
                     help="方案 D：匯入 agent 寫的 results.json（零網路、零鑰匙圈）；預設只預覽，需 --apply 才寫入")
-    ap.add_argument("--apply", action="store_true", help="只能與 --import-transcription 併用：實際寫入")
+    ap.add_argument("--import-verification", default=None, metavar="VERIFICATION_JSON",
+                    help="轉寫驗證等級：匯入獨立檢核結果 verification.json（零網路、零鑰匙圈）；預設只預覽，需 --apply 才寫入。"
+                         "verdict=ok→cross_checked、issues→flagged；永遠不會寫成 reviewed")
+    ap.add_argument("--mark-reviewed", default=None, metavar="IMAGE_IDS",
+                    help="PO 本人逐格核對原圖後，把轉寫標為 reviewed（image_id 以逗號分隔；唯一能寫 reviewed 的指令）；"
+                         "預設只預覽，需 --apply 才寫入")
+    ap.add_argument("--export-verification-task", action="store_true",
+                    help="唯讀匯出「給獨立 agent 抽查」的資料夾（manifest.json＋VERIFY_GUIDE.md＋逐列編號的待查轉寫），"
+                         "寫到 <data-dir>/articles_probe/verify-task-<時間>/；不寫資料庫、不登入、不讀鑰匙圈")
+    ap.add_argument("--only-unverified", action="store_true",
+                    help="只能與 --export-verification-task 併用：只匯出尚未驗證（unverified）的圖（預設含 flagged／cross_checked、不含 reviewed）")
+    ap.add_argument("--apply", action="store_true",
+                    help="只能與 --import-transcription／--import-verification／--mark-reviewed 併用：實際寫入")
     ap.add_argument("--overwrite", action="store_true",
                     help="只能與 --import-transcription 併用：允許覆寫已轉寫（done／not_table）的圖")
     return ap
@@ -247,38 +260,155 @@ class Importer(object):
 
     # ---------------------------------------------------------------- 方案 D：手動轉寫（Phase 10）
     def _manual_dispatch(self):
-        """處理 --export-untranscribed／--import-transcription 與其附屬旗標的互斥檢查。
-        回傳 None＝不是方案 D 的呼叫（照原流程）；否則回傳 exit code。完全不取信、不登入、不讀鑰匙圈、不連網。"""
+        """處理方案 D（--export-untranscribed／--import-transcription）與轉寫驗證（--import-verification／
+        --mark-reviewed／--export-verification-task）及其附屬旗標的互斥檢查。
+        回傳 None＝不是這些動作的呼叫（照原流程）；否則回傳 exit code。完全不取信、不登入、不讀鑰匙圈、不連網。"""
         a = self.args
-        export, imp = a.export_untranscribed, a.import_transcription is not None
-        if not (export or imp):
-            if a.limit is not None or a.apply or a.overwrite:
-                self.say("拒絕執行：--limit／--apply／--overwrite 只能與方案 D 旗標併用")
+        actions = [("export", a.export_untranscribed), ("import", a.import_transcription is not None),
+                   ("import_ver", a.import_verification is not None), ("mark", a.mark_reviewed is not None),
+                   ("export_ver", a.export_verification_task)]
+        chosen = [k for k, on in actions if on]
+        if not chosen:
+            if a.limit is not None or a.apply or a.overwrite or a.only_unverified:
+                self.say("拒絕執行：--limit／--apply／--overwrite／--only-unverified 只能與方案 D 或轉寫驗證旗標併用")
                 return 2
             return None
-        if export and imp:
-            self.say("拒絕執行：--export-untranscribed 與 --import-transcription 不可同時使用")
+        if len(chosen) > 1:
+            if set(chosen) == {"export", "import"}:
+                self.say("拒絕執行：--export-untranscribed 與 --import-transcription 不可同時使用")
+            else:
+                self.say("拒絕執行：方案 D 與轉寫驗證的動作旗標彼此不可同時使用（一次只能一個）")
             return 2
+        action = chosen[0]
         others = (a.retranscribe or a.reset_transcribe_attempts or a.transcribe_sample is not None or a.dry_run
                   or a.resume or a.reset_abandoned is not None or a.force_weekly or a.enable_transcription
                   or a.disable_transcription or a.max_articles is not None or a.backfill_since is not None)
         if others:
             self.say("拒絕執行：方案 D 旗標不可與其他動作旗標併用")
             return 2
-        if export and (a.apply or a.overwrite):
-            self.say("拒絕執行：--apply／--overwrite 只能與 --import-transcription 併用")
+        if action in ("export", "export_ver"):
+            if a.apply or a.overwrite:
+                self.say("拒絕執行：--apply／--overwrite 只能與 --import-transcription 併用"
+                         if action == "export" else
+                         "拒絕執行：--apply／--overwrite 不能與 --export-verification-task 併用")
+                return 2
+        if action == "export" and a.only_unverified:
+            self.say("拒絕執行：--only-unverified 只能與 --export-verification-task 併用")
             return 2
-        if imp and a.limit is not None:
-            self.say("拒絕執行：--limit 只能與 --export-untranscribed 併用")
-            return 2
+        if action in ("import", "import_ver", "mark"):
+            if a.limit is not None:
+                self.say("拒絕執行：--limit 只能與 --export-untranscribed／--export-verification-task 併用")
+                return 2
+            if a.only_unverified:
+                self.say("拒絕執行：--only-unverified 只能與 --export-verification-task 併用")
+                return 2
+            if a.overwrite and action != "import":
+                self.say("拒絕執行：--overwrite 只能與 --import-transcription 併用")
+                return 2
         try:
-            return self._manual_export() if export else self._manual_import()
-        except article_manual_transcribe.ManualTranscribeError as e:
+            if action == "export":
+                return self._manual_export()
+            if action == "import":
+                return self._manual_import()
+            if action == "export_ver":
+                return self._verification_export()
+            if action == "import_ver":
+                return self._verification_import()
+            return self._mark_reviewed()
+        except (article_manual_transcribe.ManualTranscribeError, article_verification.VerificationError) as e:
             self.say("拒絕執行：%s" % e)
             return 2
         except FileNotFoundError:
             self.say("文章庫尚未建立，沒有可處理的圖片")
             return 1
+
+    # ---------------------------------------------------------------- 轉寫驗證等級（Phase 12，Q-028）
+    def _verification_export(self):
+        a = self.args
+        limit = a.limit if a.limit is not None else article_verification.DEFAULT_EXPORT_LIMIT
+        r = article_verification.export_verification_task(
+            a.data_dir, limit=limit, only_unverified=a.only_unverified, now=self.now,
+            tiles_runner=self.tiles_runner, tile_tmp_root=self.tile_tmp_root)
+        self.say("已匯出 %d 張待抽查的轉寫（長圖 %d 張；切片降級 %d 張；檔案不存在略過 %d 張；無法讀取略過 %d 張）"
+                 % (r["exported"], r["long_images"], r["tiles_degraded"], r["skipped_missing"],
+                    r["skipped_unreadable"]))
+        self.say("資料夾：%s" % r["out_dir"])
+        self.say("請獨立 agent 依 VERIFY_GUIDE.md 逐列對照原圖並寫出 verification.json；圖片來自付費文章，勿貼到公開處。")
+        return 0
+
+    def _verification_import(self):
+        a = self.args
+        apply_ = a.apply
+        store = article_store.ArticleStore.open_readonly(a.data_dir)       # 預覽：唯讀、不建庫、不建表
+        try:
+            plan = article_verification.validate_verification(a.import_verification, store)
+        finally:
+            store.close()
+        self._say_verification_plan(plan, "寫入" if apply_ else "預覽（未寫入）")
+        if not apply_:
+            self.say("以上是預覽；確認無誤後加 --apply 才會寫入。")
+            return 0
+        store = article_store.ArticleStore(a.data_dir, now=self.now)       # 可寫連線才會建立驗證表
+        try:
+            plan = article_verification.validate_verification(a.import_verification, store)   # 以最新狀態重新判斷
+            result = article_verification.apply_verification(store, plan, now=self.now)
+        except article_verification.VerificationError as e:
+            self.say("拒絕執行：%s" % e)
+            return 2
+        except sqlite3.Error:
+            self.say("拒絕執行：寫入資料庫失敗，整批已 rollback（未寫入任何驗證記錄）")
+            return 2
+        finally:
+            store.close()
+        self.say("已寫入（單一交易）：cross_checked %d 張、flagged %d 張；略過 %d 張。" % (
+            len(result["cross_checked"]), len(result["flagged"]), sum(len(v) for v in result["skipped"].values())))
+        return 0
+
+    def _say_verification_plan(self, plan, head):
+        sk = plan["skipped"]
+        self.say("%s：將設為 cross_checked %d 張、flagged %d 張；略過 %d 張（method=%s，verifier=%s）" % (
+            head, len(plan["outcome"]["cross_checked"]), len(plan["outcome"]["flagged"]),
+            sum(len(v) for v in sk.values()), plan["method"], plan["verifier"]))
+        for iid, verdict, n in plan["details"]:
+            self.say("  image_id=%d → %s%s" % (
+                iid, "cross_checked" if verdict == "ok" else "flagged", "（疑慮 %d 項）" % n if n else ""))
+        for reason, ids in sorted(sk.items()):
+            self.say("  略過（%s）%d 張：image_id=%s" % (
+                article_verification.SKIP_REASON_TEXT.get(reason, reason), len(ids), ",".join(str(i) for i in ids)))
+
+    def _mark_reviewed(self):
+        a = self.args
+        apply_ = a.apply
+        ids = article_verification.parse_image_ids(a.mark_reviewed)
+        store = article_store.ArticleStore.open_readonly(a.data_dir)
+        try:
+            plan = article_verification.plan_mark_reviewed(ids, store)
+        finally:
+            store.close()
+        was = plan["was"]
+        self.say("%s：將標記 %d 張為 reviewed（原狀態：%s）" % (
+            "寫入" if apply_ else "預覽（未寫入）", len(ids),
+            "、".join("%s %d" % (k, len(was[k])) for k in article_store.VERIFICATION_STATUSES if k in was)))
+        if was.get("flagged"):
+            self.say("  注意：其中 %d 張原為 flagged（有疑慮）：image_id=%s；標為 reviewed 代表 PO 已逐格核對過疑慮"
+                     % (len(was["flagged"]), ",".join(str(i) for i in was["flagged"])))
+        if not apply_:
+            self.say("以上是預覽；PO 本人逐格核對原圖後，加 --apply 才會寫入。")
+            return 0
+        store = article_store.ArticleStore(a.data_dir, now=self.now)
+        try:
+            plan = article_verification.plan_mark_reviewed(ids, store)
+            article_verification.apply_mark_reviewed(store, ids, now=self.now)
+        except article_verification.VerificationError as e:
+            self.say("拒絕執行：%s" % e)
+            return 2
+        except (sqlite3.Error, ValueError):
+            self.say("拒絕執行：寫入失敗，整批已 rollback（未標記任何一張）")
+            return 2
+        finally:
+            store.close()
+        self.say("已標記 %d 張為 reviewed（單一交易）。" % len(ids))
+        return 0
 
     def _manual_export(self):
         a = self.args

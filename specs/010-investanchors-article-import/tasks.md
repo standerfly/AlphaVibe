@@ -282,3 +282,21 @@ T023（首次真實執行）、T048（真實手動回補試跑）、T055（部�
 - [x] T084 報告：總結表（每圖一列）、建議優先核對排序、未配對、逐張詳細、「如何核對」；不覆寫輸出；stdout 只印數字；錯誤輸入 exit 2 無 traceback。
 - [x] T085 測試 `tests/test_compare_transcriptions.py`（假資料、不連網）；quickstart §13、paddle-setup.md 交叉參照。
 - [ ] T086 [PO] 用真實 8 張圖（含 2190x5327 長圖）跑 D 與 C，依報告對照原圖，回報哪些差異真的是誰的錯，作為 D／C 取捨與日後調整分級規則的依據。
+
+---
+
+## Phase 12: 轉寫驗證等級（2026-11-18，PO 決定，clarification-log Q-028）
+
+**範圍**：資料錯誤是最嚴重的錯——每張圖的轉寫有驗證等級，未驗證／有疑慮的不進搜尋、單篇顯示附警告；不改既有欄位（新增 `transcription_verification` 表）、不新增 MCP 工具、不連網、不讀鑰匙圈、不登入、**不部署**。
+
+- [x] T087 `ArticleStore`：新表 `transcription_verification`（`CREATE TABLE IF NOT EXISTS`，僅可寫連線建立）、`get_verification(s)`／`verification_counts`／`apply_verification_batch`（單一交易、同交易稽核）／`apply_mark_reviewed`；唯讀開庫遇表不存在＝全部 unverified（不出錯、不建表）。測試：`test_article_verification.SchemaAndDefaultTest`（含舊庫模擬）。
+- [x] T088 `plan_verification_transition`（純函式，預覽與寫入共用）：issues 永遠生效、ok 不動 reviewed、flagged 防洗白（`flag_history`，method 不同於任何曾標疑慮者才可轉 cross_checked）、reviewed 絕不由此產生。測試：`TransitionRulesTest`。
+- [x] T089 重置規則：`_write_transcription` 同交易刪除驗證列（`--overwrite`、`--retranscribe` 換模型、重新匯入、批次 rollback 時不誤清）。測試：`ResetRulesTest`。
+- [x] T090 搜尋：轉寫文字那支改 JOIN 驗證表、僅 cross_checked／reviewed；片段亦只取已驗證者。顯示：`article_tools` 依等級附警告／標示（unverified／flagged 醒目警告＋flagged 疑慮摘要；cross_checked／reviewed 標示等級與方法）；台美逐字一致、MCP 工具數不變。既有測試的夾具改為先驗證再搜尋。測試：`SearchAndDisplayTest`、`test_article_connectors_parity`。
+- [x] T091 `article_verification.py`＋CLI `--import-verification [--apply]`：嚴格 schema、method 白名單、sha256 對圖檔與同資料夾 manifest、拒收控制／bidi／疑似金鑰、預覽零寫入、`--apply` 單一交易重新判斷、稽核只存數量與 method、輸出不印 issues。測試：`ImportVerificationTest`。
+- [x] T092 CLI `--mark-reviewed <ids> [--apply]`（唯一能寫 reviewed 的路徑）；`--export-verification-task [--limit N] [--only-unverified]`（唯讀、不含標題、逐列編號待查轉寫、`VERIFY_GUIDE.md`、長圖切片降級）；旗標互斥與資料目錄防呆最先；零網路零鑰匙圈。測試：`MarkReviewedTest`、`ExportVerificationTaskTest`、`CliExclusivityTest`。
+- [x] T093 `compare_transcriptions.py --emit-verification <路徑>`（method=compare-d-c；ok／issues／不輸出的判定、不覆寫、欄位截短與遮蔽）。測試：`test_compare_transcriptions.EmitVerificationTest`。
+- [x] T094 健檢：`check_investanchors_import` 摘要加「未驗證轉寫／有疑慮／已驗證／PO 已核對」張數（唯讀、舊庫全算未驗證）。測試：`HealthSummaryTest`。
+- [x] T095 文件：quickstart §14（Mermaid 流程、等級與顯示搜尋規則表、Cline 抽查步驟、資料外送提醒）、contracts/cli.md、data-model.md、clarification-log Q-028。
+- [ ] T096 [PO] 確認抽查比例（建議：頭兩週每張由 PO 核對、之後每 10 張抽 1 張；**尚未確認**），並用真實 8 張圖試跑一輪：D→compare `--emit-verification`→Cline 抽查→預覽匯入→`--mark-reviewed`；回報 Cline 實際能否看出截斷類錯誤（例：備註被截成「廠務」）。
+- [ ] T097 [PO／部署時] 部署後第一次可寫連線之前，正式庫沒有驗證表：MCP 連接器會把所有轉寫視為 unverified（搜尋不含轉寫、單篇附警告），這是預期行為；已存在的轉寫（若有）需經 §14 流程驗證後才搜得到。

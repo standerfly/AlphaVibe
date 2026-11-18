@@ -512,6 +512,202 @@ class CliTest(Base):
         self.assertNotIn("**逐格數字差異**", rep)
 
 
+class EmitVerificationTest(Base):
+    """--emit-verification（Phase 12，Q-028）：依比對結果輸出 verification.json（method=compare-d-c）。"""
+
+    def emit(self, d_texts, c_texts, extra=(), modes=("ocr_grid",), statuses=None, is_table=None, sizes=None, name="v.json"):
+        dres = self.make_d(d_texts, sizes=sizes)
+        if is_table:
+            data = self.load(dres)
+            for r in data["results"]:
+                if r["image_id"] in is_table:
+                    r["is_table"] = is_table[r["image_id"]]
+            self.write("d/results.json", data)
+        c = self.make_c(c_texts, modes=modes, statuses=statuses)
+        out = self.path(name)
+        code, stdout, err = self.run_cli("--d-results", dres, "--c-report", c, "--out", self.out,
+                                         "--emit-verification", out, *extra)
+        payload = self.load(out) if os.path.exists(out) else None
+        return code, stdout, err, payload
+
+    @staticmethod
+    def load(path):
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def by_id(self, payload):
+        return {r["image_id"]: r for r in payload["results"]}
+
+    def test_agreement_gives_ok_and_header_fields(self):
+        code, out, err, pl = self.emit({1: tbl(BASE)}, {1: tbl(BASE)})
+        self.assertEqual(code, 0, err)
+        self.assertEqual((pl["version"], pl["method"], pl["verifier"]), (1, "compare-d-c", "compare-transcriptions"))
+        self.assertEqual(pl["results"], [{"image_id": 1, "sha256": "a" * 64, "verdict": "ok"}])
+        self.assertIn("驗證檔 ok 1／issues 0／未輸出 0", out)
+
+    def test_high_or_mid_suspect_gives_issues_with_fields(self):
+        c = [r[:] for r in BASE]
+        c[1][1] = "244,170"                       # 小數點／千位逗號錯置（高）
+        code, _out, _err, pl = self.emit({1: tbl(BASE)}, {1: tbl(c)})
+        r = self.by_id(pl)[1]
+        self.assertEqual(r["verdict"], "issues")
+        iss = r["issues"][0]
+        self.assertEqual(set(iss) - {"expected"}, {"where", "found", "kind"})
+        self.assertEqual(iss["kind"], "wrong-number")
+        self.assertIn("C1", iss["where"])
+        self.assertLessEqual(len(iss["where"]), 80)
+
+    def test_numbers_only_on_one_side_give_issues(self):
+        c = BASE + [["新增列", "999,999", "888,888"]]
+        _c, _o, _e, pl = self.emit({1: tbl(BASE)}, {1: tbl(c)})
+        r = self.by_id(pl)[1]
+        self.assertEqual(r["verdict"], "issues")
+        self.assertIn("missing", {i["kind"] for i in r["issues"]})
+
+    def test_shape_differs_without_alignment_gives_issues(self):
+        c = [["完全", "不同"], ["x", "1"], ["y", "2"]]
+        _c, _o, _e, pl = self.emit({1: tbl(BASE)}, {1: tbl(c)})
+        self.assertEqual(self.by_id(pl)[1]["verdict"], "issues")
+
+    def test_shape_differs_but_headers_align_and_agree_gives_ok(self):
+        c = BASE + [["雜項", "", ""]]            # 多一列但標頭對齊成功、數字一致
+        _c, _o, _e, pl = self.emit({1: tbl(BASE)}, {1: tbl(c)})
+        self.assertEqual(self.by_id(pl)[1]["verdict"], "ok")
+
+    def test_low_level_format_only_difference_is_not_a_concern(self):
+        c = [r[:] for r in BASE]
+        c[1][1] = "24417"                         # 僅格式（低）
+        _c, _o, _e, pl = self.emit({1: tbl(BASE)}, {1: tbl(c)})
+        # 低等級疑似不納入「高／中」判定，但這是「只在單邊」的數字（24417.0 vs 24417 key 不同）→ 仍視為有疑慮
+        self.assertEqual(self.by_id(pl)[1]["verdict"], "issues")
+
+    def test_d_marked_uncertain_cell_gives_issues(self):
+        d = [r[:] for r in BASE]
+        d[2][1] = "[?]"
+        c = [r[:] for r in BASE]
+        _c, _o, _e, pl = self.emit({1: tbl(d)}, {1: tbl(c)})
+        self.assertEqual(self.by_id(pl)[1]["verdict"], "issues")
+
+    def test_any_source_with_concern_wins_over_clean_source(self):
+        bad = [r[:] for r in BASE]
+        bad[3][2] = "5,687"
+        dres = self.make_d({1: tbl(BASE)})
+        c1 = self.make_c({1: tbl(BASE)}, name="c1.md")
+        c2 = self.make_c({1: tbl(bad)}, name="c2.md")
+        out = self.path("v.json")
+        code, _o, err = self.run_cli("--d-results", dres, "--c-report", c1, "--c-report", c2, "--out", self.out,
+                                     "--emit-verification", out)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.by_id(self.load(out))[1]["verdict"], "issues")
+
+    def test_failed_source_ignored_if_another_clean_source_succeeded(self):
+        dres = self.make_d({1: tbl(BASE)})
+        c1 = self.make_c({1: tbl(BASE)}, name="c1.md")
+        c2 = self.make_c({1: tbl(BASE)}, name="c2.md", statuses={1: "timeout"})
+        out = self.path("v.json")
+        code, _o, err = self.run_cli("--d-results", dres, "--c-report", c1, "--c-report", c2, "--out", self.out,
+                                     "--emit-verification", out)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.by_id(self.load(out))[1]["verdict"], "ok")
+
+    def test_failed_or_unmatched_image_not_emitted(self):
+        code, out, _e, pl = self.emit({1: tbl(BASE), 2: tbl(BASE)}, {1: tbl(BASE), 2: tbl(BASE)}, statuses={2: "timeout"})
+        self.assertEqual(sorted(self.by_id(pl)), [1])
+        self.assertIn("未輸出 1", out)
+        # 全部都比對失敗 → 不產生檔案
+        code, out, _e, pl = self.emit({1: tbl(BASE)}, {1: tbl(BASE)}, statuses={1: "timeout"}, name="none.json")
+        self.assertIsNone(pl)
+        self.assertIn("無可輸出的圖", out)
+
+    def test_d_not_table_but_c_has_content_gives_issues(self):
+        code, _o, err, pl = self.emit({1: ""}, {1: tbl(BASE)}, is_table={1: False})
+        self.assertEqual(code, 0, err)
+        r = self.by_id(pl)[1]
+        self.assertEqual(r["verdict"], "issues")
+        self.assertEqual(r["issues"][0]["kind"], "missing")
+
+    def test_d_not_table_and_c_empty_not_emitted(self):
+        _c, _o, _e, pl = self.emit({1: ""}, {1: ""}, is_table={1: False})
+        self.assertIsNone(pl)
+
+    def test_text_only_tables_without_numbers_not_emitted(self):
+        t = tbl([["項目", "備註"], ["甲", "文字"], ["乙", "說明"]])
+        _c, _o, _e, pl = self.emit({1: t}, {1: t})
+        self.assertIsNone(pl)
+
+    def test_no_title_fulltext_and_fields_within_limits_and_importable_shape(self):
+        d = [r[:] for r in BASE]
+        d[1][0] = FULLTEXT + "\x00" * 3
+        c = [r[:] for r in BASE]
+        c[1][1] = "244,170"
+        _c, _o, _e, pl = self.emit({1: tbl(d) + "\n" + TITLE}, {1: tbl(c)})
+        blob = json.dumps(pl, ensure_ascii=False)
+        self.assertNotIn(TITLE, blob)
+        for r in pl["results"]:
+            self.assertLessEqual(len(r.get("issues", [])), 200)
+            for i in r.get("issues", []):
+                self.assertLessEqual(len(i["where"]), 80)
+                self.assertLessEqual(len(i["found"]), 200)
+                self.assertLessEqual(len(i.get("expected", "")), 200)
+                self.assertNotRegex(i["where"] + i["found"] + i.get("expected", ""), "[\x00-\x1f]")
+
+    def test_secret_like_cell_is_masked_not_leaked(self):
+        d = [r[:] for r in BASE]
+        d[1][1] = "9999"
+        c = [r[:] for r in BASE]
+        c[1][1] = "sk-ant-api03-abcdefghijklmnopqrstuvwx1234"
+        _c, _o, _e, pl = self.emit({1: tbl(d)}, {1: tbl(c)})
+        self.assertNotIn("sk-ant", json.dumps(pl, ensure_ascii=False))
+
+    def test_never_overwrites_existing_file_and_rejects_directory(self):
+        out = self.path("v.json")
+        with open(out, "w") as f:
+            f.write("{}")
+        dres = self.make_d({1: tbl(BASE)})
+        c = self.make_c({1: tbl(BASE)})
+        code, _o, err = self.run_cli("--d-results", dres, "--c-report", c, "--out", self.out, "--emit-verification", out)
+        self.assertEqual(code, 2)
+        with open(out) as f:
+            self.assertEqual(f.read(), "{}")
+        code, _o, err = self.run_cli("--d-results", dres, "--c-report", c, "--out", self.out,
+                                     "--emit-verification", self.d)
+        self.assertEqual(code, 2)
+
+    def test_without_flag_nothing_extra_written(self):
+        dres = self.make_d({1: tbl(BASE)})
+        c = self.make_c({1: tbl(BASE)})
+        code, out, _e = self.run_cli("--d-results", dres, "--c-report", c, "--out", self.out)
+        self.assertEqual(code, 0)
+        self.assertNotIn("驗證檔", out)
+        self.assertEqual([n for n in os.listdir(self.d) if n.endswith(".json")], [])
+
+    def test_emitted_file_passes_import_validation(self):
+        """端到端形狀：輸出的 verification.json 能通過 article_verification 的嚴格驗證（用真實圖與資料庫）。"""
+        import article_store
+        import article_verification
+        data = os.path.join(self.d, "data")
+        os.makedirs(data)
+        png = os.path.join(data, "articles_images", "7")
+        os.makedirs(png)
+        with open(os.path.join(png, "1.png"), "wb") as f:
+            f.write(b"\x89PNG-fake-bytes")
+        import hashlib
+        sha = hashlib.sha256(b"\x89PNG-fake-bytes").hexdigest()
+        st = article_store.ArticleStore(data)
+        st.upsert_discovered(7, "https://investanchors.com/user/vip_contents/7", "T", list_date="2026-11-10")
+        st.mark_fetched(7, "內文。" * 100, published_at="2026-11-10T08:00:00+08:00")
+        st.add_image(7, 1, "https://img.example/7-1.png")
+        st.set_image_file(7, 1, "articles_images/7/1.png")
+        st.set_transcription(7, 1, "done", text=tbl(BASE), model="manual:test", is_table=True)
+        iid = st.conn.execute("SELECT id FROM article_image").fetchone()[0]
+        payload = {"version": 1, "verifier": "compare-transcriptions", "method": "compare-d-c",
+                   "results": [{"image_id": iid, "sha256": sha, "verdict": "ok"}]}
+        path = self.write("vv/verification.json", payload)
+        plan = article_verification.validate_verification(path, st)
+        st.close()
+        self.assertEqual(plan["outcome"]["cross_checked"], [iid])
+
+
 class MainEntryTest(Base):
     def test_help_exit_zero(self):
         with contextlib.redirect_stdout(io.StringIO()):

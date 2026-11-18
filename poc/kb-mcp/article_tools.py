@@ -6,8 +6,20 @@
 
 「機器轉寫，可能有誤，請以原圖為準」標示只在這裡（輸出層）加，資料庫不存。
 """
+import json
+
 import article_store
 
+# 轉寫驗證等級（Q-028）：unverified／flagged 的轉寫只在單篇顯示並附這句警告，不納入搜尋。
+UNVERIFIED_WARNING = "【未驗證／有疑慮的圖片轉寫：數字可能有誤，不得用於投資判斷，請對照原圖】"
+NOT_TABLE_FLAGGED_WARNING = "【此圖被判為非表格，但驗證發現疑慮：可能含表格內容而未轉寫，請對照原圖】"
+MAX_DISPLAY_CELLS = 10
+VERIFICATION_LEVEL_TEXT = {
+    "unverified": "未驗證（不納入搜尋）",
+    "flagged": "有疑慮（不納入搜尋）",
+    "cross_checked": "已交叉驗證（納入搜尋）",
+    "reviewed": "PO 已逐格核對（納入搜尋）",
+}
 TRANSCRIPTION_WARNING = "【機器轉寫，可能有誤，請以原圖為準】"
 MANUAL_PREFIX = "manual:"     # 方案 D（agent 手動轉寫）寫入 transcribed_model 的前綴
 
@@ -17,6 +29,60 @@ def transcription_label(model):
     if isinstance(model, str) and model.startswith(MANUAL_PREFIX):
         return "【圖片轉寫，手動（agent：%s），可能有誤，請以原圖為準】" % (model[len(MANUAL_PREFIX):] or "未標示")
     return TRANSCRIPTION_WARNING
+
+
+def transcription_source(model):
+    """轉寫來源（不含警告字樣，給 unverified／flagged 區塊用）。"""
+    if isinstance(model, str) and model.startswith(MANUAL_PREFIX):
+        return "手動轉寫（agent：%s）" % (model[len(MANUAL_PREFIX):] or "未標示")
+    return "機器轉寫（模型：%s）" % (model or "未標示")
+
+
+def _cell_lines(v):
+    try:
+        cells = json.loads(v.get("flagged_cells") or "[]")
+    except (TypeError, ValueError):
+        return []
+    out = []
+    if isinstance(cells, list):
+        for c in cells[:MAX_DISPLAY_CELLS]:
+            if not isinstance(c, dict):
+                continue
+            line = "- %s｜%s｜轉寫現況：%s" % (c.get("where", "?"), c.get("kind", "other"), c.get("found", ""))
+            if c.get("expected"):
+                line += "｜疑似原圖：%s" % c["expected"]
+            out.append(line)
+        if len(cells) > MAX_DISPLAY_CELLS:
+            out.append("- …另 %d 項" % (len(cells) - MAX_DISPLAY_CELLS))
+    return out
+
+
+def verification_header(img):
+    """依驗證等級回傳 (標示行 list)：unverified／flagged＝醒目警告；cross_checked／reviewed＝等級與方法。"""
+    status = img.get("verification_status") or "unverified"
+    v = img.get("verification") or {}
+    model = img.get("transcribed_model")
+    if status in ("unverified", "flagged"):
+        lines = [UNVERIFIED_WARNING,
+                 "驗證等級：%s；來源：%s" % (VERIFICATION_LEVEL_TEXT[status], transcription_source(model))]
+        if status == "flagged":
+            if v.get("note"):
+                lines.append("疑慮摘要：%s" % v["note"])
+            lines += _cell_lines(v)
+        return lines
+    detail = "驗證等級：%s" % VERIFICATION_LEVEL_TEXT.get(status, status)
+    if v.get("method"):
+        detail += "；方法：%s" % v["method"]
+    if v.get("verifier") and status != "reviewed":
+        detail += "；驗證者：%s" % v["verifier"]
+    if v.get("checked_at"):
+        detail += "；時間：%s" % v["checked_at"]
+    lines = [transcription_label(model), detail]
+    if status == "cross_checked":
+        lines.append("（雙來源一致不代表絕對正確，重要數字仍請對照原圖）")
+    return lines
+
+
 NO_RESULT_TEXT = "查無符合的文章"
 
 
@@ -57,8 +123,14 @@ def format_article(article):
         lines.append("#%s｜%s｜%s｜原圖 src_url：%s｜本機路徑：%s" % (
             img["seq"], kind, label, img.get("src_url") or "無", img.get("file_path") or "無"))
         if status == "done" and img.get("transcription"):
-            lines.append("  %s" % transcription_label(img.get("transcribed_model")))
+            for hl in verification_header(img):
+                lines.append("  %s" % hl)
             lines.append("  " + img["transcription"].replace("\n", "\n  "))
+        elif status == "not_table" and img.get("verification_status") == "flagged":
+            lines.append("  %s" % NOT_TABLE_FLAGGED_WARNING)
+            v = img.get("verification") or {}
+            if v.get("note"):
+                lines.append("  疑慮摘要：%s" % v["note"])
     return "\n".join(lines)
 
 
@@ -97,7 +169,8 @@ ARTICLE_TOOL_SCHEMAS = [
         "name": "search_articles",
         "description": (
             "搜尋已匯入的「定錨產業筆記」文章（唯讀）。query 以空白分隔多個關鍵字，"
-            "全部需出現（AND）；範圍含標題、全文與表格圖片的轉寫文字；"
+            "全部需出現（AND）；範圍含標題、全文，以及「已驗證」（交叉驗證或 PO 核對）的表格圖片轉寫文字——"
+            "未驗證或有疑慮的轉寫不納入搜尋（只在單篇 get_article 顯示並附警告）；"
             "依發布日期新到舊，每筆附原文網址、片段與 article_id。"
             "台股與美股連接器共用同一個文章庫，結果相同。不會連線網站。"),
         "inputSchema": {
@@ -113,7 +186,8 @@ ARTICLE_TOOL_SCHEMAS = [
         "name": "get_article",
         "description": (
             "讀單篇已匯入的定錨文章全文與圖片清單（唯讀）。圖片附原圖網址 src_url，"
-            "表格轉寫為機器轉寫、可能有誤，請以原圖為準。找不到或尚未成功匯入會回明確錯誤。"),
+            "表格轉寫為機器轉寫、可能有誤，請以原圖為準；每張圖標示驗證等級，未驗證／有疑慮者附醒目警告、不得用於投資判斷。"
+            "找不到或尚未成功匯入會回明確錯誤。"),
         "inputSchema": {
             "type": "object",
             "properties": {

@@ -14,6 +14,7 @@
 * `last_error` 一律經 `investanchors_redact.safe_error`（FR-020）。
 """
 import datetime
+import json
 import os
 import re
 import sqlite3
@@ -34,6 +35,15 @@ STATUSES = ("discovered", "fetched", "failed", "abandoned", "skipped", "deferred
 PENDING_STATUSES = ("discovered", "failed")
 MAX_TRANSCRIBE_ATTEMPTS = 3     # 2026-11-15 審查決定：自動補轉的失敗次數上限；超過只有 --retranscribe 才會再試
 TRANSCRIPTION_STATUSES = ("done", "untranscribed", "not_table")
+
+# ---- 轉寫驗證等級（2026-11-18，PO 決定，clarification-log Q-028）
+# 預設（沒有驗證列）＝unverified。只有 cross_checked／reviewed 的轉寫文字才納入搜尋；
+# unverified／flagged 只在單篇 get_article 顯示並附醒目警告。
+VERIFICATION_STATUSES = ("unverified", "flagged", "cross_checked", "reviewed")
+SEARCHABLE_VERIFICATION = ("cross_checked", "reviewed")
+VERIFICATION_METHODS = ("compare-d-c", "agent-spot-check", "arithmetic", "body-crosscheck")   # 驗證匯入可用的來源白名單
+PO_REVIEW_METHOD = "po-review"        # 只有 --mark-reviewed 會寫入
+VERIFICATION_TABLE = "transcription_verification"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS article (
@@ -113,6 +123,18 @@ CREATE TABLE IF NOT EXISTS setting (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS transcription_verification (
+    image_id INTEGER PRIMARY KEY REFERENCES article_image(id),
+    status TEXT NOT NULL CHECK (status IN ('unverified','flagged','cross_checked','reviewed')),
+    method TEXT,
+    verifier TEXT,
+    note TEXT,
+    flagged_cells TEXT,
+    flag_history TEXT,
+    checked_at TEXT,
+    updates INTEGER NOT NULL DEFAULT 1
+);
 """
 
 
@@ -132,6 +154,53 @@ def _parse(value):
     if not value:
         return None
     return datetime.datetime.fromisoformat(value)
+
+
+def _json_list(value):
+    if not value:
+        return []
+    try:
+        out = json.loads(value)
+    except (TypeError, ValueError):
+        return []
+    return [x for x in out if isinstance(x, str)] if isinstance(out, list) else []
+
+
+def _merge_names(*parts):
+    """把逗號分隔的名稱清單合併、去重、保留順序。"""
+    seen, out = set(), []
+    for part in parts:
+        for name in (part or "").split(","):
+            name = name.strip()
+            if name and name not in seen:
+                seen.add(name)
+                out.append(name)
+    return ",".join(out)
+
+
+def plan_verification_transition(cur, verdict, method):
+    """驗證匯入的狀態轉換規則（純函式；預覽與實際寫入共用，保證兩邊判斷一致）。
+
+    cur＝現有驗證列（dict）或 None（＝unverified）；verdict＝'ok'｜'issues'；method＝本次驗證來源。
+    回傳 {"action": "write", "status": ...} 或 {"action": "skip", "reason": ...}。
+    * issues → 一律 flagged（壞消息永遠優先；含把 cross_checked／reviewed 降為 flagged）；
+    * ok → 沒有驗證列或 cross_checked：cross_checked；
+      reviewed：略過（PO 核對過的不被自動流程動）；
+      flagged：只有「method 不曾標過疑慮」才可轉 cross_checked（防單一路徑洗白），否則略過。
+    reviewed 絕不會由這個函式產生。"""
+    cur_status = cur["status"] if cur else "unverified"
+    if verdict == "issues":
+        return {"action": "write", "status": "flagged"}
+    if verdict != "ok":
+        raise ValueError("未知的 verdict：%r" % (verdict,))
+    if cur_status == "reviewed":
+        return {"action": "skip", "reason": "reviewed"}
+    if cur_status == "flagged":
+        history = set(_json_list(cur.get("flag_history")))
+        history.update(n for n in (cur.get("method") or "").split(",") if n)
+        if method in history:
+            return {"action": "skip", "reason": "same-method"}
+    return {"action": "write", "status": "cross_checked"}
 
 
 class ArticleStore(object):
@@ -365,13 +434,23 @@ class ArticleStore(object):
             raise ValueError("limit 必須是整數")
         limit = max(1, min(limit, MAX_SEARCH_LIMIT))
         conds, params = ["a.status = 'fetched'"], []
+        # 轉寫文字只有 cross_checked／reviewed 才納入搜尋（Q-028）。唯讀開庫時舊庫可能還沒有驗證表：
+        # 表不存在＝所有轉寫皆 unverified＝轉寫文字完全不納入（不是出錯）。
+        has_ver = self._has_verification_table()
+        ver_marks = ",".join("?" for _ in SEARCHABLE_VERIFICATION)
         for kw in keywords:
             pat = self._like_pattern(kw)
-            conds.append(
-                "(a.title LIKE ? ESCAPE '\\' OR a.body LIKE ? ESCAPE '\\' OR EXISTS ("
-                "SELECT 1 FROM article_image i WHERE i.article_id = a.article_id "
-                "AND i.transcription LIKE ? ESCAPE '\\'))")
-            params += [pat, pat, pat]
+            if has_ver:
+                conds.append(
+                    "(a.title LIKE ? ESCAPE '\\' OR a.body LIKE ? ESCAPE '\\' OR EXISTS ("
+                    "SELECT 1 FROM article_image i JOIN %s v ON v.image_id = i.id "
+                    "WHERE i.article_id = a.article_id AND i.transcription_status = 'done' "
+                    "AND v.status IN (%s) AND i.transcription LIKE ? ESCAPE '\\'))"
+                    % (VERIFICATION_TABLE, ver_marks))
+                params += [pat, pat] + list(SEARCHABLE_VERIFICATION) + [pat]
+            else:
+                conds.append("(a.title LIKE ? ESCAPE '\\' OR a.body LIKE ? ESCAPE '\\')")
+                params += [pat, pat]
         sql = ("SELECT a.* FROM article a WHERE " + " AND ".join(conds) +
                " ORDER BY COALESCE(a.published_at, a.list_date, '') DESC, a.article_id DESC LIMIT ?")
         params.append(limit)
@@ -386,7 +465,7 @@ class ArticleStore(object):
                     source = "內文"
                     break
                 if images is None:
-                    images = self.list_images(row["article_id"])
+                    images = self._searchable_images(row["article_id"])
                 for img in images:
                     snippet = self._snippet(img.get("transcription") or "", kw)
                     if snippet:
@@ -405,6 +484,140 @@ class ArticleStore(object):
             })
         return results
 
+    def _searchable_images(self, article_id):
+        """該文章可被搜尋／產生片段的圖：已轉寫且驗證等級為 cross_checked／reviewed。"""
+        if not self._has_verification_table():
+            return []
+        marks = ",".join("?" for _ in SEARCHABLE_VERIFICATION)
+        return [dict(r) for r in self.conn.execute(
+            "SELECT i.* FROM article_image i JOIN %s v ON v.image_id = i.id "
+            "WHERE i.article_id = ? AND i.transcription_status = 'done' AND v.status IN (%s) ORDER BY i.seq"
+            % (VERIFICATION_TABLE, marks), [article_id] + list(SEARCHABLE_VERIFICATION))]
+
+    # ------------------------------------------------------------------ 轉寫驗證（Q-028）
+
+    def _has_verification_table(self):
+        """舊庫（升級前建立、唯讀開啟）可能沒有驗證表；沒有＝全部 unverified。"""
+        row = self.conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                                (VERIFICATION_TABLE,)).fetchone()
+        return row is not None
+
+    def get_verification(self, image_id):
+        """單張圖的驗證列（dict）；沒有列或沒有表＝None（呼叫端視為 unverified）。"""
+        return self.get_verifications([image_id]).get(image_id)
+
+    def get_verifications(self, image_ids):
+        """批次取驗證列：{image_id: dict}；沒有列的圖不在結果內（＝unverified）。"""
+        ids = [int(i) for i in image_ids]
+        if not ids or not self._has_verification_table():
+            return {}
+        out = {}
+        for k in range(0, len(ids), 500):
+            chunk = ids[k:k + 500]
+            marks = ",".join("?" for _ in chunk)
+            for r in self.conn.execute("SELECT * FROM %s WHERE image_id IN (%s)" % (VERIFICATION_TABLE, marks), chunk):
+                out[r["image_id"]] = dict(r)
+        return out
+
+    def verification_counts(self):
+        """健康檢查／統計用：僅計 status=fetched 文章中已轉寫（done）的圖。
+        回 {"unverified", "flagged", "cross_checked", "reviewed"}；舊庫沒有驗證表＝全部 unverified。"""
+        total = self.conn.execute(
+            "SELECT COUNT(*) FROM article_image i JOIN article a ON a.article_id=i.article_id "
+            "WHERE a.status='fetched' AND i.transcription_status='done'").fetchone()[0]
+        out = {"flagged": 0, "cross_checked": 0, "reviewed": 0}
+        if self._has_verification_table():
+            for r in self.conn.execute(
+                    "SELECT v.status AS st, COUNT(*) AS n FROM %s v JOIN article_image i ON i.id=v.image_id "
+                    "JOIN article a ON a.article_id=i.article_id "
+                    "WHERE a.status='fetched' AND i.transcription_status='done' GROUP BY v.status" % VERIFICATION_TABLE):
+                if r["st"] in out:
+                    out[r["st"]] = r["n"]
+        out["unverified"] = total - sum(out.values())
+        return out
+
+    def apply_verification_batch(self, entries, audit_kind=None, audit_key=None, audit_day=None):
+        """驗證匯入：單一交易、全有或全無。entries＝[{image_id, verdict('ok'|'issues'), method, verifier,
+        note, cells(JSON 字串或 None)}]。每筆依 plan_verification_transition 在**交易內**以最新狀態判斷
+        （預覽之後狀態可能變了）。回傳 {"cross_checked":[ids], "flagged":[ids], "skipped":{reason:[ids]}}。
+        audit_key 可為字串或 callable(result)->字串（稽核只存數量與 method）。"""
+        result = {"cross_checked": [], "flagged": [], "skipped": {}}
+        try:
+            for e in entries:
+                cur = self.conn.execute("SELECT * FROM %s WHERE image_id=?" % VERIFICATION_TABLE,
+                                        (e["image_id"],)).fetchone()
+                cur = dict(cur) if cur else None
+                plan = plan_verification_transition(cur, e["verdict"], e["method"])
+                if plan["action"] == "skip":
+                    result["skipped"].setdefault(plan["reason"], []).append(e["image_id"])
+                    continue
+                status = plan["status"]
+                history = _json_list(cur.get("flag_history")) if cur else []
+                if status == "flagged":
+                    if e["method"] not in history:
+                        history.append(e["method"])
+                    method, verifier = e["method"], e["verifier"]
+                    note, cells = e.get("note"), e.get("cells")
+                else:   # cross_checked
+                    prior_flagged = cur is not None and cur["status"] == "flagged"
+                    if cur is not None and cur["status"] == "cross_checked":
+                        method = _merge_names(cur.get("method"), e["method"])
+                        verifier = _merge_names(cur.get("verifier"), e["verifier"])
+                    else:
+                        method, verifier = e["method"], e["verifier"]
+                    note, cells = None, None
+                    if prior_flagged:
+                        note = "原 flagged（來源：%s）經不同來源 %s 覆核，轉為 cross_checked" % (
+                            cur.get("method") or "?", e["method"])
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO %s (image_id, status, method, verifier, note, flagged_cells, "
+                    "flag_history, checked_at, updates) VALUES (?,?,?,?,?,?,?,?,?)" % VERIFICATION_TABLE,
+                    (e["image_id"], status, method, verifier, note, cells,
+                     json.dumps(history) if history else None, _iso(self.now()),
+                     (cur["updates"] + 1) if cur else 1))
+                result[status].append(e["image_id"])
+            if audit_kind:
+                key = audit_key(result) if callable(audit_key) else (audit_key or "-")
+                day = audit_day or self.now().astimezone(TZ8).date().isoformat()
+                self.conn.execute("INSERT OR IGNORE INTO alert_log (kind, key, day) VALUES (?,?,?)",
+                                  (audit_kind, key, day))
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return result
+
+    def apply_mark_reviewed(self, image_ids, audit_kind=None, audit_key=None, audit_day=None):
+        """PO 本人核對後設為 reviewed（**唯一**會寫入 reviewed 的路徑）。單一交易。
+        圖必須存在且為 done；否則整批 rollback 並丟 ValueError。回傳 {"reviewed":[ids], "was":{status:[ids]}}。"""
+        result = {"reviewed": [], "was": {}}
+        try:
+            for iid in image_ids:
+                img = self.conn.execute("SELECT transcription_status FROM article_image WHERE id=?", (iid,)).fetchone()
+                if img is None or img["transcription_status"] != "done":
+                    raise ValueError("image_id=%d 不存在或尚未轉寫（done），無法標記為已核對" % iid)
+                cur = self.conn.execute("SELECT * FROM %s WHERE image_id=?" % VERIFICATION_TABLE, (iid,)).fetchone()
+                cur = dict(cur) if cur else None
+                was = cur["status"] if cur else "unverified"
+                result["was"].setdefault(was, []).append(iid)
+                note = "PO 逐格核對後確認" + ("（原為 flagged，疑慮已由 PO 處理）" if was == "flagged" else "")
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO %s (image_id, status, method, verifier, note, flagged_cells, "
+                    "flag_history, checked_at, updates) VALUES (?,?,?,?,?,?,?,?,?)" % VERIFICATION_TABLE,
+                    (iid, "reviewed", PO_REVIEW_METHOD, "po", note, None,
+                     cur.get("flag_history") if cur else None, _iso(self.now()), (cur["updates"] + 1) if cur else 1))
+                result["reviewed"].append(iid)
+            if audit_kind:
+                key = audit_key(result) if callable(audit_key) else (audit_key or "-")
+                day = audit_day or self.now().astimezone(TZ8).date().isoformat()
+                self.conn.execute("INSERT OR IGNORE INTO alert_log (kind, key, day) VALUES (?,?,?)",
+                                  (audit_kind, key, day))
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return result
+
     def get_article(self, article_id):
         """讀單篇（僅 status='fetched'）。找不到或非 fetched → ValueError，不回殘缺內容。"""
         try:
@@ -416,11 +629,17 @@ class ArticleStore(object):
             raise ValueError("文章庫裡沒有 article_id=%d（唯讀查詢，不會去網站抓取）" % article_id)
         if row["status"] != "fetched":
             raise ValueError("article_id=%d 尚未成功匯入（狀態：%s），沒有可讀的全文" % (article_id, row["status"]))
+        images = self.list_images(article_id)
+        vers = self.get_verifications([i["id"] for i in images])
+        for img in images:       # 沒有驗證列（或舊庫沒有驗證表）＝unverified
+            v = vers.get(img["id"])
+            img["verification"] = v
+            img["verification_status"] = v["status"] if v else "unverified"
         return {
             "article_id": row["article_id"], "title": row["title"],
             "published_at": row.get("published_at") or row.get("list_date"),
             "url": row["url"], "body": row.get("body") or "",
-            "images": self.list_images(article_id),
+            "images": images,
         }
 
     def images_missing_file(self):
@@ -438,7 +657,13 @@ class ArticleStore(object):
             raise ValueError("%s 不得帶轉寫文字（不以空白或猜測值充數）" % status)
 
     def _write_transcription(self, article_id, seq, status, text, model, is_table):
-        """只執行 UPDATE、不 commit（供單筆與整批共用）。"""
+        """只執行 UPDATE、不 commit（供單筆與整批共用）。
+
+        轉寫內容一變（含 --overwrite、換模型重轉、重新匯入），舊的驗證記錄即失效：
+        在同一交易內刪除該圖的驗證列（回到 unverified，疑慮記錄一併清除）。"""
+        self.conn.execute(
+            "DELETE FROM transcription_verification WHERE image_id IN "
+            "(SELECT id FROM article_image WHERE article_id=? AND seq=?)", (article_id, seq))
         self.conn.execute(
             "UPDATE article_image SET transcription_status=?, transcription=?, transcribed_model=?, "
             "is_table=COALESCE(?, is_table) WHERE article_id=? AND seq=?",
