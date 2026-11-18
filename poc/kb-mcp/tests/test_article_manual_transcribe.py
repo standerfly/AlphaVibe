@@ -637,6 +637,28 @@ class ProductionGuardTest(Base):
             I.run(["--export-untranscribed"])
 
 
+# ====================================================================== --retranscribe 不蓋掉手動轉寫
+
+class RetranscribeKeepsManualTest(Base):
+    def test_model_change_retranscribe_skips_manual_rows_but_redoes_api_rows(self):
+        self._add_article(1)
+        manual = self._add_image(1, 1, status="done", text="手動轉寫內容", model="manual:claude-code")
+        api = self._add_image(1, 2, status="done", text="舊模型內容", model="old-model")
+        self.store().set_setting("transcribe_enabled", "1")
+        seen = []
+
+        def fake_transcribe(tiles, **kw):
+            seen.append(len(tiles))
+            return {"status": "transcribed", "is_table": True, "text": "新模型內容", "model": "new-model",
+                    "reason": None, "abort": False}
+        rc, out = self.run_cli(["--retranscribe"], transcribe=fake_transcribe, get_secret=lambda *a, **k: "k",
+                               sleeper=lambda s: None)
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(self.img_row(manual)["transcription"], "手動轉寫內容")
+        self.assertEqual(self.img_row(manual)["transcribed_model"], "manual:claude-code")
+        self.assertEqual(self.img_row(api)["transcription"], "新模型內容")
+
+
 # ====================================================================== 顯示與搜尋
 
 class DisplayAndSearchTest(Base):

@@ -434,7 +434,8 @@ class Importer(object):
         todo = store.images_to_transcribe()
         todo += [dict(r) for r in store.conn.execute(
             "SELECT * FROM article_image WHERE file_path IS NOT NULL AND transcription_status='done' "
-            "AND COALESCE(transcribed_model,'') != ? ORDER BY article_id, seq", (self.transcribe_model,))]
+            "AND COALESCE(transcribed_model,'') != ? AND COALESCE(transcribed_model,'') NOT LIKE 'manual:%' "
+            "ORDER BY article_id, seq", (self.transcribe_model,))]    # 方案 D 手動轉寫不被換模型重轉蓋掉
         done = 0
         for img in todo:
             if self.transcribe_aborted:
