@@ -408,6 +408,38 @@ class InvestanchorsImportCheckTest(unittest.TestCase):
              blocked_until))
         self.store.conn.commit()
 
+    def _rejected(self, hours_ago):
+        """被額度守衛擋下的執行（logged_in=0、result=aborted_limit）。"""
+        self.store.conn.execute(
+            "INSERT INTO import_runs (started_at, finished_at, trigger, logged_in, result) VALUES (?,?,?,?,?)",
+            (self._iso8(hours_ago), self._iso8(hours_ago), "none", 0, "aborted_limit"))
+        self.store.conn.commit()
+
+    def _lost_slot_warnings(self):
+        return [f for f in self._check() if f[0] == "warning" and "名額沒用滿" in f[2]]
+
+    def test_rejected_with_unused_quota_warns(self):
+        self._run(1)                       # 今天只登入 1 次
+        self._rejected(0.5)                # 之後仍被擋 → 間隔不足／封鎖／手動占用
+        w = self._lost_slot_warnings()
+        self.assertEqual(len(w), 1)
+        self.assertIn("間隔不足", w[0][2])
+
+    def test_rejected_when_quota_used_up_is_normal(self):
+        self._run(3)
+        self._run(2)                       # 今天已登入 2 次（用滿）
+        self._rejected(0.5)
+        self.assertEqual(self._lost_slot_warnings(), [])
+
+    def test_no_rejection_no_lost_slot_warning(self):
+        self._run(1)
+        self.assertEqual(self._lost_slot_warnings(), [])
+
+    def test_old_rejection_outside_window_ignored(self):
+        self._run(24 * 6)
+        self._rejected(24 * 5)             # 5 天前（窗口 3 天）
+        self.assertEqual(self._lost_slot_warnings(), [])
+
     def _article(self, aid, status, ok=1):
         self.store.conn.execute(
             "INSERT INTO article (article_id, url, title, status, id_time_ok) VALUES (?,?,?,?,?)",

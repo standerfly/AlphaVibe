@@ -287,17 +287,37 @@ def _aware_age_hours(value):
     return _hours_since(dt)
 
 
+def _investanchors_lost_slot_days(runs, max_logins):
+    """近 INVESTANCHORS_STALE_DAYS 天內，「有被守衛擋下（aborted_limit）、但當日實際登入數 < 上限」的日期（台北日期，新到舊）。
+
+    名額已用滿時被擋是正常的；名額沒用滿卻被擋，代表是間隔不足、封鎖冷卻或手動執行造成的落空。
+    started_at 一律是台北時間字串（article_store 寫入時轉 TZ8），所以取前 10 碼就是台北日期。"""
+    cutoff = (_now() - datetime.timedelta(days=INVESTANCHORS_STALE_DAYS)).date().isoformat()
+    logins, rejected = {}, set()
+    for r in runs:
+        day = (r["started_at"] or "")[:10]
+        if len(day) != 10 or day < cutoff:
+            continue
+        if r["logged_in"] == 1:
+            logins[day] = logins.get(day, 0) + 1
+        if r["result"] == "aborted_limit":
+            rejected.add(day)
+    return sorted((d for d in rejected if logins.get(d, 0) < max_logins), reverse=True)
+
+
 def check_investanchors_import(data_dir):
     """定錨文章匯入（specs/010）：唯讀檢視 articles.db，輸出只含數字與狀態，不含標題／內文。
 
     庫不存在＝尚未上線（視為正常，不建庫）；沒有任何執行紀錄＝排程尚未安裝，同樣視為正常。
     """
     import article_store  # 延後 import：未上線時不需要
+    import investanchors_limits
     try:
         store = article_store.ArticleStore.open_readonly(data_dir)
     except FileNotFoundError:
         return [("ok", "investanchors_import", "尚未建立（找不到 articles.db）")]
     findings = []
+    logins = 0
     try:
         try:
             runs = store.conn.execute("SELECT * FROM import_runs ORDER BY id DESC").fetchall()
@@ -315,12 +335,18 @@ def check_investanchors_import(data_dir):
                 findings.append(("critical", "investanchors_import",
                                  "超過 %d 天沒有任何執行紀錄（最後一次：%s）"
                                  % (INVESTANCHORS_STALE_DAYS, last["started_at"])))
-            import investanchors_limits
             logins = store.logins_today()
             if logins > investanchors_limits.MAX_LOGINS_PER_DAY:
                 findings.append(("critical", "investanchors_import",
                                  "今日登入 %d 次，超過每日上限 %d 次（額度守衛可能失效，請立即停用排程查明）"
                                  % (logins, investanchors_limits.MAX_LOGINS_PER_DAY)))
+            lost_days = _investanchors_lost_slot_days(runs, investanchors_limits.MAX_LOGINS_PER_DAY)
+            if lost_days:
+                findings.append(("warning", "investanchors_import",
+                                 "近 %d 天有排程被守衛擋下、當日名額沒用滿（%s）：可能是 Mac 睡眠讓兩次登入間隔不足 %d 小時、"
+                                 "手動執行占用名額或封鎖冷卻；回補速度會變慢，請確認排程與睡眠設定"
+                                 % (INVESTANCHORS_STALE_DAYS, "、".join(lost_days),
+                                    investanchors_limits.MIN_LOGIN_GAP_HOURS)))
             blocked = store.blocked_until()
             if blocked is not None:
                 if blocked.tzinfo is not None:

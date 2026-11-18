@@ -646,11 +646,11 @@ class ArticleStore(object):
     def last_login_started_at(self):
         """最近一次「已啟動登入」（logged_in=1）的執行開始時間（跨日皆計；沒有則 None）。
 
-        run 在 `start_run` 後極短時間內就 `mark_login_started`（中間只有讀鑰匙圈），以 started_at 代表登入時間。
+        run 在 `start_run` 後極短時間內就 `mark_login_started`（中間只有讀鑰匙圈），以 started_at 代表登入時間。run id 單調遞增（循序執行），最新一筆就是最近一次登入。
         被守衛拒絕的執行（logged_in=0）不算。"""
-        rows = self.conn.execute("SELECT started_at FROM import_runs WHERE logged_in=1").fetchall()
-        values = [_aware(_parse(r[0])) for r in rows if r[0]]
-        return max(values) if values else None
+        row = self.conn.execute(
+            "SELECT started_at FROM import_runs WHERE logged_in=1 ORDER BY id DESC LIMIT 1").fetchone()
+        return _aware(_parse(row[0])) if row and row[0] else None
 
     def blocked_until(self):
         row = self.conn.execute(

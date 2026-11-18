@@ -209,7 +209,12 @@ launchctl print gui/$(id -u)/com.alphavibe.investanchorsimport | head -20   # �
 3. **資料回滾**：`alphavibe.db`／`us_stocks.db`／`flights.db` 不受 010 影響（§2.2），一般不需還原；若要還原以 §2.2 的備份為準，且先停服務。010 自己的資料只有 `<data>/articles.db`、`articles_images/`、`articles_probe/`——**要完全撤銷就刪這三者**（刪除前請 PO 同意；`articles.db` 已納入每日備份，`articles_images/` 與 `articles_probe/` 不在備份內，§6 風險 1）。不要動 `poc/data-test-articles/`（測試庫，`quickstart.md:67` 要求保留）。
 4. 回滾後驗證：§2.4 的 `curl` 預期 404、工具數預期 48／29／8（回到舊版）。
 
-### 3.4 每日 2 次放寬（2026-11-17，PO 決定，Phase 9）部署與回滾（全部未執行）
+### 3.4 每日 2 次放寬（2026-11-17，PO 決定，Phase 9）部署與回滾（2026-11-18 已部署）
+
+> **2026-11-18 追加（PR #50 code-review 後續）**：健檢新增警告「近 3 天有排程被守衛擋下、當日名額沒用滿」（Mac 睡眠使兩次登入間隔不足 6 小時、
+> 手動執行占用名額或封鎖冷卻都會觸發；只是警示，不影響守衛）。**手動真實執行（含核對）前請先確認當日剩餘名額與間隔**
+> （`--dry-run` 會顯示「拒絕（min_gap／daily_login_limit）」與最早可登入時間），否則會吃掉當晚排程的名額。
+> 登入次數與間隔的訊息文字改由常數 `MAX_LOGINS_PER_DAY`／`MIN_LOGIN_GAP_HOURS` 帶入，回滾改常數時訊息自動一致。
 
 內容：`MAX_LOGINS_PER_DAY` 1→2、新增 `MIN_LOGIN_GAP_HOURS=6`、plist 排程 12:30＋23:00、健檢「當日登入 >2」critical（見 clarification-log Q-026、tasks Phase 9）。分支 `claude/stnd-investanchors-po-fptqws`，**尚未合併、尚未部署**。
 
