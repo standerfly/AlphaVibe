@@ -5,9 +5,17 @@
 注意：兩邊一致不代表一定正確（兩個引擎可能犯同樣的錯）；不一致也不代表哪邊對——最終以原圖為準。
 
 `--emit-verification <路徑>`（010 Phase 12，Q-028）：另依比對結果輸出 verification.json（method=compare-d-c）供
-`investanchors_import.py --import-verification` 匯入。**雙來源一致不代表正確**——這只是「有一個獨立來源（C）與 D 沒有衝突」，
-且只屬「數字家族」——必須再有文字家族（agent 逐字抽查）通過才會成為 cross_checked；絕不是 reviewed；
-每筆帶 transcription_sha256（由 D results 的 text 計算，須與匯入資料庫的文字一致；D 尚未匯入資料庫的圖，匯入驗證時會被拒收）；任何疑慮一律 flagged；比對失敗或未配對的圖不輸出（維持 unverified）。
+`investanchors_import.py --import-verification` 匯入。每張圖彙整所有「成功」的 C 來源後分四類：
+  issues       任一成功來源有高／中疑似錯置或逐格數字差異（形狀相同或標頭對齊成功時），或 D 有 [?] 存疑格；清單只列這些
+  ok           至少一個成功來源與 D 的數值多重集合完全相同（只在單邊的數字＝0）、無任何疑似錯置與逐格差異、形狀相同或標頭對齊成功，
+               且沒有任何來源出現 issues 的疑慮（壞消息優先）
+  inconclusive 沒有疑慮、也不滿足 ok（例：只有「只在單邊」的數字差異〔多半是 C 的 OCR 結構差異〕、形狀不同又對齊失敗、兩邊都沒有數字、
+               D 判為非表格）：**不寫進 verification.json**，維持 unverified——既不是 flagged、也不算數字家族通過
+  未配對       沒有任何成功比對的 C 來源：同樣不輸出
+報告（compare-*.md）每張圖有一行「驗證分類」原因（只含數量與分類）；stdout 摘要列 ok／issues／inconclusive／未配對 張數。
+**ok 只代表「數字層雙來源一致」，不含文字截斷檢查**（例如「營收」被截成「營」仍可能 ok）——文字家族要靠 agent-spot-check，
+兩家族都通過才會成為 cross_checked，最後由 PO 核對；絕不是 reviewed。每筆帶 transcription_sha256（由 D results 的 text 計算，
+須與匯入資料庫的文字一致；D 尚未匯入資料庫的圖，匯入驗證時會被拒收）。
 
 純本機：不連網、不讀鑰匙圈、不登入、不碰資料庫；只讀 results.json／manifest.json／paddle-eval-*.md，
 只寫 `<out>/compare-<時間>.md`（不覆寫）。報告含轉寫片段（付費文章圖片來源，只留本機），
@@ -628,7 +636,7 @@ def _score(cmp_):
     return hi, mid, lo
 
 
-def build_report(d, sources, matches, unmatched_c, args_desc, stamp):
+def build_report(d, sources, matches, unmatched_c, args_desc, stamp, classes=None):
     """matches: [(source, d_item, c_section|None, cmp|None, reason_text)]。回傳 Markdown。"""
     L = ["# D 與 C 轉寫比對（%s；本機、不含文章標題）" % args_desc, "", "產生時間：%s" % stamp,
          "D：%s（%d 張）" % (d["model"], len(d["items"])), ""]
@@ -705,6 +713,8 @@ def build_report(d, sources, matches, unmatched_c, args_desc, stamp):
         size = "%sx%s" % (it["width"], it["height"]) if it.get("width") else "尺寸不明"
         L.append("### 圖 %s｜%s｜%s" % (it["image_id"], _clip(_basename(it["path"]), 40), size))
         L.append("原圖：%s" % it["path"])
+        if classes is not None and it["image_id"] in classes:
+            L.append("驗證分類：%s" % classes[it["image_id"]]["reason"])
         L.append("")
         for (s, it2, sec, cmp_, why) in [m for m in matches if m[1] is it]:
             L.append("#### %s（%s）" % (s["id"], s["label"]))
@@ -805,71 +815,108 @@ def _issue(where, found, expected, kind):
     return it
 
 
-def _compare_concerns(sid, cmp_):
-    """單一 C 來源的比對 → 疑慮清單（沒有＝空）。判定依 PO 規格：高／中疑似錯置、只在單邊的數字、
-    形狀不同而標頭對齊失敗、逐格數字差異、D 自己標了 [?]；低（僅格式）疑似與非數字文字差異**不**納入判定。"""
+def _source_concerns(sid, cmp_):
+    """單一 C 來源的「疑慮」（規則 1）：高／中疑似錯置、逐格數字差異（形狀相同或標頭對齊成功時才會產生）。
+    **不含**「只在單邊」的數字（C 的 OCR 結構差異、模式間重複會讓它很多），也不含低等級（僅格式）疑似與非數字文字差異。"""
     out = []
-    t = cmp_["tokens"]
-    for x in t["suspects"]:
+    for x in cmp_["tokens"]["suspects"]:
         if x["level"] in (LEVEL_HIGH, LEVEL_MID):
-            out.append(_issue("%s：D %s／C %s" % (sid, _pos_str(x["d"]["pos"]), _pos_str(x["c"]["pos"])),
-                              x["d"]["raw"], x["c"]["raw"], "wrong-number"))
-    for x in t["only_d"]:
-        out.append(_issue("%s：D %s" % (sid, _pos_str(x["pos"])), x["raw"], "", "extra"))
-    for x in t["only_c"]:
-        out.append(_issue("%s：C %s" % (sid, _pos_str(x["pos"])), "D 沒有對應的數字", x["raw"], "missing"))
+            out.append((x["level"], _issue("%s：D %s／C %s" % (sid, _pos_str(x["d"]["pos"]), _pos_str(x["c"]["pos"])),
+                                           x["d"]["raw"], x["c"]["raw"], "wrong-number")))
     for x in cmp_["num_diffs"]:
-        out.append(_issue("%s：D %s／C %s" % (sid, _pos_str(x["pos_d"]), _pos_str(x["pos_c"])),
-                          x["d"] or "（空）", x["c"] or "（空）", "wrong-number"))
-    gd, gc = cmp_["gd"], cmp_["gc"]
-    if (gd["nrows"], gd["ncols"]) != (gc["nrows"], gc["ncols"]) and cmp_["mode"] != "header":
-        out.append(_issue("%s：整張圖" % sid, "D %s／C %s，無法以標頭對齊" % (_shape(gd), _shape(gc)), "", "other"))
-    for p in cmp_["d_low"]:
-        out.append(_issue("%s：D %s" % (sid, _pos_str(p)), "[?] 存疑格（D 自己標示看不清楚）", "", "other"))
+        out.append(("逐格", _issue("%s：D %s／C %s" % (sid, _pos_str(x["pos_d"]), _pos_str(x["pos_c"])),
+                                 x["d"] or "（空）", x["c"] or "（空）", "wrong-number")))
     return out
 
 
-def build_verification(d, matches):
-    """依比對結果組 verification.json。回傳 (payload|None, {"ok":n,"issues":n,"skipped":n})。
-    * D 判為非表格而任一 C 來源有內容 → issues；其餘非表格圖不輸出（沒有轉寫文字可驗證）。
-    * 表格圖：只用比對成功的來源；沒有任何成功來源、或兩邊都沒有數字可比 → 不輸出（維持 unverified）；
-      任何成功來源有疑慮 → issues；全部成功來源皆無疑慮 → ok。
-    * 缺有效 sha256 的圖不輸出。"""
-    results, counts = [], {"ok": 0, "issues": 0, "skipped": 0}
+def _source_is_clean(cmp_):
+    """規則 2 的單一來源條件：無任何疑似錯置（含低等級）、無逐格差異、D 與 C 的數值 token 多重集合完全相同
+    （只在單邊的數字＝0），且形狀相同（逐格）或標頭對齊成功。"""
+    t = cmp_["tokens"]
+    return (not t["suspects"] and not t["only_d"] and not t["only_c"] and not cmp_["num_diffs"]
+            and cmp_["mode"] in ("cell", "header"))
+
+
+def _inconclusive_reason(done):
+    """沒有疑慮、也沒有乾淨來源時的原因（只含數量與分類）。以「只在單邊數字最少」的來源為代表。"""
+    best = min(done, key=lambda m: len(m[3]["tokens"]["only_d"]) + len(m[3]["tokens"]["only_c"]))
+    cmp_ = best[3]
+    only = len(cmp_["tokens"]["only_d"]) + len(cmp_["tokens"]["only_c"])
+    if only:
+        return "inconclusive：只在單邊的數字 %d 個，無高中疑似錯置" % only
+    if cmp_["mode"] == "set":
+        return "inconclusive：形狀不同且標頭對齊失敗，無法逐格比對（無高中疑似錯置）"
+    return "inconclusive：僅有低等級（格式）差異，數值並非完全相同"
+
+
+def classify_image(it, mine):
+    """單張圖的驗證分類。回傳 {"category": ok|issues|inconclusive|unmatched, "reason": 報告用一行（只含數量與分類）,
+    "issues": [...]}。
+    規則（彙整所有「成功」的 C 來源；PO 2026-11-18 修正，原規則把『只在單邊的數字』也當疑慮，造成全部標 issues）：
+    1. issues：任一成功來源出現高／中疑似錯置或逐格數字差異；D 自己標的 [?] 存疑格也算。任何 issues 勝過 ok。
+    2. ok：至少一個成功來源「乾淨」（見 _source_is_clean）且沒有規則 1 的疑慮。**只代表數字層雙來源一致，
+       不含文字截斷檢查（文字家族要靠 agent-spot-check）**。
+    3. inconclusive（不輸出，維持 unverified）：沒有疑慮、但也沒有乾淨來源。
+    4. D 判為非表格：一律 inconclusive（不輸出；非表格圖不會被驗證匯入），C 有內容時報告仍註明。
+    5. 兩邊都沒有數字可比：不輸出。沒有任何成功比對的來源：unmatched。"""
+    sha = it.get("sha256")
+    if it.get("is_table") is False:
+        filled = [m for m in mine if m[2] is not None and m[2]["data"]["status"] == "transcribed"
+                  and (m[2]["data"]["text"] or "").strip()]
+        note = "（%d 個 C 來源轉出了內容，請對照原圖人工確認）" % len(filled) if filled else "（C 也沒有內容）"
+        return {"category": "inconclusive", "issues": [], "reason": "inconclusive：D 判為非表格，不輸出驗證記錄%s" % note}
+    done = [m for m in mine if m[3] is not None]
+    if not done:
+        return {"category": "unmatched", "issues": [], "reason": "未配對：沒有任何成功比對的 C 來源"}
+    if not isinstance(sha, str) or not _SHA_RE.match(sha):
+        return {"category": "inconclusive", "issues": [], "reason": "inconclusive：缺有效的原圖 sha256，無法輸出"}
+    if not any(m[3]["td"] + m[3]["tc"] > 0 for m in done):
+        return {"category": "inconclusive", "issues": [], "reason": "inconclusive：兩邊都沒有數字可比"}
+    issues, hi, mid, cell = [], 0, 0, 0
+    for m in done:
+        for kind, iss in _source_concerns(m[0]["id"], m[3]):
+            issues.append(iss)
+            hi += kind == LEVEL_HIGH
+            mid += kind == LEVEL_MID
+            cell += kind == "逐格"
+    low = done[0][3]["d_low"]                      # D 的 [?] 與 C 來源無關，只記一次
+    for pos in low:
+        issues.append(_issue("D %s" % _pos_str(pos), "[?] 存疑格（D 自己標示看不清楚）", "", "other"))
+    if issues:
+        return {"category": "issues", "issues": issues,
+                "reason": "issues：高疑似錯置 %d、中疑似錯置 %d、逐格數字差異 %d、D 存疑格 %d" % (hi, mid, cell, len(low))}
+    clean = [m for m in done if _source_is_clean(m[3])]
+    if clean:
+        return {"category": "ok", "issues": [],
+                "reason": "ok：%s 與 D 的數值完全一致（只在單邊的數字 0）；僅數字層，不含文字截斷檢查" % clean[0][0]["id"]}
+    return {"category": "inconclusive", "issues": [], "reason": _inconclusive_reason(done)}
+
+
+def classify_all(d, matches):
+    return {it["image_id"]: classify_image(it, [m for m in matches if m[1] is it]) for it in d["items"]}
+
+
+def build_verification(d, matches, classes=None):
+    """依分類組 verification.json。回傳 (payload|None, {"ok","issues","inconclusive","unmatched"})。
+    只輸出 ok 與 issues；inconclusive／未配對的圖不寫（維持 unverified，既不是 flagged、也不算數字家族通過）。"""
+    classes = classes or classify_all(d, matches)
+    results, counts = [], {"ok": 0, "issues": 0, "inconclusive": 0, "unmatched": 0}
     for it in d["items"]:
-        sha = it.get("sha256")
-        mine = [m for m in matches if m[1] is it]
-        if not isinstance(sha, str) or not _SHA_RE.match(sha):
-            counts["skipped"] += 1
+        c = classes[it["image_id"]]
+        counts[c["category"]] += 1
+        if c["category"] not in ("ok", "issues"):
             continue
-        issues, verdict = [], None
-        if it.get("is_table") is False:
-            filled = [m for m in mine if m[2] is not None and m[2]["data"]["status"] == "transcribed"
-                      and (m[2]["data"]["text"] or "").strip()]
-            if filled:
-                verdict = "issues"
-                issues = [_issue("%s：整張圖" % m[0]["id"], "D 判為非表格（沒有轉寫）", "C 轉出了內容", "missing") for m in filled]
-        else:
-            done = [m for m in mine if m[3] is not None]
-            if done and any(m[3]["td"] + m[3]["tc"] > 0 for m in done):
-                for m in done:
-                    issues.extend(_compare_concerns(m[0]["id"], m[3]))
-                verdict = "issues" if issues else "ok"
-        if verdict is None:
-            counts["skipped"] += 1
-            continue
-        row = {"image_id": it["image_id"], "sha256": sha,
+        row = {"image_id": it["image_id"], "sha256": it["sha256"],
                "transcription_sha256": hashlib.sha256((it["text"] or "").encode("utf-8")).hexdigest(),
-               "verdict": verdict}
-        if verdict == "issues":
+               "verdict": c["category"]}
+        if c["category"] == "issues":
             seen, uniq = set(), []
-            for x in issues:
+            for x in c["issues"]:
                 key = (x["where"], x["found"], x.get("expected"), x["kind"])
                 if key not in seen:
                     seen.add(key)
                     uniq.append(x)
             row["issues"] = uniq[:VERIFY_MAX_ISSUES]
-        counts[verdict] += 1
         results.append(row)
     if not results:
         return None, counts
@@ -887,8 +934,9 @@ def build_parser():
                     help="數值相對容差（預設 0＝必須完全相同；0.01＝相差 1%% 內視為一致）")
     ap.add_argument("--normalize-text", action="store_true", help="非數字文字比較前歸一化（去空白、小寫、簡繁字形）")
     ap.add_argument("--emit-verification", default=None, metavar="PATH",
-                    help="另輸出 verification.json（method=compare-d-c；不覆寫既有檔）。雙來源一致不代表正確：ok 只算數字家族通過"
-                         "（另需 agent 文字抽查才成為 cross_checked）；有任何疑慮→issues；比對失敗或未配對的圖不輸出")
+                    help="另輸出 verification.json（method=compare-d-c；不覆寫既有檔）。ok＝數字層雙來源完全一致（不含文字截斷檢查，"
+                         "另需 agent 文字抽查才成為 cross_checked）；高中疑似錯置或逐格差異→issues；其餘（只在單邊的數字、"
+                         "對齊失敗、非表格、未配對）為 inconclusive／未配對，不輸出")
     return ap
 
 
@@ -954,7 +1002,8 @@ def run(argv=None, now=None, say=print):
         stamp = stamp_dt.strftime("%Y%m%d-%H%M%S")
         desc = "D=%s；C=%d 個來源；numeric-tol=%s；normalize-text=%s" % (
             d["model"], len(sources), args.numeric_tol, "開" if args.normalize_text else "關")
-        report = build_report(d, sources, matches, unmatched_c, desc, stamp_dt.strftime("%Y-%m-%d %H:%M:%S"))
+        classes = classify_all(d, matches)
+        report = build_report(d, sources, matches, unmatched_c, desc, stamp_dt.strftime("%Y-%m-%d %H:%M:%S"), classes)
         os.makedirs(args.out, exist_ok=True)
         out_path, n = os.path.join(args.out, "compare-%s.md" % stamp), 1
         while True:
@@ -970,12 +1019,13 @@ def run(argv=None, now=None, say=print):
             f.write(report)
         ver_note = ""
         if args.emit_verification:
-            payload, vc = build_verification(d, matches)
+            payload, vc = build_verification(d, matches, classes)
+            summary = "ok %d／issues %d／inconclusive %d／未配對 %d" % (vc["ok"], vc["issues"], vc["inconclusive"], vc["unmatched"])
             if payload is None:
-                ver_note = "；驗證檔：無可輸出的圖（未輸出 %d 張，維持 unverified）" % vc["skipped"]
+                ver_note = "；驗證檔：無可輸出的圖（%s；維持 unverified）" % summary
             else:
                 _write_new_json(args.emit_verification, payload)
-                ver_note = "；驗證檔 ok %d／issues %d／未輸出 %d → %s" % (vc["ok"], vc["issues"], vc["skipped"], args.emit_verification)
+                ver_note = "；驗證檔 %s → %s" % (summary, args.emit_verification)
     except CompareError as e:
         err("拒絕執行：%s" % e)
         return 2

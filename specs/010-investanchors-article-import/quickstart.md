@@ -162,7 +162,7 @@ python3 poc/kb-mcp/compare_transcriptions.py \
 4. `[?]`（D 指南用的 `?` 也算）與 C 的低信心格會列出位置——這些格子本來就待確認。
 5. 文字（非數字）差異標**低優先**；簡繁、空白差異用 `--normalize-text` 消掉。
 6. **一致不代表正確**：D 與 C 可能犯同樣的錯；不一致也不代表哪邊對。核對步驟：開原圖，只看列出的格子（位置＝列、欄，表頭列算第 1 列、分隔列不算），以原圖為準；D 錯就用 §12 的 `--overwrite` 重匯入。
-7. `--emit-verification <路徑>` 可把比對結果輸出成 verification.json（`method=compare-d-c`），見 §14；**雙來源一致不代表正確**。
+7. `--emit-verification <路徑>` 可把比對結果輸出成 verification.json（`method=compare-d-c`；分 ok／issues／inconclusive／未配對，inconclusive 與未配對不輸出），見 §14；**雙來源一致不代表正確**。
 8. 限制：數值比較以格子文字為準。**百分號有／無不同列為「中」**（單位可能遺漏）；**千位逗號分組不合法**（如 `12,34`、`2,00`）視為異常、不與 `1,234`／`200` 判為一致；`24417` 與 `24,417`（合法分組、數值相同）視為一致；括號負數 (1,234) 與 -1,234 同為 -1234，但**字母／中文緊貼的括號**（如 台積電(2330)）是代號註記、不算負數；日期與年份仍會被抽成數字，兩邊格式不同時（2025.12.31 vs 2025/12/31）會有雜訊；形狀不同又對不上標頭時，只能做數值集合比對，兩格互換之類的位置錯誤偵測不到（對照原圖時請多看）。輸入檔不跟隨符號連結、上限 8MB；D 判為非表格圖者在報告開頭註明。報告含轉寫片段（付費文章圖片來源）只留本機，**不含文章標題**（非表格文字行內容不輸出，只取其中數字）。
 
 ## 14. 轉寫驗證等級與抽查流程（2026-11-18，PO 決定，Q-028）
@@ -212,6 +212,12 @@ flowchart LR
 - 非表格圖（`not_table`）：`verdict=issues` 會標 `flagged`（例如 C 轉出了表格內容、D 判為非表格），`get_article` 會在該圖下顯示警告；`verdict=ok` 略過。尚未轉寫（`untranscribed`）的圖不接受驗證，整批拒收。
 - 批次寫入（驗證、核對、轉寫）以 `BEGIN IMMEDIATE` 先取得寫入鎖，避免多寫入者交錯；驗證的讀取判斷與寫入在同一個鎖內。
 
+### 原圖筆誤（`source-typo`）
+「原圖本身的筆誤」被忠實轉寫**不是轉寫錯誤**，不該讓整張圖 flagged 而卡死。verification.json 的 issue `kind` 新增 `source-typo`：
+- **使用條件**（`VERIFY_GUIDE.md` 對 agent 明講）：轉寫與原圖**逐字一致**、但原圖本身顯然有錯（名稱／代碼欄對調、明顯錯字）。**反例**：轉寫與原圖不一致一律不是 source-typo；不確定就用 `other`（uncertain），寧可 flagged。
+- **匯入規則**：一張圖的 issues **全部**都是 `source-typo` → 視同 `ok`（該 method 的家族記為通過），**不標 flagged**，但在驗證列的 `source_typos` 欄留下位置摘要，`get_article` 在該圖旁（任何驗證等級）顯示「【原圖可能有筆誤（轉寫已照原圖抄寫），請對照原圖：第 N 列第 M 欄（簡述）…】」（台美一致、不含標題）。只要有任何一項不是 `source-typo`（truncated／wrong-number／missing／extra／other）整張圖照舊 flagged；`other` 保持原義。每張圖最多 20 項 source-typo，位置描述長度限制沿用；預覽與稽核 key（`source_typo=N`）列出張數。
+- **風險與緩解**：檢核者可以把轉寫錯誤誤標成 source-typo 來繞過 flagged。緩解：(1) `get_article` 一律顯示原圖筆誤提示，使用者讀到時會對照原圖；(2) `reviewed` 只能 PO 設定、頭兩週 PO 逐張核對；(3) 檢核者是獨立 agent，且仍須兩個檢核家族都通過才進搜尋；(4) 結論綁定轉寫內容。
+
 ### 已知限制與 PO 的緩解
 - `method` 與 `verifier` 是**自報字串**：系統無法證明 agent 真的逐格檢查了，也無法驗證 `verifier` 的身分。一個不誠實或偷懶的檢核者可以寫 ok。
 - 緩解：(1) `reviewed` **只能由 PO 本人**設定，agent 與自動流程都寫不了；(2) **頭兩週每張轉寫由 PO 逐格核對**（`--mark-reviewed`）；(3) 兩家族設計讓單一路徑無法進搜尋；(4) 驗證結論綁定轉寫內容，改寫後必須重驗。`VERIFY_GUIDE.md` 也對 agent 明講此限制。
@@ -224,8 +230,13 @@ flowchart LR
 python3 poc/kb-mcp/compare_transcriptions.py --d-results <manual-transcribe-資料夾>/results.json \
   --c-report <paddle-eval>.md --out <輸出資料夾> --emit-verification <輸出資料夾>/verification.json
 ```
-- `method=compare-d-c`、`verifier=compare-transcriptions`；**只算數字家族**，每筆帶由 D results 的 `text` 計算的 `transcription_sha256`（須與匯入資料庫的文字一致，所以 D 要先 `--import-transcription --apply`，再匯入驗證）。判定：該圖在**所有成功比對的 C 來源**都沒有高／中疑似錯置、沒有「只在單邊」的數字、沒有逐格數字差異、D 沒有 `[?]` 存疑格、形狀不同時標頭對齊成功 → `ok`；任何疑慮 → `issues`（`where`／`found`／`expected`／`kind` 由疑似錯置與差異摘要而成）；D 判為非表格而 C 有內容 → `issues`；比對失敗、未配對、兩邊都沒有數字可比的圖**不輸出**（維持 unverified）。
-- **雙來源一致不代表正確**：兩個引擎可能犯同樣的錯；非數字文字差異（例如備註被截斷）**不在判定內**（OCR 雜訊太多）。所以 compare 的 `ok` 只記「數字家族通過」，**不會**讓轉寫進搜尋；文字欄位要靠 agent 抽查（流程二），兩者都通過才是 `cross_checked`，最後由 PO 核對。
+- `method=compare-d-c`、`verifier=compare-transcriptions`；**只算數字家族**，每筆帶由 D results 的 `text` 計算的 `transcription_sha256`（須與匯入資料庫的文字一致，所以 D 要先 `--import-transcription --apply`，再匯入驗證）。判定（2026-11-18 PO 修正：原規則把「只在單邊的數字」也當疑慮，正式環境 7 張全標 issues）：每張圖彙整**所有成功比對的 C 來源**，分四類——
+  - **`issues`**：任一成功來源出現「高或中疑似錯置」或「逐格數字差異」（形狀相同或標頭對齊成功時），或 D 有 `[?]` 存疑格；清單只列這些（`where`／`found`／`expected`／`kind`），**不列**「只在單邊」的數字。任何 issues 勝過 ok（壞消息優先）。
+  - **`ok`**：至少一個成功來源與 D 的數值 token 多重集合**完全相同**（只在單邊的數字＝0）、無任何疑似錯置與逐格差異、且形狀相同或標頭對齊成功，並且沒有任何來源出現 issues 的疑慮。
+  - **`inconclusive`**（**不寫進 verification.json**，維持 unverified——既不是 flagged、也不算數字家族通過）：沒有疑慮、但也不滿足 ok，例如只有「只在單邊」的數字差異（多半是 C 的 OCR 結構差異、模式間重複）、形狀不同又標頭對齊失敗、C 只有純文字沒有表格、兩邊都沒有數字可比；**D 判為非表格**一律 inconclusive（例如柱狀圖被 C 轉出座標軸文字），報告仍註明 C 是否有內容。
+  - **未配對**：沒有任何成功比對的 C 來源（不輸出）。
+  - stdout 摘要列 `ok N／issues N／inconclusive N／未配對 N`；報告 `compare-*.md` 每張圖有一行「驗證分類：…」原因（只含數量與分類，如「inconclusive：只在單邊的數字 X 個，無高中疑似錯置」）。
+- **雙來源一致不代表正確**：兩個引擎可能犯同樣的錯；非數字文字差異（例如備註被截斷）**不在判定內**（OCR 雜訊太多）。所以 compare 的 `ok` 只代表「**數字層雙來源一致**」、**不含文字截斷檢查**（「營收」被截成「營」仍可能 ok），只記「數字家族通過」，**不會**讓轉寫進搜尋；文字欄位要靠 agent 抽查（流程二），兩者都通過才是 `cross_checked`，最後由 PO 核對。
 - 匯入：`python3 poc/kb-mcp/investanchors_import.py --data-dir <資料目錄> --import-verification <verification.json>`（預設只預覽；確認後加 `--apply`）。
 
 ### 流程二：用 Cline agent 做獨立抽查

@@ -48,6 +48,7 @@ VERIFICATION_METHODS = ("compare-d-c", "agent-spot-check", "arithmetic", "body-c
 NUMERIC_METHODS = ("compare-d-c", "arithmetic", "body-crosscheck")
 TEXT_METHODS = ("agent-spot-check",)
 FAMILIES = ("numeric", "text")
+MAX_SOURCE_TYPOS = 20     # 每張圖保存的「原圖筆誤」位置摘要上限
 PO_REVIEW_METHOD = "po-review"        # 只有 --mark-reviewed 會寫入
 VERIFICATION_TABLE = "transcription_verification"
 
@@ -139,6 +140,7 @@ CREATE TABLE IF NOT EXISTS transcription_verification (
     flagged_cells TEXT,
     flag_history TEXT,
     checks_passed TEXT,
+    source_typos TEXT,
     checked_at TEXT,
     updates INTEGER NOT NULL DEFAULT 1
 );
@@ -203,6 +205,21 @@ def method_family(method):
     return None
 
 
+def _merge_typos(existing_json, new_list):
+    """合併「原圖筆誤」位置摘要（JSON 字串＋新清單，依 where 去重，最多 MAX_SOURCE_TYPOS 項）；沒有則回 None。"""
+    out = []
+    try:
+        old = json.loads(existing_json) if existing_json else []
+    except (TypeError, ValueError):
+        old = []
+    seen = set()
+    for t in (old if isinstance(old, list) else []) + list(new_list or []):
+        if isinstance(t, dict) and t.get("where") not in seen:
+            seen.add(t.get("where"))
+            out.append(t)
+    return json.dumps(out[:MAX_SOURCE_TYPOS], ensure_ascii=False) if out else None
+
+
 def plan_verification_transition(cur, verdict, method):
     """驗證匯入的狀態轉換規則（純函式；預覽與實際寫入共用，保證兩邊判斷一致）。
 
@@ -263,6 +280,8 @@ class ArticleStore(object):
         vcols = [r[1] for r in self.conn.execute("PRAGMA table_info(transcription_verification)")]
         if vcols and "flag_history" not in vcols:    # 中間版本的驗證表
             self.conn.execute("ALTER TABLE transcription_verification ADD COLUMN flag_history TEXT")
+        if vcols and "source_typos" not in vcols:    # 原圖筆誤記錄（2026-11-18）
+            self.conn.execute("ALTER TABLE transcription_verification ADD COLUMN source_typos TEXT")
         if vcols and "checks_passed" not in vcols:
             self.conn.execute("ALTER TABLE transcription_verification ADD COLUMN checks_passed TEXT")
             # 舊規則的 cross_checked（單一檢核即可）不符新規則（需數字＋文字兩家族）：一律降為 unverified，
@@ -600,7 +619,7 @@ class ArticleStore(object):
         （預覽之後狀態可能變了），並確認資料庫目前的轉寫文字 SHA-256 與抽查時一致，不符即丟 TranscriptionChanged
         （整批 rollback）。回傳 {"cross_checked":[ids], "flagged":[ids], "partial":[ids], "skipped":{reason:[ids]}}；
         partial＝ok 但兩個檢核家族尚未都通過。audit_key 可為字串或 callable(result)->字串（只存數量與 method）。"""
-        result = {"cross_checked": [], "flagged": [], "partial": [], "skipped": {}}
+        result = {"cross_checked": [], "flagged": [], "partial": [], "skipped": {}, "typo": []}
         try:
             self._begin_immediate()
             for e in entries:
@@ -618,6 +637,9 @@ class ArticleStore(object):
                 status = plan["status"]
                 history = _json_list(cur.get("flag_history")) if cur else []
                 checks = ",".join(plan["checks"]) or None
+                typos = _merge_typos(cur.get("source_typos") if cur else None, e.get("typos"))
+                if e.get("typos"):
+                    result["typo"].append(e["image_id"])
                 if e["verdict"] == "issues":
                     if e["method"] not in history:
                         history.append(e["method"])
@@ -634,9 +656,10 @@ class ArticleStore(object):
                     note = cells = None
                 self.conn.execute(
                     "INSERT OR REPLACE INTO %s (image_id, status, method, verifier, note, flagged_cells, "
-                    "flag_history, checks_passed, checked_at, updates) VALUES (?,?,?,?,?,?,?,?,?,?)" % VERIFICATION_TABLE,
+                    "flag_history, checks_passed, source_typos, checked_at, updates) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+                    % VERIFICATION_TABLE,
                     (e["image_id"], status, method, verifier, note, cells,
-                     json.dumps(history) if history else None, checks, _iso(self.now()),
+                     json.dumps(history) if history else None, checks, typos, _iso(self.now()),
                      (cur["updates"] + 1) if cur else 1))
                 result[kind].append(e["image_id"])
             if audit_kind:
@@ -667,9 +690,11 @@ class ArticleStore(object):
                 note = "PO 逐格核對後確認" + ("（原為 flagged，疑慮已由 PO 處理）" if was == "flagged" else "")
                 self.conn.execute(
                     "INSERT OR REPLACE INTO %s (image_id, status, method, verifier, note, flagged_cells, "
-                    "flag_history, checks_passed, checked_at, updates) VALUES (?,?,?,?,?,?,?,?,?,?)" % VERIFICATION_TABLE,
+                    "flag_history, checks_passed, source_typos, checked_at, updates) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+                    % VERIFICATION_TABLE,
                     (iid, "reviewed", PO_REVIEW_METHOD, "po", note, None,
-                     cur.get("flag_history") if cur else None, None, _iso(self.now()), (cur["updates"] + 1) if cur else 1))
+                     cur.get("flag_history") if cur else None, None, cur.get("source_typos") if cur else None,
+                     _iso(self.now()), (cur["updates"] + 1) if cur else 1))
                 result["reviewed"].append(iid)
             if audit_kind:
                 key = audit_key(result) if callable(audit_key) else (audit_key or "-")

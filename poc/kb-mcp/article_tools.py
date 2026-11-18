@@ -67,6 +67,26 @@ def _partial_text(v):
     return ""
 
 
+def source_typo_line(img):
+    """原圖可能有筆誤的提示（轉寫已照原圖抄寫）；任何驗證等級都顯示。只含位置與簡述，不含標題。"""
+    v = img.get("verification") or {}
+    try:
+        typos = json.loads(v.get("source_typos") or "[]")
+    except (TypeError, ValueError):
+        return ""
+    parts = []
+    for t in (typos if isinstance(typos, list) else [])[:MAX_DISPLAY_CELLS]:
+        if isinstance(t, dict):
+            part = "%s（%s" % (t.get("where", "?"), t.get("found", ""))
+            if t.get("expected"):
+                part += "；疑似應為：%s" % t["expected"]
+            parts.append(part + "）")
+    if not parts:
+        return ""
+    more = len(typos) - MAX_DISPLAY_CELLS
+    return "【原圖可能有筆誤（轉寫已照原圖抄寫），請對照原圖：%s%s】" % ("；".join(parts), "；…另 %d 項" % more if more > 0 else "")
+
+
 def verification_header(img):
     """依驗證等級回傳 (標示行 list)：unverified／flagged＝醒目警告；cross_checked／reviewed＝等級與方法。"""
     status = img.get("verification_status") or "unverified"
@@ -138,6 +158,9 @@ def format_article(article):
         if status == "done" and img.get("transcription"):
             for hl in verification_header(img):
                 lines.append("  %s" % hl)
+            typo = source_typo_line(img)
+            if typo:
+                lines.append("  %s" % typo)
             # 每行加固定前綴「│ 」：轉寫文字內偽造的「【…】」警告樣式行，無法與上方真正的警告標頭混淆
             lines.append("  │ " + img["transcription"].replace("\n", "\n  │ "))
         elif status == "not_table" and img.get("verification_status") == "flagged":
