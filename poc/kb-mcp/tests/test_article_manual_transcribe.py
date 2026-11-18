@@ -9,6 +9,7 @@ import io
 import json
 import os
 import shutil
+import sqlite3
 import socket
 import subprocess
 import sys
@@ -499,12 +500,33 @@ class ImportTest(Base):
             "控制字元 NUL": self.results([mod(text="a\x00b")]),
             "控制字元 ESC": self.results([mod(text="a\x1b[31mb")]),
             "含 CR": self.results([mod(text="a\rb")]),
+            "bidi RLO": self.results([mod(text="a\u202eb")]),
+            "bidi 隔離": self.results([mod(text="a\u2066b\u2069")]),
+            "零寬空白": self.results([mod(text="a\u200bb")]),
+            "BOM": self.results([mod(text="a\ufeffb")]),
+            "model 結尾換行": self.results([good], model="manual:x\n"),
             "image_id 重複": self.results([good, copy.deepcopy(good)]),
         }
         for name, payload in cases.items():
             rc, out = self.imp(payload, ["--apply"])
             self.assertEqual(rc, 2, "%s 應被拒絕：%s" % (name, out))
             self.assertEqual(self.img_row(self.a)["transcription_status"], "untranscribed", name)
+
+    def test_deeply_nested_json_rejected_cleanly(self):
+        p = os.path.join(self.tmp, "deep.json")
+        _write(p, "[" * 100000 + "]" * 100000)
+        rc, out = self.run_cli(["--import-transcription", p])
+        self.assertEqual(rc, 2, out)
+        self.assertNotIn("Traceback", out)
+
+    def test_apply_db_error_exits_2_with_fixed_message_and_rolls_back(self):
+        with mock.patch.object(M, "apply_plan", side_effect=sqlite3.IntegrityError("boom 標題")):
+            rc, out = self.imp(self.results([self.item(self.a)]), ["--apply"])
+        self.assertEqual(rc, 2, out)
+        self.assertIn("rollback", out)
+        self.assertNotIn("boom", out)
+        self.assertNotIn(TITLE, out)
+        self.assertEqual(self.img_row(self.a)["transcription_status"], "untranscribed")
 
     def test_non_json_and_missing_and_oversize_file_rejected(self):
         p = os.path.join(self.tmp, "bad.json")

@@ -38,13 +38,13 @@ RESULTS_VERSION = 1
 DEFAULT_EXPORT_LIMIT = 10
 MAX_EXPORT_LIMIT = 100
 MODEL_PREFIX = "manual:"
-MODEL_RE = re.compile(r"^manual:[A-Za-z0-9-]{1,40}$")
-SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+MODEL_RE = re.compile(r"manual:[A-Za-z0-9-]{1,40}")   # 一律用 fullmatch（`$` 會放行結尾換行）
+SHA256_RE = re.compile(r"[0-9a-f]{64}")   # 一律用 fullmatch
 MAX_TEXT_CHARS = 40000            # 單張圖的轉寫文字上限（8 片長圖的量級已綽綽有餘）
 MAX_RESULTS_ITEMS = 200
 MAX_RESULTS_FILE_BYTES = 8 * 1000 * 1000
 AUDIT_KIND = "manual_transcription_import"
-_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f  ]")   # 允許 \n 與 \t；\r 也不收（統一換行）
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")   # 允許 \n 與 \t；\r 也不收；含 bidi／零寬／格式字元
 _TOP_KEYS = {"version", "model", "results"}
 _ITEM_KEYS = {"image_id", "sha256", "is_table", "text"}
 
@@ -226,7 +226,7 @@ def _load_json_file(path, what):
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
         _fail("%s不是合法的 UTF-8 JSON" % what)
 
 
@@ -259,7 +259,7 @@ def validate_results(results_path, store, overwrite=False):
     if data.get("version") != RESULTS_VERSION or isinstance(data.get("version"), bool):
         _fail("results.version 必須是 %d" % RESULTS_VERSION)
     model = data.get("model")
-    if not isinstance(model, str) or not MODEL_RE.match(model):
+    if not isinstance(model, str) or not MODEL_RE.fullmatch(model):
         _fail("model 必填，格式必須是 manual:<agent 名稱>（英數與連字號、≤40 字）")
     results = data.get("results")
     if not isinstance(results, list) or not results:
@@ -283,7 +283,7 @@ def validate_results(results_path, store, overwrite=False):
             _fail("%s：image_id 重複" % tag)
         seen.add(iid)
         sha = it["sha256"]
-        if not isinstance(sha, str) or not SHA256_RE.match(sha):
+        if not isinstance(sha, str) or not SHA256_RE.fullmatch(sha):
             _fail("%s：sha256 格式不正確（64 位小寫十六進位）" % tag)
         is_table, text = it["is_table"], it["text"]
         if not isinstance(is_table, bool):

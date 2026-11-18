@@ -19,6 +19,7 @@ import random
 import sys
 import tempfile
 import shutil
+import sqlite3
 
 import article_data_guard
 import article_id_time
@@ -309,6 +310,9 @@ class Importer(object):
         store = article_store.ArticleStore(a.data_dir, now=self.now)
         try:
             article_manual_transcribe.apply_plan(store, plan, now=self.now)
+        except sqlite3.Error:
+            self.say("拒絕執行：寫入資料庫失敗，整批已 rollback（未寫入任何轉寫）")
+            return 2
         finally:
             store.close()
         self.say("已寫入 %d 筆（單一交易）。" % len(plan["rows"]))
