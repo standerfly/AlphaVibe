@@ -110,3 +110,7 @@ deferred ──PO 要求補抓（放寬截止日，`--backfill-since`）──�
 - `transcription` 只含轉寫內容；「機器轉寫」標示一律在輸出時（`get_article`／`search_articles` 片段）加上，不入庫。`untranscribed` 時 `transcription` 必為 NULL（不以空白／猜測充數，FR-017）。
 - 只增不刪：store 不提供 delete 方法；放棄的文章只改 status。
 - 日誌／`last_error`／通知 **不得含** 帳密、cookie、全文（以單元測試對日誌輸出做負向斷言）。
+
+### `pipeline_run`（轉寫流水線執行紀錄；2026-11-18，Q-029）
+新增表（`CREATE TABLE IF NOT EXISTS`，不改既有欄位；唯讀開庫遇表不存在＝視為尚未上線）。欄位：`id`、`started_at`、`finished_at`、`trigger`（`cron`／`manual`）、`result`（`ok`／`noop`／`aborted_usage_limit`／`aborted_login`／`aborted_auth_mode`／`aborted_flags`／`error`）、`images_attempted`、`images_written`、`cross_checked`、`flagged`、`unverified`、`not_table`、`failed`、`reset_hint`（撞上限時回報的重置時間字串，已清理、≤40 字；不存內容）。每日執行次數與張數上限由此表計算。
+**新增 setting**：`pipeline_enabled`（`1`＝啟用；沒有此列＝關閉）。**新增 `article_image.transcribed_model` 值**：`claude-cli:<別名>`（流水線轉寫；`--retranscribe` 不覆寫）。驗證條目的 verifier：`pipeline-verifier-<別名>`（`agent-spot-check`）、`pipeline-paddle`（`compare-d-c`）。驗證者失敗次數記在 `alert_log`（`kind=pipeline_verify_fail`、key＝`<image_id>:<時間>`，只存 id）；流水線寫入稽核 `kind=transcription_pipeline_write`（key 只含時間、步驟、模型別名）。

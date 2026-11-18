@@ -258,3 +258,77 @@ python3 poc/kb-mcp/compare_transcriptions.py --d-results <manual-transcribe-資�
 - `check_scheduled_jobs` 的 `investanchors_import` 摘要多一段「未驗證轉寫 N 張（其中僅通過單一家族 N 張）、有疑慮 N 張、已驗證 N 張、PO 已核對 N 張」（只計已轉寫的圖；舊庫沒有驗證表時全部算未驗證）。
 - 每次 `--import-verification --apply`、`--mark-reviewed --apply` 在 `alert_log` 留一筆（`kind=transcription_verification_import`／`transcription_mark_reviewed`，key 只含時間、method 與數量（cross_checked／partial／flagged／skipped），**不含 issues 內容**）。
 - 查詢範例（唯讀）：`sqlite3 -readonly <資料目錄>/articles.db "select status, count(*) from transcription_verification group by status;"`
+
+## 15. 新圖自動轉寫與驗證流水線（2026-11-18，PO 決定，Q-029；Phase 14）
+
+> **狀態：程式與自動測試完成；尚未部署、尚未安裝排程、`pipeline_enabled` 預設關閉；Mac 實測尚未做（PO 同意後另行）。**
+> 範圍已縮減為「最小差異」：沿用 11-18 下午以互動 agent 驗證過的流程，只把手動換成排程呼叫 `claude -p`；金標準驗收與盲讀比對不做（Q-029）。
+
+### 流程
+```mermaid
+flowchart TD
+  A[排程 13:10／23:40 啟動 transcription_pipeline.py] --> B{pipeline_enabled=1？<br/>每日次數／張數未超限？}
+  B -- 否 --> Z[拒絕或結束]
+  B -- 是 --> C[claude --help 檢查旗標<br/>claude auth status 檢查登入方式]
+  C -- 缺旗標／登入失效／API 金鑰模式 --> X[立即中止、記錄、不重試]
+  C -- ok --> D[先補驗證：已轉寫但未驗證的圖<br/>再選 untranscribed 的新圖]
+  D --> E[暫存工作夾：單圖或長圖切片]
+  E --> F[reader-1：claude -p sonnet 轉寫]
+  F --> G[單一交易寫入 unverified<br/>model=claude-cli:sonnet]
+  G --> H[驗證者：全新 claude -p opus<br/>看圖＋行號待查轉寫，沿用 VERIFY_GUIDE 規則]
+  H --> I[agent-spot-check 條目<br/>走 validate_verification／apply_verification]
+  I -- issues --> FL[flagged：只有 PO 能清除<br/>Telegram 只通知張數]
+  I -- ok --> J[PaddleOCR mobile＋「涵蓋」規則]
+  J -- ok --> CC[cross_checked：進搜尋]
+  J -- issues --> FL
+  J -- 缺 paddle／inconclusive --> UV[維持 unverified，不輸出條目]
+  F & H -. 撞使用量上限／登入過期 .-> X
+```
+
+### 重點規則
+- **零花費**：只走訂閱。命令列（**2026-11-18 Mac 實測驗證的降載組合**：sonnet 讀圖、opus 驗證，退出碼 0、structured_output 正常、permission_denials 0，名目成本約降 97%）固定非 bare、`-p`、`--model <別名>`、`--output-format json`、`--json-schema`、`--no-session-persistence`、`--permission-mode dontAsk`、`--tools Read`、`--allowedTools Read`、`--disallowedTools "Bash Edit Write NotebookEdit WebFetch WebSearch"`（單一字串）、**`--system-prompt "<短提示詞>"`（取代預設系統提示，只放角色與輸出格式；轉寫／驗證規則放在使用者訊息提示中）**、`--add-dir <只放該圖的暫存工作夾>`、cwd＝乾淨暫存夾；旗標存在才加：`--permission-prompts none`、`--strict-mcp-config`（不傳 `--mcp-config`）、**`--setting-sources ""`（空字串；傳 `none` 會報 Invalid setting source，有效值僅 user／project／local）**、`--disable-slash-commands`（`--restricted` 需 `--use-restricted`）；沒有 `--max-turns`、`--system-prompt-file`、`--effort`（沒有對照組，先不當預設）；外部逾時用 Python subprocess timeout（macOS 無 timeout 指令）；**提示詞走 stdin**（`--tools`／`--add-dir` 是可變長度參數）。子行程環境是白名單（PATH、HOME、LANG、LC_ALL、LC_CTYPE、TMPDIR、USER、LOGNAME、SHELL＋可選 `CLAUDE_CODE_OAUTH_TOKEN`），沒有任何 `ANTHROPIC_*`／`CLAUDE_CODE_USE_*`。`claude_cli_runner.assert_argv_safe／assert_env_safe` 每次執行前檢查，違規即丟例外；`claude auth status` 若顯示 API 金鑰／Console／雲端供應商登入就中止（結果 `aborted_auth_mode`，健檢 critical）。
+- **驗證者不是盲讀**：看得到每行加 `[L001]` 行號的待查轉寫；規則文字直接取自 `VERIFY_GUIDE.md`（逐字比對截斷、source-typo 定義與反例、看不清楚不猜）。輸出 `{verdict: ok|issues, issues:[{where, found, expected?, kind}]}`，逐項過與人工匯入相同的欄位檢查，再走既有 `validate_verification`／`apply_verification`（綁 `transcription_sha256`、flagged 只有 PO 能清除、source-typo 規則皆沿用）。`not_table` 只由 reader-1 判斷、沒有驗證者（限制：被誤判為非表格的圖不會自動發現，健檢只計數）。
+- **使用量上限／登入失效**：`claude_cli_runner.classify_failure` 以多重判斷偵測（非 0 退出碼、`is_error`、輸出含 `hit your…limit`／`session|weekly limit`／`resets …`／`rate_limit`、登入失效字句），**只在沒有有效 `structured_output` 時才判斷**。偵測到即停止整次執行：進行中的那張不計失敗次數；剩下的圖維持 untranscribed（或已轉寫待驗證），下次排程續做；`pipeline_run.reset_hint` 只存重置時間字串；`articles_probe/pipeline-debug-*.txt` 存遮蔽後的短除錯文字（不含轉寫內容）。**官方未明載撞限時的退出碼與 JSON 欄位，這是文字樣式推測，需 Mac 實測校正**（改 `_USAGE_LIMIT_RES`／`_LOGIN_RES` 即可擴充）。
+- **守衛**：單次 ≤5 張（預設 3）、每日 ≤6 張、每日 ≤2 次執行（保守預設；**真實表格圖（尤其 2190×5327 長圖切 4 片）的圖片 token 遠大於合成小圖，成本不可線性外推，須用真實圖實測後再調**；手動多跑一次會被每日次數擋下，需要時由 PO 同意後調整常數）；與 API 轉寫（`transcribe_enabled=1`）互斥；一次一個行程（flock）；每張圖失敗 3 次（reader-1）或驗證失敗 3 次後不再自動重試。
+- **PaddleOCR**：獨立 venv（`~/.venvs/paddle/bin/python`，見 `paddle-setup.md`）執行 `paddle_eval.py`（ocr_grid、mobile、離線、約 2GB 記憶體）；缺 paddle／逾時／失敗／inconclusive → 數字家族不輸出，維持 unverified，不阻擋文字家族。
+- **通知**：有新 flagged 時發一則固定文字「📋 定錨轉寫：N 張圖需核對」（只含數字）。PO 只核對 flagged，其他不抽查。
+
+### 指令
+```bash
+# 只看計畫與完整命令列（零副作用；不執行 claude／paddle／鑰匙圈）
+python3 poc/kb-mcp/transcription_pipeline.py --data-dir <資料目錄> --dry-run
+# 啟用／停用（預設關閉；與 API 轉寫互斥）
+python3 poc/kb-mcp/transcription_pipeline.py --data-dir <資料目錄> --enable
+python3 poc/kb-mcp/transcription_pipeline.py --data-dir <資料目錄> --disable
+# 手動執行一次（需已啟用）
+python3 poc/kb-mcp/transcription_pipeline.py --data-dir <資料目錄> --max-images 1
+```
+正式庫一律需 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1`。其他旗標見 `contracts/cli.md` §流水線。`--drop-flag` 要用 `=` 連接（例：`--drop-flag=--setting-sources`）。
+
+### 登入檢查與訂閱 token（token 預設不需要）
+**Mac 實測已確認：launchd 背景環境可直接使用 claude.ai 訂閱登入，不需要 `claude setup-token`。** 啟動時程式用 `claude auth status` 檢查；token 來源只保留為**選用備援**（萬一日後背景讀不到登入狀態才用）：
+```bash
+claude setup-token                      # 依畫面完成授權，取得一年期訂閱 token（不要貼到對話或檔案）
+security add-generic-password -U -s stnd-investanchors -a claude-oauth-token -w   # -a 後固定名稱；-w 後不接任何東西，互動輸入 token
+security find-generic-password -s stnd-investanchors -a claude-oauth-token >/dev/null && echo ok   # 只驗證存在
+claude auth status                      # 應顯示 authMethod 為 claude.ai（訂閱）
+```
+程式只在記憶體取用並以環境變數傳給 `claude` 子行程：不印出、不寫日誌、不進例外與 stdout；**任何排查都不得用 `dump-keychain`、`-g`，也不得對 token 用 `-w` 以外的方式讀**。
+
+### Mac 實測狀態（2026-11-18）
+**已驗證**：上面的降載旗標組合（sonnet 讀圖、opus 驗證）退出碼 0、`structured_output` 正常、逐格一致、`permission_denials` 0；launchd 背景環境可直接用訂閱登入（不需 setup-token）。
+**仍待確認**（`--dry-run` 也會列出）：
+1. 真實表格圖（含長圖切片）的實際用量與成本，用真實圖實測後再調每日上限。
+2. 撞上限與登入過期的實際輸出／退出碼（校正偵測樣式；建議以假輸入核對 `classify_failure`，不必刻意耗額度）。
+3. `claude auth status` 的輸出格式（程式同時支援 JSON 與文字）。
+4. 長圖切片（node＋Playwright）在 launchd 環境可用，且 Read 多張切片行為正確。
+5. 轉寫與驗證的實際品質（第一週由 PO 看結果）；`--use-restricted` 並用行為（未驗證，預設關閉）。
+
+### 啟用與回滾
+1. 合併部署後（`ops/deploy.sh`）先 `--dry-run`；PO 在場用真實圖做剩餘的 Mac 實測（建議用測試資料目錄 `poc/data-test-articles` 的 1～2 張圖，`--enable` 後 `--max-images 1`，並記下用量）。
+2. 確認後在正式庫 `--enable`，再由 PO 同意安裝 plist：`ops/launchd/com.alphavibe.transcriptionpipeline.plist`（每日 13:10、23:40；無 RunAtLoad／KeepAlive；日誌 `~/Library/Logs/alphavibe-transcription.log`）。**本分支只建檔，不安裝。**
+3. 第一週由 PO 看實際結果（Telegram 通知、健檢摘要、`flagged` 張數）。
+4. 回滾：`--disable`（立即停止新執行）或 `launchctl bootout gui/$(id -u)/com.alphavibe.transcriptionpipeline` 並移除 plist；已寫入的轉寫與驗證條目保留（`model=claude-cli:…`，可由 PO 以既有 `--mark-reviewed`／重新轉寫處理）。`--retranscribe`（API）不會覆寫 `claude-cli:` 轉寫。
+
+### 健檢（`check_scheduled_jobs` 的 `transcription_pipeline`）
+啟用狀態、最近執行與結果、待轉寫／待驗證／已達上限張數、有疑慮待 PO 核對張數（摘要只含數字）；啟用且有待處理圖卻超過 3 天沒執行＝warning；連續 3 次因使用量上限中止＝warning（含最近重置時間）；登入失效＝warning；登入方式變成 API 金鑰＝critical。

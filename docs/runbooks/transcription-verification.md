@@ -44,6 +44,12 @@
 ## 四、未來（尚未開發）：用 Cline 自動抽查的工具
 規劃見 `specs/010-investanchors-article-import/cline-integration-prompt.md`（Phase 13；新對話開發中／待開發）。**開發完成並合併後**，本節會補上指令與 prompt。在此之前一律用上面的手動流程。
 
+## 四之二、自動化之後 PO 的角色（Phase 14，Q-029；尚未上線）
+流水線（`transcription_pipeline.py`，預設關閉）上線後，新圖由排程呼叫 `claude -p`（訂閱、零花費）自動轉寫並由另一次 `claude -p` 驗證，上面的手動流程變成**備援**。PO 只需：
+1. 收到 Telegram「📋 定錨轉寫：N 張圖需核對」或健檢顯示「有疑慮待 PO 核對」時，對 flagged 的圖逐格核對（`--mark-reviewed`）；**其他不抽查**。
+2. 健檢出現「連續撞使用量上限」「登入失效」時處理（重新登入或 `claude setup-token`；見 quickstart §15）。
+3. 啟用前的 Mac 實測與第一週看實際結果。flagged 仍然只有 PO 能清除。
+
 ## 五、注意
 - claude.ai 的 AlphaVibe 連接器（搜尋、讀文章）是**唯讀**，沒有 shell，**不能**執行匯出／匯入／驗證工具；這些只能在 Mac 的終端機或 Mac 上的 Claude Code 對話進行。
 - 給 PO 在 Mac 貼的指令一律 zsh 相容；鑰匙圈檢查只用存在性，禁止 `dump-keychain`、`-w`、`-g`。

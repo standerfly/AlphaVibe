@@ -305,3 +305,18 @@ T023（首次真實執行）、T048（真實手動回補試跑）、T055（部�
 - [x] T101 `source-typo`：issue kind 新增；全部 issues 皆 source-typo 的圖視同 ok（不 flagged）並存 `source_typos`、`get_article` 顯示原圖筆誤提示；任一非 source-typo 項目照舊 flagged；每張圖最多 20 項；預覽／稽核列張數；VERIFY_GUIDE 定義條件與反例。測試：`SourceTypoTest`。
 - [x] T100 `compare_transcriptions.py --emit-verification` 規則修正（PO 同意）：issues 只認高／中疑似錯置與逐格數字差異（＋D `[?]`），不再把「只在單邊的數字」當疑慮；ok 需某成功來源與 D 數值多重集合完全相同且形狀相同／標頭對齊成功；其餘為 inconclusive（不輸出）；D 非表格一律 inconclusive；報告每張圖加「驗證分類」行、stdout 列 ok／issues／inconclusive／未配對；ok 只代表數字層一致（不含文字截斷檢查）。測試：`EmitVerificationTest`。
 - [x] T102 `compare_transcriptions.py` ok 規則第 2 次修正（PO 同意「先做第 1 步」）：改為「涵蓋」——D 的每個數字都能在 C 找到就算數字層佐證（C 多出的數字、形狀不同、標頭對齊失敗不再阻擋；C 該格空白視為未佐證而非不一致）；位置對應與漏列由文字家族確認。若仍有大量未佐證數字，再評估加入第三個確認者（A：Apple Vision）。
+
+---
+
+## Phase 14: 新圖自動轉寫與驗證流水線（2026-11-18，PO 決定，clarification-log Q-029）
+
+**範圍（已縮減為「最小差異」）**：沿用 11-18 下午以互動 agent 驗證過的流程——reader-1（`claude -p`）轉寫 → 驗證者（另一次全新的 `claude -p`，看圖＋行號待查轉寫，**非盲讀**）→ PaddleOCR 數字家族。**只用 claude.ai 訂閱、零額外花費，絕不走 API 金鑰**。**不做**：盲讀逐格比對、金標準驗收（皆延後）。不部署、不安裝 plist、不新增 MCP 工具、不登入定錨。
+
+- [x] T103 `claude_cli_runner.py`：`claude -p` 封裝（命令列／環境白名單／`assert_argv_safe`／`assert_env_safe`、`claude --help` 旗標檢查與降級、`claude auth status` 登入方式檢查、stdin 提示詞、逾時殺行程群組、工作夾前後比對、`structured_output` 嚴格驗證、`classify_failure` 撞限／登入失效偵測、token 只經環境變數且全面遮蔽）。測試：`test_transcription_pipeline.GuardTest`／`ClassifyFailureTest`／`VerifierRunnerTest`／`TokenTest`。
+- [x] T104 `transcription_pipeline.py`＋`pipeline_compare.py`：選圖（先補驗證再轉新圖）、暫存工作夾（長圖切片）、reader-1 → 單一交易寫入 unverified（`claude-cli:<別名>`）→ 驗證者 → 既有 `validate_verification`／`apply_verification` → PaddleOCR＋涵蓋規則；判定沿用既有規則；Telegram 只通知張數；`--dry-run` 零副作用並印完整命令列與 Mac 實測假設；`--enable`／`--disable`、資料目錄防呆最先、flock、每日上限、與 API 轉寫互斥。
+- [x] T105 撞使用量上限／登入失效／登入方式不符／缺旗標：立即中止、剩下的圖保持原狀、下次續做、不計失敗次數、只記重置時間；`pipeline_run` 表與 `ArticleStore` 方法（`apply_pipeline_image` 單一交易、`pipeline_images_to_verify`、驗證失敗計次）；`--retranscribe` 不覆寫 `claude-cli:`；`article_tools` 顯示標示。
+- [x] T106 健檢 `check_transcription_pipeline`（最近執行過舊、連續撞限、登入失效、API 模式 critical、待處理／flagged 張數）；plist `ops/launchd/com.alphavibe.transcriptionpipeline.plist`（13:10、23:40，無 RunAtLoad／KeepAlive，**未安裝**）。
+- [x] T107 測試（假 claude 可執行檔＋假 paddle；零網路、零真實 claude、零鑰匙圈）與文件（quickstart §15、contracts/cli.md §6、data-model、Q-029、runbook）。
+- [x] T108a Mac 降載實測（2026-11-18，PO）：`--system-prompt` 短提示詞＋`--setting-sources ""` 等組合，sonnet 讀圖／opus 驗證皆退出碼 0、structured_output 正常、permission_denials 0，名目成本降約 97%；launchd 背景可直接用訂閱登入，不需 setup-token。預設旗標已改為此組合。
+- [ ] T108 [GATE] [PO] 剩餘 Mac 實測（quickstart §15）：真實圖（含 2190×5327 長圖切 4 片）用量、撞限／登入過期輸出樣式、長圖切片。
+- [ ] T109 [GATE] [PO] 同意後在正式庫 `--enable` 並安裝 plist；第一週由 PO 看實際結果（flagged 張數、品質）。

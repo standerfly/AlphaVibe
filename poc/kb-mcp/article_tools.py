@@ -22,12 +22,15 @@ VERIFICATION_LEVEL_TEXT = {
 }
 TRANSCRIPTION_WARNING = "【機器轉寫，可能有誤，請以原圖為準】"
 MANUAL_PREFIX = "manual:"     # 方案 D（agent 手動轉寫）寫入 transcribed_model 的前綴
+CLAUDE_CLI_PREFIX = "claude-cli:"   # Phase 14 流水線（Claude Code 非互動模式讀圖）寫入 transcribed_model 的前綴
 
 
 def transcription_label(model):
     """依 transcribed_model 決定轉寫來源標示：手動（方案 D）與 API 轉寫明確區分，兩者都提醒以原圖為準。"""
     if isinstance(model, str) and model.startswith(MANUAL_PREFIX):
         return "【圖片轉寫，手動（agent：%s），可能有誤，請以原圖為準】" % (model[len(MANUAL_PREFIX):] or "未標示")
+    if isinstance(model, str) and model.startswith(CLAUDE_CLI_PREFIX):
+        return "【圖片轉寫，Claude 自動轉寫（%s），可能有誤，請以原圖為準】" % (model[len(CLAUDE_CLI_PREFIX):] or "未標示")
     return TRANSCRIPTION_WARNING
 
 
@@ -35,6 +38,8 @@ def transcription_source(model):
     """轉寫來源（不含警告字樣，給 unverified／flagged 區塊用）。"""
     if isinstance(model, str) and model.startswith(MANUAL_PREFIX):
         return "手動轉寫（agent：%s）" % (model[len(MANUAL_PREFIX):] or "未標示")
+    if isinstance(model, str) and model.startswith(CLAUDE_CLI_PREFIX):
+        return "Claude 自動轉寫（模型別名：%s）" % (model[len(CLAUDE_CLI_PREFIX):] or "未標示")
     return "機器轉寫（模型：%s）" % (model or "未標示")
 
 
