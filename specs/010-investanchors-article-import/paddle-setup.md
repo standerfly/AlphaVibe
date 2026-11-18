@@ -108,6 +108,8 @@ python3 -m unittest tests.test_article_transcribe_paddle tests.test_paddle_eval 
 另有每張耗時與平均、失敗數的總結；**不含文章標題或內文**。`--show-low-conf` 會在報告裡列出被標 `[?]` 的格子的引擎猜測值與信心
 （只在報告裡，不進轉寫文字）。退出碼：0 全成功、1 有失敗、2 參數錯誤、3 引擎不可用（未安裝／缺模型）。
 
+與方案 D（agent 讀圖）的結果並排比對、優先找出數字差異：用 `poc/kb-mcp/compare_transcriptions.py`，操作見 `quickstart.md` §13。
+
 ## 6. Linux 容器 smoke 結果（2026-11-18；x86_64、Python 3.13、4 核 CPU、無 GPU）
 
 測試圖：用 PIL＋文泉驛正黑字型產生的**合成**繁中數字表格（欄位：項目／2024／2025E／2026E／年增率；每列隨機數字，固定亂數種子，有逐格正解）。

@@ -269,3 +269,16 @@ T023（首次真實執行）、T048（真實手動回補試跑）、T055（部�
 - [x] T078 文件：quickstart §12 方案 D 操作手冊、contracts/cli.md 新旗標、clarification-log Q-027。
 - [ ] T079 [PO] 以真實圖片試一次：`--export-untranscribed --limit 3`（測試目錄 `poc/data-test-articles`）→ 請 agent 讀圖寫 results.json → 預覽 → `--apply` → 逐格對照原圖抽查（比照 Q-020 的 10 張含長圖標準）。
 - [ ] T080 [PO] 決定 `AGENT_GUIDE.md` 的「看不清楚寫 `?`」是否改為 `[?]`（目前沿用 API 轉寫的 `?`，兩邊一致）。
+
+---
+
+## Phase 11: D 與 C 轉寫比對工具（2026-11-18，PO 決定）
+
+**範圍**：只新增 `poc/kb-mcp/compare_transcriptions.py` 與測試／文件；不改任何既有模組、不連網、不讀鑰匙圈、不登入、不碰真實資料、**不部署**。
+
+- [x] T081 `compare_transcriptions.py`：解析 D（results.json＋manifest.json）與 C（paddle-eval-*.md，多份、多模式各一來源），以原圖路徑配對；表格容錯解析（缺分隔列、欄數不齊、`\|`、`[?]`／`?`）。
+- [x] T082 數值比對：正規化（千位逗號、%、括號負數、全形、負號變體、保留小數位）→ 多重集合差異→近似配對與分級（高：小數點錯置／數量級／正負號；中：位數差 1／個別數字不同；低：僅格式）；`--numeric-tol`。
+- [x] T083 逐格對照（形狀相同）／標頭對齊（形狀不同）／降級為集合比對（附原因）；[?] 計數與位置；文字差異低優先與 `--normalize-text`。
+- [x] T084 報告：總結表（每圖一列）、建議優先核對排序、未配對、逐張詳細、「如何核對」；不覆寫輸出；stdout 只印數字；錯誤輸入 exit 2 無 traceback。
+- [x] T085 測試 `tests/test_compare_transcriptions.py`（假資料、不連網）；quickstart §13、paddle-setup.md 交叉參照。
+- [ ] T086 [PO] 用真實 8 張圖（含 2190x5327 長圖）跑 D 與 C，依報告對照原圖，回報哪些差異真的是誰的錯，作為 D／C 取捨與日後調整分級規則的依據。
