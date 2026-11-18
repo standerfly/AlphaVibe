@@ -19,11 +19,13 @@ import random
 import sys
 import tempfile
 import shutil
+import sqlite3
 
 import article_data_guard
 import article_id_time
 import article_image_tiles
 import article_images
+import article_manual_transcribe
 import article_store
 import article_transcribe
 import investanchors_limits
@@ -130,6 +132,17 @@ def build_parser():
     ap.add_argument("--transcribe-sample", type=int, default=None, metavar="N",
                     help="只讀本機圖片隨機抽 N 張（至少含 1 張長圖）轉寫，結果寫 <data-dir>/articles_probe/；"
                          "不寫資料庫、不登入；開關關閉時仍可執行")
+    ap.add_argument("--export-untranscribed", action="store_true",
+                    help="方案 D：唯讀匯出未轉寫的圖給 agent 讀（manifest.json＋AGENT_GUIDE.md＋長圖切片），"
+                         "寫到 <data-dir>/articles_probe/manual-transcribe-<時間>/；不寫資料庫、不登入、不讀鑰匙圈")
+    ap.add_argument("--limit", type=int, default=None, metavar="N",
+                    help="只能與 --export-untranscribed 併用：最多匯出幾張（預設 %d，上限 %d）"
+                         % (article_manual_transcribe.DEFAULT_EXPORT_LIMIT, article_manual_transcribe.MAX_EXPORT_LIMIT))
+    ap.add_argument("--import-transcription", default=None, metavar="RESULTS_JSON",
+                    help="方案 D：匯入 agent 寫的 results.json（零網路、零鑰匙圈）；預設只預覽，需 --apply 才寫入")
+    ap.add_argument("--apply", action="store_true", help="只能與 --import-transcription 併用：實際寫入")
+    ap.add_argument("--overwrite", action="store_true",
+                    help="只能與 --import-transcription 併用：允許覆寫已轉寫（done／not_table）的圖")
     return ap
 
 
@@ -201,6 +214,9 @@ class Importer(object):
         except article_data_guard.DataDirRefused as e:
             self.say("拒絕執行：%s" % e)
             return 2
+        manual_rc = self._manual_dispatch()
+        if manual_rc is not None:
+            return manual_rc
         if args.reset_transcribe_attempts and not args.retranscribe:
             self.say("拒絕執行：--reset-transcribe-attempts 只能與 --retranscribe 併用")
             return 2
@@ -227,6 +243,80 @@ class Importer(object):
             return self._execute(store)
         finally:
             store.close()
+
+    # ---------------------------------------------------------------- 方案 D：手動轉寫（Phase 10）
+    def _manual_dispatch(self):
+        """處理 --export-untranscribed／--import-transcription 與其附屬旗標的互斥檢查。
+        回傳 None＝不是方案 D 的呼叫（照原流程）；否則回傳 exit code。完全不取信、不登入、不讀鑰匙圈、不連網。"""
+        a = self.args
+        export, imp = a.export_untranscribed, a.import_transcription is not None
+        if not (export or imp):
+            if a.limit is not None or a.apply or a.overwrite:
+                self.say("拒絕執行：--limit／--apply／--overwrite 只能與方案 D 旗標併用")
+                return 2
+            return None
+        if export and imp:
+            self.say("拒絕執行：--export-untranscribed 與 --import-transcription 不可同時使用")
+            return 2
+        others = (a.retranscribe or a.reset_transcribe_attempts or a.transcribe_sample is not None or a.dry_run
+                  or a.resume or a.reset_abandoned is not None or a.force_weekly or a.enable_transcription
+                  or a.disable_transcription or a.max_articles is not None or a.backfill_since is not None)
+        if others:
+            self.say("拒絕執行：方案 D 旗標不可與其他動作旗標併用")
+            return 2
+        if export and (a.apply or a.overwrite):
+            self.say("拒絕執行：--apply／--overwrite 只能與 --import-transcription 併用")
+            return 2
+        if imp and a.limit is not None:
+            self.say("拒絕執行：--limit 只能與 --export-untranscribed 併用")
+            return 2
+        try:
+            return self._manual_export() if export else self._manual_import()
+        except article_manual_transcribe.ManualTranscribeError as e:
+            self.say("拒絕執行：%s" % e)
+            return 2
+        except FileNotFoundError:
+            self.say("文章庫尚未建立，沒有可處理的圖片")
+            return 1
+
+    def _manual_export(self):
+        a = self.args
+        limit = a.limit if a.limit is not None else article_manual_transcribe.DEFAULT_EXPORT_LIMIT
+        r = article_manual_transcribe.export_untranscribed(
+            a.data_dir, limit=limit, now=self.now, tiles_runner=self.tiles_runner, tile_tmp_root=self.tile_tmp_root)
+        self.say("已匯出 %d 張未轉寫的圖（長圖 %d 張；切片降級 %d 張；檔案不存在略過 %d 張；無法讀取略過 %d 張）"
+                 % (r["exported"], r["long_images"], r["tiles_degraded"], r["skipped_missing"],
+                    r["skipped_unreadable"]))
+        self.say("資料夾：%s" % r["out_dir"])
+        self.say("請 agent 依 AGENT_GUIDE.md 讀圖並寫出 results.json；圖片來自付費文章，勿貼到公開處。")
+        return 0
+
+    def _manual_import(self):
+        a = self.args
+        apply_ = a.apply
+        # 預覽用唯讀開庫（不建庫、不寫入）；--apply 才用可寫連線，且庫必須已存在
+        store = article_store.ArticleStore.open_readonly(a.data_dir)
+        try:
+            plan = article_manual_transcribe.validate_results(a.import_transcription, store, overwrite=a.overwrite)
+        finally:
+            store.close()
+        self.say("%s：將寫入 %d 筆、略過已轉寫 %d 筆（model=%s）" % (
+            "寫入" if apply_ else "預覽（未寫入）", len(plan["rows"]), len(plan["skipped_done"]), plan["model"]))
+        for iid, aid, seq, n in plan["details"]:
+            self.say("  image_id=%d article_id=%d seq=%d 長度=%d 字" % (iid, aid, seq, n))
+        if not apply_:
+            self.say("以上是預覽；確認無誤後加 --apply 才會寫入。")
+            return 0
+        store = article_store.ArticleStore(a.data_dir, now=self.now)
+        try:
+            article_manual_transcribe.apply_plan(store, plan, now=self.now)
+        except sqlite3.Error:
+            self.say("拒絕執行：寫入資料庫失敗，整批已 rollback（未寫入任何轉寫）")
+            return 2
+        finally:
+            store.close()
+        self.say("已寫入 %d 筆（單一交易）。" % len(plan["rows"]))
+        return 0
 
     # ---------------------------------------------------------------- 放寬回補範圍（T044）
     def _backfill_since(self):
@@ -348,7 +438,8 @@ class Importer(object):
         todo = store.images_to_transcribe()
         todo += [dict(r) for r in store.conn.execute(
             "SELECT * FROM article_image WHERE file_path IS NOT NULL AND transcription_status='done' "
-            "AND COALESCE(transcribed_model,'') != ? ORDER BY article_id, seq", (self.transcribe_model,))]
+            "AND COALESCE(transcribed_model,'') != ? AND COALESCE(transcribed_model,'') NOT LIKE 'manual:%' "
+            "ORDER BY article_id, seq", (self.transcribe_model,))]    # 方案 D 手動轉寫不被換模型重轉蓋掉
         done = 0
         for img in todo:
             if self.transcribe_aborted:

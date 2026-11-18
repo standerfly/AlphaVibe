@@ -108,3 +108,33 @@ sqlite3 -readonly $DB "select value from setting where key='transcribe_enabled';
   - `--retranscribe` 只讀本機圖片、不登入、不下載（`investanchors_import.py:341-342`；說明見 `:126-127`），且只處理 `file_path IS NOT NULL` 的圖（`:350`、`article_store.py:469`），圖檔不在就無從轉寫。
   - 重抓文章本身需登入網站，且受每日 2 次（間隔 ≥6 小時）／每次 5 篇限制（`investanchors_limits.MAX_ARTICLES_PER_RUN`，見 `--max-articles` 說明 `investanchors_import.py:113-114`）。
   - 最接近的現有行為：只有「剛抓取成功的那次」會下載圖片。若要支援，需新增「對 `fetched` 文章重置並重抓」或「依 `images_missing_file`／檔案不存在補抓」的功能，並由 PO 決定受限流約束。
+
+## 12. 方案 D 操作手冊：手動轉寫（2026-11-18，PO 決定，Q-027）
+
+**是什麼**：表格圖要轉成文字才搜尋得到。先不用付費 API 與金鑰：PO 請 agent（Claude Code、Cline 等，用它們內建的讀圖能力）把「未轉寫的圖」轉成文字，再匯入資料庫。**全程不呼叫任何外部 API、不讀鑰匙圈、不登入定錨、不連網。**
+
+**與 `transcribe_enabled` 的關係**（程式查證結論）：開關**只管「匯入排程是否自動呼叫外部 API 轉寫」**；顯示與搜尋已存在的轉寫文字**完全不看開關**（`article_tools.py`、`ArticleStore.search_articles` 都沒有判斷它）。所以方案 D：開關維持關閉即可，匯入不改開關，匯入後 `get_article`／`search_articles` 立刻看得到。日後若打開開關跑 API 轉寫，`--retranscribe` 的換模型重轉**不會**覆寫 `manual:` 的列。
+
+### PO 要做的（建議一天一次、每次 10 張內）
+1. 匯出（唯讀，不登入）：
+   `python3 poc/kb-mcp/investanchors_import.py --data-dir <資料目錄> --export-untranscribed [--limit 10]`
+   會印出資料夾 `<資料目錄>/articles_probe/manual-transcribe-<時間>/`（正式庫需 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1`；先在測試目錄 `poc/data-test-articles` 試）。
+2. 把該資料夾交給 agent，一句話即可：「請依 AGENT_GUIDE.md 讀這個資料夾的圖，把結果寫成同資料夾的 results.json」。
+3. 預覽（預設不寫入）：
+   `python3 poc/kb-mcp/investanchors_import.py --data-dir <資料目錄> --import-transcription <資料夾>/results.json`
+   看「將寫入幾筆、略過幾筆、每筆長度」；任何驗證不通過會整批拒絕並說明是第幾筆、哪個 image_id。
+4. 確認後加 `--apply` 寫入（單一交易，全有或全無）。已轉寫的圖預設略過；要覆寫才加 `--overwrite`。
+5. **抽查**：每批至少挑 2～3 張（含長圖）逐格對照原圖——原圖路徑在 manifest 的 `path`，或用 `get_article` 看圖片清單的「本機路徑」；比對數字、單位、欄位對齊、有無漏列或重複列。不認可就用 `--overwrite` 重匯入（或請 agent 重做那幾張）。標準比照 Q-020（累計 10 張含長圖由 PO 本人確認）。
+
+### agent 要做的（`AGENT_GUIDE.md` 已寫在匯出資料夾內）
+逐項讀 manifest 的 `view_files`（短圖＝原圖、長圖＝切片），表格轉成 Markdown 表格、看不清楚的格寫 `?`、**不猜測、不補數字、不加原圖沒有的資訊**，長圖把各片合併成一張圖一份文字（重疊列只留一次），寫出 results.json（`model` 必須是 `manual:<agent 名稱>`，`sha256` 原樣抄 manifest）。**不得修改圖檔或 manifest、不碰資料庫、不連網。**
+
+### 長圖與降級
+長圖會用既有切片邏輯產生切片（需要 Playwright＋瀏覽器，通常在 Mac 上才有）。沒有瀏覽器（例如 Linux 容器）時不會失敗：manifest 該項 `tile_status=unavailable`、`view_files` 只有原圖，指南要求 agent 自行分段檢視、看不清楚的格寫 `?`——品質較差，建議在有瀏覽器的環境匯出長圖。
+
+### 安全注意
+- agent 讀的是**付費文章圖片**：匯出資料夾（在 `articles_probe/`，已 gitignore）只留本機，**不要貼到公開處或第三方服務**；manifest 不含標題與內文，但圖片本身就是內容。
+- 匯入只認 manifest／資料庫裡真實存在、sha256 與目前圖檔一致的圖；拒收控制字元與疑似金鑰／token 的字串；錯誤訊息與預覽輸出都不回顯轉寫內容。
+- 稽核：每次 `--apply` 在 `articles.db` 的 `alert_log` 留一筆（`kind=manual_transcription_import`，只含數量與 model，不含內容）：
+  `sqlite3 -readonly <資料目錄>/articles.db "select * from alert_log where kind='manual_transcription_import';"`
+- 辨識來源：`get_article` 會標示「【圖片轉寫，手動（agent：…），可能有誤，請以原圖為準】」；資料庫 `article_image.transcribed_model` 以 `manual:` 開頭者即手動轉寫。

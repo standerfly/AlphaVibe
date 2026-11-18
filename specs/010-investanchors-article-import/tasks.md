@@ -252,3 +252,20 @@ T023（首次真實執行）、T048（真實手動回補試跑）、T055（部�
 - [x] T068 回補／匯入行為測試：`test_investanchors_backfill.TwiceDailyTest`（同日兩次游標連續前進不重複不漏抓、每次 ≤5 篇、第三次被拒、6 小時內被拒不登入、換日重置、兩個時間點無新信且回補完成皆不登入）、`test_article_reconcile`（核對共用守衛：緊接第二次 `min_gap`、第 3 次 `daily_login_limit`）。
 - [x] T069 文件同步：clarification-log Q-026（Q-019 註明已更新）、spec／plan／research（R4、R8 更新段）／quickstart／tasks 通用規則 5、pre-release-review（§3.4、通用規則 8 註記）、CLAUDE.md 010 段落；歷史決策紀錄保留原文並註明。
 - [ ] T070 [GATE] [PO] 同意部署 Phase 9（重新 bootout／bootstrap plist），驗證首日兩次登入各 `logged_out=1`。
+
+---
+
+## Phase 10: 方案 D 手動轉寫（2026-11-18，PO 決定，clarification-log Q-027）
+
+**範圍**：免 API 金鑰——把未轉寫的圖匯出給 agent（Claude Code／Cline）讀圖，結果匯入資料庫。全程不呼叫外部 API、不讀鑰匙圈、不登入、不改 schema；**不部署**。C＝本機 PaddleOCR 另案同時開發、A＝Apple Vision 研究備案（皆不在本 Phase）。
+
+- [x] T071 `article_manual_transcribe.export_untranscribed`＋CLI `--export-untranscribed [--limit N]`：唯讀、預設 10 張、穩定排序；排除已轉寫／not_table／abandoned／檔案不存在／壞檔；`manifest.json` 不含標題內文；長圖重用 `article_image_tiles.open_tiles` 產出切片到匯出資料夾，無瀏覽器時降級（`tile_status=unavailable`）。測試：`test_article_manual_transcribe.ExportTest`。
+- [x] T072 `AGENT_GUIDE.md`：規則句子抽成 `article_transcribe.TRANSCRIBE_RULES`／`TILE_OVERLAP_RULE`，API 提示詞（`PROMPT_BASE`／`PROMPT_CONTEXT`，字串不變）與指南共用，避免兩套說法；含 results.json schema 與安全提醒。
+- [x] T073 `validate_results`／`apply_plan`＋CLI `--import-transcription <results.json> [--apply] [--overwrite]`：嚴格 schema、`model=manual:<agent>`、sha256 對資料庫檔案與 manifest、拒收控制字元與疑似金鑰（`investanchors_redact.secret_like`）、預設預覽、已轉寫不覆寫、錯誤訊息不回顯內容。
+- [x] T074 `ArticleStore.apply_transcription_batch`（單一交易、全有或全無、同交易寫 `alert_log` 稽核只存數量）＋`get_image_by_id`／`images_for_manual_export`；`set_transcription` 改為與整批共用驗證與寫入。測試：原子性（中途失敗 rollback、稽核列不留）。
+- [x] T075 `article_tools.transcription_label`：`get_article` 標示「圖片轉寫，手動（agent：…）」；搜尋範圍與 API 轉寫相同。台美連接器共用，輸出一致。
+- [x] T076 CLI 互斥與防呆：兩旗標彼此與其他動作旗標互斥；`--limit`／`--apply`／`--overwrite` 只能配對應動作；資料目錄防呆最先執行；零網路零鑰匙圈測試（monkeypatch socket 與 `security` 子行程）。
+- [x] T077 `--retranscribe` 換模型重轉不得覆寫 `manual:` 轉寫（獨立小提交）。
+- [x] T078 文件：quickstart §12 方案 D 操作手冊、contracts/cli.md 新旗標、clarification-log Q-027。
+- [ ] T079 [PO] 以真實圖片試一次：`--export-untranscribed --limit 3`（測試目錄 `poc/data-test-articles`）→ 請 agent 讀圖寫 results.json → 預覽 → `--apply` → 逐格對照原圖抽查（比照 Q-020 的 10 張含長圖標準）。
+- [ ] T080 [PO] 決定 `AGENT_GUIDE.md` 的「看不清楚寫 `?`」是否改為 `[?]`（目前沿用 API 轉寫的 `?`，兩邊一致）。
