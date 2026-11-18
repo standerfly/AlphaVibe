@@ -9,6 +9,14 @@
 import article_store
 
 TRANSCRIPTION_WARNING = "【機器轉寫，可能有誤，請以原圖為準】"
+MANUAL_PREFIX = "manual:"     # 方案 D（agent 手動轉寫）寫入 transcribed_model 的前綴
+
+
+def transcription_label(model):
+    """依 transcribed_model 決定轉寫來源標示：手動（方案 D）與 API 轉寫明確區分，兩者都提醒以原圖為準。"""
+    if isinstance(model, str) and model.startswith(MANUAL_PREFIX):
+        return "【圖片轉寫，手動（agent：%s），可能有誤，請以原圖為準】" % (model[len(MANUAL_PREFIX):] or "未標示")
+    return TRANSCRIPTION_WARNING
 NO_RESULT_TEXT = "查無符合的文章"
 
 
@@ -49,7 +57,7 @@ def format_article(article):
         lines.append("#%s｜%s｜%s｜原圖 src_url：%s｜本機路徑：%s" % (
             img["seq"], kind, label, img.get("src_url") or "無", img.get("file_path") or "無"))
         if status == "done" and img.get("transcription"):
-            lines.append("  %s" % TRANSCRIPTION_WARNING)
+            lines.append("  %s" % transcription_label(img.get("transcribed_model")))
             lines.append("  " + img["transcription"].replace("\n", "\n  "))
     return "\n".join(lines)
 

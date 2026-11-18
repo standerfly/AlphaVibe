@@ -427,8 +427,8 @@ class ArticleStore(object):
         return [dict(r) for r in self.conn.execute(
             "SELECT * FROM article_image WHERE file_path IS NULL ORDER BY article_id, seq")]
 
-    def set_transcription(self, article_id, seq, status, text=None, model=None, is_table=None):
-        """`transcription` 只存轉寫內容、不含標示；`untranscribed` 時必為 NULL（FR-017）。"""
+    @staticmethod
+    def _check_transcription(status, text):
         if status not in TRANSCRIPTION_STATUSES:
             raise ValueError("未知的轉寫狀態：%r" % (status,))
         if status == "done":
@@ -436,12 +436,54 @@ class ArticleStore(object):
                 raise ValueError("done 必須有轉寫文字")
         elif text:
             raise ValueError("%s 不得帶轉寫文字（不以空白或猜測值充數）" % status)
+
+    def _write_transcription(self, article_id, seq, status, text, model, is_table):
+        """只執行 UPDATE、不 commit（供單筆與整批共用）。"""
         self.conn.execute(
             "UPDATE article_image SET transcription_status=?, transcription=?, transcribed_model=?, "
             "is_table=COALESCE(?, is_table) WHERE article_id=? AND seq=?",
             (status, text if status == "done" else None, model if status == "done" else None,
              None if is_table is None else (1 if is_table else 0), article_id, seq))
+
+    def set_transcription(self, article_id, seq, status, text=None, model=None, is_table=None):
+        """`transcription` 只存轉寫內容、不含標示；`untranscribed` 時必為 NULL（FR-017）。"""
+        self._check_transcription(status, text)
+        self._write_transcription(article_id, seq, status, text, model, is_table)
         self.conn.commit()
+
+    def apply_transcription_batch(self, rows, audit_kind=None, audit_key=None, audit_day=None):
+        """整批寫入轉寫（方案 D 手動匯入用）：單一交易、全有或全無。
+
+        rows＝[(article_id, seq, status, text, model, is_table), ...]；先全部驗證再寫入，任何一筆出錯即 rollback。
+        audit_kind／audit_key 若有，在**同一交易內**寫一筆 alert_log 稽核（只放數量，不放內容）；
+        刻意不寫 import_runs——避免讓健康檢查把手動匯入誤當成排程執行。"""
+        for r in rows:
+            self._check_transcription(r[2], r[3])
+        try:
+            for aid, seq, status, text, model, is_table in rows:
+                self._write_transcription(aid, seq, status, text, model, is_table)
+            if audit_kind:
+                day = audit_day or self.now().astimezone(TZ8).date().isoformat()
+                self.conn.execute("INSERT OR IGNORE INTO alert_log (kind, key, day) VALUES (?,?,?)",
+                                  (audit_kind, audit_key or "-", day))
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def get_image_by_id(self, image_id):
+        """依 article_image.id 取一張圖（含所屬文章狀態）；沒有回 None。"""
+        row = self.conn.execute(
+            "SELECT i.*, a.status AS article_status FROM article_image i "
+            "JOIN article a ON a.article_id=i.article_id WHERE i.id=?", (image_id,)).fetchone()
+        return dict(row) if row else None
+
+    def images_for_manual_export(self):
+        """方案 D 匯出候選：未轉寫、有本機檔、所屬文章非 abandoned；依 article_id／seq 穩定排序。"""
+        return [dict(r) for r in self.conn.execute(
+            "SELECT i.* FROM article_image i JOIN article a ON a.article_id=i.article_id "
+            "WHERE i.file_path IS NOT NULL AND i.transcription_status='untranscribed' "
+            "AND a.status != 'abandoned' ORDER BY i.article_id, i.seq")]
 
     def images_to_transcribe(self):
         return [dict(r) for r in self.conn.execute(

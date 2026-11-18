@@ -47,14 +47,20 @@ OUTPUT_SCHEMA = {
     "additionalProperties": False,
 }
 
-PROMPT_BASE = (
+# 轉寫規則文字：API 轉寫（PROMPT_BASE）與方案 D 手動轉寫（article_manual_transcribe 的 AGENT_GUIDE.md）共用，
+# 避免兩套說法。改這裡會同時影響兩邊。
+TRANSCRIBE_RULES = (
     "請把這張圖中「可見」的數字與文字完整轉寫成純文字。若是表格，每列一行、欄位以 | 分隔，保留表頭。"
     "只轉寫看得到的內容，不要推測、不要補值、不要加說明；看不清楚的格子一律寫 ?。"
-    "同時判斷這張圖是否為表格。以 JSON 回覆：{\"is_table\": 布林值, \"text\": 轉寫文字}。"
+)
+TILE_OVERLAP_RULE = "若本片頂端的列已出現在上述內容中，請略過這些重複列，只轉寫新的列。"
+PROMPT_BASE = (
+    TRANSCRIBE_RULES
+    + "同時判斷這張圖是否為表格。以 JSON 回覆：{\"is_table\": 布林值, \"text\": 轉寫文字}。"
 )
 PROMPT_CONTEXT = (
     "\n\n這是同一張長圖的後續切片，與上一片有重疊。上一片的表頭與最後 2 列如下（僅供對照，不要重複轉寫）：\n"
-    "%s\n若本片頂端的列已出現在上述內容中，請略過這些重複列，只轉寫新的列。"
+    "%s\n" + TILE_OVERLAP_RULE
 )
 
 
