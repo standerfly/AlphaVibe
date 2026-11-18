@@ -7,13 +7,13 @@
 `--emit-verification <路徑>`（010 Phase 12，Q-028）：另依比對結果輸出 verification.json（method=compare-d-c）供
 `investanchors_import.py --import-verification` 匯入。每張圖彙整所有「成功」的 C 來源後分四類：
   issues       任一成功來源有高／中疑似錯置或逐格數字差異（形狀相同或標頭對齊成功時），或 D 有 [?] 存疑格；清單只列這些
-  ok           至少一個成功來源與 D 的數值多重集合完全相同（只在單邊的數字＝0）、無任何疑似錯置與逐格差異、形狀相同或標頭對齊成功，
-               且沒有任何來源出現 issues 的疑慮（壞消息優先）
-  inconclusive 沒有疑慮、也不滿足 ok（例：只有「只在單邊」的數字差異〔多半是 C 的 OCR 結構差異〕、形狀不同又對齊失敗、兩邊都沒有數字、
+  ok           至少一個成功來源「涵蓋 D」：D 的每個數值 token 都能在 C 找到（C 多出來的數字——座標軸、OCR 重複、結構差異——不算疑慮）、
+               無任何疑似錯置與逐格差異，且沒有任何來源出現 issues 的疑慮（壞消息優先）；形狀不同、標頭對齊失敗不再阻擋
+  inconclusive 沒有疑慮、也不滿足 ok（例：D 的數字有些在 C 找不到〔C 可能漏辨識〕、僅有低等級格式差異、兩邊都沒有數字、
                D 判為非表格）：**不寫進 verification.json**，維持 unverified——既不是 flagged、也不算數字家族通過
   未配對       沒有任何成功比對的 C 來源：同樣不輸出
 報告（compare-*.md）每張圖有一行「驗證分類」原因（只含數量與分類）；stdout 摘要列 ok／issues／inconclusive／未配對 張數。
-**ok 只代表「數字層雙來源一致」，不含文字截斷檢查**（例如「營收」被截成「營」仍可能 ok）——文字家族要靠 agent-spot-check，
+**ok 只代表「D 的數字有獨立 OCR 佐證」，不含位置對應與文字截斷檢查**（例如「營收」被截成「營」仍可能 ok）——文字家族要靠 agent-spot-check，
 兩家族都通過才會成為 cross_checked，最後由 PO 核對；絕不是 reviewed。每筆帶 transcription_sha256（由 D results 的 text 計算，
 須與匯入資料庫的文字一致；D 尚未匯入資料庫的圖，匯入驗證時會被拒收）。
 
@@ -364,6 +364,8 @@ def _compare_cells(pairs, tol, normalize_text):
         td, rd = extract_numbers(cd)
         tc, rc = extract_numbers(cc)
         low = is_lowconf_cell(cd) or is_lowconf_cell(cc)
+        if td and not tc:
+            continue        # C 在該格沒辨識出任何數字（OCR 漏辨識）＝「沒有獨立佐證」，不是「兩邊不一致」；由 only_d（D 的數字在 C 找不到）呈現，歸 inconclusive
         if not _cell_numeric_equal(td, tc, tol):
             num_diffs.append({"pos_d": pd_, "pos_c": pc_, "d": cd, "c": cc, "lowconf": low})
         elif text_norm(rd, normalize_text) != text_norm(rc, normalize_text):
@@ -830,22 +832,19 @@ def _source_concerns(sid, cmp_):
 
 
 def _source_is_clean(cmp_):
-    """規則 2 的單一來源條件：無任何疑似錯置（含低等級）、無逐格差異、D 與 C 的數值 token 多重集合完全相同
-    （只在單邊的數字＝0），且形狀相同（逐格）或標頭對齊成功。"""
+    """單一來源「涵蓋 D」（PO 2026-11-18：第 1 步，降低需要人工確認的量）：無任何疑似錯置（含低等級）、無逐格差異、
+    **D 的每個數值 token 都能在 C 找到**（只在 D 的數字＝0）。C 多出來的數字（座標軸、OCR 重複、結構差異）不算疑慮；
+    形狀不同、標頭對齊失敗也不再阻擋（位置對應與漏列由文字家族 agent-spot-check 逐格確認）。"""
     t = cmp_["tokens"]
-    return (not t["suspects"] and not t["only_d"] and not t["only_c"] and not cmp_["num_diffs"]
-            and cmp_["mode"] in ("cell", "header"))
+    return not t["suspects"] and not t["only_d"] and not cmp_["num_diffs"]
 
 
 def _inconclusive_reason(done):
-    """沒有疑慮、也沒有乾淨來源時的原因（只含數量與分類）。以「只在單邊數字最少」的來源為代表。"""
-    best = min(done, key=lambda m: len(m[3]["tokens"]["only_d"]) + len(m[3]["tokens"]["only_c"]))
-    cmp_ = best[3]
-    only = len(cmp_["tokens"]["only_d"]) + len(cmp_["tokens"]["only_c"])
-    if only:
-        return "inconclusive：只在單邊的數字 %d 個，無高中疑似錯置" % only
-    if cmp_["mode"] == "set":
-        return "inconclusive：形狀不同且標頭對齊失敗，無法逐格比對（無高中疑似錯置）"
+    """沒有疑慮、也沒有任何來源涵蓋 D 時的原因（只含數量與分類）。以「D 在 C 找不到的數字最少」的來源為代表。"""
+    best = min(done, key=lambda m: len(m[3]["tokens"]["only_d"]))
+    only_d = len(best[3]["tokens"]["only_d"])
+    if only_d:
+        return "inconclusive：D 的數字有 %d 個在 C 找不到（C 可能漏辨識；無高中疑似錯置）" % only_d
     return "inconclusive：僅有低等級（格式）差異，數值並非完全相同"
 
 
@@ -854,8 +853,8 @@ def classify_image(it, mine):
     "issues": [...]}。
     規則（彙整所有「成功」的 C 來源；PO 2026-11-18 修正，原規則把『只在單邊的數字』也當疑慮，造成全部標 issues）：
     1. issues：任一成功來源出現高／中疑似錯置或逐格數字差異；D 自己標的 [?] 存疑格也算。任何 issues 勝過 ok。
-    2. ok：至少一個成功來源「乾淨」（見 _source_is_clean）且沒有規則 1 的疑慮。**只代表數字層雙來源一致，
-       不含文字截斷檢查（文字家族要靠 agent-spot-check）**。
+    2. ok：至少一個成功來源「涵蓋 D」（D 的每個數值都能在 C 找到、無疑似錯置與逐格差異，見 _source_is_clean；C 多出的數字不算）
+       且沒有規則 1 的疑慮。**只代表 D 的數字有獨立 OCR 佐證，不含位置對應與文字截斷檢查（文字家族要靠 agent-spot-check）**。
     3. inconclusive（不輸出，維持 unverified）：沒有疑慮、但也沒有乾淨來源。
     4. D 判為非表格：一律 inconclusive（不輸出；非表格圖不會被驗證匯入），C 有內容時報告仍註明。
     5. 兩邊都沒有數字可比：不輸出。沒有任何成功比對的來源：unmatched。"""
@@ -887,8 +886,10 @@ def classify_image(it, mine):
                 "reason": "issues：高疑似錯置 %d、中疑似錯置 %d、逐格數字差異 %d、D 存疑格 %d" % (hi, mid, cell, len(low))}
     clean = [m for m in done if _source_is_clean(m[3])]
     if clean:
+        extra = len(clean[0][3]["tokens"]["only_c"])
         return {"category": "ok", "issues": [],
-                "reason": "ok：%s 與 D 的數值完全一致（只在單邊的數字 0）；僅數字層，不含文字截斷檢查" % clean[0][0]["id"]}
+                "reason": "ok：%s 涵蓋 D 的全部數值（C 另多出 %d 個數字，常為座標軸或 OCR 結構差異；位置與漏列由文字抽查確認）；"
+                          "僅數字層，不含文字截斷檢查" % (clean[0][0]["id"], extra)}
     return {"category": "inconclusive", "issues": [], "reason": _inconclusive_reason(done)}
 
 
@@ -934,7 +935,7 @@ def build_parser():
                     help="數值相對容差（預設 0＝必須完全相同；0.01＝相差 1%% 內視為一致）")
     ap.add_argument("--normalize-text", action="store_true", help="非數字文字比較前歸一化（去空白、小寫、簡繁字形）")
     ap.add_argument("--emit-verification", default=None, metavar="PATH",
-                    help="另輸出 verification.json（method=compare-d-c；不覆寫既有檔）。ok＝數字層雙來源完全一致（不含文字截斷檢查，"
+                    help="另輸出 verification.json（method=compare-d-c；不覆寫既有檔）。ok＝D 的每個數字都被至少一個 C 來源涵蓋（C 多出的數字不算；不含位置對應與文字截斷檢查，"
                          "另需 agent 文字抽查才成為 cross_checked）；高中疑似錯置或逐格差異→issues；其餘（只在單邊的數字、"
                          "對齊失敗、非表格、未配對）為 inconclusive／未配對，不輸出")
     return ap

@@ -559,14 +559,31 @@ class EmitVerificationTest(Base):
         self.assertIn("C1", iss["where"])
         self.assertLessEqual(len(iss["where"]), 80)
 
-    def test_numbers_only_on_one_side_is_inconclusive_not_issues(self):
-        """只在單邊的數字（C 的結構差異）不是疑慮：不輸出，維持 unverified。"""
+    def test_extra_numbers_only_in_c_do_not_block_ok(self):
+        """C 多出來的數字（座標軸、OCR 重複、結構差異）不算疑慮：D 的每個數字都被 C 涵蓋就是 ok。"""
         c = BASE + [["新增列", "999,999", "888,888"]]
+        code, out, _e, pl = self.emit({1: tbl(BASE)}, {1: tbl(c)})
+        self.assertEqual(code, 0)
+        self.assertEqual(self.by_id(pl)[1]["verdict"], "ok")
+        self.assertIn("ok 1／issues 0／inconclusive 0／未配對 0", out)
+        self.assertRegex(self.report(), "驗證分類：ok：C1 涵蓋 D 的全部數值（C 另多出 2 個數字")
+
+    def test_d_numbers_missing_in_c_is_inconclusive_not_issues(self):
+        """D 的數字在 C 找不到（C 可能漏辨識）：不輸出，維持 unverified（既非 flagged、也不算數字家族通過）。"""
+        c = [r[:] for r in BASE]
+        c[3] = ["z", "", ""]                      # C 漏辨識了整列數字（BASE 的 (1,234)、5,678）
         code, out, _e, pl = self.emit({1: tbl(BASE)}, {1: tbl(c)})
         self.assertEqual(code, 0)
         self.assertIsNone(pl)
         self.assertIn("ok 0／issues 0／inconclusive 1／未配對 0", out)
-        self.assertRegex(self.report(), "驗證分類：inconclusive：只在單邊的數字 2 個，無高中疑似錯置")
+        self.assertRegex(self.report(), "驗證分類：inconclusive：D 的數字有 2 個在 C 找不到")
+
+    def test_c_missing_a_cell_is_not_a_cell_diff_but_d_missing_a_number_c_has_is_issues(self):
+        # C 該格空白（OCR 漏辨識）：不是不一致 → inconclusive（已由上一個測試涵蓋）；反過來 D 該格空白而 C 有數字＝D 可能漏了 → issues
+        d = [r[:] for r in BASE]
+        d[3] = ["淨利", "", ""]
+        code, out, _e, pl = self.emit({1: tbl(d)}, {1: tbl(BASE)})
+        self.assertEqual(self.by_id(pl)[1]["verdict"], "issues")
 
     def test_issues_list_never_contains_one_sided_numbers(self):
         c = [r[:] for r in BASE] + [["新增列", "999,999", "888,888"]]
@@ -614,12 +631,17 @@ class EmitVerificationTest(Base):
         self.assertIsNone(pl)
         self.assertIn("inconclusive 1", out)
 
-    def test_same_numbers_but_shape_differs_and_alignment_fails_is_inconclusive(self):
-        """多重集合相同，但形狀不同又對齊失敗（標頭文字對不上）→ 不輸出。"""
+    def test_same_numbers_but_shape_differs_and_alignment_fails_is_now_ok(self):
+        """多重集合涵蓋、形狀不同且標頭對齊失敗：數字有獨立佐證 → ok（位置對應由文字抽查確認，報告與文件有明講）。"""
         c = [["甲", "2023", "2024"], ["x", "24,417.0", "30,000"], ["y", "20.8%", "21.5%"], ["z", "(1,234)", "5,678"], ["w", "", ""]]
         code, out, _e, pl = self.emit({1: tbl(BASE)}, {1: tbl(c)})
+        self.assertEqual(self.by_id(pl)[1]["verdict"], "ok")
+
+    def test_shape_differs_and_numbers_differ_is_inconclusive(self):
+        c = [["完全", "不同"], ["x", "1"], ["y", "2"]]
+        code, out, _e, pl = self.emit({1: tbl(BASE)}, {1: tbl(c)})
         self.assertIsNone(pl)
-        self.assertRegex(self.report(), "驗證分類：inconclusive：形狀不同且標頭對齊失敗")
+        self.assertIn("inconclusive 1", out)
 
     def test_shape_differs_but_headers_align_and_agree_gives_ok(self):
         c = BASE + [["雜項", "", ""]]            # 多一列但標頭對齊成功、數字一致
@@ -675,9 +697,10 @@ class EmitVerificationTest(Base):
     def test_stdout_summary_has_four_counts_for_mixed_images(self):
         bad = [r[:] for r in BASE]
         bad[1][1] = "244,170"
-        extra = BASE + [["新增列", "999,999", "888,888"]]
+        missing = [r[:] for r in BASE]
+        missing[3] = ["z", "", ""]                 # C 漏辨識 D 的數字 → inconclusive
         code, out, _e, pl = self.emit({1: tbl(BASE), 2: tbl(BASE), 3: tbl(BASE), 4: tbl(BASE)},
-                                      {1: tbl(BASE), 2: tbl(bad), 3: tbl(extra), 4: tbl(BASE)}, statuses={4: "timeout"})
+                                      {1: tbl(BASE), 2: tbl(bad), 3: tbl(missing), 4: tbl(BASE)}, statuses={4: "timeout"})
         self.assertIn("ok 1／issues 1／inconclusive 1／未配對 1", out)
         self.assertEqual(sorted(self.by_id(pl)), [1, 2])
 
@@ -693,7 +716,7 @@ class EmitVerificationTest(Base):
         c = self.make_c({1: tbl(BASE)})
         code, _o, _e = self.run_cli("--d-results", dres, "--c-report", c, "--out", self.out)
         rep = self.report()
-        self.assertRegex(rep, "驗證分類：ok：C1 與 D 的數值完全一致（只在單邊的數字 0）；僅數字層，不含文字截斷檢查")
+        self.assertRegex(rep, "驗證分類：ok：C1 涵蓋 D 的全部數值（C 另多出 0 個數字")
 
     def test_d_not_table_and_c_empty_not_emitted(self):
         _c, _o, _e, pl = self.emit({1: ""}, {1: ""}, is_table={1: False})
