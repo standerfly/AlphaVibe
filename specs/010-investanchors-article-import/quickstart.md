@@ -232,10 +232,10 @@ python3 poc/kb-mcp/compare_transcriptions.py --d-results <manual-transcribe-資�
 ```
 - `method=compare-d-c`、`verifier=compare-transcriptions`；**只算數字家族**，每筆帶由 D results 的 `text` 計算的 `transcription_sha256`（須與匯入資料庫的文字一致，所以 D 要先 `--import-transcription --apply`，再匯入驗證）。判定（2026-11-18 PO 修正：原規則把「只在單邊的數字」也當疑慮，正式環境 7 張全標 issues）：每張圖彙整**所有成功比對的 C 來源**，分四類——
   - **`issues`**：任一成功來源出現「高或中疑似錯置」或「逐格數字差異」（形狀相同或標頭對齊成功時），或 D 有 `[?]` 存疑格；清單只列這些（`where`／`found`／`expected`／`kind`），**不列**「只在單邊」的數字。任何 issues 勝過 ok（壞消息優先）。
-  - **`ok`**：至少一個成功來源與 D 的數值 token 多重集合**完全相同**（只在單邊的數字＝0）、無任何疑似錯置與逐格差異、且形狀相同或標頭對齊成功，並且沒有任何來源出現 issues 的疑慮。
-  - **`inconclusive`**（**不寫進 verification.json**，維持 unverified——既不是 flagged、也不算數字家族通過）：沒有疑慮、但也不滿足 ok，例如只有「只在單邊」的數字差異（多半是 C 的 OCR 結構差異、模式間重複）、形狀不同又標頭對齊失敗、C 只有純文字沒有表格、兩邊都沒有數字可比；**D 判為非表格**一律 inconclusive（例如柱狀圖被 C 轉出座標軸文字），報告仍註明 C 是否有內容。
+  - **`ok`**（2026-11-18 第 2 次修正：「涵蓋」規則，降低需 PO 確認的量）：至少一個成功來源**涵蓋 D**——D 的每個數值 token 都能在 C 找到、無任何疑似錯置與逐格差異；**C 多出來的數字（座標軸、OCR 重複、結構差異）不算疑慮**，形狀不同、標頭對齊失敗也不再阻擋；並且沒有任何來源出現 issues 的疑慮。意義：D 的每個數字都有至少一個獨立 OCR 佐證；**位置對應（數字是否放對格）與漏列／文字截斷由文字家族 agent-spot-check 逐格確認**，所以 ok 單獨仍不進搜尋。
+  - **`inconclusive`**（**不寫進 verification.json**，維持 unverified——既不是 flagged、也不算數字家族通過）：沒有疑慮、但也不滿足 ok，例如 **D 的數字有些在 C 找不到**（C 可能漏辨識；某格 C 沒辨識出任何數字也歸此類，不算「不一致」）、僅有低等級格式差異、兩邊都沒有數字可比；**D 判為非表格**一律 inconclusive（例如柱狀圖被 C 轉出座標軸文字），報告仍註明 C 是否有內容。反過來「D 該格空白而 C 有數字」仍是 `issues`（D 可能漏了）。
   - **未配對**：沒有任何成功比對的 C 來源（不輸出）。
-  - stdout 摘要列 `ok N／issues N／inconclusive N／未配對 N`；報告 `compare-*.md` 每張圖有一行「驗證分類：…」原因（只含數量與分類，如「inconclusive：只在單邊的數字 X 個，無高中疑似錯置」）。
+  - stdout 摘要列 `ok N／issues N／inconclusive N／未配對 N`；報告 `compare-*.md` 每張圖有一行「驗證分類：…」原因（只含數量與分類，如「inconclusive：D 的數字有 X 個在 C 找不到」）。
 - **雙來源一致不代表正確**：兩個引擎可能犯同樣的錯；非數字文字差異（例如備註被截斷）**不在判定內**（OCR 雜訊太多）。所以 compare 的 `ok` 只代表「**數字層雙來源一致**」、**不含文字截斷檢查**（「營收」被截成「營」仍可能 ok），只記「數字家族通過」，**不會**讓轉寫進搜尋；文字欄位要靠 agent 抽查（流程二），兩者都通過才是 `cross_checked`，最後由 PO 核對。
 - 匯入：`python3 poc/kb-mcp/investanchors_import.py --data-dir <資料目錄> --import-verification <verification.json>`（預設只預覽；確認後加 `--apply`）。
 
