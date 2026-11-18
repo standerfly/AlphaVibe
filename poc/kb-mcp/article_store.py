@@ -857,12 +857,12 @@ class ArticleStore(object):
         self.conn.commit()
 
     def pipeline_usage_today(self, now=None):
-        """以台北日期計今天的 (執行次數, 已嘗試張數)。舊庫沒有紀錄表＝(0, 0)。"""
+        """以台北日期計今天的 (執行次數, 已嘗試張數)。舊庫沒有紀錄表＝(0, 0)。執行次數不計 aborted_*（登入失效等未呼叫模型即中止的執行不佔每日次數）。"""
         if not self._has_pipeline_table():
             return 0, 0
         day = _aware(now or self.now()).astimezone(TZ8).date().isoformat()
         row = self.conn.execute(
-            "SELECT COUNT(*), COALESCE(SUM(images_attempted), 0) FROM pipeline_run WHERE substr(started_at,1,10)=?",
+            "SELECT COALESCE(SUM(result IS NULL OR result NOT LIKE 'aborted%'), 0), COALESCE(SUM(images_attempted), 0) FROM pipeline_run WHERE substr(started_at,1,10)=?",
             (day,)).fetchone()
         return row[0], row[1]
 

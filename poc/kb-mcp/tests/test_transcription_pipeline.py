@@ -81,13 +81,13 @@ class GuardTest(unittest.TestCase):
         self.assertEqual(CR.assert_argv_safe(["claude", "--model", "opus"]), ["claude", "--model", "opus"])
 
     def test_env_is_whitelist_and_strips_billing_variables(self):
-        base = {"PATH": "/bin", "HOME": "/h", "LANG": "C", "ANTHROPIC_API_KEY": "sk-ant-x", "ANTHROPIC_AUTH_TOKEN": "t",
+        base = {"PATH": "/bin", "HOME": "/h", "LANG": "C", "USER": "u", "LOGNAME": "u", "ANTHROPIC_API_KEY": "sk-ant-x", "ANTHROPIC_AUTH_TOKEN": "t",
                 "ANTHROPIC_BASE_URL": "http://x", "CLAUDE_CODE_USE_BEDROCK": "1", "CLAUDE_CODE_USE_VERTEX": "1",
                 "AWS_ACCESS_KEY_ID": "a", "HTTPS_PROXY": "p", "FOO": "bar"}
         env = CR.build_env(None, base)
-        self.assertEqual(set(env), {"PATH", "HOME", "LANG"})
+        self.assertEqual(set(env), {"PATH", "HOME", "LANG", "USER", "LOGNAME"})
         env2 = CR.build_env(TOKEN, base)
-        self.assertEqual(set(env2), {"PATH", "HOME", "LANG", "CLAUDE_CODE_OAUTH_TOKEN"})
+        self.assertEqual(set(env2), {"PATH", "HOME", "LANG", "USER", "LOGNAME", "CLAUDE_CODE_OAUTH_TOKEN"})
 
     def test_assert_env_safe_rejects_billing_and_unknown_variables(self):
         for k in CR.BILLING_ENV_NAMES + ("ANTHROPIC_FOO", "CLAUDE_CODE_USE_MANTLE", "RANDOM_VAR"):
@@ -172,7 +172,7 @@ class GuardTest(unittest.TestCase):
         self.assertFalse(T.parse_args(["--data-dir", "x"]).unrestricted_read)
 
     def test_env_whitelist_is_minimal(self):
-        self.assertEqual(set(CR.ENV_ALLOW), {"PATH", "HOME", "LANG"})
+        self.assertEqual(set(CR.ENV_ALLOW), {"PATH", "HOME", "LANG", "USER", "LOGNAME"})
 
 
 class ClassifyFailureTest(unittest.TestCase):
@@ -777,6 +777,15 @@ class UsageLimitTest(PBase):
         self.assertEqual(self.run_pipe(), 0)
         self.assertIn("達每日上限", self.text())
         self.assertEqual(self.stub.calls(), [])
+
+    def test_aborted_runs_do_not_count_toward_daily_run_cap(self):
+        for _ in range(T.MAX_RUNS_PER_DAY + 1):
+            s = self.store()
+            s.finish_pipeline_run(s.start_pipeline_run("cron"), "aborted_login", {})
+            s.close()
+        s = self.store()
+        self.assertEqual(s.pipeline_usage_today()[0], 0)
+        s.close()
 
     def test_daily_image_cap_limits_batch(self):
         s = self.store()
