@@ -456,7 +456,7 @@ class HappyPathTest(PBase):
             self.assertIn(c["args"][c["args"].index("--model") + 1], CR.MODEL_ALIASES)
 
     def test_max_images_default_and_hard_cap(self):
-        self.assertEqual(self.run_pipe("--max-images", "6"), 2)
+        self.assertEqual(self.run_pipe("--max-images", "7"), 2)
         self.assertEqual(self.stub.calls(), [])
         self.assertEqual(self.run_pipe("--max-images", "0"), 2)
 
@@ -855,7 +855,7 @@ class SafetyGatesTest(PBase):
         a = T.parse_args(["--data-dir", "x"])
         self.assertEqual(a.claude_bin, "/Users/stander/.local/bin/claude")
         self.assertEqual(a.paddle_python, os.path.expanduser("~/.venvs/paddle/bin/python"))
-        self.assertEqual((a.max_images, a.reader1_model, a.verifier_model), (3, "sonnet", "opus"))
+        self.assertEqual((a.max_images, a.reader1_model, a.verifier_model), (6, "sonnet", "opus"))
 
 
 class RequiredFlagsAbortTest(PBase):
@@ -976,8 +976,8 @@ class FalsePositiveGuardTest(PBase):
 
 class DefaultsTest(unittest.TestCase):
     def test_conservative_daily_defaults(self):
-        self.assertEqual((T.DEFAULT_MAX_IMAGES, T.MAX_RUNS_PER_DAY, T.MAX_IMAGES_PER_DAY), (3, 2, 6))
-        self.assertEqual(T.HARD_MAX_IMAGES, 5)
+        self.assertEqual((T.DEFAULT_MAX_IMAGES, T.MAX_RUNS_PER_DAY, T.MAX_IMAGES_PER_DAY), (6, 2, 6))
+        self.assertEqual(T.HARD_MAX_IMAGES, 6)
 
     def test_optional_flag_values_match_mac_verified_combo(self):
         _m, args, _d = CR.plan_flags(F.HELP_BASE + F.HELP_OPTIONAL)
@@ -1489,7 +1489,7 @@ class PlistTest(unittest.TestCase):
 
     def test_two_times_1310_and_2340(self):
         sci = self.p["StartCalendarInterval"]
-        self.assertEqual([(d["Hour"], d["Minute"]) for d in sci], [(13, 10), (23, 40)])
+        self.assertEqual([(d["Hour"], d["Minute"]) for d in sci], [(23, 40)])
         self.assertLessEqual(len(sci), T.MAX_RUNS_PER_DAY)
 
     def test_no_runatload_or_keepalive(self):
