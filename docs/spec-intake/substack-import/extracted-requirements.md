@@ -83,7 +83,7 @@
 | GAP-001 | SRC-001, SRC-002 | Conflict | PO prompt 要求日誌／通知／回報不得含標題；PO 決定 9 要求通知含作者＋標題 | Resolved | 以 SRC-002 為準：通知可含、日誌與錯誤訊息不含（clarification Q-009） |
 | GAP-002 | SRC-001, SRC-002 | Conflict | prompt 列「RSS 為主、Gmail 通知信為輔」與「可共用 articles.db」；決定為 RSS 唯一、獨立庫 | Resolved | 以 SRC-002 為準 |
 | GAP-003 | SRC-001, SRC-002 | Unclear | 「每次真實對外執行由 PO 在對話確認」與「每日 22:00 無人值守排程」如何並存 | Resolved | 追加決定第1題：還原為登入／鑰匙圈／消耗用量須親自確認，安裝排程須親自確認，RSS 輪詢不逐次確認（Q-101） |
-| GAP-004 | SRC-002, SRC-004 | Conflict | 「需要時轉寫指定圖片，重用 010 流水線」與「不動 `articles.db`」：流水線讀取的是 `articles.db` 的圖片資料 | Partially Resolved | 追加決定第2題：第一版手動少量轉寫、不改 010；實作路徑與 PO 解讀確認見 Q-115 |
+| GAP-004 | SRC-002, SRC-004 | Conflict | 「需要時轉寫指定圖片，重用 010 流水線」與「不動 `articles.db`」：流水線讀取的是 `articles.db` 的圖片資料 | Partially Resolved | 追加決定第2題：第一版手動少量轉寫、不改 010；PO 解讀已確認（Q-115 Answered）；實作路徑見 Q-122 |
 | GAP-005 | SRC-002, SRC-004 | Unclear | `get_article` 目前以整數 article_id 識別；兩庫並查時 011 文章如何識別 | Open | 見 Q-108（設計層，非阻擋） |
 | GAP-006 | SRC-002 | Unclear | 文章發布後內容被作者修改（同 guid、內容不同）時是否更新已存內容 | Open | 見 Q-109 |
 | GAP-007 | SRC-003 §2 | Unclear | feed 固定 20 篇；若兩次輪詢之間發文超過 20 篇會漏文（低頻作者機率低） | Open | 見 Q-110，非阻擋 |

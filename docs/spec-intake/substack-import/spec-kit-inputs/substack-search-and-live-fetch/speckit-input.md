@@ -6,7 +6,7 @@
 **Spec Feature Slug:** substack-search-and-live-fetch
 **Handoff Order:** 2
 
-> Draft：依賴第 1 包，且尚含 Open 項（Q-102、Q-108、Q-113、Q-118；Q-104 待 PO 審閱確認、不阻擋），不得交給 speckit-specify。
+> Draft：依賴第 1 包，阻擋 Accept 的項目已清零（Q-102 已答）；尚含不阻擋 Open 項（Q-108、Q-113、Q-118；Q-104 待 PO 審閱確認），product-spec 未 Accepted，不得交給 speckit-specify。
 
 ## Feature Summary
 
@@ -27,7 +27,7 @@
 - 通用即時取得寫入工具：台股與美股連接器都提供且行為逐字相同；Mac Claude Code 亦可觸發。
 - 可指定單一作者或全部；與排程共用鎖、去重、資料庫；只認 RSS；feed 未出現回報稍後再試。
 - 圖片同步下載，失敗者留給排程補下載；須在連接器逾時內回報進度或分段（Q-118）。
-- 同作者最小輪詢間隔守衛（數值待 Q-102），任何輪詢（排程或即時）都計入。
+- 同作者最小輪詢間隔守衛：預設 30 分鐘、為可隨時調整的設定（不寫死）（Q-102），任何輪詢（排程或即時）都計入。
 - 引用 Substack 作者意見時標明來源與「僅預覽」（FR-029）。
 - 新增寫入工具不得破壞 010「文章通道唯讀」守門，須另證（FR-027）。
 - 不接受網址參數；只寫 `substack.db`；不進唯讀白名單。
@@ -65,8 +65,8 @@
 
 ## Constraints And Assumptions
 
-PO 親自確認範圍為登入／鑰匙圈／消耗用量與安裝排程，RSS 輪詢不逐次確認（Q-101 已答）；站方速率上限未知，間隔數值由 PO 決定（Q-102）；feed 發文延遲未實測（Q-112）；遠端分支 `origin/claude/substack-article-discussion-8c62eh` 若先合併會使守門基準變動（台 52、唯讀 33），故守門數字用相對敘述（Q-104，待審閱不阻擋）；`~/.claude` stock-researcher 白名單不在 repo，需 PO 在 Mac 同步（SRC-001）。
+PO 親自確認範圍為登入／鑰匙圈／消耗用量與安裝排程，RSS 輪詢不逐次確認（Q-101 已答）；站方速率上限未知，間隔預設 30 分鐘、可隨時調整，PO 已同意（Q-102 已答）；feed 發文延遲未實測（Q-112）；遠端分支 `origin/claude/substack-article-discussion-8c62eh` 若先合併會使守門基準變動（台 52、唯讀 33），故守門數字用相對敘述（Q-104，待審閱不阻擋）；`~/.claude` stock-researcher 白名單不在 repo，需 PO 在 Mac 同步（SRC-001）。
 
 ## Source Decisions
 
-clarification-log.md：Q-012～Q-015、Q-119、Q-121 已答；Open：Q-102、Q-104（待審閱，不阻擋）、Q-108、Q-112、Q-113、Q-118。支援文件：supporting-artifacts/permission-security-note.md、integration-note.md、schedule-and-locks.md。
+clarification-log.md：Q-012～Q-015、Q-102、Q-119、Q-121 已答；Open（皆不阻擋）：Q-104（待審閱）、Q-108、Q-112、Q-113、Q-118。支援文件：supporting-artifacts/permission-security-note.md、integration-note.md、schedule-and-locks.md。

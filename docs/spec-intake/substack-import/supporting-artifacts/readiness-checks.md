@@ -25,11 +25,11 @@
 | Gap ID | Artifact | Blocking? | Needed Decision Or Content | Owner | Status |
 |--------|----------|-----------|----------------------------|-------|--------|
 | GAP-001 | 排程授權與每次執行確認的解讀 | No | Q-101 已答（追加決定第1題） | Stander | Closed |
-| GAP-002 | 即時取得最小間隔數值 | Yes | Q-102 | Stander | Open |
+| GAP-002 | 即時取得最小間隔數值 | No | Q-102 已答（預設 30 分鐘、可調；追加決定三） | Stander | Closed |
 | GAP-003 | 付費預覽判斷規則 | No | Q-103 已答（三類規則；追加決定二） | Stander | Closed |
 | GAP-004 | 遠端分支與工具數守門 | No | Q-104 待審閱確認（守門數字改相對敘述；不阻擋 Accept） | Stander | Open |
-| GAP-005 | 手動轉寫的 PO 解讀確認與實作路徑 | Yes | Q-106 已答；解讀確認與路徑見 Q-115 | Stander／規格階段 | Open |
-| GAP-006 | ToS 風險承擔書面記錄 | Yes | Q-107 | Stander | Open |
+| GAP-005 | 手動轉寫的實作路徑 | No | Q-106、Q-115 已答（解讀確認＋試跑對象規則）；路徑見 Q-122 | 規格階段 | Open |
+| GAP-006 | ToS 風險承擔書面記錄 | No | Q-107 已答（PO 明確承擔，附使用約束；追加決定三） | Stander | Closed |
 | GAP-007 | 23:00／23:40 搶庫日誌結果 | No | Q-105 | Stander／Claude | Open |
 | GAP-008 | 備份與健檢納入範圍、feed 延遲、圖片細節、雙庫搜尋識別 | No | Q-108～Q-114 | Stander | Open |
 | GAP-009 | 逾時秒數、作者間隔、告警門檻、補跑規則等數值 | No | 規格階段補 | Claude／Stander | Open |

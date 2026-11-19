@@ -6,7 +6,7 @@
 **Spec Feature Slug:** substack-fetch-and-store
 **Handoff Order:** 1
 
-> Draft：尚含 Open 項（阻擋 Accept：Q-107、Q-115；不阻擋：Q-111、Q-117），不得交給 speckit-specify。
+> Draft：阻擋 Accept 的項目已清零（Q-107、Q-115 已答）；尚含不阻擋 Open 項（Q-111、Q-117、Q-122 等），product-spec 未 Accepted，不得交給 speckit-specify。
 
 ## Feature Summary
 
@@ -29,7 +29,7 @@ PO 追蹤的作者有新文章時，需要自動存到 Mac 供 claude.ai 對話�
 - 獨立 `substack.db`；guid／URL 去重；首次只收 14 天內。
 - 免費全文；付費僅預覽並標記「僅預覽」；判斷規則三類（P 預覽＝content:encoded 結尾為固定「Read more」連結段落；F 全文＝無該尾端且有足夠純文字；N 非文字＝無該尾端且幾乎無文字或僅有播放器），無法確定者一律存為「僅預覽」並標示，不得以文章長度判斷。
 - 圖片下載、不自動分析、保留圖位標記（含圖說／alt）；下載失敗的圖由排程補下載。
-- 手動轉寫少數幾篇文章（限手動、不排程、須 PO 當下確認、不改 010 行為；實作路徑待 Q-115）。
+- 手動轉寫少數幾篇文章（限手動、不排程、須 PO 當下確認、不改 010 行為）；試跑對象＝判定為 F（全文）類、較近期文章，每位作者至少 1 篇、至多 3 篇（Q-115）；實作路徑待規格階段（Q-122）。
 - 每日 22:00；05:00～18:00 只約束消耗 AI agent token 的工作，RSS 抓取與 22:00 排程不受限；011 專屬鎖。
 - 會消耗 token 的排程間隔過短時提醒 PO（健檢／通知，不自動改排程；數值待 Q-117）。
 - Telegram 通知含作者＋標題；日誌與錯誤訊息不含標題；外洩掃描。
@@ -56,7 +56,7 @@ Gmail 通知信、登入／cookie／繞付費牆、抓單篇網頁、改動 `art
 ## Functional Requirements
 
 對應 product-spec.md：FR-001～FR-017、FR-025（定錨查詢不變）、FR-026、FR-030（token 排程間隔提醒）、FR-031（預覽比例異常提醒）、FR-032（價值說明）。重點：
-- FR-010 手動少量轉寫：不寫死實作路徑，規格階段判定並證明 010 不變（Q-115）。
+- FR-010 手動少量轉寫：試跑通過標準見 product-spec 情境 12；不寫死實作路徑，規格階段判定並證明 010 不變（Q-122）。
 - 去重與重跑安全；單作者／單篇失敗互不影響；不留半寫入紀錄。
 - 付費判斷依三類規則（FR-007，Q-103 已答）；結尾標記為推論非站方保證，站方改版會使判斷整批失準，須有預覽比例異常提醒（FR-031：全文比例突然異常時健檢提醒，只報現況、不自動處置，數值待規格）。
 - 價值說明（FR-032）：依 2026-11-19 實測，兩作者近 40 篇中約 35 篇為僅預覽，PO 已知悉並決定繼續。
@@ -72,8 +72,8 @@ Gmail 通知信、登入／cookie／繞付費牆、抓單篇網頁、改動 `art
 
 ## Constraints And Assumptions
 
-macOS Mac mini、python3 3.9.6 標準庫、launchd、`AlphaVibe-prod` 部署；RSS 每 feed 固定 20 篇；付費文章僅預覽且無機器可讀旗標；站方限速未公布；ToS 灰色地帶由 PO 承擔（Q-107）；PO 親自確認範圍為登入／鑰匙圈／消耗用量與安裝排程，RSS 輪詢不逐次確認（Q-101 已答）；子行程環境白名單含 USER 與 LOGNAME；路徑以 realpath 比對。
+macOS Mac mini、python3 3.9.6 標準庫、launchd、`AlphaVibe-prod` 部署；RSS 每 feed 固定 20 篇；付費文章僅預覽且無機器可讀旗標；站方限速未公布；ToS 灰色地帶由 PO 明確承擔（Q-107 已答）：僅供 PO 本人本機使用、不轉發、不公開、不批量備份他人作品，資料不得出現在任何對外服務或公開位置；PO 親自確認範圍為登入／鑰匙圈／消耗用量與安裝排程，RSS 輪詢不逐次確認（Q-101 已答）；子行程環境白名單含 USER 與 LOGNAME；路徑以 realpath 比對。
 
 ## Source Decisions
 
-clarification-log.md：Q-001～Q-011、Q-101、Q-103、Q-106、Q-119～Q-121 已答（含 Q-103）；Open：Q-105、Q-107、Q-109、Q-110、Q-111、Q-114、Q-115、Q-116、Q-117。追加決定來源：raw/2026-11-19-po-decisions-dialogue.md「追加決定」節。範圍見 scope-decision.md；支援文件見 supporting-artifacts/（整合、錯誤矩陣、安全、資料模型、排程與鎖、流程與狀態模型）。
+clarification-log.md：Q-001～Q-011、Q-101、Q-103、Q-106、Q-107、Q-115、Q-119～Q-121 已答；Open（皆不阻擋）：Q-105、Q-109、Q-110、Q-111、Q-114、Q-116、Q-117、Q-122。追加決定來源：raw/2026-11-19-po-decisions-dialogue.md「追加決定」節。範圍見 scope-decision.md；支援文件見 supporting-artifacts/（整合、錯誤矩陣、安全、資料模型、排程與鎖、流程與狀態模型）。
