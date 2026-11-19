@@ -1,14 +1,14 @@
 # Product Spec: Substack 文章自動匯入（011）
 
-**Status:** In Review
+**Status:** Accepted
 **Feature Slug:** substack-import
 **Function Branch:** function/substack-import
 **Product Owner:** Stander
 **TPM:** Stander
-**Accepted At:** N/A
-**Acceptance Evidence:** N/A
+**Accepted At:** 2026-11-19
+**Acceptance Evidence:** PO（Stander）於 2026-11-19 對話明確回覆「顯接受目前作法，Accept」（含審閱三個待核對點：決定紀錄為整理稿、Q-103 總括確認、Q-104 相對守門數字）；紀錄於 raw/2026-11-19-po-decisions-dialogue.md 最末節
 
-> 本文為草稿（Status：In Review＝阻擋項已清零、待 PO 審閱與 Accept；**尚未 Accepted**）；Open 項見 clarification-log.md B 節。2026-11-19「追加決定（阻擋項 Q-102／Q-107／Q-115）」已併入。2026-11-19 驗收後 PO 追加五項決定與「Q-103／Q-104 調查後」追加決定（SRC-002 兩個「追加決定」節，優先級最高）已併入本文。來源代號：SRC-001 PO prompt、SRC-002 PO 決定紀錄（優先）、SRC-003 RSS／ToS 研究、SRC-004 010 盤點、SRC-005 僅預覽判斷分析（agent 產出，PO 只做總括確認）。需求 ID（FR）可追溯至 extracted-requirements.md 的 CFR 編號。
+> 本文已於 2026-11-19 經 PO Accept（見上方 Acceptance Evidence）；兩個 speckit-input 仍為 Draft，交付 Spec Kit 需 PO 另行批准 handoff；Open 項見 clarification-log.md B 節。2026-11-19「追加決定（阻擋項 Q-102／Q-107／Q-115）」已併入。2026-11-19 驗收後 PO 追加五項決定與「Q-103／Q-104 調查後」追加決定（SRC-002 兩個「追加決定」節，優先級最高）已併入本文。來源代號：SRC-001 PO prompt、SRC-002 PO 決定紀錄（優先）、SRC-003 RSS／ToS 研究、SRC-004 010 盤點、SRC-005 僅預覽判斷分析（agent 產出，PO 只做總括確認）。需求 ID（FR）可追溯至 extracted-requirements.md 的 CFR 編號。
 
 ## Problem And Goal
 
