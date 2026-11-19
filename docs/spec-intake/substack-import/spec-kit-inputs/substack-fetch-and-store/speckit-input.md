@@ -1,6 +1,6 @@
 # Spec Kit Input: Substack 文章抓取與儲存
 
-**Status:** Draft
+**Status:** Accepted
 **Source Product Spec:** ../../product-spec.md
 **Source Scope Decision:** ../../scope-decision.md
 **Spec Feature Slug:** substack-fetch-and-store

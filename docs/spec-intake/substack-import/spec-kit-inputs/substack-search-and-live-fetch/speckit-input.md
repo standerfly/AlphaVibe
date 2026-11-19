@@ -1,6 +1,6 @@
 # Spec Kit Input: Substack 搜尋整合與即時取得
 
-**Status:** Draft
+**Status:** Accepted
 **Source Product Spec:** ../../product-spec.md
 **Source Scope Decision:** ../../scope-decision.md
 **Spec Feature Slug:** substack-search-and-live-fetch

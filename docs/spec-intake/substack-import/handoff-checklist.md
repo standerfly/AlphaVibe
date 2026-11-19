@@ -3,13 +3,13 @@
 **Feature Slug:** substack-import
 **Product Spec:** product-spec.md
 **Spec Kit Inputs Index:** spec-kit-inputs/index.md
-**Status:** Draft
+**Status:** Ready
 
 ## Product Baseline
 
 - [x] `docs/spec-intake/index.md` lists this feature workspace
-- [ ] `product-spec.md` status is `Accepted`
-- [ ] PO and TPM approval are recorded in `product-spec.md`
+- [x] `product-spec.md` status is `Accepted`
+- [x] PO and TPM approval are recorded in `product-spec.md`（PO／TPM 皆為 Stander，Acceptance Evidence 已記）
 - [x] All raw source material for this feature is listed in `intake-index.md`
 - [x] Blocking questions in `clarification-log.md` are resolved（2026-11-19：Q-102／Q-107／Q-115 已答，阻擋清單清零）
 - [x] In-scope and out-of-scope decisions are recorded in `scope-decision.md`
@@ -28,15 +28,15 @@
 
 - [x] `spec-kit-inputs/index.md` lists every generated input package
 - [x] Each input package has exactly one Spec Kit feature boundary
-- [N/A] Each accepted `speckit-input.md` has `Status: Accepted`（目前無 Accepted 套件，兩包皆 Draft）
-- [N/A] Each accepted `speckit-input.md` links back to source decisions（同上；Draft 包已有 Source Decisions 節）
-- [N/A] Handoff order is recorded for accepted input packages（同上；Draft 包的順序已記於 spec-kit-inputs/index.md）
+- [x] Each accepted `speckit-input.md` has `Status: Accepted`
+- [x] Each accepted `speckit-input.md` links back to source decisions
+- [x] Handoff order is recorded for accepted input packages（spec-kit-inputs/index.md）
 
 ## Handoff Approval
 
-- [N/A] TPM confirms accepted input packages are ready for `speckit-specify`（無 Accepted 套件，待 PO 審閱後才適用）
-- [ ] PO confirms the split from product spec to Spec Kit inputs is acceptable（未簽核，非 N/A）
-- [N/A] No accepted input contains unresolved contradictions or meeting-note noise（無 Accepted 套件）
+- [x] TPM confirms accepted input packages are ready for `speckit-specify`（Stander 於 2026-11-19 對話選「批准 handoff，進入 Spec Kit」）
+- [x] PO confirms the split from product spec to Spec Kit inputs is acceptable（同上，兩包拆法於提問中明列）
+- [x] No accepted input contains unresolved contradictions or meeting-note noise（已通過獨立驗收；13 個非阻擋 Open 項於 Spec Kit 階段處理）
 
 ## Notes
 

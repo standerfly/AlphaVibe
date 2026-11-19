@@ -63,3 +63,10 @@
 - PO 原話：「顯接受目前作法，Accept」（「顯」疑為「現」之筆誤；整理者解讀為「現在接受目前作法，Accept」）。
 - 範圍：Accept `product-spec.md`，並接受審閱時列出的三個待核對點之現行處理（決定紀錄為整理稿、Q-103 以總括確認定案、Q-104 以相對守門數字處理）。
 - 未涵蓋：兩個 speckit-input 的 Accepted 與 handoff 批准——PO 尚未明確給出，維持 Draft。
+
+---
+
+# PO 批准 handoff（2026-11-19）
+
+- Claude 提問：下一步 1.批准 handoff 進入 Spec Kit（兩個輸入包標 Accepted、走 speckit-specify，建議先處理 Q-122／Q-118）、2.先推送備份、3.今天先停。PO 原話：「1.」
+- 整理者解讀：PO 批准 handoff 並同意兩包拆法；兩個 speckit-input 標 Accepted；先第 1 包（substack-fetch-and-store）再第 2 包。
