@@ -6,7 +6,7 @@
 **Spec Feature Slug:** substack-search-and-live-fetch
 **Handoff Order:** 2
 
-> Draft：依賴第 1 包，且尚含 Open 項（Q-102、Q-104、Q-108、Q-113、Q-118），不得交給 speckit-specify。
+> Draft：依賴第 1 包，且尚含 Open 項（Q-102、Q-108、Q-113、Q-118；Q-104 待 PO 審閱確認、不阻擋），不得交給 speckit-specify。
 
 ## Feature Summary
 
@@ -31,7 +31,7 @@
 - 引用 Substack 作者意見時標明來源與「僅預覽」（FR-029）。
 - 新增寫入工具不得破壞 010「文章通道唯讀」守門，須另證（FR-027）。
 - 不接受網址參數；只寫 `substack.db`；不進唯讀白名單。
-- 守門數字：台股 50→51、美股 10→11、唯讀 31 不變；parity 測試僅對該工具例外並新增專屬測試。
+- 守門數字：以合併當下 `function/alphavibe` 實際值為準：011 為台股／美股各 +1、唯讀不變（撰寫時 2026-11-19 實測基準：台股 50、美股 10、唯讀 31，僅為背景資訊）；011 tasks 階段須在合併當下重算；parity 測試僅對該工具例外並新增專屬測試。
 - 舊庫（無新欄位）與 `substack.db` 不存在時唯讀查詢相容。
 
 ## Out Of Scope
@@ -57,7 +57,7 @@
 
 ## Success Criteria
 
-- 工具數：台股 51、美股 11、唯讀 31。
+- 工具數：台股與美股各比合併當下基準 +1、唯讀不變（基準以合併當下實際值為準）。
 - 唯讀白名單測試證明不含即時取得工具。
 - 兩連接器該工具輸出逐字相同（專屬 parity 測試）。
 - 既有定錨文章搜尋結果前後一致。
@@ -65,8 +65,8 @@
 
 ## Constraints And Assumptions
 
-PO 親自確認範圍為登入／鑰匙圈／消耗用量與安裝排程，RSS 輪詢不逐次確認（Q-101 已答）；站方速率上限未知，間隔數值由 PO 決定（Q-102）；feed 發文延遲未實測（Q-112）；遠端分支 `origin/claude/substack-article-discussion-8c62eh` 可能影響工具數守門（Q-104）；`~/.claude` stock-researcher 白名單不在 repo，需 PO 在 Mac 同步（SRC-001）。
+PO 親自確認範圍為登入／鑰匙圈／消耗用量與安裝排程，RSS 輪詢不逐次確認（Q-101 已答）；站方速率上限未知，間隔數值由 PO 決定（Q-102）；feed 發文延遲未實測（Q-112）；遠端分支 `origin/claude/substack-article-discussion-8c62eh` 若先合併會使守門基準變動（台 52、唯讀 33），故守門數字用相對敘述（Q-104，待審閱不阻擋）；`~/.claude` stock-researcher 白名單不在 repo，需 PO 在 Mac 同步（SRC-001）。
 
 ## Source Decisions
 
-clarification-log.md：Q-012～Q-015、Q-119、Q-121 已答；Open：Q-102、Q-104、Q-108、Q-112、Q-113、Q-118。支援文件：supporting-artifacts/permission-security-note.md、integration-note.md、schedule-and-locks.md。
+clarification-log.md：Q-012～Q-015、Q-119、Q-121 已答；Open：Q-102、Q-104（待審閱，不阻擋）、Q-108、Q-112、Q-113、Q-118。支援文件：supporting-artifacts/permission-security-note.md、integration-note.md、schedule-and-locks.md。

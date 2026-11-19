@@ -26,8 +26,8 @@
 |--------|----------|-----------|----------------------------|-------|--------|
 | GAP-001 | 排程授權與每次執行確認的解讀 | No | Q-101 已答（追加決定第1題） | Stander | Closed |
 | GAP-002 | 即時取得最小間隔數值 | Yes | Q-102 | Stander | Open |
-| GAP-003 | 付費預覽判斷規則抽樣驗證 | Yes | Q-103（僅 RSS 輪詢抽樣，依 Q-101 不需逐次確認） | Stander／驗收 agent | Open |
-| GAP-004 | 遠端分支與工具數守門衝突查證 | Yes | Q-104 | Stander | Open |
+| GAP-003 | 付費預覽判斷規則 | No | Q-103 已答（三類規則；追加決定二） | Stander | Closed |
+| GAP-004 | 遠端分支與工具數守門 | No | Q-104 待審閱確認（守門數字改相對敘述；不阻擋 Accept） | Stander | Open |
 | GAP-005 | 手動轉寫的 PO 解讀確認與實作路徑 | Yes | Q-106 已答；解讀確認與路徑見 Q-115 | Stander／規格階段 | Open |
 | GAP-006 | ToS 風險承擔書面記錄 | Yes | Q-107 | Stander | Open |
 | GAP-007 | 23:00／23:40 搶庫日誌結果 | No | Q-105 | Stander／Claude | Open |
