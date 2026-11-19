@@ -28,16 +28,10 @@
         <key>ALPHAVIBE_ALLOW_PRODUCTION_WRITE</key>
         <string>1</string>
     </dict>
-    <!-- 每日 13:10 與 23:40：避開既有排程（02:00、03:30、03:45、04:00、06:00、07:45、09:30、12:30、17:00、20:15、23:00、23:15、週一 10:00）。
-         一次一個行程；刻意不設 RunAtLoad／KeepAlive：安裝或開機時不得立即呼叫 claude。每次最多 3 張、每日最多 6 張、每日最多 2 次執行（程式內守衛；保守預設，真實圖成本須實測後再調）。 -->
+    <!-- 每日 23:40（PO 2026-11-19 決定：只留一個時段、每次 6 張）：避開既有排程（02:00、03:30、03:45、04:00、06:00、07:45、09:30、12:30、17:00、20:15、23:00、23:15、週一 10:00）。
+         一次一個行程；刻意不設 RunAtLoad／KeepAlive：安裝或開機時不得立即呼叫 claude。每次最多 6 張、每日最多 6 張、每日最多 2 次執行（程式內守衛；保守預設，真實圖成本須實測後再調）。 -->
     <key>StartCalendarInterval</key>
     <array>
-        <dict>
-            <key>Hour</key>
-            <integer>13</integer>
-            <key>Minute</key>
-            <integer>10</integer>
-        </dict>
         <dict>
             <key>Hour</key>
             <integer>23</integer>

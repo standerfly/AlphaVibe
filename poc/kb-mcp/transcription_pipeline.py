@@ -19,7 +19,7 @@
 
 CLI（`--data-dir` 必填；正式庫需 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1`，旗標最先檢查）：
   --dry-run                只列出將處理的圖、**完整命令列**與待 Mac 實測的假設清單，不執行任何外部程式（claude／paddle／node／鑰匙圈）、不寫庫
-  --max-images N           單次最多處理幾張（預設 3、硬上限 5）；另有每日張數與每日執行次數上限
+  --max-images N           單次最多處理幾張（預設 6、硬上限 6）；另有每日張數與每日執行次數上限
   --timeout-sec S          單次 claude 呼叫逾時（預設 600，夾在 30～1800）
   --reader1-model／--verifier-model   別名白名單 sonnet／opus／haiku／fable，兩者必須不同
   --claude-bin 路徑        絕對路徑（預設 /Users/stander/.local/bin/claude）
@@ -56,8 +56,8 @@ import investanchors_redact  # noqa: E402
 import pipeline_compare as PC  # noqa: E402
 
 TZ8 = article_store.TZ8
-DEFAULT_MAX_IMAGES = 3
-HARD_MAX_IMAGES = 5
+DEFAULT_MAX_IMAGES = 6
+HARD_MAX_IMAGES = 6
 MAX_RUNS_PER_DAY = 2                 # 排程每日 2 次（PO 2026-11-18：保守預設；真實圖成本不可線性外推，須用真實圖實測後再調，放寬須 PO 同意）
 MAX_IMAGES_PER_DAY = 6               # 每日張數上限（以「實際呼叫 claude 的張數」計）＝單次 3 張 × 每日 2 次
 DEFAULT_PADDLE_PYTHON = os.path.expanduser("~/.venvs/paddle/bin/python")

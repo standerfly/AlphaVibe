@@ -315,7 +315,7 @@ T023（首次真實執行）、T048（真實手動回補試跑）、T055（部�
 - [x] T103 `claude_cli_runner.py`：`claude -p` 封裝（命令列／環境白名單／`assert_argv_safe`／`assert_env_safe`、`claude --help` 旗標檢查與降級、`claude auth status` 登入方式檢查、stdin 提示詞、逾時殺行程群組、工作夾前後比對、`structured_output` 嚴格驗證、`classify_failure` 撞限／登入失效偵測、token 只經環境變數且全面遮蔽）。測試：`test_transcription_pipeline.GuardTest`／`ClassifyFailureTest`／`VerifierRunnerTest`／`TokenTest`。
 - [x] T104 `transcription_pipeline.py`＋`pipeline_compare.py`：選圖（先補驗證再轉新圖）、暫存工作夾（長圖切片）、reader-1 → 單一交易寫入 unverified（`claude-cli:<別名>`）→ 驗證者 → 既有 `validate_verification`／`apply_verification` → PaddleOCR＋涵蓋規則；判定沿用既有規則；Telegram 只通知張數；`--dry-run` 零副作用並印完整命令列與 Mac 實測假設；`--enable`／`--disable`、資料目錄防呆最先、flock、每日上限、與 API 轉寫互斥。
 - [x] T105 撞使用量上限／登入失效／登入方式不符／缺旗標：立即中止、剩下的圖保持原狀、下次續做、不計失敗次數、只記重置時間；`pipeline_run` 表與 `ArticleStore` 方法（`apply_pipeline_image` 單一交易、`pipeline_images_to_verify`、驗證失敗計次）；`--retranscribe` 不覆寫 `claude-cli:`；`article_tools` 顯示標示。
-- [x] T106 健檢 `check_transcription_pipeline`（最近執行過舊、連續撞限、登入失效、API 模式 critical、待處理／flagged 張數）；plist `ops/launchd/com.alphavibe.transcriptionpipeline.plist`（13:10、23:40，無 RunAtLoad／KeepAlive，**未安裝**）。
+- [x] T106 健檢 `check_transcription_pipeline`（最近執行過舊、連續撞限、登入失效、API 模式 critical、待處理／flagged 張數）；plist `ops/launchd/com.alphavibe.transcriptionpipeline.plist`（2026-11-19 PO 改為只留 23:40、每次 6 張；無 RunAtLoad／KeepAlive，**未安裝**）。
 - [x] T107 測試（假 claude 可執行檔＋假 paddle；零網路、零真實 claude、零鑰匙圈）與文件（quickstart §15、contracts/cli.md §6、data-model、Q-029、runbook）。
 - [x] T108a Mac 降載實測（2026-11-18，PO）：`--system-prompt` 短提示詞＋`--setting-sources ""` 等組合，sonnet 讀圖／opus 驗證皆退出碼 0、structured_output 正常、permission_denials 0，名目成本降約 97%；launchd 背景可直接用訂閱登入，不需 setup-token。預設旗標已改為此組合。
 - [ ] T108 [GATE] [PO] 剩餘 Mac 實測（quickstart §15）：真實圖（含 2190×5327 長圖切 4 片）用量、撞限／登入過期輸出樣式、長圖切片。
