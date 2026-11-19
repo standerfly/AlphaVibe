@@ -159,6 +159,56 @@ class BackupCheckTest(unittest.TestCase):
         self.assertEqual(checker.check_backups(self.tmp)[0][0], "critical")
 
 
+class DiskSpaceCheckTest(unittest.TestCase):
+    """儲存空間提醒（2026-11-19）：剩餘空間不足要在寫滿之前提醒。"""
+    GB = 1024 ** 3
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="alphavibe-disk-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def check(self, free_gb, total_gb=500, backup_dir=None):
+        import collections
+        U = collections.namedtuple("U", "total used free")
+        fn = lambda path: U(total_gb * self.GB, int((total_gb - free_gb) * self.GB), int(free_gb * self.GB))
+        return checker.check_disk_space(self.tmp, backup_dir or os.path.join(self.tmp, "nope"), usage_fn=fn)
+
+    def test_plenty_of_space_is_ok(self):
+        f = self.check(50)
+        self.assertEqual([x[0] for x in f], ["ok"])
+        self.assertIn("50.0 GB", f[0][2])
+
+    def test_below_warn_threshold_is_warning(self):
+        self.assertEqual(self.check(checker.DISK_WARN_FREE_GB - 1)[0][0], "warning")
+
+    def test_below_crit_threshold_is_critical(self):
+        f = self.check(checker.DISK_CRIT_FREE_GB - 1)
+        self.assertEqual(f[0][0], "critical")
+        self.assertIn("立即清理", f[0][2])
+
+    def test_exactly_at_thresholds_is_not_flagged(self):
+        self.assertEqual(self.check(checker.DISK_WARN_FREE_GB)[0][0], "ok")
+        self.assertEqual(self.check(checker.DISK_CRIT_FREE_GB)[0][0], "warning")
+
+    def test_same_disk_checked_once(self):
+        other = os.path.join(self.tmp, "backups")
+        os.makedirs(other)
+        self.assertEqual(len(self.check(50, backup_dir=other)), 1)
+
+    def test_missing_paths_are_skipped_not_errors(self):
+        import collections
+        self.assertEqual(checker.check_disk_space(os.path.join(self.tmp, "x"), os.path.join(self.tmp, "y")), [])
+
+    def test_usage_error_is_warning_not_crash(self):
+        def boom(path):
+            raise OSError("denied")
+        f = checker.check_disk_space(self.tmp, os.path.join(self.tmp, "nope"), usage_fn=boom)
+        self.assertEqual(f[0][0], "warning")
+
+    def test_registered_in_run_all(self):
+        self.assertIn("disk_space", [c[0] for c in checker.CHECKS])
+
+
 class ExitCodeTest(unittest.TestCase):
     """critical 要用非 0 退出碼，之後不管接哪種通知管道都認得。"""
 
