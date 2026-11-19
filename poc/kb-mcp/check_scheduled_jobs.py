@@ -26,7 +26,6 @@ import datetime
 import glob
 import json
 import os
-import shutil
 import sqlite3
 import sys
 
@@ -56,10 +55,6 @@ INVESTANCHORS_STALE_DAYS = 3
 PIPELINE_STALE_DAYS = 3
 # 連續幾次因訂閱使用量上限而中止就警告（單次撞限是正常的，下次排程會續做）
 PIPELINE_LIMIT_ABORT_WARN_RUNS = 3
-# 儲存空間提醒（2026-11-19 PO 要求）：資料庫、備份、文章圖片都存在本機磁碟，寫滿會讓匯入、備份、轉寫全部失敗。
-# 以剩餘空間（GB）判斷：低於 WARN 提醒清理，低於 CRIT 代表隨時可能寫入失敗。
-DISK_WARN_FREE_GB = 15
-DISK_CRIT_FREE_GB = 5
 
 
 def _now():
@@ -452,41 +447,6 @@ def check_transcription_pipeline(data_dir):
     return findings + [("ok", "transcription_pipeline", summary)]
 
 
-def check_disk_space(data_dir, backup_dir=DEFAULT_BACKUP_DIR, usage_fn=None):
-    """資料目錄與備份目錄所在磁碟的剩餘空間（同一顆磁碟只查一次）。
-
-    剩餘 < DISK_CRIT_FREE_GB → critical；< DISK_WARN_FREE_GB → warning；否則 ok（摘要含剩餘 GB）。
-    路徑用 realpath（資料目錄在 prod 是 symlink）；路徑不存在就跳過該路徑，不當成錯誤。"""
-    usage_fn = usage_fn or shutil.disk_usage
-    seen, findings = {}, []
-    for label, path in (("資料目錄", data_dir), ("備份目錄", backup_dir)):
-        real = os.path.realpath(path)
-        if not os.path.exists(real):
-            continue
-        try:
-            dev = os.stat(real).st_dev
-        except OSError:
-            continue
-        if dev in seen:
-            continue
-        try:
-            usage = usage_fn(real)
-        except OSError as exc:
-            findings.append(("warning", "disk_space", "無法讀取%s所在磁碟的剩餘空間：%s" % (label, exc)))
-            continue
-        seen[dev] = True
-        free_gb = usage.free / 1024.0 ** 3
-        used_pct = 100.0 * usage.used / usage.total if usage.total else 0.0
-        text = "%s所在磁碟剩餘 %.1f GB（已用 %.0f%%）" % (label, free_gb, used_pct)
-        if free_gb < DISK_CRIT_FREE_GB:
-            findings.append(("critical", "disk_space", text + "，低於 %d GB：匯入、備份、轉寫隨時可能寫入失敗，請立即清理" % DISK_CRIT_FREE_GB))
-        elif free_gb < DISK_WARN_FREE_GB:
-            findings.append(("warning", "disk_space", text + "，低於 %d GB：請盡快清理（舊備份、不用的專案、Docker、快取）" % DISK_WARN_FREE_GB))
-        else:
-            findings.append(("ok", "disk_space", text))
-    return findings
-
-
 CHECKS = (
     ("market_scan", check_market_scan, True),   # True = 需要 data_dir
     ("statement_import", check_statement_import, True),
@@ -495,7 +455,6 @@ CHECKS = (
     ("backup", check_backups, False),
     ("articles_backup", check_articles_backup, True),
     ("web_service", check_web_service, False),
-    ("disk_space", check_disk_space, True),
 )
 
 

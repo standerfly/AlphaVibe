@@ -344,6 +344,3 @@ PaddleOCR 缺失、逾時或結果 inconclusive 時不輸出數字條目，這�
 
 ### 照片被當成表格轉寫的處理（2026-11-19 批次試跑發現）
 提示詞的「拿不準填 true」讓展場現場照被 reader-1 判成表格，並把招牌文字逐行抄成垃圾轉寫（驗證者正確標 flagged）。處置：提示詞改為「照片（含場景、展場、人物、產品、錄音室等實景照）、裝飾、logo、純示意圖、無數值標籤圖形一律 is_table=false、不轉寫畫面中的招牌文字；只有資料圖表才 true；圖表類拿不準填 true、照片類拿不準填 false」。已被誤判而 flagged 的圖：`--reset-flagged <id>` 重置後重跑即會判 not_table。
-
-### 儲存空間提醒（2026-11-19，PO 要求）
-`check_scheduled_jobs.py` 新增 `disk_space` 檢查（隨既有健檢每天 04:00 執行）：查資料目錄與備份目錄所在磁碟的剩餘空間（同一顆磁碟只查一次、symlink 用 realpath）。剩餘 < 15 GB＝warning、< 5 GB＝critical（常數 `DISK_WARN_FREE_GB`／`DISK_CRIT_FREE_GB`）；正常時摘要顯示剩餘 GB 與使用率。通知沿用健檢規則：只在狀態改變時發 Telegram（ok→warning／critical、恢復時再發一則），不會每天重複提醒；要手動看現況執行 `python3 poc/kb-mcp/check_scheduled_jobs.py`。清理優先順序：舊備份（`~/AlphaVibe-backups`）、不用的專案資料夾、Docker 映像、舊版 VS Code 擴充。
