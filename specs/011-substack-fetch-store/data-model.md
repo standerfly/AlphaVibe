@@ -96,7 +96,7 @@
 |---|---|---|
 | `id` | INTEGER PK | |
 | `started_at`／`finished_at` | TEXT | `finished_at` NULL＝被中斷 |
-| `trigger` | TEXT | `schedule`／`catchup`（01:00 或醒來補跑）／`manual`／`backfill`／`retry_images` |
+| `trigger` | TEXT | `schedule`／`catchup`（01:00 或醒來補跑）／`manual`／`backfill`／`retry_images`／`reclassify`（`--reclassify` 重判，FR-033） |
 | `schedule_day` | TEXT NULL | 排程日（22:00 起算的日期）；只有 `schedule`／`catchup` 有值 |
 | `result` | TEXT | `ok`／`partial`（有作者失敗）／`aborted_disk`／`aborted_budget`（20 分鐘牆鐘預算到，research R2）／`aborted_config`／`deferred`（23:00～00:59 啟動）／`already_done` |
 | `authors_polled`／`authors_skipped_interval`／`authors_failed` | INTEGER | |
@@ -150,6 +150,7 @@
 
 ```text
 feed 條目 ──去重命中──────────────▶ 略過（不寫，計 duplicate）
+   │  （guid 與 link_norm 各命中不同兩篇＝`dedupe_conflict`：同樣略過；計數只印 stdout／日誌、不入庫、無對應欄位）
    │──早於 window_from（非追補）──▶ 略過（不寫，計 skipped_window）
    │──pubDate 解析失敗（非追補）──▶ 略過（不寫，計 skipped_no_pubdate）
    └──單一交易寫入成功──────────▶ 已存（completeness=P|F|N，終態；不覆寫、不更新，FR-007）

@@ -3,6 +3,8 @@
 給接手者（Claude／開發者）與 PO。指令皆可直接貼進 macOS zsh；含迴圈的部分寫成 `bash -c` 或直接展開清單。
 正式環境在 `/Users/stander/My_project/AlphaVibe-prod`（見專案 CLAUDE.md），**開發與測試一律用獨立資料目錄**。
 
+**工作位置**：011 在獨立 git worktree `/Users/stander/My_project/AlphaVibe-011`（分支 `011-substack-fetch-store`）開發與測試。主資料夾 `/Users/stander/My_project/AlphaVibe` 被其他 session 佔用、可能被切到別的分支，**不要假設其分支**，不得碰、不得在那裡切換分支、commit 或推送。正式環境仍是 `/Users/stander/My_project/AlphaVibe-prod`（路徑不變）。換環境或隔一段時間接手：先 `pwd`、`git branch --show-current`（須為 `011-substack-fetch-store`）、`git status`。
+
 ## 1. 接手前必讀
 
 1. `spec.md`（唯一需求依據）、`plan.md`（含「已決定」表與仍待確認的 FR-013 暫解讀）、`research.md` R0（重用邊界）與 R10（已知坑）。
@@ -14,7 +16,7 @@
 ## 2. 建立測試資料目錄（不碰正式庫）
 
 ```bash
-cd /Users/stander/My_project/AlphaVibe
+cd /Users/stander/My_project/AlphaVibe-011
 mkdir -p poc/data-test-substack
 python3 poc/kb-mcp/substack_config.py --data-dir poc/data-test-substack init
 python3 poc/kb-mcp/substack_config.py --data-dir poc/data-test-substack validate
@@ -25,7 +27,7 @@ python3 poc/kb-mcp/substack_import.py --data-dir poc/data-test-substack --dry-ru
 ## 3. 自動化測試
 
 ```bash
-cd /Users/stander/My_project/AlphaVibe
+cd /Users/stander/My_project/AlphaVibe-011
 python3 -m unittest discover -s poc/kb-mcp/tests -p 'test_substack*.py'      # 011 新測試
 python3 -m unittest discover -s poc/kb-mcp/tests                              # 全套（含 010，必須全綠，SC-004）
 ```
@@ -60,7 +62,7 @@ python3 -m unittest discover -s poc/kb-mcp/tests                              # 
 1. PR 合併進 `function/alphavibe` 後部署（CLAUDE.md「部署」指令；`ops/deploy.sh` 不需修改）。
 2. 正式設定檔（只做一次）：
    ```bash
-   cd /Users/stander/My_project/AlphaVibe
+   cd /Users/stander/My_project/AlphaVibe-prod
    ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1 python3 poc/kb-mcp/substack_config.py --data-dir poc/data init
    ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1 python3 poc/kb-mcp/substack_import.py --data-dir poc/data --dry-run
    ```
@@ -118,6 +120,7 @@ cd /Users/stander/My_project/AlphaVibe-prod && git fetch origin function/alphavi
 ## 9. 接手備忘（坑）
 
 - 日誌絕不印標題、文章網址（slug 常是標題）、圖片網址、notify 錯誤原文（Bot token 遮不到，research R4）。
+- `poc/kb-mcp/substack_*.py` 全文（含註解與字串）不得出現 `articles.db`／`article_store`／`ArticleStore`（T-A 靜態測試掃全文）；要提 010 時寫「010 文章庫」。
 - 路徑比較一律 `os.path.realpath`（`/var`→`/private/var`）。
 - `SubstackStore()` 建構子只建表；唯讀開庫不得建檔。
 - 排程日判斷只看實際執行過的排程列，要排除 `deferred`／`already_done`（research R2）；sqlite3 一律 `isolation_level=None`＋`transaction()`（research R8）；`XPC_SERVICE_NAME` 判斷用 `com.alphavibe.` 前綴、不是「是否存在」（research R1 T-D）。

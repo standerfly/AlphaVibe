@@ -17,6 +17,10 @@
 技術路線完全沿用 010：`poc/kb-mcp/` 下的進入點腳本＋依賴注入（可測）、`article_data_guard` 資料目錄防呆、`investanchors_redact` 遮蔽與外洩斷言、
 `notify.send_telegram`、flock 執行鎖、`ops/launchd` plist＋`AlphaVibe-prod` 部署。重用邊界見 research.md R0。
 
+## 工作位置
+
+**工作位置（2026-11-20 起）**：011 在獨立 git worktree `/Users/stander/My_project/AlphaVibe-011`（分支 `011-substack-fetch-store`）開發與測試。主資料夾 `/Users/stander/My_project/AlphaVibe` 被其他 session 佔用、可能被切到別的分支，**不要假設其分支**，不得碰、不得在那裡切換分支、commit 或推送。正式環境仍是 `/Users/stander/My_project/AlphaVibe-prod`（路徑不變）。換環境或隔一段時間接手：先 `pwd`、`git branch --show-current`（須為 `011-substack-fetch-store`）、`git status`。
+
 ## Technical Context
 
 **Language/Version**: Python 3.9.6（`/usr/bin/python3`，這台 Mac 唯一版本；不得用 3.10+ 語法）
@@ -45,7 +49,7 @@
 | 不改 010 行為（FR-021、FR-024、FR-031） | 只 import 010 模組 | ✅ 只修改 `backup_databases.py`／`check_scheduled_jobs.py` 的新增區塊（research R7 逐項評估既有測試影響：無） |
 | 秘密不進日誌、不碰鑰匙圈（FR-020、FR-026、009 鑰匙圈教訓） | — | ✅ 不取鑰匙圈；不記 notify 錯誤原文；外洩掃描測試 |
 | 排程不耗 token、手動耗 token 須 PO 當下確認（FR-019、FR-020） | — | ✅ 排程模組不 import 任何模型呼叫；轉寫兩段式確認碼、launchd 啟動即拒絕 |
-| 驗證不自驗（全域規則 10／20 號） | — | ✅ tasks 階段須排入 fresh agent 驗收（quickstart §4 V1～V11 為驗收清單） |
+| 驗證不自驗（全域規則 10／20 號） | — | ✅ tasks 階段須排入 fresh agent 驗收（quickstart §4 V1～V16 為驗收清單） |
 | Python 3.9、僅標準庫（CLAUDE.md 2026-07-07） | — | ✅ Technical Context |
 
 **結論**：無違規，Complexity Tracking 不需填寫。建議（不阻擋）：PO 另行決定是否以 `/speckit-constitution` 填寫專案原則。
@@ -60,7 +64,7 @@ specs/011-substack-fetch-store/
 ├── plan.md              # 本檔
 ├── research.md          # Phase 0：R0 重用邊界＋R1～R10 決策
 ├── data-model.md        # Phase 1：substack.db 表、狀態轉換、驗證規則、FR→設計對照表（§5）
-├── quickstart.md        # Phase 1：接手備忘、測試、驗證對照 V1～V11、上線、回滾
+├── quickstart.md        # Phase 1：接手備忘、測試、驗證對照 V1～V16、上線、回滾
 ├── contracts/
 │   ├── cli.md           # substack_import.py（含 --reclassify）／substack_config.py／substack_transcribe.py
 │   ├── config-format.md # substack_config.json

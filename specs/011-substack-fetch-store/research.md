@@ -56,7 +56,7 @@
 
 **試跑紀錄格式（US6-AS3）**：`transcription_trial` 一列＝一次試跑：`started_at`、`finished_at`、`confirm_code`、`articles`（篇數）、
 `images_attempted`、`images_ok`、`images_not_table`、`images_failed`、`claude_calls`（實際呼叫次數＝「消耗」）、`models`、
-`result`（`ok`／`partial`／`aborted_usage_limit`／`aborted_login`／`aborted_auth_mode`／`refused`）、`reset_hint`；每張圖結果在
+`result`（`ok`／`partial`／`aborted_usage_limit`／`aborted_login`／`aborted_auth_mode`）、`reset_hint`；被拒絕的執行（確認碼不符、跨日、選取不符、疑似排程啟動、未取得鎖）**不寫試跑紀錄**，只回退出碼與訊息；每張圖結果在
 `image_transcription`。stdout 只印上述數字與代碼。**限制**：`claude -p` 不回傳訂閱額度百分比，「消耗」只能記呼叫次數與圖數 **[PO 已決定：B8]**（FR-024）。
 
 **選取規則（FR-023）**：每位啟用作者取「完整度 F、至少 1 張已下載圖」中最新的 `--per-author N` 篇（N=1～3，預設 1）；
@@ -181,7 +181,7 @@ YAML（非標準庫）；讓 Claude 直接手改 JSON（無驗證、無備份）
 | HTML→純文字 | `html.parser` 自寫轉換器（`substack_html.py`）：區塊元素換行、`li`→「• 」、`script/style` 丟棄、`iframe/audio/video` 與播放器 div→〔嵌入內容〕／〔播放器〕；`<img>`→`〔圖 N｜圖說：…｜alt：…〕`（`figure` 內的 `figcaption` 併入標記、不重複輸出）；保留原始 HTML 於 `content_html` | 標準庫；保留原 HTML 讓 PO 要求「重新判斷」（FR-033，本包提供，見 R11）時不必重抓 |
 | Read more（P） | 去掉尾端空白後，以 `html.parser` 取**最後一個頂層區塊**：是 `<p>`、唯一有意義子節點為 `<a>`、連結文字正規化後等於 `Read more`（不分大小寫）、`href` 為 `https://<host>/p/<slug>` → P（`classify_reason='read_more_tail'`） | 依 `docs/spec-intake/substack-import/raw/2026-11-19-paid-preview-analysis.md` 第 4 行的固定結構；**不看長度**（FR-012） |
 | F／N／不確定 | 無上述尾端時：可見文字（扣除圖位與播放器標記、空白）≥ **200 字** → F；< 200 字 → N。下列一律存 P 並標 `uncertain:*`：`content:encoded` 缺漏或空、HTML 無法解析、尾端有 `Read more` 文字但結構或 `href` 主機與文章連結不符、最後區塊含 `Read more` 但後面還有內容 | 實測 N 類 0～38 字、F 類 7.5k～15k 字，200 落在大間隙中；「足夠純文字」門檻＝可見文字 ≥200 字，為明示常數、寫進契約 **[PO 已決定：B1，FR-010]** |
-| 去重鍵 | `guid`（文字原樣）與 `link_norm`（https、小寫主機、去 query／fragment、去尾斜線）各有 UNIQUE 索引；任一相同即重複、不覆寫（FR-007）；guid 中 A、link 中 B 的衝突 → 視為重複並計數 `dedupe_conflict` | RSS guid `isPermaLink=false`；兩種網址只存一份（Edge Case） |
+| 去重鍵 | `guid`（文字原樣）與 `link_norm`（https、小寫主機、去 query／fragment、去尾斜線）各有 UNIQUE 索引；任一相同即重複、不覆寫（FR-007）；guid 中 A、link 中 B 的衝突 → 視為重複並計數 `dedupe_conflict`（**只印 stdout 與日誌、不入庫、不新增欄位**） | RSS guid `isPermaLink=false`；兩種網址只存一份（Edge Case） |
 | ETag | `author.etag` 存上次回應的 ETag 原字串（含 `W/` 弱標記），下次 `If-None-Match`；304＝無變化、不解析、不寫文章，但仍算一次請求（更新 `last_request_at`） | 實測有 ETag、無 Last-Modified（`integration-note.md §1`） |
 | feed 請求 | 每作者每次執行最多 1 次；逾時 30 秒；回應上限 5MB；XML 先拒絕含 `<!DOCTYPE`／`<!ENTITY` 的內容再用 `xml.etree.ElementTree` 解析；作者之間間隔 5 秒；轉址只允許到該作者設定的 feed 主機或 `<x>.substack.com` | 實測 feed 約 0.8～1MB；預先拒絕 DTD 防實體展開 |
 | robots.txt | `urllib.robotparser` 判斷 feed 路徑；結果快取在 `robots_cache`（每主機 24 小時，對應實測 `max-age=86400`）；取 robots 失敗時用 7 天內快取，否則該作者本次略過（`robots_unavailable`，算一次失敗）；被禁止 → `robots_disallow`（算失敗，依告警策略） | robots 請求不是 feed 請求，不違反 FR-003 的「至多一次 feed 請求」 |
