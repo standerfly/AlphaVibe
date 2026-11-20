@@ -56,6 +56,11 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 決策依據：`docs/adr/0027-prespec-workflow.md`。
 
 <!-- SPECKIT START -->
+`specs/011-substack-fetch-store/plan.md`（Substack 文章抓取與儲存，第 1 包：每日 22:00（補跑 01:00）公開 RSS
+條件請求、獨立 `substack.db`＋`substack_images/`、P／F／N 完整度判斷、逐篇 Telegram 通知、只能手動且須 PO 確認碼的轉寫試跑；
+需求基線 `docs/spec-intake/substack-import/`，2026-11-19 Accepted）**2026-11-19 現況：plan（Phase 0/1）完成、尚未產生 tasks、
+沒有程式碼**；15 項待決項 PO 已於 2026-11-20 回答，僅 FR-013 暫解讀待 PO 確認。接手前讀 `specs/011-substack-fetch-store/quickstart.md`。
+
 `specs/010-investanchors-article-import/plan.md`（定錨產業筆記文章自動匯入：Gmail 通知信觸發＋
 全新無持久化 profile 的 Playwright 登入取文、跑完即登出、獨立 `articles.db`、表格圖視覺模型轉寫、
 台股／美股連接器共用唯讀 `search_articles`／`get_article`；需求基線
