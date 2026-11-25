@@ -210,5 +210,82 @@ class ClockTest(Base):
         self.assertTrue(s.now_iso().endswith("+00:00"))
 
 
+class AddContentTest(Base):
+    def add(self, **kw):
+        args = dict(source_type="youtube", url="https://www.youtube.com/watch?v=AAAAAAAAAAA", title="標題",
+                    author="頻道", published_on="2026-11-19", body="逐字稿全文內容 SECRETBODY")
+        args.update(kw)
+        return self.s.add_content(**args)
+
+    def test_import_success_writes_content_and_audit(self):
+        r = self.add(channel="http", filename="a.md")
+        self.assertEqual(r["status"], "imported")
+        self.assertEqual(r["source_key"], "youtube:AAAAAAAAAAA")
+        self.assertEqual(r["same_body_elsewhere"], [])
+        self.assertEqual(self.count("content"), 1)
+        a = self.s.conn.execute("SELECT * FROM audit_log").fetchall()
+        self.assertEqual(len(a), 1)
+        self.assertEqual((a[0]["action"], a[0]["channel"], a[0]["content_id"]), ("import", "http", r["id"]))
+        self.assertIn("a.md", a[0]["detail"])
+        self.assertIn("youtube:AAAAAAAAAAA", a[0]["detail"])
+        self.assertNotIn("SECRETBODY", a[0]["detail"])
+        self.assertNotIn("逐字稿", a[0]["detail"])
+        self.assertEqual(self.s.find_by_source_key("youtube:AAAAAAAAAAA")["id"], r["id"])
+        self.assertIsNone(self.s.find_by_source_key("youtube:BBBBBBBBBBB"))
+
+    def test_duplicate_returns_existing_without_writing(self):
+        first = self.add()
+        r = self.add(url="https://youtu.be/AAAAAAAAAAA?t=9", body="另一份內文")
+        self.assertEqual(r["status"], "duplicate")
+        self.assertEqual(r["existing"]["id"], first["id"])
+        self.assertEqual(self.count("content"), 1)
+        self.assertEqual(self.count("audit_log"), 1)
+
+    def test_duplicate_checked_before_empty_body(self):
+        self.add()
+        r = self.add(body="   ")
+        self.assertEqual(r["status"], "duplicate")
+
+    def test_empty_body_variants_rejected_and_nothing_written(self):
+        for b in ("", "  \n\t", "\u3000\u3000", None):
+            with self.assertRaises(S.ContentValidationError, msg=repr(b)) as cm:
+                self.add(body=b)
+            self.assertIn("內文為空", str(cm.exception))
+        self.assertEqual(self.count("content"), 0)
+        self.assertEqual(self.count("audit_log"), 0)
+
+    def test_validation_errors(self):
+        cases = (dict(source_type="blog"), dict(title="  "), dict(author=""), dict(url=""),
+                 dict(published_on="2026-02-30"), dict(published_on="20261119"),
+                 dict(published_on="2026/11/19"), dict(channel="smtp"),
+                 dict(url="ftp://x.com/a"), dict(url="https://www.youtube.com/watch?v=short"))
+        for kw in cases:
+            with self.assertRaises(S.ContentValidationError, msg=str(kw)):
+                self.add(**kw)
+        self.assertEqual(self.count("content"), 0)
+
+    def test_same_body_elsewhere_warning(self):
+        a = self.add(body="一模一樣 的內文")
+        b = self.add(url="https://www.youtube.com/watch?v=BBBBBBBBBBB", title="另一支", body="一模一樣  的內文\n")
+        self.assertEqual(b["status"], "imported")
+        self.assertEqual(b["same_body_elsewhere"], [{"id": a["id"], "title": "標題"}])
+
+    def test_tx_rolls_back_when_audit_fails(self):
+        orig = self.s._audit
+
+        def boom(*a, **k):
+            raise RuntimeError("audit down")
+        self.s._audit = boom
+        with self.assertRaises(RuntimeError):
+            self.add()
+        self.s._audit = orig
+        self.assertEqual(self.count("content"), 0)
+
+    def test_guid_normalised(self):
+        self.add(source_type="podcast", url="https://example.com/ep1", guid="  g-1  ")
+        r = self.s.conn.execute("SELECT guid, source_key FROM content").fetchone()
+        self.assertEqual((r["guid"], r["source_key"]), ("g-1", "podcast:guid:g-1"))
+
+
 if __name__ == "__main__":
     unittest.main()

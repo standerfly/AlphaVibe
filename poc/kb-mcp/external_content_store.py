@@ -13,7 +13,10 @@ import contextlib
 import datetime
 import json
 import os
+import re
 import sqlite3
+
+import external_content_identity as identity
 
 DB_FILENAME = "external_content.db"
 
@@ -72,6 +75,13 @@ def _aware(dt):
 
 def _utc_now():
     return datetime.datetime.now(datetime.timezone.utc)
+
+
+class ContentValidationError(ValueError):
+    """入庫欄位驗證失敗（訊息為繁體中文具體原因）。"""
+
+
+_DATE_SHAPE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 class ExternalContentStore(object):
@@ -134,3 +144,77 @@ class ExternalContentStore(object):
             "INSERT INTO audit_log (ts, channel, action, content_id, detail) VALUES (?,?,?,?,?)",
             (self.now_iso(), channel, action, content_id,
              json.dumps(detail or {}, ensure_ascii=False, sort_keys=True)))
+
+    # ------------------------------------------------------------ 入庫（US1）
+
+    def find_by_source_key(self, source_key):
+        """以 source_key 找既有內容（已軟刪除者 key 已被改名，不會命中）；回 dict（不含全文）或 None。"""
+        r = self.conn.execute(
+            "SELECT id, source_key, source_type, title, author, published_on, url, body_sha256 "
+            "FROM content WHERE source_key = ?", (source_key,)).fetchone()
+        return dict(r) if r else None
+
+    def _same_body_elsewhere(self, sha, exclude_key):
+        rows = self.conn.execute(
+            "SELECT id, title FROM content WHERE body_sha256 = ? AND source_key != ? AND deleted_at IS NULL "
+            "ORDER BY id", (sha, exclude_key)).fetchall()
+        return [{"id": r["id"], "title": r["title"]} for r in rows]
+
+    def add_content(self, source_type, url, title, author, published_on, body, guid=None,
+                    channel="stdio", filename=None):
+        """入庫核心（資料匣與 import_text 共用）。
+
+        順序：驗必填與格式 → 以 source_key 判重複 → 驗內文非空 → 算雜湊 → 單一交易寫 content＋audit(import)。
+        回 {"status": "imported", "id", "title", "source_key", "same_body_elsewhere": [...]}；
+        重複回 {"status": "duplicate", "existing": {...}, "source_key"} 且不寫入。
+        驗證失敗丟 ContentValidationError（含 identity.IdentityError 的原因）。
+        稽核 detail 只放 source_key、標題、檔名，不含全文。"""
+        if source_type not in SOURCE_TYPES:
+            raise ContentValidationError("source_type 必須是 %s 其中之一" % "、".join(SOURCE_TYPES))
+        if channel not in CHANNELS:
+            raise ContentValidationError("channel 必須是 http 或 stdio")
+        vals = {}
+        for name, v in (("url", url), ("title", title), ("author", author)):
+            if not isinstance(v, str) or not v.strip():
+                raise ContentValidationError("缺少必填欄位：%s" % name)
+            vals[name] = v.strip()
+        if not isinstance(published_on, str) or not _DATE_SHAPE_RE.match(published_on.strip()):
+            raise ContentValidationError("date 格式必須是 YYYY-MM-DD")
+        published_on = published_on.strip()
+        try:
+            datetime.date.fromisoformat(published_on)
+        except ValueError:
+            raise ContentValidationError("date 不是真實的日曆日期：%s" % published_on)
+        guid = guid.strip() if isinstance(guid, str) and guid.strip() else None
+        try:
+            key = identity.source_key(vals["url"], source_type, guid)
+        except identity.IdentityError as e:
+            raise ContentValidationError(str(e))
+
+        existing = self.find_by_source_key(key)
+        if existing:
+            return {"status": "duplicate", "source_key": key, "existing": existing}
+
+        if not isinstance(body, str) or not body.strip():
+            raise ContentValidationError("內文為空")
+        sha = identity.body_sha256(body)
+        now = self.now_iso()
+        try:
+            with self._tx() as c:
+                cur = c.execute(
+                    "INSERT INTO content (source_key, source_type, url, title, author, published_on, body, "
+                    "body_sha256, guid, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (key, source_type, vals["url"], vals["title"], vals["author"], published_on, body,
+                     sha, guid, now, now))
+                cid = cur.lastrowid
+                detail = {"source_key": key, "title": vals["title"]}
+                if filename:
+                    detail["filename"] = filename
+                self._audit("import", cid, channel, detail)
+        except sqlite3.IntegrityError:
+            existing = self.find_by_source_key(key)     # 兩端同時匯入：UNIQUE 先到先贏
+            if existing:
+                return {"status": "duplicate", "source_key": key, "existing": existing}
+            raise
+        return {"status": "imported", "id": cid, "title": vals["title"], "source_key": key,
+                "same_body_elsewhere": self._same_body_elsewhere(sha, key)}

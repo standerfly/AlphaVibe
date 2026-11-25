@@ -1,11 +1,17 @@
 """外部內容知識庫的 MCP 工具層骨架（012 contracts/tools.md）。
 
-目前（Phase 2）只有：固定標註、第三方文字分隔 helper、7 個工具的 schema、名稱分組、分派骨架。
-7 個工具本體皆尚未實作，呼叫一律 `raise ToolError("尚未實作")`——`server.py` 只對**例外**標 isError，
+含：固定標註、第三方文字分隔 helper、7 個工具的 schema、名稱分組、分派。
+US1 已實作 create_inbox_file、import_inbox、import_text；其餘 4 個工具（search_external_content、
+get_external_content、confirm_summary、delete_content）仍未實作，呼叫一律 `raise ToolError("尚未實作")`——`server.py` 只對**例外**標 isError，
 所以所有錯誤路徑都必須 raise。工具名稱不得含 article／verif／reviewed（避開既有守門測試）。
 """
 
 import os
+
+import external_content_identity as identity
+import external_content_inbox as inbox
+import external_content_metadata as metadata
+import external_content_store as store_mod
 
 DISCLAIMER = "作者個人觀點，未經查證"
 
@@ -216,10 +222,288 @@ def ensure_write_allowed(data_dir):
             "若確定要寫入正式資料，請在 MCP 設定的 env 加上這個旗標。")
 
 
+IMPORT_TEXT_MAX_DEFAULT = 200000
+NEXT_STEP_HINT = (
+    "下一步：請逐檔向 PO 提出摘要草稿（草稿只是對話中的提案，不得入庫）；"
+    "PO 明確說同意之前，不得呼叫 confirm_summary。")
+
+
+def _import_text_max():
+    raw = os.environ.get("EXTERNAL_CONTENT_IMPORT_TEXT_MAX")
+    try:
+        v = int(raw) if raw else IMPORT_TEXT_MAX_DEFAULT
+    except ValueError:
+        return IMPORT_TEXT_MAX_DEFAULT
+    return v if v > 0 else IMPORT_TEXT_MAX_DEFAULT
+
+
+def _clean(v):
+    return v.strip() if isinstance(v, str) else ""
+
+
+def _host_mismatch_note(meta):
+    """YouTube 判斷看主機不看 source_type；兩者不符只提示。"""
+    if identity.is_youtube_url(meta["url"]) and meta["source_type"] != "youtube":
+        return "連結是 YouTube，但 source_type 標為 %s（身分仍依 YouTube 規則判斷）" % meta["source_type"]
+    return None
+
+
+def _ingest(store, fields, body, channel, filename=None):
+    """資料匣與 import_text 共用的核心（FR-006）：驗中繼資料 → source_key → 判重複 →
+    驗內文 → 入庫。回 dict（status／...）；驗證問題丟 InboxError／ContentValidationError。"""
+    meta = inbox.validate_meta(fields)
+    try:
+        key = identity.source_key(meta["url"], meta["source_type"], meta["guid"])
+    except identity.IdentityError as e:
+        raise inbox.InboxError(str(e))
+    notes = []
+    n = _host_mismatch_note(meta)
+    if n:
+        notes.append(n)
+    existing = store.find_by_source_key(key)
+    if existing:
+        return {"status": "duplicate", "existing": existing, "notes": notes}
+    inbox.check_body(body)
+    res = store.add_content(meta["source_type"], meta["url"], meta["title"], meta["author"], meta["date"],
+                            body, guid=meta["guid"], channel=channel, filename=filename)
+    res["notes"] = notes
+    return res
+
+
+def _tp(text):
+    """第三方可控字串（標題、作者、檔名、例外訊息）一律以分隔標記包住；只包字串本身。"""
+    return wrap_third_party(text)
+
+
+def _fmt_result_line(label, r):
+    st = r["status"]
+    if st == "imported":
+        line = "[imported] 檔名／來源：\n%s\n→ 已入庫 ID %d，標題：\n%s" % (_tp(label), r["id"], _tp(r["title"]))
+    elif st == "duplicate":
+        e = r["existing"]
+        line = ("[duplicate] 檔名／來源：\n%s\n→ 來源已存在（ID %d），既有標題：\n%s\n未寫入"
+                % (_tp(label), e["id"], _tp(e["title"])))
+        if label != "import_text":
+            line += "；檔案保留在資料匣等 PO 決定"
+    elif st == "already_processed":
+        line = "[already_processed] 檔名／來源：\n%s\n→ 說明：\n%s" % (_tp(label), _tp(r.get("reason", "已處理")))
+    else:
+        line = ("[failed] 檔名／來源：\n%s\n→ 原因：\n%s\n（維持待處理）"
+                % (_tp(label), _tp(r.get("reason", "失敗"))))
+    out = [line]
+    for sb in r.get("same_body_elsewhere") or []:
+        out.append("    警告：全文與其他來源相同（ID %d），標題：\n%s\n    ——僅提示，不阻擋" % (sb["id"], _tp(sb["title"])))
+    for n in r.get("notes") or []:
+        out.append("    提示：\n" + _tp(n))
+    return "\n".join(out)
+
+
+def _check_on_duplicate(args):
+    od = args.get("on_duplicate") or "ask"
+    if od not in ("ask", "replace", "skip"):
+        raise ToolError("on_duplicate 只接受 ask、replace、skip")
+    if od != "ask":
+        raise ToolError("on_duplicate=%s 將於後續階段支援；目前只支援 ask（重複只回報、不寫入）" % od)
+
+
+def _import_inbox(args, data_dir, channel):
+    _check_on_duplicate(args)
+    filenames = args.get("filenames")
+    if filenames is not None:
+        if not isinstance(filenames, list) or not all(isinstance(x, str) for x in filenames):
+            raise ToolError("filenames 必須是檔名字串清單")
+        try:
+            for fn in filenames:
+                inbox.validate_basename(fn)
+        except inbox.InboxError as e:
+            raise ToolError(str(e))
+    try:
+        pending, skipped = inbox.list_pending(data_dir)
+    except OSError as e:
+        raise ToolError("無法讀取資料匣：%s" % e)
+    if filenames:
+        targets = []
+        for fn in filenames:
+            if fn in targets:
+                continue
+            if os.path.splitext(fn)[1].lower() not in inbox.SUPPORTED_EXTS:
+                if fn not in skipped:
+                    skipped.append(fn)
+                continue
+            targets.append(fn)
+        skipped = [x for x in skipped if x in (filenames or [])]
+    else:
+        targets = pending
+    skip_note = ""
+    if skipped:
+        skip_note = ("\nskipped_unsupported（副檔名不是 .md／.txt，已略過；請改存為純文字或 Markdown）：\n%s"
+                     % _tp("\n".join(skipped)))
+    if not targets:
+        if filenames and not skipped:
+            msg = "指定的檔案都不在資料匣最上層（可能已被處理）"
+        else:
+            msg = "資料匣沒有待匯入檔案"
+        return with_disclaimer(msg + skip_note)
+
+    st = store_mod.ExternalContentStore(data_dir)
+    imported_names = []
+    lines, counts = [], {"imported": 0, "duplicate": 0, "failed": 0, "already_processed": 0}
+    try:
+        for name in targets:
+            r = _process_one_file(st, data_dir, name, channel)
+            counts[r["status"]] += 1
+            if r["status"] == "imported":
+                imported_names.append(name)
+            lines.append(_fmt_result_line(name, r))
+    finally:
+        st.close()
+    summary = ("統計：共 %d 檔；imported %d、duplicate %d、failed %d、already_processed %d"
+               % (len(targets), counts["imported"], counts["duplicate"], counts["failed"],
+                  counts["already_processed"]))
+    out = ["\n".join(lines), summary]
+    if skip_note:
+        out.append(skip_note.strip())
+    if imported_names:
+        out.append(NEXT_STEP_HINT + "\n本次已入庫的檔案（只需為這些提出摘要草稿）：\n"
+                   + "\n".join(_tp(n) for n in imported_names))
+    else:
+        out.append("沒有檔案入庫，不需要提出摘要草稿。失敗的檔案維持待處理：請 PO 依上述原因修正檔案後，重新說「匯入」；"
+                   "重複的檔案請 PO 決定如何處理。")
+    return with_disclaimer("\n\n".join(out))
+
+
+def _process_one_file(st, data_dir, name, channel):
+    """單檔獨立處理，任何問題只影響該檔。"""
+    try:
+        text = inbox.read_inbox_file(data_dir, name)
+    except FileNotFoundError:
+        return {"status": "already_processed", "reason": "檔案已不在資料匣（可能已被另一次匯入處理）"}
+    except inbox.InboxError as e:
+        return {"status": "failed", "reason": str(e)}
+    except Exception as e:
+        return {"status": "failed", "reason": "不可讀取：%s" % e}
+    try:
+        meta, body, unknown = inbox.parse_inbox_text(text)
+        r = _ingest(st, meta, body, channel, filename=name)
+    except (inbox.InboxError, store_mod.ContentValidationError) as e:
+        return {"status": "failed", "reason": str(e)}
+    except Exception as e:
+        return {"status": "failed", "reason": "處理時發生錯誤：%s" % e}
+    if unknown:
+        r.setdefault("notes", []).append("忽略未知鍵 %s" % "、".join(unknown))
+    if r["status"] == "imported":
+        try:
+            inbox.move_to_processed(data_dir, name)
+        except FileNotFoundError:
+            r.setdefault("notes", []).append("入庫後檔案已不在資料匣，未搬移")
+        except Exception as e:
+            r.setdefault("notes", []).append("已入庫但搬入 processed 失敗：%s" % e)
+    return r
+
+
+def _import_text(args, data_dir, channel):
+    _check_on_duplicate(args)
+    missing = [k for k in ("source_type", "url", "title", "author", "date", "body")
+               if not isinstance(args.get(k), str) or not args.get(k).strip()]
+    if missing:
+        raise ToolError("缺少必填欄位：%s" % "、".join(missing))
+    body = args["body"]
+    limit = _import_text_max()
+    if len(body) > limit:
+        raise ToolError("內容過長，請改走資料匣（目前 %d 字，上限 %d；用 create_inbox_file＋import_inbox）"
+                        % (len(body), limit))
+    fields = {"source_type": args["source_type"], "url": args["url"], "title": args["title"],
+              "author": args["author"], "date": args["date"], "guid": args.get("guid")}
+    st = store_mod.ExternalContentStore(data_dir)
+    try:
+        try:
+            r = _ingest(st, fields, body, channel)
+        except (inbox.InboxError, store_mod.ContentValidationError) as e:
+            raise ToolError(str(e))
+    finally:
+        st.close()
+    return with_disclaimer("%s\n\n%s" % (_fmt_result_line("import_text", r), NEXT_STEP_HINT))
+
+
+def _create_inbox_file(args, data_dir, channel):
+    url = _clean(args.get("url"))
+    if not url:
+        raise ToolError("缺少必填欄位：url")
+    given = {"source_type": _clean(args.get("source_type")).lower(), "title": _clean(args.get("title")),
+             "author": _clean(args.get("author")), "date": _clean(args.get("date")),
+             "guid": _clean(args.get("guid"))}
+    try:
+        inbox.check_date(given["date"]) if given["date"] else None
+        if given["source_type"] and given["source_type"] not in inbox.SOURCE_TYPES:
+            raise inbox.InboxError("source_type 必須是 youtube、podcast、article 其中之一")
+        key = identity.source_key(url, given["source_type"], given["guid"] or None)
+    except (inbox.InboxError, identity.IdentityError) as e:
+        raise ToolError(str(e))
+
+    st = store_mod.ExternalContentStore(data_dir)
+    try:
+        existing = st.find_by_source_key(key)
+    finally:
+        st.close()
+    if existing:
+        return with_disclaimer(
+            "來源已存在於知識庫，未建檔：ID %d，發布日期 %s。source_key：%s\n既有標題：\n%s\n作者：\n%s"
+            % (existing["id"], existing["published_on"], key, _tp(existing["title"]), _tp(existing["author"])))
+    try:
+        pending = inbox.find_pending_by_source_key(data_dir, key)
+    except OSError as e:
+        raise ToolError("無法讀取資料匣：%s" % e)
+    if pending:
+        return with_disclaimer("資料匣已有相同來源的待處理檔，未建新檔：\n%s" % _tp(pending))
+
+    notes = []
+    fields = dict(given)
+    fields["url"] = url
+    if identity.is_youtube_url(url):
+        try:
+            auto = metadata.fetch_youtube_metadata(url)
+        except Exception as e:
+            auto = None
+            notes.append("自動補欄位失敗：%s" % e)
+        if auto:
+            notes.extend(auto.get("notes") or [])
+            if not fields["source_type"]:
+                fields["source_type"] = "youtube"
+            for k, mk in (("title", "title"), ("author", "author"), ("date", "date")):
+                if not fields[k] and auto.get(mk):
+                    fields[k] = auto[mk]
+    missing = [k for k in inbox.REQUIRED_KEYS if not fields.get(k)]
+    if missing:
+        msg = ("尚缺必填欄位：%s（未建檔）。請向 PO 詢問補齊後重新呼叫 create_inbox_file；不得猜測。"
+               % "、".join(missing))
+        if notes:
+            msg += "\n" + "\n".join(notes)
+        return with_disclaimer(msg)
+    try:
+        meta = inbox.validate_meta(fields)
+        path = inbox.create_pending_file(data_dir, meta, key)
+    except inbox.InboxError as e:
+        raise ToolError(str(e))
+    n = _host_mismatch_note(meta)
+    if n:
+        notes.append(n)
+    out = ("已建立待匯入檔案（內文留空，請 PO 貼入逐字稿後再說「匯入」）：\n%s\nsource_key：%s" % (path, key))
+    if notes:
+        out += "\n" + "\n".join(notes)
+    return with_disclaimer(out)
+
+
 def call_external_content_tool(name, args, data_dir, channel="stdio"):
     """分派。未知名稱與尚未實作的工具一律 raise ToolError（server.py 只對例外標 isError）。"""
     if name not in TOOL_NAMES:
         raise ToolError("未知的外部內容工具：%s" % name)
     if name in WRITE_TOOL_NAMES:
         ensure_write_allowed(data_dir)
+    args = args or {}
+    if name == "create_inbox_file":
+        return _create_inbox_file(args, data_dir, channel)
+    if name == "import_inbox":
+        return _import_inbox(args, data_dir, channel)
+    if name == "import_text":
+        return _import_text(args, data_dir, channel)
     raise ToolError("尚未實作")
