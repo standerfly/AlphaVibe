@@ -504,11 +504,12 @@ class ImportInboxTest(US1Base):
         self.call("import_inbox")
         self.assertEqual(self.processed(), ["a-1.md", "a.md"])
 
-    def test_on_duplicate_non_ask_not_supported_yet(self):
+    def test_on_duplicate_replace_skip_require_filenames(self):
+        # US4：原「將於後續階段支援」的 raise 改為「必須搭配 filenames」
         for v in ("replace", "skip"):
             with self.assertRaises(T.ToolError) as cm:
                 self.call("import_inbox", {"on_duplicate": v})
-            self.assertIn("後續階段", str(cm.exception))
+            self.assertIn("filenames", str(cm.exception))
         with self.assertRaises(T.ToolError):
             self.call("import_inbox", {"on_duplicate": "bogus"})
 
@@ -619,15 +620,16 @@ class ImportTextTest(US1Base):
                 self.call("import_text", dict(self.ARGS, **kw))
         self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM content")[0]["n"], 0)
 
-    def test_on_duplicate_non_ask_not_supported_yet(self):
+    def test_on_duplicate_invalid_value_rejected(self):
+        # US4：replace／skip 已支援（見 US4 測試）；只有非法值被拒
         with self.assertRaises(T.ToolError):
-            self.call("import_text", dict(self.ARGS, on_duplicate="replace"))
+            self.call("import_text", dict(self.ARGS, on_duplicate="bogus"))
 
     def test_fr006_same_rules_as_inbox(self):
         # 同一份資料走兩條路，結果欄位一致；同一來源走第二條路則被判重複
         self.call("import_text", dict(self.ARGS))
         self.put("x.md", meta_block(url="https://example.com/a", source_type="article", title="短文",
-                                    author="作者") + "短文內文 TEXTBODY")
+                                    author="作者") + "不同的內文（雜湊相同會回 already_processed）")
         out = self.call("import_inbox")
         self.assertIn("[duplicate]", out)
         # 兩邊對相同壞資料給出同一原因
@@ -664,7 +666,7 @@ class ThirdPartyWrapAndNextStepTest(US1Base):
     def test_import_text_duplicate_and_create_existing_wrapped(self):
         args = dict(ImportTextTest.ARGS, title=self.EVIL)
         self.call("import_text", args)
-        out = self.call("import_text", args)
+        out = self.call("import_text", dict(args, body="不同的內文"))
         self.assertNotIn(self.EVIL, out)
         self.assertIn("＜＜＜第三方文字結束＞＞＞", out)
         out2 = self.call("create_inbox_file", {"url": args["url"]})
@@ -931,6 +933,349 @@ class GetToolTest(US1Base):
         d = [s for s in T.TOOL_SCHEMAS if s["name"] == "get_external_content"][0]["description"]
         for s in ("search_external_content", "offset", "summary_only"):
             self.assertIn(s, d)
+
+
+# ------------------------------------------------------------------ US4：重複來源與更新全文（T031）
+
+SENTINEL = "SENTINELBODY_9f3a"
+ART = "https://example.com/a"
+
+
+def art_block(url=ART, **kw):
+    return meta_block(url=url, source_type="article", **kw)
+
+
+class US4Base(US1Base):
+    @staticmethod
+    def count_status(out, status):
+        return sum(1 for line in out.splitlines() if line.startswith("[%s]" % status))
+
+    def seed(self, body="舊全文 OLDBODY", url=ART, with_summary=True):
+        """以 import_text 先入庫一筆，必要時加一則已確認摘要；回 content id。"""
+        self.call("import_text", {"source_type": "article", "url": url, "title": "舊標題", "author": "作者",
+                                  "date": "2026-11-19", "body": body})
+        cid = self.rows("SELECT id FROM content")[-1]["id"]
+        if with_summary:
+            _add_summary(self.data, cid, text="既有已確認摘要")
+        return cid
+
+    def body_of(self, cid):
+        return self.rows("SELECT body, body_sha256, updated_at FROM content WHERE id = ?", (cid,))[0]
+
+
+class DuplicateAskInboxTest(US4Base):
+    def test_ask_reports_existing_id_and_title_and_keeps_file(self):
+        cid = self.seed()
+        self.put("again.md", art_block(url="https://www.example.com/a/?utm_source=x", title="新標題") + "新內文")
+        out = self.call("import_inbox")
+        self.assertEqual(self.count_status(out, "duplicate"), 1)
+        self.assertIn("ID %d" % cid, out)
+        self.assertIn("舊標題", out)
+        self.assertEqual(self.pending(), ["again.md"])
+        self.assertEqual(self.processed(), [])
+        self.assertEqual(self.body_of(cid)["body"], "舊全文 OLDBODY")
+        self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM audit_log")[0]["n"], 1)
+        self.assertNotIn("摘要草稿", out.split("統計")[1].split("沒有檔案入庫")[0] if "沒有檔案入庫" in out else "")
+
+    def test_pending_decision_stays_processable_next_time(self):
+        cid = self.seed()
+        self.put("again.md", art_block() + "新內文")
+        self.call("import_inbox")
+        out = self.call("import_inbox")                       # 仍待決
+        self.assertEqual(self.count_status(out, "duplicate"), 1)
+        out = self.call("import_inbox", {"on_duplicate": "replace", "filenames": ["again.md"]})
+        self.assertEqual(self.count_status(out, "replaced"), 1)
+        self.assertEqual(self.body_of(cid)["body"].strip(), "新內文")
+
+    def test_duplicate_with_empty_body_ask_still_duplicate(self):
+        self.seed()
+        self.put("tpl.md", art_block() + "")
+        out = self.call("import_inbox")
+        self.assertEqual(self.count_status(out, "duplicate"), 1)
+        self.assertEqual(self.pending(), ["tpl.md"])
+
+
+class ReplaceSkipInboxTest(US4Base):
+    def test_replace_updates_body_hash_updated_at_keeps_summary_audits_and_moves(self):
+        cid = self.seed()
+        before = self.body_of(cid)
+        self.put("new.md", art_block(title="新標題") + "\n全新全文 %s\n" % SENTINEL)
+        out = self.call("import_inbox", {"on_duplicate": "replace", "filenames": ["new.md"]}, channel="http")
+        self.assertEqual(self.count_status(out, "replaced"), 1)
+        self.assertIn("replaced 1", out)
+        self.assertIn("已確認摘要仍保留", out)
+        self.assertIn("摘要草稿", out)                         # 取代算「入庫」類：附下一步提示
+        self.assertIn(T.DISCLAIMER, out)
+        self.assertNotIn(SENTINEL, out)
+        after = self.body_of(cid)
+        self.assertIn(SENTINEL, after["body"])
+        self.assertNotEqual(after["body_sha256"], before["body_sha256"])
+        self.assertEqual(after["body_sha256"], T.identity.body_sha256("\n全新全文 %s\n" % SENTINEL))
+        self.assertNotEqual(after["updated_at"], before["updated_at"])
+        self.assertEqual(self.rows("SELECT title FROM content")[0]["title"], "舊標題")   # 只換全文
+        sm = self.rows("SELECT text, status FROM summary")
+        self.assertEqual([(r["text"], r["status"]) for r in sm], [("既有已確認摘要", "confirmed")])
+        a = self.rows("SELECT action, channel, content_id, detail FROM audit_log ORDER BY id")
+        self.assertEqual((a[-1]["action"], a[-1]["channel"], a[-1]["content_id"]), ("replace", "http", cid))
+        self.assertNotIn(SENTINEL, a[-1]["detail"])
+        self.assertIn("new.md", a[-1]["detail"])
+        self.assertEqual(self.pending(), [])
+        self.assertEqual(self.processed(), ["new.md"])
+        self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM content")[0]["n"], 1)
+
+    def test_search_and_get_see_new_body_and_summary_after_replace(self):
+        cid = self.seed()
+        self.put("new.md", art_block() + "全新全文 %s" % SENTINEL)
+        self.call("import_inbox", {"on_duplicate": "replace", "filenames": ["new.md"]})
+        self.assertIn("沒有找到", self.call("search_external_content", {"query": "OLDBODY"}))
+        self.assertIn("ID %d" % cid, self.call("search_external_content", {"query": SENTINEL}))
+        got = self.call("get_external_content", {"id": cid})
+        self.assertIn(SENTINEL, got)
+        self.assertIn("既有已確認摘要", got)
+        self.assertNotIn("OLDBODY", got)
+
+    def test_replace_with_empty_body_fails_and_existing_unchanged(self):
+        cid = self.seed()
+        before = self.body_of(cid)
+        self.put("tpl.md", art_block() + "\n \u3000\n")
+        out = self.call("import_inbox", {"on_duplicate": "replace", "filenames": ["tpl.md"]})
+        self.assertEqual(self.count_status(out, "failed"), 1)
+        self.assertIn("內文為空", out)
+        self.assertEqual(tuple(self.body_of(cid)), tuple(before))
+        self.assertEqual(self.pending(), ["tpl.md"])
+        self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM audit_log")[0]["n"], 1)
+
+    def test_skip_does_not_write_and_moves_to_processed(self):
+        cid = self.seed()
+        before = tuple(self.body_of(cid))
+        self.put("drop.md", art_block() + "別的全文 %s" % SENTINEL)
+        out = self.call("import_inbox", {"on_duplicate": "skip", "filenames": ["drop.md"]})
+        self.assertEqual(self.count_status(out, "skipped"), 1)
+        self.assertIn("skipped 1", out)
+        self.assertIn("已放棄", out)
+        self.assertNotIn("摘要草稿提", out.split("統計")[0])
+        self.assertEqual(tuple(self.body_of(cid)), before)
+        self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM audit_log")[0]["n"], 1)
+        self.assertEqual(self.pending(), [])
+        self.assertEqual(self.processed(), ["drop.md"])
+
+    def test_replace_skip_without_filenames_rejected_and_nothing_changes(self):
+        cid = self.seed()
+        self.put("d.md", art_block() + "新內文")
+        for v in ("replace", "skip"):
+            for fn in (None, []):
+                args = {"on_duplicate": v}
+                if fn is not None:
+                    args["filenames"] = fn
+                with self.assertRaises(T.ToolError, msg=v) as cm:
+                    self.call("import_inbox", args)
+                self.assertIn("filenames", str(cm.exception))
+        self.assertEqual(self.pending(), ["d.md"])
+        self.assertEqual(self.body_of(cid)["body"], "舊全文 OLDBODY")
+
+    def test_replace_only_acts_on_named_files(self):
+        cid = self.seed()
+        self.put("named.md", art_block() + "新內文")
+        self.put("other-dup.md", art_block(url="https://example.com/a?ref=z") + "另一份新內文")
+        out = self.call("import_inbox", {"on_duplicate": "replace", "filenames": ["named.md"]})
+        self.assertEqual(self.count_status(out, "replaced"), 1)
+        self.assertEqual(self.pending(), ["other-dup.md"])
+        self.assertEqual(self.body_of(cid)["body"], "新內文")
+
+    def test_replace_skip_do_not_affect_non_duplicate_files(self):
+        self.seed()
+        self.put("fresh.md", art_block(url="https://example.com/fresh") + "全新來源內文")
+        for v, fname in (("replace", "fresh.md"), ):
+            out = self.call("import_inbox", {"on_duplicate": v, "filenames": [fname]})
+            self.assertEqual(self.count_status(out, "imported"), 1)
+            self.assertEqual(self.count_status(out, "replaced"), 0)
+        self.put("fresh2.md", art_block(url="https://example.com/fresh2") + "又一個全新來源")
+        out = self.call("import_inbox", {"on_duplicate": "skip", "filenames": ["fresh2.md"]})
+        self.assertEqual(self.count_status(out, "imported"), 1)
+        self.assertEqual(self.count_status(out, "skipped"), 0)
+        self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM content")[0]["n"], 3)
+
+    def test_named_file_already_gone_is_already_processed_not_abort(self):
+        self.seed()
+        self.put("new.md", art_block() + "新內文")
+        out = self.call("import_inbox", {"on_duplicate": "replace", "filenames": ["gone.md", "new.md"]})
+        self.assertEqual(self.count_status(out, "already_processed"), 1)
+        self.assertIn("檔案已不在資料匣", out)
+        self.assertEqual(self.count_status(out, "replaced"), 1)
+
+    def test_filenames_still_basename_only_with_replace(self):
+        self.seed()
+        for bad in ("../x.md", "processed/a.md", "/etc/passwd"):
+            with self.assertRaises(T.ToolError, msg=bad):
+                self.call("import_inbox", {"on_duplicate": "replace", "filenames": [bad]})
+
+
+class AlreadyProcessedTest(US4Base):
+    def test_same_hash_returns_already_processed_and_moves(self):
+        cid = self.seed(body="同一份  全文")
+        self.put("leftover.md", art_block() + "同一份 全文\n")        # 空白不同、正規化後相同
+        out = self.call("import_inbox")
+        self.assertEqual(self.count_status(out, "already_processed"), 1)
+        self.assertEqual(self.pending(), [])
+        self.assertEqual(self.processed(), ["leftover.md"])
+        self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM content")[0]["n"], 1)
+        self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM audit_log")[0]["n"], 1)
+        self.assertEqual(self.body_of(cid)["body"], "同一份  全文")
+
+    def test_same_hash_wins_over_replace_and_skip(self):
+        cid = self.seed(body="同一份全文")
+        before = tuple(self.body_of(cid))
+        self.put("a.md", art_block() + "同一份全文")
+        out = self.call("import_inbox", {"on_duplicate": "replace", "filenames": ["a.md"]})
+        self.assertEqual(self.count_status(out, "already_processed"), 1)
+        self.assertEqual(tuple(self.body_of(cid)), before)
+        self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM audit_log")[0]["n"], 1)
+
+    def test_db_committed_but_move_failed_then_resend_moves_without_duplicate(self):
+        self.put("a.md", meta_block() + "內文甲")
+        with mock.patch.object(INB, "move_to_processed", side_effect=OSError("disk busy")):
+            out = self.call("import_inbox")
+        self.assertEqual(self.count_status(out, "imported"), 1)
+        self.assertEqual(self.count_status(out, "failed"), 0)
+        self.assertIn("處理已完成但搬檔失敗", out)
+        self.assertEqual(self.pending(), ["a.md"])
+        self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM content")[0]["n"], 1)
+        out = self.call("import_inbox")                       # 再說一次「匯入」
+        self.assertEqual(self.count_status(out, "already_processed"), 1)
+        self.assertEqual(self.pending(), [])
+        self.assertEqual(self.processed(), ["a.md"])
+        self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM content")[0]["n"], 1)
+        self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM audit_log")[0]["n"], 1)
+
+    def test_move_failure_does_not_abort_batch(self):
+        self.put("a.md", art_block(url="https://example.com/1") + "內文一")
+        self.put("b.md", art_block(url="https://example.com/2") + "內文二")
+        real = INB.move_to_processed
+        calls = []
+
+        def flaky(data_dir, name):
+            calls.append(name)
+            if name == "a.md":
+                raise OSError("boom")
+            return real(data_dir, name)
+        with mock.patch.object(INB, "move_to_processed", side_effect=flaky):
+            out = self.call("import_inbox")
+        self.assertEqual(self.count_status(out, "imported"), 2)
+        self.assertEqual(self.pending(), ["a.md"])
+        self.assertEqual(self.processed(), ["b.md"])
+
+    def test_processed_file_put_back_in_inbox_not_reimported(self):
+        self.put("a.md", meta_block() + "內文甲")
+        self.call("import_inbox")
+        self.put("a.md", meta_block() + "內文甲")                 # PO 又丟回來再說「匯入」
+        out = self.call("import_inbox")
+        self.assertEqual(self.count_status(out, "already_processed"), 1)
+        self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM content")[0]["n"], 1)
+        self.assertEqual(self.processed(), ["a-1.md", "a.md"])
+
+
+class SameBodyElsewhereTest(US4Base):
+    def test_imported_carries_warning(self):
+        a = self.seed(body="共同全文 SAME", url="https://example.com/x", with_summary=False)
+        self.put("b.md", art_block(url="https://example.com/y") + "共同全文   SAME")
+        out = self.call("import_inbox")
+        self.assertEqual(self.count_status(out, "imported"), 1)
+        self.assertIn("全文與其他來源相同（ID %d）" % a, out)
+
+    def test_duplicate_carries_warning(self):
+        a = self.seed(body="共同全文 SAME", url="https://example.com/x", with_summary=False)
+        self.seed(body="z 的原全文", url="https://example.com/z", with_summary=False)
+        # z 的重複檔，其全文與 x 相同、與 z 現有全文不同 → duplicate（ask）且附警告
+        self.put("e.md", art_block(url="https://example.com/z") + "共同全文 SAME")
+        out = self.call("import_inbox")
+        self.assertEqual(self.count_status(out, "duplicate"), 1)
+        self.assertIn("全文與其他來源相同（ID %d）" % a, out)
+
+    def test_replace_result_carries_warning_when_new_body_matches_other(self):
+        a = self.seed(body="甲的全文", url="https://example.com/x", with_summary=False)
+        self.seed(body="乙的舊全文", url="https://example.com/y", with_summary=False)
+        self.put("n.md", art_block(url="https://example.com/y") + "甲的全文")
+        out = self.call("import_inbox", {"on_duplicate": "replace", "filenames": ["n.md"]})
+        self.assertEqual(self.count_status(out, "replaced"), 1)
+        self.assertIn("全文與其他來源相同（ID %d）" % a, out)
+
+
+class ImportTextDuplicateTest(US4Base):
+    ARGS = {"source_type": "article", "url": ART, "title": "短文", "author": "作者", "date": "2026-11-19",
+            "body": "短文內文 TEXTBODY"}
+
+    def test_ask_default_reports_id_title_and_does_not_write(self):
+        cid = self.seed()
+        out = self.call("import_text", dict(self.ARGS, body="別的內文"))
+        self.assertIn("[duplicate]", out)
+        self.assertIn("ID %d" % cid, out)
+        self.assertIn("舊標題", out)
+        self.assertNotIn("檔案保留在資料匣", out)
+        self.assertEqual(self.body_of(cid)["body"], "舊全文 OLDBODY")
+        self.assertIn(T.DISCLAIMER, out)
+
+    def test_replace_directly_replaces_keeps_summary_and_audits(self):
+        cid = self.seed()
+        out = self.call("import_text", dict(self.ARGS, body="新全文 %s" % SENTINEL, on_duplicate="replace"),
+                        channel="http")
+        self.assertIn("[replaced]", out)
+        self.assertIn("已確認摘要仍保留", out)
+        self.assertIn("下一步", out)
+        self.assertIn(T.DISCLAIMER, out)
+        self.assertEqual(self.body_of(cid)["body"], "新全文 %s" % SENTINEL)
+        self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM summary WHERE status='confirmed'")[0]["n"], 1)
+        a = self.rows("SELECT action, channel, detail FROM audit_log ORDER BY id")[-1]
+        self.assertEqual((a["action"], a["channel"]), ("replace", "http"))
+        self.assertNotIn(SENTINEL, a["detail"])
+
+    def test_skip_does_not_write_and_reports_abandoned(self):
+        cid = self.seed()
+        out = self.call("import_text", dict(self.ARGS, body="別的內文", on_duplicate="skip"))
+        self.assertIn("[skipped]", out)
+        self.assertIn("已放棄", out)
+        self.assertNotIn("下一步", out)
+        self.assertEqual(self.body_of(cid)["body"], "舊全文 OLDBODY")
+        self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM audit_log")[0]["n"], 1)
+
+    def test_same_hash_already_processed_for_every_mode(self):
+        cid = self.seed(body="完全相同 全文")
+        for mode in ("ask", "replace", "skip"):
+            out = self.call("import_text", dict(self.ARGS, body="完全相同   全文\n", on_duplicate=mode))
+            self.assertIn("[already_processed]", out, mode)
+        self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM audit_log")[0]["n"], 1)
+        self.assertEqual(self.body_of(cid)["body"], "完全相同 全文")
+
+    def test_replace_with_blank_body_rejected_existing_unchanged(self):
+        cid = self.seed()
+        with self.assertRaises(T.ToolError):
+            self.call("import_text", dict(self.ARGS, body="   ", on_duplicate="replace"))
+        self.assertEqual(self.body_of(cid)["body"], "舊全文 OLDBODY")
+
+    def test_replace_needs_no_filenames(self):
+        self.seed()
+        out = self.call("import_text", dict(self.ARGS, body="新", on_duplicate="replace"))
+        self.assertIn("[replaced]", out)
+
+
+class Sc004Test(US4Base):
+    def test_three_youtube_spellings_yield_one_row(self):
+        urls = ["https://youtu.be/AAAAAAAAAAA?si=x&t=30",
+                "https://www.youtube.com/watch?v=AAAAAAAAAAA&feature=share",
+                "https://www.youtube.com/shorts/AAAAAAAAAAA"]
+        for i, u in enumerate(urls):
+            self.put("f%d.md" % i, meta_block(url=u, title="影片 %d" % i) + "第 %d 份內文" % i)
+            self.call("import_inbox")
+        self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM content")[0]["n"], 1)
+        self.assertEqual(self.rows("SELECT source_key FROM content")[0]["source_key"], "youtube:AAAAAAAAAAA")
+        self.assertEqual(sorted(self.pending()), ["f1.md", "f2.md"])      # 重複待決，留在 inbox
+
+    def test_create_inbox_file_on_existing_source_does_not_create_file(self):
+        self.put("a.md", meta_block() + "內文甲")
+        self.call("import_inbox")
+        out = self.call("create_inbox_file", {"url": "https://youtu.be/AAAAAAAAAAA?t=9"})
+        self.assertIn("來源已存在", out)
+        self.assertEqual(self.pending(), [])
+
 
 
 if __name__ == "__main__":

@@ -159,7 +159,8 @@ class ExternalContentStore(object):
             "FROM content WHERE source_key = ?", (source_key,)).fetchone()
         return dict(r) if r else None
 
-    def _same_body_elsewhere(self, sha, exclude_key):
+    def find_same_body(self, sha, exclude_key):
+        """全文雜湊相同、但 source_key 不同的其他內容（排除軟刪除）；回 [{"id","title"}]（只警告，不阻擋）。"""
         rows = self.conn.execute(
             "SELECT id, title FROM content WHERE body_sha256 = ? AND source_key != ? AND deleted_at IS NULL "
             "ORDER BY id", (sha, exclude_key)).fetchall()
@@ -198,7 +199,7 @@ class ExternalContentStore(object):
 
         existing = self.find_by_source_key(key)
         if existing:
-            return {"status": "duplicate", "source_key": key, "existing": existing}
+            return self._duplicate_result(key, existing, body)
 
         if not isinstance(body, str) or not body.strip():
             raise ContentValidationError("內文為空")
@@ -219,10 +220,40 @@ class ExternalContentStore(object):
         except sqlite3.IntegrityError:
             existing = self.find_by_source_key(key)     # 兩端同時匯入：UNIQUE 先到先贏
             if existing:
-                return {"status": "duplicate", "source_key": key, "existing": existing}
+                return self._duplicate_result(key, existing, body)
             raise
         return {"status": "imported", "id": cid, "title": vals["title"], "source_key": key,
-                "same_body_elsewhere": self._same_body_elsewhere(sha, key)}
+                "same_body_elsewhere": self.find_same_body(sha, key)}
+
+    def _duplicate_result(self, key, existing, body):
+        same = []
+        if isinstance(body, str) and body.strip():
+            same = self.find_same_body(identity.body_sha256(body), key)
+        return {"status": "duplicate", "source_key": key, "existing": existing, "same_body_elsewhere": same}
+
+    def replace_body(self, content_id, new_body, channel="stdio", filename=None):
+        """取代既有內容的全文（US4）：單一交易只更新 body／body_sha256／updated_at，summary 完全不動，
+        並寫 audit(replace)；detail 只放 source_key、標題、檔名，不含全文。
+        new_body 以 strip() 判斷非空（空白拒絕、既有內容不變）；內容須存在且未軟刪除。"""
+        if channel not in CHANNELS:
+            raise ContentValidationError("channel 必須是 http 或 stdio")
+        if not isinstance(new_body, str) or not new_body.strip():
+            raise ContentValidationError("內文為空")
+        sha = identity.body_sha256(new_body)
+        now = self.now_iso()
+        with self._tx() as c:
+            r = c.execute("SELECT source_key, title FROM content WHERE id = ? AND deleted_at IS NULL",
+                          (content_id,)).fetchone()
+            if not r:
+                raise ContentValidationError("找不到 ID %s 的外部內容（不存在或已刪除）" % content_id)
+            c.execute("UPDATE content SET body = ?, body_sha256 = ?, updated_at = ? WHERE id = ?",
+                      (new_body, sha, now, content_id))
+            detail = {"source_key": r["source_key"], "title": r["title"]}
+            if filename:
+                detail["filename"] = filename
+            self._audit("replace", content_id, channel, detail)
+        return {"status": "replaced", "id": content_id, "title": r["title"], "source_key": r["source_key"],
+                "same_body_elsewhere": self.find_same_body(sha, r["source_key"])}
 
     # ------------------------------------------------------------ 查詢（US2；唯讀連線也可用）
 

@@ -249,9 +249,15 @@ def _host_mismatch_note(meta):
     return None
 
 
-def _ingest(store, fields, body, channel, filename=None):
-    """資料匣與 import_text 共用的核心（FR-006）：驗中繼資料 → source_key → 判重複 →
-    驗內文 → 入庫。回 dict（status／...）；驗證問題丟 InboxError／ContentValidationError。"""
+REPLACE_KEEP_SUMMARY_NOTE = "已確認摘要仍保留；若全文變動很大，請 PO 檢視摘要是否仍適用"
+
+
+def _ingest(store, fields, body, channel, filename=None, on_duplicate="ask"):
+    """資料匣與 import_text 共用的核心（FR-006）：驗中繼資料 → source_key → 判重複（只看區塊）→
+    非重複才驗內文、入庫；重複時：雜湊相同 → already_processed；否則依 on_duplicate：
+    ask→duplicate、replace→取代全文（保留摘要）、skip→放棄。
+    回 dict（status 為 imported／duplicate／already_processed／replaced／skipped）；
+    驗證問題丟 InboxError／ContentValidationError。"""
     meta = inbox.validate_meta(fields)
     try:
         key = identity.source_key(meta["url"], meta["source_type"], meta["guid"])
@@ -263,7 +269,21 @@ def _ingest(store, fields, body, channel, filename=None):
         notes.append(n)
     existing = store.find_by_source_key(key)
     if existing:
-        return {"status": "duplicate", "existing": existing, "notes": notes}
+        blank = not isinstance(body, str) or not body.strip()
+        sha = None if blank else identity.body_sha256(body)
+        if sha is not None and sha == existing.get("body_sha256"):
+            return {"status": "already_processed", "existing": existing, "notes": notes,
+                    "reason": "全文與庫內既有內容（ID %d）相同，視為已處理，未重複入庫" % existing["id"]}
+        if on_duplicate == "skip":
+            return {"status": "skipped", "existing": existing, "notes": notes}
+        if on_duplicate == "replace":
+            inbox.check_body(body)
+            r = store.replace_body(existing["id"], body, channel=channel, filename=filename)
+            notes.append(REPLACE_KEEP_SUMMARY_NOTE)
+            r["notes"] = notes
+            return r
+        return {"status": "duplicate", "existing": existing, "notes": notes,
+                "same_body_elsewhere": [] if sha is None else store.find_same_body(sha, key)}
     inbox.check_body(body)
     res = store.add_content(meta["source_type"], meta["url"], meta["title"], meta["author"], meta["date"],
                             body, guid=meta["guid"], channel=channel, filename=filename)
@@ -286,6 +306,13 @@ def _fmt_result_line(label, r):
                 % (_tp(label), e["id"], _tp(e["title"])))
         if label != "import_text":
             line += "；檔案保留在資料匣等 PO 決定"
+    elif st == "replaced":
+        line = ("[replaced] 檔名／來源：\n%s\n→ 已取代全文（ID %d），標題：\n%s"
+                % (_tp(label), r["id"], _tp(r["title"])))
+    elif st == "skipped":
+        e = r["existing"]
+        line = ("[skipped] 檔名／來源：\n%s\n→ 已放棄（PO 決定不取代既有 ID %d），標題：\n%s\n未寫入"
+                % (_tp(label), e["id"], _tp(e["title"])))
     elif st == "already_processed":
         line = "[already_processed] 檔名／來源：\n%s\n→ 說明：\n%s" % (_tp(label), _tp(r.get("reason", "已處理")))
     else:
@@ -303,13 +330,15 @@ def _check_on_duplicate(args):
     od = args.get("on_duplicate") or "ask"
     if od not in ("ask", "replace", "skip"):
         raise ToolError("on_duplicate 只接受 ask、replace、skip")
-    if od != "ask":
-        raise ToolError("on_duplicate=%s 將於後續階段支援；目前只支援 ask（重複只回報、不寫入）" % od)
+    return od
 
 
 def _import_inbox(args, data_dir, channel):
-    _check_on_duplicate(args)
+    on_duplicate = _check_on_duplicate(args)
     filenames = args.get("filenames")
+    if on_duplicate != "ask" and not filenames:
+        raise ToolError("on_duplicate=%s 必須搭配明確的 filenames（指定要處理的檔名），"
+                        "以免一次波及資料匣內所有重複檔；請列出要取代或放棄的檔名" % on_duplicate)
     if filenames is not None:
         if not isinstance(filenames, list) or not all(isinstance(x, str) for x in filenames):
             raise ToolError("filenames 必須是檔名字串清單")
@@ -348,32 +377,36 @@ def _import_inbox(args, data_dir, channel):
 
     st = store_mod.ExternalContentStore(data_dir)
     imported_names = []
-    lines, counts = [], {"imported": 0, "duplicate": 0, "failed": 0, "already_processed": 0}
+    lines, counts = [], {"imported": 0, "duplicate": 0, "failed": 0, "already_processed": 0,
+                         "replaced": 0, "skipped": 0}
     try:
         for name in targets:
-            r = _process_one_file(st, data_dir, name, channel)
+            r = _process_one_file(st, data_dir, name, channel, on_duplicate)
             counts[r["status"]] += 1
-            if r["status"] == "imported":
+            if r["status"] in ("imported", "replaced"):
                 imported_names.append(name)
             lines.append(_fmt_result_line(name, r))
     finally:
         st.close()
-    summary = ("統計：共 %d 檔；imported %d、duplicate %d、failed %d、already_processed %d"
-               % (len(targets), counts["imported"], counts["duplicate"], counts["failed"],
-                  counts["already_processed"]))
+    summary = ("統計：共 %d 檔；imported %d、replaced %d、skipped %d、duplicate %d、failed %d、already_processed %d"
+               % (len(targets), counts["imported"], counts["replaced"], counts["skipped"], counts["duplicate"],
+                  counts["failed"], counts["already_processed"]))
     out = ["\n".join(lines), summary]
     if skip_note:
         out.append(skip_note.strip())
     if imported_names:
-        out.append(NEXT_STEP_HINT + "\n本次已入庫的檔案（只需為這些提出摘要草稿）：\n"
-                   + "\n".join(_tp(n) for n in imported_names))
+        hint = NEXT_STEP_HINT + "\n本次已入庫或已取代全文的檔案（只需為這些提出摘要草稿）：\n" \
+            + "\n".join(_tp(n) for n in imported_names)
+        if counts["replaced"]:
+            hint += "\n取代全文者：" + REPLACE_KEEP_SUMMARY_NOTE + "。"
+        out.append(hint)
     else:
         out.append("沒有檔案入庫，不需要提出摘要草稿。失敗的檔案維持待處理：請 PO 依上述原因修正檔案後，重新說「匯入」；"
-                   "重複的檔案請 PO 決定如何處理。")
+                   "重複的檔案請 PO 決定：取代全文（on_duplicate=replace）或放棄（on_duplicate=skip），並指定 filenames。")
     return with_disclaimer("\n\n".join(out))
 
 
-def _process_one_file(st, data_dir, name, channel):
+def _process_one_file(st, data_dir, name, channel, on_duplicate="ask"):
     """單檔獨立處理，任何問題只影響該檔。"""
     try:
         text = inbox.read_inbox_file(data_dir, name)
@@ -385,25 +418,27 @@ def _process_one_file(st, data_dir, name, channel):
         return {"status": "failed", "reason": "不可讀取：%s" % e}
     try:
         meta, body, unknown = inbox.parse_inbox_text(text)
-        r = _ingest(st, meta, body, channel, filename=name)
+        r = _ingest(st, meta, body, channel, filename=name, on_duplicate=on_duplicate)
     except (inbox.InboxError, store_mod.ContentValidationError) as e:
         return {"status": "failed", "reason": str(e)}
     except Exception as e:
         return {"status": "failed", "reason": "處理時發生錯誤：%s" % e}
     if unknown:
         r.setdefault("notes", []).append("忽略未知鍵 %s" % "、".join(unknown))
-    if r["status"] == "imported":
+    if r["status"] in ("imported", "replaced", "skipped", "already_processed"):
+        # 資料庫已處理完（或 PO 放棄）：把檔案搬走；搬檔失敗不改變結果，下次因雜湊相同回 already_processed 補搬
         try:
             inbox.move_to_processed(data_dir, name)
         except FileNotFoundError:
-            r.setdefault("notes", []).append("入庫後檔案已不在資料匣，未搬移")
+            r.setdefault("notes", []).append("處理後檔案已不在資料匣，未搬移")
         except Exception as e:
-            r.setdefault("notes", []).append("已入庫但搬入 processed 失敗：%s" % e)
+            r.setdefault("notes", []).append(
+                "處理已完成但搬檔失敗（檔案仍在資料匣，下次匯入會回報 already_processed 並補搬，不會重複入庫）：%s" % e)
     return r
 
 
 def _import_text(args, data_dir, channel):
-    _check_on_duplicate(args)
+    on_duplicate = _check_on_duplicate(args)
     missing = [k for k in ("source_type", "url", "title", "author", "date", "body")
                if not isinstance(args.get(k), str) or not args.get(k).strip()]
     if missing:
@@ -418,12 +453,17 @@ def _import_text(args, data_dir, channel):
     st = store_mod.ExternalContentStore(data_dir)
     try:
         try:
-            r = _ingest(st, fields, body, channel)
+            r = _ingest(st, fields, body, channel, on_duplicate=on_duplicate)
         except (inbox.InboxError, store_mod.ContentValidationError) as e:
             raise ToolError(str(e))
     finally:
         st.close()
-    return with_disclaimer("%s\n\n%s" % (_fmt_result_line("import_text", r), NEXT_STEP_HINT))
+    out = _fmt_result_line("import_text", r)
+    if r["status"] in ("imported", "replaced"):
+        out += "\n\n" + NEXT_STEP_HINT
+        if r["status"] == "replaced":
+            out += "\n取代全文者：" + REPLACE_KEEP_SUMMARY_NOTE + "。"
+    return with_disclaimer(out)
 
 
 def _create_inbox_file(args, data_dir, channel):

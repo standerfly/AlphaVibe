@@ -424,6 +424,115 @@ class SearchTest(Base):
         self.assertIn("confirmed_at", sm[0])
 
 
+class ReplaceBodyTest(Base):
+    def add(self, **kw):
+        args = dict(source_type="youtube", url="https://www.youtube.com/watch?v=AAAAAAAAAAA", title="標題",
+                    author="頻道", published_on="2026-11-19", body="舊全文")
+        args.update(kw)
+        return self.s.add_content(**args)
+
+    def add_summary(self, cid):
+        self.s.add_summary(cid, "已確認摘要", "好", channel="stdio")
+
+    def test_updates_only_body_hash_updated_at_and_keeps_summary(self):
+        r = self.add()
+        self.add_summary(r["id"])
+        before = dict(self.s.conn.execute("SELECT * FROM content WHERE id=?", (r["id"],)).fetchone())
+        sums_before = [tuple(x) for x in self.s.conn.execute("SELECT * FROM summary").fetchall()]
+        self.clock[0] = T0 + datetime.timedelta(hours=1)
+        out = self.s.replace_body(r["id"], "新全文 NEWSECRET", channel="http", filename="n.md")
+        self.assertEqual((out["status"], out["id"], out["title"]), ("replaced", r["id"], "標題"))
+        self.assertEqual(out["same_body_elsewhere"], [])
+        after = dict(self.s.conn.execute("SELECT * FROM content WHERE id=?", (r["id"],)).fetchone())
+        changed = set(k for k in before if before[k] != after[k])
+        self.assertEqual(changed, {"body", "body_sha256", "updated_at"})
+        self.assertEqual(after["body"], "新全文 NEWSECRET")
+        self.assertEqual(after["body_sha256"], S.identity.body_sha256("新全文 NEWSECRET"))
+        self.assertEqual(after["updated_at"], (T0 + datetime.timedelta(hours=1)).isoformat())
+        self.assertEqual(after["created_at"], before["created_at"])
+        self.assertEqual([tuple(x) for x in self.s.conn.execute("SELECT * FROM summary").fetchall()], sums_before)
+
+    def test_audit_in_same_tx_without_body(self):
+        r = self.add()
+        self.s.replace_body(r["id"], "新全文 NEWSECRET", channel="http", filename="n.md")
+        a = self.s.conn.execute("SELECT * FROM audit_log ORDER BY id").fetchall()[-1]
+        self.assertEqual((a["action"], a["channel"], a["content_id"]), ("replace", "http", r["id"]))
+        self.assertIn("n.md", a["detail"])
+        self.assertIn("youtube:AAAAAAAAAAA", a["detail"])
+        self.assertIn("標題", a["detail"])
+        self.assertNotIn("NEWSECRET", a["detail"])
+        self.assertNotIn("舊全文", a["detail"])
+
+    def test_tx_rolls_back_when_audit_fails(self):
+        r = self.add()
+        before = tuple(self.s.conn.execute("SELECT body, body_sha256, updated_at FROM content").fetchone())
+        orig = self.s._audit
+        self.s._audit = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("audit down"))
+        with self.assertRaises(RuntimeError):
+            self.s.replace_body(r["id"], "新全文")
+        self.s._audit = orig
+        self.assertEqual(tuple(self.s.conn.execute("SELECT body, body_sha256, updated_at FROM content").fetchone()),
+                         before)
+        self.assertEqual(self.count("audit_log"), 1)
+
+    def test_blank_body_rejected_and_nothing_changes(self):
+        r = self.add()
+        for b in ("", "  \n\t", "\u3000\u3000", None):
+            with self.assertRaises(S.ContentValidationError, msg=repr(b)) as cm:
+                self.s.replace_body(r["id"], b)
+            self.assertIn("內文為空", str(cm.exception))
+        self.assertEqual(self.s.conn.execute("SELECT body FROM content").fetchone()[0], "舊全文")
+        self.assertEqual(self.count("audit_log"), 1)
+
+    def test_missing_or_deleted_content_rejected(self):
+        with self.assertRaises(S.ContentValidationError):
+            self.s.replace_body(999, "x")
+        r = self.add()
+        self.s.conn.execute("UPDATE content SET deleted_at = ? WHERE id = ?", (T0.isoformat(), r["id"]))
+        self.s.conn.commit()
+        with self.assertRaises(S.ContentValidationError):
+            self.s.replace_body(r["id"], "x")
+        with self.assertRaises(S.ContentValidationError):
+            self.s.replace_body(r["id"], "x", channel="smtp")
+
+    def test_replaced_result_carries_same_body_elsewhere(self):
+        a = self.add(body="共同 內文")
+        b = self.add(url="https://www.youtube.com/watch?v=BBBBBBBBBBB", body="B 的全文")
+        out = self.s.replace_body(b["id"], "共同   內文")
+        self.assertEqual(out["same_body_elsewhere"], [{"id": a["id"], "title": "標題"}])
+
+
+class FindSameBodyTest(Base):
+    def add(self, vid, body, title="標題"):
+        return self.s.add_content("youtube", "https://www.youtube.com/watch?v=%s" % vid, title, "頻道",
+                                  "2026-11-19", body)
+
+    def test_returns_other_sources_with_same_hash_only(self):
+        a = self.add("AAAAAAAAAAA", "同樣 內文", "甲")
+        b = self.add("BBBBBBBBBBB", "同樣  內文", "乙")
+        self.add("CCCCCCCCCCC", "不同內文")
+        sha = S.identity.body_sha256("同樣 內文")
+        self.assertEqual(self.s.find_same_body(sha, "youtube:AAAAAAAAAAA"), [{"id": b["id"], "title": "乙"}])
+        self.assertEqual([x["id"] for x in self.s.find_same_body(sha, "youtube:ZZZZZZZZZZZ")], [a["id"], b["id"]])
+        self.assertEqual(self.s.find_same_body("0" * 64, "x"), [])
+
+    def test_excludes_soft_deleted(self):
+        a = self.add("AAAAAAAAAAA", "同樣內文")
+        self.add("BBBBBBBBBBB", "同樣內文")
+        self.s.conn.execute("UPDATE content SET deleted_at = ? WHERE id = ?", (T0.isoformat(), a["id"]))
+        self.s.conn.commit()
+        self.assertEqual(self.s.find_same_body(S.identity.body_sha256("同樣內文"), "youtube:BBBBBBBBBBB"), [])
+
+    def test_duplicate_result_also_carries_same_body_elsewhere(self):
+        a = self.add("AAAAAAAAAAA", "共同內文")
+        self.add("BBBBBBBBBBB", "B 原文")
+        r = self.s.add_content("youtube", "https://youtu.be/BBBBBBBBBBB", "標題", "頻道", "2026-11-19", "共同內文")
+        self.assertEqual(r["status"], "duplicate")
+        self.assertEqual(r["same_body_elsewhere"], [{"id": a["id"], "title": "標題"}])
+        r = self.s.add_content("youtube", "https://youtu.be/BBBBBBBBBBB", "標題", "頻道", "2026-11-19", "  ")
+        self.assertEqual((r["status"], r["same_body_elsewhere"]), ("duplicate", []))
+
+
 if __name__ == "__main__":
     unittest.main()
 

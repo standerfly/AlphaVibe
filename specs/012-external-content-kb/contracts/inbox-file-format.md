@@ -49,6 +49,6 @@ guid:
 
 ## 結果回報（每檔一行語意）
 
-`import_inbox` 逐檔回報 `status`：`imported`｜`duplicate`（附既有內容 ID 與標題）｜`failed`（附原因：缺欄位清單／格式錯誤／內文為空／連結無效／不可讀或編碼錯誤）｜`already_processed`（重複且內文雜湊與庫內相同，檔案已搬入 processed）。
+`import_inbox` 逐檔回報 `status`：`imported`｜`duplicate`（附既有內容 ID 與標題）｜`failed`（附原因：缺欄位清單／格式錯誤／內文為空／連結無效／不可讀或編碼錯誤）｜`already_processed`（重複且內文雜湊與庫內相同，檔案已搬入 processed）｜`replaced`（重複且 PO 指定 `replace`：已取代全文並保留已確認摘要，檔案已搬入 processed）｜`skipped`（重複且 PO 指定 `skip`：不寫入、視為放棄，檔案已搬入 processed）。
 `imported` 與 `duplicate` 都另附 `same_body_elsewhere`（全文雜湊相同、但 `source_key` 不同的其他內容 ID／標題，若有）——這是「同內容不同來源只警告不阻擋」（FR-010）的警告欄位。
 結果另含 `skipped_unsupported`（副檔名非 `.md`／`.txt` 而被略過的檔名清單）。

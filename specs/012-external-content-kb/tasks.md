@@ -137,13 +137,13 @@ description: "外部內容知識庫（012）任務清單"
 
 ### Tests for User Story 4
 
-- [ ] T031 [P] [US4] 在 `poc/kb-mcp/tests/test_external_content_tools.py` 補 US4 部分：重複回 `duplicate`（附既有 ID 與標題）；`on_duplicate=replace` 取代 `body`／`body_sha256`／`updated_at`、保留已確認摘要、寫 `replace` 稽核、檔案搬 processed；`skip` 不寫入並搬 processed；**`import_inbox` 的 `replace`／`skip` 未搭配 `filenames` 被拒**；`replace`／`skip` 對非重複檔無影響（仍正常入庫）；重複且雜湊相同 → `already_processed` 並搬 processed；模擬「DB 已提交但搬檔失敗」後再匯入 → 回 `already_processed` 並補搬、不重複入庫；`imported` 與 `duplicate` 都附 `same_body_elsewhere`；`import_text` 的 `ask`／`replace`／`skip`／相同雜湊各路徑；`create_inbox_file` 對已存在來源不建檔；已處理檔留在 inbox 再說「匯入」不重複入庫；重複且 PO 尚未決定的檔案維持待處理；SC-004：三種寫法重複匯入庫內只有 1 筆；重複檔內文為空且 `on_duplicate=ask` 仍回 `duplicate`（去重在驗內文之前）；`replace` 搭空內文回 `failed`「內文為空」且既有內容不變（工具層）
-- [ ] T032 [P] [US4] 在 `poc/kb-mcp/tests/test_external_content_store.py` 補：`replace_body`（只更新 body／雜湊／updated_at、summary 不動、audit 同交易、空內文拒絕）、`find_same_body(sha, exclude_key)`
+- [x] T031 [P] [US4] 在 `poc/kb-mcp/tests/test_external_content_tools.py` 補 US4 部分：重複回 `duplicate`（附既有 ID 與標題）；`on_duplicate=replace` 取代 `body`／`body_sha256`／`updated_at`、保留已確認摘要、寫 `replace` 稽核、檔案搬 processed；`skip` 不寫入並搬 processed；**`import_inbox` 的 `replace`／`skip` 未搭配 `filenames` 被拒**；`replace`／`skip` 對非重複檔無影響（仍正常入庫）；重複且雜湊相同 → `already_processed` 並搬 processed；模擬「DB 已提交但搬檔失敗」後再匯入 → 回 `already_processed` 並補搬、不重複入庫；`imported` 與 `duplicate` 都附 `same_body_elsewhere`；`import_text` 的 `ask`／`replace`／`skip`／相同雜湊各路徑；`create_inbox_file` 對已存在來源不建檔；已處理檔留在 inbox 再說「匯入」不重複入庫；重複且 PO 尚未決定的檔案維持待處理；SC-004：三種寫法重複匯入庫內只有 1 筆；重複檔內文為空且 `on_duplicate=ask` 仍回 `duplicate`（去重在驗內文之前）；`replace` 搭空內文回 `failed`「內文為空」且既有內容不變（工具層）
+- [x] T032 [P] [US4] 在 `poc/kb-mcp/tests/test_external_content_store.py` 補：`replace_body`（只更新 body／雜湊／updated_at、summary 不動、audit 同交易、空內文拒絕）、`find_same_body(sha, exclude_key)`
 
 ### Implementation for User Story 4
 
-- [ ] T033 [US4] 在 `poc/kb-mcp/external_content_store.py` 實作 `replace_body`、`find_same_body`；`add_content` 結果附 `same_body_elsewhere`
-- [ ] T034 [US4] 在 `poc/kb-mcp/external_content_tools.py` 完成 `import_inbox`／`import_text` 的重複分支：`ask`／`replace`／`skip`、`already_processed`（雜湊相同）、`replace`／`skip` 在 `import_inbox` 須搭配 `filenames`（`import_text` 不受此限）、搬檔失敗的補搬邏輯、`same_body_elsewhere` 輸出
+- [x] T033 [US4] 在 `poc/kb-mcp/external_content_store.py` 實作 `replace_body`、`find_same_body`；`add_content` 結果附 `same_body_elsewhere`
+- [x] T034 [US4] 在 `poc/kb-mcp/external_content_tools.py` 完成 `import_inbox`／`import_text` 的重複分支：`ask`／`replace`／`skip`、`already_processed`（雜湊相同）、`replace`／`skip` 在 `import_inbox` 須搭配 `filenames`（`import_text` 不受此限）、搬檔失敗的補搬邏輯、`same_body_elsewhere` 輸出
 
 **Checkpoint**: US4 獨立可測
 
