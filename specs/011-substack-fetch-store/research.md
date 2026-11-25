@@ -139,6 +139,7 @@ launchd 醒來補跑是全專案慣例；011 只寫自己的庫與鎖，即使�
 - **告警策略**（FR-032）：設定檔 `alert_policy`＝`every_failure`（預設、初期）或 `consecutive_3`；403／429 與「回應不是 feed 的 HTML 挑戰頁」
   一律立即告警（後者比照 intake `integration-note.md §2`「視同被擋」**[PO 已決定：B2，FR-005／FR-032]**）。作者級連續失敗次數存 `author.consecutive_failures`，
   200／304 歸零；因最小間隔跳過不增不減。
+- **N 類提醒（FR-035，PO 決定 Q14）**：N 類文章的逐篇通知在「完整度：非文字」之後多一行固定提醒句（見 `contracts/notifications.md §1`）；摘要裡非文字篇數大於 0 時，在該行後附同一提醒句。一次性＝只隨該篇通知發出，沒有「再次催促」的任何排程或狀態；失敗補發重送同一則。系統不自行處理 N 類（不轉寫、不抓網頁、不呼叫模型，靜態測試與執行期攔截涵蓋）。提醒句只含固定文字，不含連結與內文。
 - **摘要通知**：本次有新文章、有告警或有「feed 20 篇皆為新文」提示時，最後再發 1 則摘要，含新增篇數（P/F/N）、缺圖／放棄張數與**空間現況**
   （FR-025／FR-028；Edge Case「在回報中提示可能漏文」）。沒有新文章且無告警 → 不發任何通知（US1-AS4）。**[PO 已決定：B4]**
 - **告警附空間現況**（FR-028「有事件的通知附帶空間現況」）：四種告警文字末尾都附一行「空間：剩餘 X GB；substack.db Y MB；圖片 Z MB」（現況數字，無判定字眼）；逐篇新文章通知不附（其空間現況由同次摘要提供）。空間數字以 `shutil.disk_usage(data_dir)` 與實際檔案大小計算，計算失敗時該行寫「空間：無法取得」而不是省略或猜測。
@@ -178,9 +179,9 @@ YAML（非標準庫）；讓 Claude 直接手改 JSON（無驗證、無備份）
 | 圖片目錄 | `<data_dir>/substack_images/<article_id>/<seq>.<ext>`；路徑不含任何來自網址的片段；寫 `.part` 後 `os.replace`（比照 `article_images.py:92-95`） | 與 `articles_images/` 平行、名稱可辨識 |
 | 圖片下載 | `substack_images.py`：https 限定；主機白名單（預設 `substackcdn.com`、`substack-post-media.s3.amazonaws.com`、作者 feed 主機，可在設定檔擴充）；轉址只允許落在白名單主機；`Content-Type` 必須 `image/*`；單檔 20MB；張與張間隔 1 秒；逾時 30 秒；失敗（含白名單外）`fail_count+1`，達 3 → `abandoned` | 白名單外的圖不發請求、記 `host_not_allowed`，3 次後放棄；**[PO 已決定：B5，FR-034]** 白名單初始＝上列兩個固定主機＋各作者 feed 主機，PO 可在對話中以 `add-image-host`／`remove-image-host` 增修；拒絕「任意主機」以防 feed 內容誘導抓內網位址 |
 | 封面圖 | `enclosure` 為 `image/*` 且不在內文中 → 以 `seq=0`「封面」下載；`audio/*`／`video/*` 只記型別、不下載 | Q-114 未決；封面是文章圖片的一部分、成本低 |
-| HTML→純文字 | `html.parser` 自寫轉換器（`substack_html.py`）：區塊元素換行、`li`→「• 」、`script/style` 丟棄、`iframe/audio/video` 與播放器 div→〔嵌入內容〕／〔播放器〕；`<img>`→`〔圖 N｜圖說：…｜alt：…〕`（`figure` 內的 `figcaption` 併入標記、不重複輸出）；保留原始 HTML 於 `content_html` | 標準庫；保留原 HTML 讓 PO 要求「重新判斷」（FR-033，本包提供，見 R11）時不必重抓 |
+| HTML→純文字 | `html.parser` 自寫轉換器（`substack_html.py`）：區塊元素換行、`li`→「• 」、`script/style` 丟棄、`iframe/audio/video` 與播放器 div→〔嵌入內容〕／〔播放器〕；`<img>`→`〔圖 N｜圖說：…｜alt：…〕`（`figure` 內的 `figcaption` 併入標記、不重複輸出）；保留原始 HTML 於 `content_html`；**N 類只用於取得圖位清單（寫入 `article_image`），轉換出的文字不存入 `article.body_text`（恆 NULL，Q14）** | 標準庫；保留原 HTML 讓 PO 要求「重新判斷」（FR-033，本包提供，見 R11）時不必重抓 |
 | Read more（P） | 去掉尾端空白後，以 `html.parser` 取**最後一個頂層區塊**：是 `<p>`、唯一有意義子節點為 `<a>`、連結文字正規化後等於 `Read more`（不分大小寫）、`href` 為 `https://<host>/p/<slug>` → P（`classify_reason='read_more_tail'`） | 依 `docs/spec-intake/substack-import/raw/2026-11-19-paid-preview-analysis.md` 第 4 行的固定結構；**不看長度**（FR-012） |
-| F／N／不確定 | 無上述尾端時：可見文字（扣除圖位與播放器標記、空白）≥ **200 字** → F；< 200 字 → N。下列一律存 P 並標 `uncertain:*`：`content:encoded` 缺漏或空、HTML 無法解析、尾端有 `Read more` 文字但結構或 `href` 主機與文章連結不符、最後區塊含 `Read more` 但後面還有內容 | 實測 N 類 0～38 字、F 類 7.5k～15k 字，200 落在大間隙中；「足夠純文字」門檻＝可見文字 ≥200 字，為明示常數、寫進契約 **[PO 已決定：B1，FR-010]** |
+| F／N／不確定 | 無上述尾端時：可見文字（扣除圖位與播放器標記、空白）≥ **200 字** → F；< 200 字 → N。下列一律存 P 並標 `uncertain:*`：`content:encoded` 缺漏或空、HTML 無法解析、尾端有 `Read more` 文字但結構或 `href` 主機與文章連結不符、最後區塊含 `Read more` 但後面還有內容 | N 類不存內文（PO 決定 Q14）；實測 N 類 0～38 字、F 類 7.5k～15k 字，200 落在大間隙中；「足夠純文字」門檻＝可見文字 ≥200 字，為明示常數、寫進契約 **[PO 已決定：B1，FR-010]** |
 | 去重鍵 | `guid`（文字原樣）與 `link_norm`（https、小寫主機、去 query／fragment、去尾斜線）各有 UNIQUE 索引；任一相同即重複、不覆寫（FR-007）；guid 中 A、link 中 B 的衝突 → 視為重複並計數 `dedupe_conflict`（**只印 stdout 與日誌、不入庫、不新增欄位**） | RSS guid `isPermaLink=false`；兩種網址只存一份（Edge Case） |
 | ETag | `author.etag` 存上次回應的 ETag 原字串（含 `W/` 弱標記），下次 `If-None-Match`；304＝無變化、不解析、不寫文章，但仍算一次請求（更新 `last_request_at`） | 實測有 ETag、無 Last-Modified（`integration-note.md §1`） |
 | feed 請求 | 每作者每次執行最多 1 次；逾時 30 秒；回應上限 5MB；XML 先拒絕含 `<!DOCTYPE`／`<!ENTITY` 的內容再用 `xml.etree.ElementTree` 解析；作者之間間隔 5 秒；轉址只允許到該作者設定的 feed 主機或 `<x>.substack.com` | 實測 feed 約 0.8～1MB；預先拒絕 DTD 防實體展開 |
@@ -284,12 +285,12 @@ YAML（非標準庫）；讓 Claude 直接手改 JSON（無驗證、無備份）
 - **有效完整度**＝該文章最近一筆 `reclassification.new_completeness`，沒有則為 `article.completeness`；以視圖 `article_effective`（唯讀 VIEW）提供，
   查詢與手動轉寫選取（FR-023 的「F 類」）都用有效值；FR-013 占比用原判斷（見 R7）。
 - **規則**：重判呼叫與匯入時**同一個**分類函式（`substack_html.classify(content_html, link, ...)`），用「當下程式裡的規則」；所以站方改版後 PO 先調整規則（走程式變更）、再要求重判。
-  `body_text` 不重算、不覆寫（重判只改判斷，不改已存內容）。
+  `body_text` 不重算、不覆寫（重判只改判斷，不改已存內容）。**例外（Q14）**：原判斷 N 的文章 `body_text` 恆為 NULL；重判結果為 F 或 P 時，以保存的 `content_html` 重新呼叫 `html_to_text`，把結果存入**該筆 `reclassification.derived_body_text`**（`article` 欄位仍不動）；`article_effective.effective_body_text` 因而非 NULL；有效完整度為 N 時 `effective_body_text` 恆 NULL。
 - **指令**（`contracts/cli.md §1`）：`substack_import.py --data-dir DIR --reclassify (--article-ids IDS | --author KEY) [--dry-run]` 與唯讀
   `--reclassify-history ARTICLE_IDS`。取同一把執行鎖（拿不到＝忙碌 exit 3）；零網路、零模型；輸出只有計數與內部 id
   （檢查篇數、未變、改變 P→F 幾篇…），不含標題。結果相同（新舊類別一樣）也記一列（證明有重判過、規則版本為何）；`--dry-run` 只列「會改變」的 id、不寫庫。
 - **PO 對話流程**：PO 說「FOMO 最近的文章判斷怪怪的，幫我重判」→ Claude 先 `--reclassify --author fomosoc --dry-run` 回報會改幾篇 → PO 同意後正式執行 → 回報結果與歷史。
-- **測試**：重判前後 `content_html`／`body_text`／`article.completeness` 位元組不變；`reclassification` 新增 N 列；兩次重判後有 2 列、順序正確；重判期間攔截 `urllib`／`subprocess`
+- **測試**：重判前後 `content_html`／`body_text`／`article.completeness` 位元組不變；N→F 重判後 `derived_body_text` 等於 `html_to_text(content_html)`、`effective_body_text` 非 NULL、再重判回 N 則 `effective_body_text` 為 NULL；`reclassification` 新增 N 列；兩次重判後有 2 列、順序正確；重判期間攔截 `urllib`／`subprocess`
   確認零呼叫；有效值＝最近一筆；`--author` 範圍只含該作者；不存在的 id 回報而非靜默略過。
 
 **Alternatives**：直接 UPDATE `article.completeness`（違反 FR-033「不覆寫歷史」與 FR-007）；只存「最新重判值」欄位在 article（丟失歷史）；重判時重新抓 feed（違反「以保存的原始內容」；feed 也只保留 20 篇）。

@@ -41,7 +41,7 @@ python3 -m unittest discover -s poc/kb-mcp/tests                              # 
 | # | 驗證 | 怎麼做 | 預期 |
 |---|---|---|---|
 | V1 | 首次只收 14 天、重跑不重複（US1-AS1/2、SC-002） | 測試 `test_substack_import`：假 feed 20 篇跨 3 個月，跑兩次 | 第一次只存窗內篇數；第二次總數不變 |
-| V2 | 三類分類（US2、SC-006） | `test_substack_classify`：以兩位作者真實 feed 的**結構樣本**（Read more 尾端、純播放器、嵌入卡片、長文帶 Read more、免責聲明結尾）組成 fixture | 規則表逐篇吻合；不確定者全為 P |
+| V2 | 三類分類（US2、SC-006） | `test_substack_classify`：以兩位作者真實 feed 的**結構樣本**（Read more 尾端、純播放器、嵌入卡片、長文帶 Read more、免責聲明結尾）組成 fixture | 規則表逐篇吻合；不確定者全為 P；N 類 `body_text` 為 NULL、`content_html` 與圖片列仍在 |
 | V3 | 缺圖、補下載、放棄（US3、SC-008） | `test_substack_images`：一張圖連續失敗 | 第 1、2 次 `missing`，第 3 次 `abandoned`，之後不再請求；`--retry-images` 後再試 |
 | V4 | 單一作者被擋不拖累（US4、SC-007、SC-011） | 假 feed：A 回 403、B 正常；兩種告警策略各跑 | A 停手＋立即告警、B 照常；`consecutive_3` 下逾時第 3 次才告警 |
 | V5 | 忙碌不寫庫（FR-017） | 測試先持有 `.substack_import.lock` 再執行 | exit 3、`substack.db` 位元組不變 |
@@ -51,9 +51,9 @@ python3 -m unittest discover -s poc/kb-mcp/tests                              # 
 | V9 | 備份（US7-AS3） | `python3 poc/kb-mcp/backup_databases.py --data-dir poc/data-test-substack --dest "$(mktemp -d)"` | 有 `substack-*.db.gz`（完整性 ok）與 `mirror/substack_images/` |
 | V10 | 補跑判斷（research R2、FR-017） | 假時鐘測試：22:00 已跑 → 01:00 `already_done`；23:30 醒來 → `deferred`；07:00 醒來且當日未跑 → 執行；**邊界 21:59／22:00／23:00／23:59／00:59／01:00**；`deferred`／`already_done` 紀錄不影響後續 01:00 判斷 | 如左 |
 | V11 | FR-027 | `test_substack_isolation`：`.gitignore` 涵蓋 `poc/data/`；`app/`、`server*.py`、`us_stock_mcp_server.py` 不含 `substack`；備份目的地在家目錄；通知文字不含 `http` 與任何文章網址片段 | 全過 |
-| V12 | 重判（US2-AS6/7、FR-033、SC-012） | `test_substack_reclassify`：重判前後 `article` 位元組不變、`reclassification` 逐次新增、`article_effective` 取最近一筆、攔截網路與 subprocess 為 0 次 | 原判斷與歷史皆保留 |
+| V12 | 重判（US2-AS6/7、FR-033、SC-012） | `test_substack_reclassify`：重判前後 `article` 位元組不變、`reclassification` 逐次新增、`article_effective` 取最近一筆、攔截網路與 subprocess 為 0 次；N→F 重判後 `derived_body_text` 由 `content_html` 產生、`effective_body_text` 非空 | 原判斷與歷史皆保留 |
 | V13 | 圖片白名單（US3-AS4、FR-034、SC-013） | `test_substack_images`：非白名單主機的圖零請求、記 `host_not_allowed`；`add-image-host` 後可 `--retry-images` | 如左 |
-| V14 | 通知內容與摘要（FR-025、SC-014） | `test_substack_import`：逐篇通知含作者／標題／完整度、無連結；追補逐篇；有告警無新文章也發含空間現況的摘要 | 如左 |
+| V14 | 通知內容與摘要（FR-025、SC-014） | `test_substack_import`：逐篇通知含作者／標題／完整度、無連結；追補逐篇；有告警無新文章也發含空間現況的摘要；N 類通知含 FR-035 固定提醒、再跑不重複提醒（SC-015） | 如左 |
 | V15 | 預算強制中止與交易回滾（research R2／R8） | 假時鐘＋卡住的假 HTTP；回滾注入測試 | 預算內中止、鎖釋放、無 `.part`、無半寫入 |
 | V16 | 手動轉寫不動 010（T-C 執行期） | `test_substack_isolation`：攔截 `sqlite3.connect`／`open`，全程未開啟 `articles.db`；`XPC_SERVICE_NAME` 三種值案例 | 全過 |
 

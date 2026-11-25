@@ -41,7 +41,7 @@
 | `completeness` | TEXT NOT NULL | **原判斷**：`P`（僅預覽）／`F`（全文）／`N`（非文字）（FR-010）；寫入後**不可改**（重判結果另存 §1.9，FR-033） |
 | `classify_reason` | TEXT NOT NULL | 原判斷依據：`read_more_tail`／`text_ge_200`／`text_lt_200`／`uncertain:<代碼>`（不確定者 completeness 一律 `P`，FR-012）；`text_ge_200`＝可見文字 ≥200 字（FR-010） |
 | `content_html` | TEXT | `content:encoded` 原文（P 即為公開預覽本身，FR-011）；**重判（FR-033）的唯一輸入**，寫入後不可改 |
-| `body_text` | TEXT | 轉換後純文字，含圖位標記〔圖 N｜圖說：…｜alt：…〕（FR-014）；P 類不含尾端 Read more 段 |
+| `body_text` | TEXT NULL | 轉換後純文字，含圖位標記〔圖 N｜圖說：…｜alt：…〕（FR-014）；P 類不含尾端 Read more 段；**N 類恆為 NULL（不保存內文，PO 決定 Q14、FR-011）**——N 類的圖位標記改由 `article_image` 列（`seq`、圖說、alt）與 `content_html` 保存；寫入後不可改 |
 | `description` | TEXT NULL | RSS description（預覽摘要） |
 | `enclosure_type` | TEXT NULL | 例 `image/jpeg`、`audio/mpeg`（只記型別） |
 | `notify_status` | TEXT NOT NULL | `pending`／`sent`／`failed`／`abandoned`（FR-025） |
@@ -50,7 +50,7 @@
 
 索引：`UNIQUE(guid) WHERE guid IS NOT NULL`、`UNIQUE(link_norm)`、`(author_key, published_at)`、`(fetched_at)`。
 
-唯讀視圖 `article_effective`（FR-033）：`article` 左連接「每篇最近一筆 `reclassification`」，輸出 `effective_completeness`（有重判取最近一筆的 `new_completeness`，否則 `article.completeness`）、`original_completeness`、`reclassified_count`。查詢完整度（手動轉寫選取、`--status`、未來第 2 包搜尋）一律用 `effective_completeness`；FR-013 全文占比用 `original_completeness`（research R7）。
+唯讀視圖 `article_effective`（FR-033）：`article` 左連接「每篇最近一筆 `reclassification`」，輸出 `effective_completeness`（有重判取最近一筆的 `new_completeness`，否則 `article.completeness`）、`original_completeness`、`reclassified_count`、`effective_body_text`（**可搜尋內文的唯一出處**：有效完整度為 `N` → NULL；否則 `article.body_text` 非 NULL 時取之，否則取「最近一筆 `derived_body_text` 非 NULL 的重判紀錄」之值；FR-011、Q14）。查詢完整度（手動轉寫選取、`--status`、未來第 2 包搜尋）一律用 `effective_completeness`，取內文一律用 `effective_body_text`（N 類永遠 NULL；第 2 包搜尋只能索引 `effective_body_text` 非 NULL 者）；FR-013 全文占比用 `original_completeness`（research R7）。
 
 ### 1.3 圖片 `article_image`（spec：圖片；FR-014～FR-016）
 
@@ -139,6 +139,7 @@
 | `new_completeness` | TEXT NOT NULL | `P`／`F`／`N`；不確定者仍一律 `P`（FR-012） |
 | `new_reason` | TEXT NOT NULL | 同 `classify_reason` 的代碼集合 |
 | `rule_version` | TEXT NOT NULL | 重判所用 `substack_html.RULE_VERSION`（讓日後看得出是哪一版規則判的） |
+| `derived_body_text` | TEXT NULL | **僅在**文章 `body_text` 為 NULL（原判斷 N）而 `new_completeness` 為 `F` 或 `P` 時填：用與匯入同一個 `html_to_text`（P 則同樣去掉尾端 Read more 段）對保存的 `content_html` 重新轉換的結果，含圖位標記（FR-033、FR-011、Q14）；其他情況 NULL。重判為 `N` 時不填；既有 `body_text` 非 NULL 的文章也不填（不重算、不覆寫）。append-only，寫入後不可改 |
 | `changed` | INTEGER 0/1 | `new_completeness != old_completeness` |
 | `run_id` | INTEGER NULL | → `run.id`（本次重判寫的 `run` 列，`trigger='reclassify'`） |
 
@@ -153,7 +154,7 @@ feed 條目 ──去重命中──────────────▶ 略�
    │  （guid 與 link_norm 各命中不同兩篇＝`dedupe_conflict`：同樣略過；計數只印 stdout／日誌、不入庫、無對應欄位）
    │──早於 window_from（非追補）──▶ 略過（不寫，計 skipped_window）
    │──pubDate 解析失敗（非追補）──▶ 略過（不寫，計 skipped_no_pubdate）
-   └──單一交易寫入成功──────────▶ 已存（completeness=P|F|N，終態；不覆寫、不更新，FR-007）
+   └──單一交易寫入成功──────────▶ 已存（completeness=P|F|N，終態；不覆寫、不更新，FR-007；N 類 body_text=NULL、content_html 與圖片列照存，FR-011）
         交易失敗 → 回滾、不留紀錄 → 下次執行重新評估
 ```
 
@@ -161,6 +162,8 @@ feed 條目 ──去重命中──────────────▶ 略�
 
 `pending` →（送出成功）`sent` ｜ `pending`/`failed` →（失敗）`failed`（attempts+1）→ attempts=3 → `abandoned`。
 每次執行先補發 `pending`/`failed`，再發新文章；同次不重試。
+
+**N 類提醒（FR-035）**：N 類提醒是該篇逐篇通知本身的固定文字（`contracts/notifications.md §1`），沒有獨立的提醒狀態欄位——該篇通知 `sent` 後即不再有任何提醒（一次性、不催促）；通知失敗補發時重送的仍是同一則（含提醒）通知，成功後累計送達 1 次。重判（FR-033）永不發通知，故 N→F 或 F→N 的重判都不會產生新提醒。
 
 ### 2.2b 重判（FR-033）
 
@@ -173,6 +176,8 @@ reclassification 新增一列（old=當下有效值 → new）──▶ 有效�
    ▼
 article.content_html／body_text／completeness／classify_reason 全程不變
 ```
+
+**N 類重判為 F／P 的內文產生（Q14、FR-033）**：原判斷 N 的文章 `article.body_text` 恆為 NULL；重判結果為 F 或 P 時，`reclassify` 以保存的 `content_html` 重新呼叫 `html_to_text`，把結果寫入**該筆新增的 `reclassification.derived_body_text`**（不改 `article` 任何欄位，維持「重判前後 `article` 位元組不變」）；`article_effective.effective_body_text` 因此變為非 NULL，成為第 2 包可搜尋內容。若再次重判回 N，`effective_body_text` 回到 NULL（歷史的 `derived_body_text` 仍保留於舊列，不刪）；再重判為 F 時再產生新一筆 `derived_body_text`。原判斷為 F／P 者（`body_text` 已有值）重判不重算、`derived_body_text` 為 NULL，但若重判為 N，`effective_body_text` 仍回 NULL（有效完整度為 N 者不提供內文）。
 
 ### 2.3 圖片
 
@@ -204,9 +209,12 @@ abandoned ──PO 要求重試（--retry-images）──▶ missing(fail_count=
 | 不得以長度判斷 P：P 只能來自 `read_more_tail` 或 `uncertain:*` | FR-012 |
 | `guid`（非 NULL）與 `link_norm` 各自唯一；插入前以「guid=? OR link_norm=?」查重，命中即不寫 | FR-007 |
 | 已存文章沒有任何 UPDATE 路徑會改 `title`／`content_html`／`body_text`／`completeness`／`classify_reason` | FR-007（不覆寫） |
+| `completeness='N'` ⇒ `body_text IS NULL`（`body_text` 為 NULL 者必為 N；F／P 必非 NULL）；N 類 `content_html` 非空時照存、圖片列照建 | FR-011、Q14 |
+| `reclassification.derived_body_text` 只在「文章 `body_text IS NULL` 且 `new_completeness ∈ {F,P}`」時非 NULL；`article_effective.effective_body_text`：有效完整度 N ⇒ NULL | FR-011、FR-033、Q14 |
+| 通知文字 `completeness='N'` 時恰含固定提醒句，且不含 `link`／內文；非 N 時不含該句 | FR-035、SC-015 |
 | `reclassification` 只有 INSERT（無 UPDATE／DELETE）；`old_completeness` 必等於寫入當下的有效值；`new_completeness ∈ {P,F,N}`，`uncertain:*` 者必為 `P` | FR-033、FR-012 |
 | 重判不讀網路、不呼叫模型、不發通知；重判前後 `article` 的所有欄位位元組不變 | FR-033、SC-012 |
-| 通知文字只含作者（出版名稱）、標題、完整度；不含 `link`／`link_norm`／任何網址 | FR-025、FR-027 例外 |
+| 通知文字只含作者（出版名稱）、標題、完整度（N 類另含 FR-035 固定提醒句）；不含 `link`／`link_norm`／任何網址 | FR-025、FR-027 例外 |
 | 圖片下載前主機必須通過白名單（完全相同或子網域）；不通過者不發請求、記 `host_not_allowed`、`fail_count+1` | FR-034、FR-015 |
 | 所有寫入經 `transaction()`（`isolation_level=None`、顯式 `BEGIN IMMEDIATE`）；交易外不得有 DML | FR-009（research R8） |
 | `status='downloaded'` ⇔ `file_path` 非 NULL 且檔案存在（寫檔在前、更新在後） | FR-009 |
@@ -235,7 +243,7 @@ abandoned ──PO 要求重試（--retry-images）──▶ missing(fail_count=
 | FR-007 | §1.2 唯一索引、§3 |
 | FR-008 | §1.1 `activated_at`／`window_from`；research R5 追補；`contracts/cli.md §1 --backfill`（追補文章逐篇通知：research R4、`contracts/notifications.md §1`） |
 | FR-009 | research R8；§3 |
-| FR-010～FR-012 | research R6（Read more 結構、可見文字 ≥200 字門檻、不確定規則）；§1.2 `completeness`／`classify_reason`、§3 |
+| FR-010～FR-012 | research R6（Read more 結構、可見文字 ≥200 字門檻、不確定規則）；§1.2 `completeness`／`classify_reason`、§3；**FR-011 的 N 類不存內文**：§1.2 `body_text`（N 恆 NULL）、`article_effective.effective_body_text`、§3 |
 | FR-013 | research R7「全文占比提醒」（維持近 7 天平均 ±30 個百分點，PO 暫解讀待確認；用原判斷）；`contracts/health-output.md` |
 | FR-014 | research R6（HTML→文字、圖位標記）；§1.3 |
 | FR-015 | §2.3；`contracts/cli.md --retry-images`；健檢放棄張數 |
@@ -249,11 +257,12 @@ abandoned ──PO 要求重試（--retry-images）──▶ missing(fail_count=
 | FR-024 | research R1 T-C（含執行期證明）；§1.7 `transcription_trial.claude_calls`（消耗＝呼叫次數）、`image_transcription.text`（直接讀庫驗證） |
 | FR-025 | research R4（作者＋標題＋完整度、無連結、追補逐篇、摘要含空間）；§1.2 `notify_*`、§2.2；`contracts/notifications.md §1、§2` |
 | FR-026 | research R6「日誌內容」、R7 外洩掃描；§3 |
-| FR-027 | plan.md「FR-027 可驗證項」（含 Telegram 通知例外：只含作者、標題、完整度、無連結）；資料只在 gitignore 的 `poc/data/`、無任何 STND／MCP 入口；§3 通知不含網址 |
+| FR-027 | plan.md「FR-027 可驗證項」（含 Telegram 通知例外：只含作者、標題、完整度、N 類另含固定提醒句、無連結）；資料只在 gitignore 的 `poc/data/`、無任何 STND／MCP 入口；§3 通知不含網址 |
 | FR-028 | `contracts/health-output.md`（每日健檢空間現況、放棄張數）；`contracts/notifications.md §2` 摘要與 §3 告警附空間現況；research R4、R7 |
 | FR-029 | research R7（備份、健檢）；R9（回滾、部署）；`rotate_logs` glob |
 | FR-030 | research R3 |
 | FR-031 | research R1 T-E；plan.md 驗收 |
 | FR-032 | research R4；§1.1 `consecutive_failures`、§2.4（`challenge_html` 立即告警）；設定 `alert_policy`；`contracts/notifications.md §3` |
-| FR-033（新增） | research R11；§1.2 視圖 `article_effective`、§1.9 `reclassification`、§2.2b、§3；`contracts/cli.md §1 --reclassify／--reclassify-history` |
+| FR-033（新增） | research R11；§1.2 視圖 `article_effective`、§1.9 `reclassification`（含 `derived_body_text`：N 重判為 F／P 的內文產生）、§2.2b、§3；`contracts/cli.md §1 --reclassify／--reclassify-history` |
 | FR-034（新增） | research R6 圖片下載（白名單）；設定 `image_hosts`（`contracts/config-format.md`）；`contracts/cli.md §2 add-image-host／remove-image-host`；§1.3 `host_not_allowed`、§3 |
+| FR-035（新增，Q14） | `contracts/notifications.md §1（N 類逐篇提醒）、§2（摘要附提醒）`；§2.2 N 類提醒為一次性（沿用 `notify_status`，無獨立欄位）；§3 通知文字驗證規則；research R4（通知內容） |
