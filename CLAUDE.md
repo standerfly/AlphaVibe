@@ -56,6 +56,14 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 決策依據：`docs/adr/0027-prespec-workflow.md`。
 
 <!-- SPECKIT START -->
+`specs/012-external-content-kb/plan.md`（外部內容知識庫：YouTube／Podcast／文章的逐字稿或全文存進獨立
+`<data_dir>/external_content.db`，討論投資時由 claude.ai／本機 Claude Code 的 agent 全文檢索並引用；
+進件走資料匣 `<data_dir>/inbox/`——`create_inbox_file` 建好中繼資料已填、內文空白的檔，PO 貼入逐字稿後
+`import_inbox` 由服務端讀檔入庫，逐字稿不經模型輸出；摘要只有 PO 明確同意才入庫；刪除為軟刪除；
+需求基線 `docs/spec-intake/external-content-kb/`，2026-11-25 Accepted）**2026-11-25 現況：T001～T040 程式與
+測試完成（US1～US5、7 個工具、接線與守門；外部內容 288 個測試）；整體獨立驗收（T042）、EP466 端到端（T043）、
+claude.ai 單次貼文上限實測（T044）、部署（T045）、claude.ai 主路徑驗收（T046）尚未完成；尚未部署。**
+接手前先讀 `specs/012-external-content-kb/quickstart.md` 與 `tasks.md`；**部署前不要讓 claude.ai 看到半成品**。
 `specs/010-investanchors-article-import/plan.md`（定錨產業筆記文章自動匯入：Gmail 通知信觸發＋
 全新無持久化 profile 的 Playwright 登入取文、跑完即登出、獨立 `articles.db`、表格圖視覺模型轉寫、
 台股／美股連接器共用唯讀 `search_articles`／`get_article`；需求基線
@@ -170,6 +178,18 @@ roundtrip-search 來源）。
   庫不存在回錯誤、不建庫、不寫 `alphavibe.db`／`us_stocks.db`）。工具數守門兩處：
   `test_pnl.py::test_tool_counts`（50／31）、`test_traceability.py::test_tools_list_has_fifty`；
   另有 `test_article_connectors_parity.py` 守台美輸出逐字相同。
+  **外部內容庫（012，合併後台股 57／唯讀 33／美股 12）**：7 個工具集中在
+  `poc/kb-mcp/external_content_tools.py`（查詢 `search_external_content`／`get_external_content` 掛台股、
+  唯讀白名單、美股；寫入 `create_inbox_file`／`import_inbox`／`import_text`／`confirm_summary`／
+  `delete_content` **只掛 `server.py`**）；模組：`external_content_{identity,store,inbox,metadata,tools}.py`；
+  工具名稱不得含 `article`／`verif`／`reviewed`（守門測試保留字）。`Server` 有 `channel` 參數
+  （`stdio`＝本機、`http`＝claude.ai 經閘道），稽核 `audit_log.channel` 記錄入口。專案指示與 AI Studio prompt
+  範本：`docs/runbooks/external-content-project-instructions.md`（已併入 `ALPHAVIBE_CONTEXT.md`）。
+  **三個易踩坑**：(1) 正式環境 `AlphaVibe-prod/poc/data` 是符號連結，資料匣路徑比對必須兩邊都 `os.path.realpath`；
+  (2) 本機 stdio 路徑沒有 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE` 檢查，寫入工具另有「資料目錄＝正式目錄且無旗標則拒絕」
+  （`ensure_write_allowed`），本機要寫正式資料須在 `.mcp.json` 的 env 加該旗標，開發測試一律用獨立 `ALPHAVIBE_DATA_DIR`；
+  (3) `confirm_summary`／`delete_content` 的 `po_confirmed` 與原話是 agent 自填的稽核留痕，系統無法驗證真偽
+  （遵循度保證，不是強制力）。
 - **STND 架構與使用方式總覽（2026-08-24 新增）**：`docs/architecture.md`
   （分頁地圖、前後端架構、資料層/防呆機制、部署方式、開新 session 該去哪個
   資料夾——比本檔案的「STND 分頁與程式碼位置」節更完整，含視覺化 diagram 連結）
