@@ -26,6 +26,7 @@
 | Q-019 | 收件匣資料夾路徑 | SRC-002 | data | Answered | PO 同意：`poc/data/inbox/`（已以 git check-ignore 確認被 .gitignore 排除，第三方逐字稿不進 git）；不用 docs/research/。【Claude 補充】資料夾實作時才建立 | Stander | 2026-11-25 |
 | Q-020 | 使用流程與 prompt 取得方式：PO 只需記三句話（存檔→說「匯入」→說「同意」）；查詢由專案指示讓 agent 自動先搜尋；更正／刪除用自然語言；每次匯入後附「下一步」提示 | SRC-002 | workflow | Answered | PO 同意三句話流程：(1)問 agent 取 prompt→存檔 (2)說「匯入」(3)說「同意」；查詢由專案指示讓 agent 自動先搜尋；更正／刪除用自然語言【匯入後附下一步提示為 Claude 補充，PO 2026-11-25 接受】 | Stander | 2026-11-25 |
 | Q-021 | 每次使用時 PO 如何取得貼進 Google AI Studio 的 prompt | SRC-002 | workflow | Answered | PO OK：(1)專案指示內含 prompt 範本，對 claude.ai 說「給我逐字稿 prompt」取得；（AI Studio 儲存 prompt、repo runbook 留底：PO 2026-11-25 同意不列入需求，自行視需要使用） | Stander | 2026-11-25 |
+| Q-022 | PO 實際使用流程：先貼連結給 agent，請 agent 建立資料匣與檔案，PO 再貼內容 | SRC-002 | workflow | Answered | PO 同意（2026-11-25，Accept 後修訂）：以「agent 建待匯入檔」為主要進件流程（建檔前先查重、中繼資料已填、內文空白、回報路徑）；「AI Studio 產出完整檔案」保留為另一種進件方式；claude.ai 不能建檔，故由服務端工具在資料匣建檔；標題／頻道／日期取不到時詢問 PO | Stander | 2026-11-25 |
 
 ## Notes
 
