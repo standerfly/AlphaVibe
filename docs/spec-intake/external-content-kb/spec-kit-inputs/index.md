@@ -5,4 +5,4 @@
 
 | Spec Feature Slug | Status | Scope Summary | Dependencies | Source Decisions | Handoff Order |
 |-------------------|--------|---------------|--------------|------------------|---------------|
-| TBD | Draft | TBD | TBD | TBD | TBD |
+| external-content-kb | Draft | 獨立外部內容庫＋agent 建待匯入檔＋收件匣進件＋全文檢索＋摘要確認＋更新／刪除＋台美連接器查詢 | 無（不依賴 Substack 抓取功能） | Q-001～Q-022（見 clarification-log.md） | 1 |
