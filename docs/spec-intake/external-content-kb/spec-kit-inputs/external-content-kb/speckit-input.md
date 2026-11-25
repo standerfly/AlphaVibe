@@ -1,6 +1,6 @@
 # Spec Kit Input: 外部內容知識庫（YouTube／Podcast／文章）
 
-**Status:** Draft
+**Status:** Accepted
 **Source Product Spec:** ../../product-spec.md
 **Source Scope Decision:** ../../scope-decision.md
 **Spec Feature Slug:** external-content-kb
