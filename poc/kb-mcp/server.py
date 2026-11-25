@@ -27,6 +27,7 @@ import tpex_client  # noqa: E402
 import trade_ledger_parser  # noqa: E402
 import trade_text_parser  # noqa: E402
 import article_tools  # noqa: E402
+import external_content_tools  # noqa: E402
 from kb_store import KBStore  # noqa: E402
 
 SUPPORTED_PROTOCOL_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18")
@@ -880,7 +881,7 @@ TOOLS = [
             "required": ["text"],
         },
     },
-] + article_tools.ARTICLE_TOOL_SCHEMAS  # 010 US2：定錨文章查詢（唯讀，與美股連接器共用）
+] + article_tools.ARTICLE_TOOL_SCHEMAS + external_content_tools.TOOL_SCHEMAS  # 010 US2：定錨文章查詢（唯讀，與美股連接器共用）；012：外部內容知識庫 7 個工具
 
 
 def _default_data_dir():
@@ -908,8 +909,9 @@ def _simplify_scan_row(row):
 PRICE_POSITION_LOOKBACK_DAYS = 800
 
 class Server:
-    def __init__(self, data_dir=None):
+    def __init__(self, data_dir=None, channel="stdio"):
         self.data_dir = os.path.abspath(data_dir or _default_data_dir())
+        self.channel = channel  # 012：入口紀錄（stdio／http），外部內容寫入稽核用
         self.store = KBStore(self.data_dir)
 
     # ---- 工具實作 ----
@@ -918,6 +920,10 @@ class Server:
         if name in article_tools.ARTICLE_TOOL_NAMES:
             # 唯讀開 <data_dir>/articles.db（mode=ro），不碰 alphavibe.db
             return article_tools.call_article_tool(self.data_dir, name, args)
+        if name in external_content_tools.TOOL_NAMES:
+            # 012：外部內容知識庫（自有 external_content.db；寫入工具含正式庫保護）
+            return external_content_tools.call_external_content_tool(
+                name, args, self.data_dir, channel=self.channel)
         if name == "save_stance":
             return self.store.save_stance(
                 code=args["code"], stance=args["stance"],
