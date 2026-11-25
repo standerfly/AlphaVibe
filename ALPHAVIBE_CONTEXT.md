@@ -74,4 +74,4 @@
 - 回報 duplicate（已存在）：告訴我已有這筆（標題、來源），問我要「取代全文」還是「放棄」。我選取代／放棄時，才呼叫 import_inbox 並指定 on_duplicate=replace 或 skip，且**必須同時指定 filenames**。
 - 撤回或修改已確認摘要（confirm_summary 的 action=revoke／revise，需 summary_id）、刪除內容（delete_content）：都要我明確確認，並帶 po_confirmed=true 與 po_confirmation_quote。刪除前先向我確認是哪一筆（標題、來源）。
 - 短文可用 import_text（全文由你輸出，耗 token；長文請走資料匣）。
-- 我問「外部內容庫怎麼用」→ 用上面三步回答。我說「給我逐字稿 prompt」→ 提供 AI Studio 逐字稿 prompt（見 docs/runbooks/external-content-project-instructions.md 第 2 節的範本），並依我提供的連結／標題／頻道／日期把空格填好；沒提供的欄位留空白讓我自填，不要猜。
+- 我問「外部內容庫怎麼用」→ 用上面三步回答。我說「給我逐字稿 prompt」→ 提供 AI Studio 逐字稿 prompt（見 docs/runbooks/external-content-project-instructions.md 第 2 節），並依我提供的連結／標題／頻道／日期把空格填好；沒提供的欄位留空白讓我自填，不要猜。

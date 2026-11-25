@@ -7,6 +7,7 @@ get_external_content；US3 已實作 confirm_summary；US5 已實作 delete_cont
 """
 
 import os
+import re
 
 import external_content_identity as identity
 import external_content_inbox as inbox
@@ -490,8 +491,8 @@ def _create_inbox_file(args, data_dir, channel):
         st.close()
     if existing:
         return with_disclaimer(
-            "來源已存在於知識庫，未建檔：ID %d，發布日期 %s。source_key：%s\n既有標題：\n%s\n作者：\n%s"
-            % (existing["id"], existing["published_on"], key, _tp(existing["title"]), _tp(existing["author"])))
+            "來源已存在於知識庫，未建檔：ID %d，發布日期 %s。source_key：\n%s\n既有標題：\n%s\n作者：\n%s"
+            % (existing["id"], existing["published_on"], _tp(key), _tp(existing["title"]), _tp(existing["author"])))
     try:
         pending = inbox.find_pending_by_source_key(data_dir, key)
     except OSError as e:
@@ -507,7 +508,7 @@ def _create_inbox_file(args, data_dir, channel):
             auto = metadata.fetch_youtube_metadata(url)
         except Exception as e:
             auto = None
-            notes.append("自動補欄位失敗：%s" % e)
+            notes.append("自動補欄位失敗：%s" % e)  # 輸出時整段以 _tp 包覆
         if auto:
             notes.extend(auto.get("notes") or [])
             if not fields["source_type"]:
@@ -520,7 +521,7 @@ def _create_inbox_file(args, data_dir, channel):
         msg = ("尚缺必填欄位：%s（未建檔）。請向 PO 詢問補齊後重新呼叫 create_inbox_file；不得猜測。"
                % "、".join(missing))
         if notes:
-            msg += "\n" + "\n".join(notes)
+            msg += "\n備註：\n" + "\n".join(_tp(n) for n in notes)
         return with_disclaimer(msg)
     try:
         meta = inbox.validate_meta(fields)
@@ -530,9 +531,9 @@ def _create_inbox_file(args, data_dir, channel):
     n = _host_mismatch_note(meta)
     if n:
         notes.append(n)
-    out = ("已建立待匯入檔案（內文留空，請 PO 貼入逐字稿後再說「匯入」）：\n%s\nsource_key：%s" % (path, key))
+    out = ("已建立待匯入檔案（內文留空，請 PO 貼入逐字稿後再說「匯入」）：\n%s\nsource_key：\n%s" % (_tp(path), _tp(key)))
     if notes:
-        out += "\n" + "\n".join(notes)
+        out += "\n備註：\n" + "\n".join(_tp(n) for n in notes)
     return with_disclaimer(out)
 
 
@@ -729,7 +730,42 @@ def _delete_content(args, data_dir, channel):
     return with_disclaimer("\n".join(lines))
 
 
+_ERR_VALUE_MAX = 80
+_QUOTED_RE = re.compile("「([^」]*)」")
+
+
+def _short(v):
+    v = " ".join(str(v).split())
+    return v if len(v) <= _ERR_VALUE_MAX else v[:_ERR_VALUE_MAX] + "…"
+
+
+def _string_args(args):
+    for v in (args or {}).values():
+        if isinstance(v, str):
+            yield v
+        elif isinstance(v, (list, tuple)):
+            for x in v:
+                if isinstance(x, str):
+                    yield x
+
+
+def _sanitize_error(msg, args):
+    """例外訊息回顯的第三方值（「…」內的值、agent 傳入的長字串／含換行字串）截斷到 80 字並去除換行。"""
+    for v in sorted(set(_string_args(args)), key=len, reverse=True):
+        if v and v in msg and (len(v) > _ERR_VALUE_MAX or "\n" in v or "\r" in v):
+            msg = msg.replace(v, _short(v))
+    msg = _QUOTED_RE.sub(lambda m: "「%s」" % _short(m.group(1)), msg)
+    return " ".join(msg.split()) if ("\n" in msg or "\r" in msg) else msg
+
+
 def call_external_content_tool(name, args, data_dir, channel="stdio"):
+    try:
+        return _dispatch(name, args, data_dir, channel)
+    except ToolError as e:
+        raise ToolError(_sanitize_error(str(e), args))
+
+
+def _dispatch(name, args, data_dir, channel):
     """分派。未知名稱一律 raise ToolError（server.py 只對例外標 isError）。"""
     if name not in TOOL_NAMES:
         raise ToolError("未知的外部內容工具：%s" % name)

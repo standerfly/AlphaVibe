@@ -184,7 +184,7 @@ roundtrip-search 來源）。
   `delete_content` **只掛 `server.py`**）；模組：`external_content_{identity,store,inbox,metadata,tools}.py`；
   工具名稱不得含 `article`／`verif`／`reviewed`（守門測試保留字）。`Server` 有 `channel` 參數
   （`stdio`＝本機、`http`＝claude.ai 經閘道），稽核 `audit_log.channel` 記錄入口。專案指示與 AI Studio prompt
-  範本：`docs/runbooks/external-content-project-instructions.md`（已併入 `ALPHAVIBE_CONTEXT.md`）。
+  範本：`docs/runbooks/external-content-project-instructions.md`（已併入 `ALPHAVIBE_CONTEXT.md`）。`external_content.db` 已加入 `backup_databases.py` 的 `OPTIONAL_DATABASES`（012 T042 修正），`inbox/` 檔案不備份。
   **三個易踩坑**：(1) 正式環境 `AlphaVibe-prod/poc/data` 是符號連結，資料匣路徑比對必須兩邊都 `os.path.realpath`；
   (2) 本機 stdio 路徑沒有 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE` 檢查，寫入工具另有「資料目錄＝正式目錄且無旗標則拒絕」
   （`ensure_write_allowed`），本機要寫正式資料須在 `.mcp.json` 的 env 加該旗標，開發測試一律用獨立 `ALPHAVIBE_DATA_DIR`；

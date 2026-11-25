@@ -42,7 +42,9 @@ DATABASES = ("alphavibe.db", "us_stocks.db", "flights.db")
 # 可選資料庫（2026-11-16，010 定錨文章匯入）：來源檔不存在時略過（記一行、
 # 不算失敗、不建檔、不影響 exit code）；存在時與 DATABASES 完全同一套
 # 備份＋輪替。articles_images/ 刻意不備份（見 specs/010-.../quickstart.md）。
-OPTIONAL_DATABASES = ("articles.db",)
+# 2026-11-25（012 T042 修正）：external_content.db（外部內容庫）同一語意加入。
+# 資料匣 inbox/ 與 inbox/processed/ 的檔案不備份（逐字稿已在資料庫內）。
+OPTIONAL_DATABASES = ("articles.db", "external_content.db")
 
 
 def _log(msg):
