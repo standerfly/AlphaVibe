@@ -6,8 +6,8 @@
 1. `sqlite3.connect()` 帶 `check_same_thread=False`；
 2. `__init__()` **不得有任何資料寫入副作用**（建表以外一律不寫）。
 
-本檔目前只含地基：schema、`open_readonly`、`_tx()`（BEGIN IMMEDIATE＋失敗 rollback）、`_audit()`。
-業務寫入方法（入庫、取代、摘要、軟刪除）留給後續階段，一律用 `_tx()` 讓資料與稽核同一交易。
+本檔含 schema、`open_readonly`、`_tx()`（BEGIN IMMEDIATE＋失敗 rollback）、`_audit()`，
+以及入庫、取代、查詢、摘要、軟刪除；所有寫入一律用 `_tx()` 讓資料與稽核同一交易。
 """
 import contextlib
 import datetime
@@ -426,3 +426,27 @@ class ExternalContentStore(object):
             c.execute("UPDATE summary SET status = 'revoked' WHERE id = ?", (summary_id,))
             self._audit("summary_revoke", content_id, channel, {"summary_id": summary_id, "title": title, "po_quote": po_quote})
         return {"summary_id": summary_id, "content_id": content_id, "title": title}
+
+    # ------------------------------------------------------------ 軟刪除（US5；FR-013）
+
+    def delete_content(self, content_id, po_quote, channel="stdio"):
+        """軟刪除單筆內容：同一交易設 deleted_at、把 source_key 改為 `<原 key>#deleted-<id>`（釋放唯一鍵，
+        同一來源之後可重新匯入為新內容）、寫 audit(delete)。summary 列保留不動（內容被排除後自然查不到）。
+        audit detail 只放原 source_key、標題、po_quote，不含內容或摘要全文。第一版無還原工具（手動，見 quickstart）。
+        內容須存在且未刪除；po_quote 以 strip() 判斷非空；任一步失敗整筆回滾。"""
+        if isinstance(content_id, bool) or not isinstance(content_id, int):
+            raise ContentValidationError("content_id 必須是整數")
+        self._need_text("PO 同意原話", po_quote)
+        if channel not in CHANNELS:
+            raise ContentValidationError("channel 必須是 http 或 stdio")
+        now = self.now_iso()
+        with self._tx() as c:
+            r = c.execute("SELECT source_key, title FROM content WHERE id = ? AND deleted_at IS NULL",
+                          (content_id,)).fetchone()
+            if not r:
+                raise ContentValidationError("找不到 ID %s 的外部內容（不存在或已刪除）" % content_id)
+            c.execute("UPDATE content SET deleted_at = ?, source_key = ? WHERE id = ?",
+                      (now, "%s#deleted-%d" % (r["source_key"], content_id), content_id))
+            self._audit("delete", content_id, channel,
+                        {"source_key": r["source_key"], "title": r["title"], "po_quote": po_quote})
+        return {"content_id": content_id, "title": r["title"]}

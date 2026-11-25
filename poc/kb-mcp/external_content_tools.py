@@ -2,8 +2,8 @@
 
 含：固定標註、第三方文字分隔 helper、7 個工具的 schema、名稱分組、分派。
 US1 已實作 create_inbox_file、import_inbox、import_text；US2 已實作 search_external_content、
-get_external_content；US3 已實作 confirm_summary；其餘 1 個工具（delete_content）仍未實作，呼叫一律 `raise ToolError("尚未實作")`——`server.py` 只對**例外**標 isError，
-所以所有錯誤路徑都必須 raise。工具名稱不得含 article／verif／reviewed（避開既有守門測試）。
+get_external_content；US3 已實作 confirm_summary；US5 已實作 delete_content（軟刪除）——7 個工具皆已實作。
+`server.py` 只對**例外**標 isError，所以所有錯誤路徑都必須 raise。工具名稱不得含 article／verif／reviewed（避開既有守門測試）。
 """
 
 import os
@@ -179,7 +179,9 @@ TOOL_SCHEMAS = [
         "name": "delete_content",
         "description": (
             "【寫入】刪除單筆外部內容（軟刪除：之後搜尋與讀取都查不到，同一來源可重新匯入；第一版不提供還原工具）。"
-            "僅在 PO 明確說要刪除後呼叫；必須 po_confirmed=true 並附 po_confirmation_quote（PO 原話），否則拒絕。"
+            "僅在先向 PO 確認是哪一筆、且 PO 明確說要刪除後才呼叫（須 PO 明確確認後才呼叫）；"
+            "必須 po_confirmed=true 並附 po_confirmation_quote（PO 原話），否則拒絕。"
+            "這是遵循度保證，不是強制力：系統無法驗證 PO 是否真的同意。"
             "稽核會記錄標題與原話，不含全文。"),
         "inputSchema": {
             "type": "object",
@@ -709,8 +711,26 @@ def _confirm_summary(args, data_dir, channel):
     return with_disclaimer("\n".join(lines))
 
 
+def _delete_content(args, data_dir, channel):
+    cid = args.get("content_id")
+    if isinstance(cid, bool) or not isinstance(cid, int):
+        raise ToolError("content_id 必須是整數（內容 ID）")
+    quote = _po_gate(args, "delete_content")
+    st = store_mod.ExternalContentStore(data_dir)
+    try:
+        try:
+            r = st.delete_content(cid, quote, channel=channel)
+        except ValueError as e:      # ContentValidationError 是 ValueError 子類
+            raise ToolError(str(e))
+    finally:
+        st.close()
+    lines = ["已軟刪除外部內容。content_id=%d" % r["content_id"], "標題：\n%s" % _tp(r["title"]),
+             "之後搜尋與讀取都查不到；同一來源可重新匯入為新內容。可手動還原；第一版無還原工具。"]
+    return with_disclaimer("\n".join(lines))
+
+
 def call_external_content_tool(name, args, data_dir, channel="stdio"):
-    """分派。未知名稱與尚未實作的工具一律 raise ToolError（server.py 只對例外標 isError）。"""
+    """分派。未知名稱一律 raise ToolError（server.py 只對例外標 isError）。"""
     if name not in TOOL_NAMES:
         raise ToolError("未知的外部內容工具：%s" % name)
     if name in WRITE_TOOL_NAMES:
@@ -728,4 +748,6 @@ def call_external_content_tool(name, args, data_dir, channel="stdio"):
         return _import_text(args, data_dir, channel)
     if name == "confirm_summary":
         return _confirm_summary(args, data_dir, channel)
-    raise ToolError("尚未實作")
+    if name == "delete_content":
+        return _delete_content(args, data_dir, channel)
+    raise ToolError("未知的外部內容工具：%s" % name)

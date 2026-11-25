@@ -157,11 +157,11 @@ description: "外部內容知識庫（012）任務清單"
 
 ### Tests for User Story 5
 
-- [ ] T035 [US5] 在 `poc/kb-mcp/tests/test_external_content_store.py` 與 `test_external_content_tools.py` 補：`delete_content` 缺 `po_confirmed=true` 或原話為空 → 拒絕且無任何刪除；確認後同交易刪除 `content` 與其 `summary`、寫 `delete` 稽核（detail 含標題與原話、**不含全文**）、之後 `search`／`get` 查不到；刪除不存在的 ID 為錯誤；刪除後 audit 紀錄仍在；改為**軟刪除**斷言：`deleted_at` 設定、`source_key` 改為 `#deleted-<id>`、摘要不再被查詢、列仍在；刪除後同一來源可重新匯入；稽核含 `channel`
+- [x] T035 [US5] 在 `poc/kb-mcp/tests/test_external_content_store.py` 與 `test_external_content_tools.py` 補：`delete_content` 缺 `po_confirmed=true` 或原話為空 → 拒絕且無任何刪除；確認後同交易**軟刪除** `content`（設 `deleted_at`、`source_key` 改名）、`summary` 列保留、寫 `delete` 稽核（detail 含標題與原話、**不含全文**）、之後 `search`／`get` 查不到；刪除不存在的 ID 為錯誤；刪除後 audit 紀錄仍在；改為**軟刪除**斷言：`deleted_at` 設定、`source_key` 改為 `#deleted-<id>`、摘要不再被查詢、列仍在；刪除後同一來源可重新匯入；稽核含 `channel`
 
 ### Implementation for User Story 5
 
-- [ ] T036 [US5] 在 `poc/kb-mcp/external_content_store.py` 實作 `delete_content`（單一交易、audit 不含全文）；在 `poc/kb-mcp/external_content_tools.py` 實作 `delete_content` 工具與其說明（須 PO 明確確認）（軟刪除：設 `deleted_at` 並改 `source_key`，`search`／`get` 排除已刪除列）
+- [x] T036 [US5] 在 `poc/kb-mcp/external_content_store.py` 實作 `delete_content`（單一交易、audit 不含全文）；在 `poc/kb-mcp/external_content_tools.py` 實作 `delete_content` 工具與其說明（須 PO 明確確認）（軟刪除：設 `deleted_at` 並改 `source_key`，`search`／`get` 排除已刪除列）
 
 **Checkpoint**: 7 個工具全數實作完成
 

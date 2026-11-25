@@ -48,6 +48,7 @@ python3 -m unittest discover -s poc/kb-mcp/tests
 - **陷阱 A（高）符號連結**：正式環境 `AlphaVibe-prod/poc/data` 是指向 `AlphaVibe/poc/data` 的符號連結，`server.py` 只做 `abspath` 不解開。資料匣檢查必須對 inbox 根目錄與檔案**兩邊**都 `os.path.realpath`，測試要有「資料目錄本身是符號連結」的案例（一般暫存目錄抓不到這問題）。
 - **陷阱 B（中）本機 stdio 路徑**：本機 Claude Code 的 MCP 執行開發資料夾當下 checkout 的分支程式，卻連實際資料目錄（含正式資料），且該路徑沒有 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE` 檢查。開發與測試一律設 `ALPHAVIBE_DATA_DIR=<獨立測試庫>`；寫入工具另有「正式資料目錄且未設旗標則拒絕」的保護。
 - **還原軟刪除**（第一版無還原工具）：手動以 SQL 把該列 `deleted_at` 設回 NULL、`source_key` 去掉 `#deleted-<id>` 後綴；操作前先備份 `external_content.db`。
+  **衝突處理**：若刪除後同一來源已被重新匯入（新列佔用了原 `source_key`），直接還原會撞 `UNIQUE(source_key)`（US5 驗收實測）。還原前須先決定保留哪一筆：要還原舊列，就先對新列做軟刪除（同樣設 `deleted_at` 並把 `source_key` 改為 `<原 key>#deleted-<id>`），再還原舊列；若新列已足夠，就不必還原舊列。
 - 新資料庫檔 `external_content.db` 是否被每日備份涵蓋**未查到**，部署時須確認 `ops/` 備份腳本（dbbackup）是否涵蓋，必要時補上。
 - 資料匣檔案與資料庫都在 `poc/data/`（`.gitignore`），逐字稿是第三方內容，不得 commit。
 - macOS `/var`→`/private/var`：任何路徑比對一律 `os.path.realpath`。

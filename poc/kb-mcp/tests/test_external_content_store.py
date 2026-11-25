@@ -703,3 +703,93 @@ class ReviseRevokeTest(SummaryBase):
         with self.assertRaises(sqlite3.Error):
             self.s.revoke_summary(self.cid, self.sid, "好")
         self.assertEqual([x["status"] for x in self.summaries()], ["confirmed"])
+
+
+# ------------------------------------------------------------------ US5：軟刪除（T035）
+
+class DeleteContentTest(SummaryBase):
+    def setUp(self):
+        SummaryBase.setUp(self)
+        self.sid = self.s.add_summary(self.cid, "舊版 " + TEXT_S, "好")["summary_id"]
+
+    def content_row(self, cid):
+        return dict(self.s.conn.execute("SELECT * FROM content WHERE id = ?", (cid,)).fetchone())
+
+    def test_soft_delete_sets_deleted_at_renames_key_keeps_summary(self):
+        self.clock[0] = T0 + datetime.timedelta(minutes=5)
+        r = self.s.delete_content(self.cid, "  刪掉吧  ", channel="http")
+        self.assertEqual((r["content_id"], r["title"]), (self.cid, "標題甲"))
+        c = self.content_row(self.cid)
+        self.assertEqual(c["deleted_at"], self.clock[0].isoformat())
+        self.assertEqual(c["source_key"], "youtube:AAAAAAAAAAA#deleted-%d" % self.cid)
+        self.assertEqual(self.count("summary"), 1)
+        self.assertEqual(self.summaries()[0]["status"], "confirmed")
+        self.assertEqual(self.count("content"), 2)
+        a = self.audits("delete")
+        self.assertEqual((len(a), a[0]["channel"], a[0]["content_id"]), (1, "http", self.cid))
+        d = json.loads(a[0]["detail"])
+        self.assertEqual((d["source_key"], d["title"], d["po_quote"]),
+                         ("youtube:AAAAAAAAAAA", "標題甲", "  刪掉吧  "))
+        self.assertNotIn(BODY_S, a[0]["detail"])
+        self.assertNotIn(TEXT_S, a[0]["detail"])
+        self.assertNotIn("舊版", a[0]["detail"])
+
+    def test_search_get_and_summary_ops_exclude_deleted(self):
+        self.s.delete_content(self.cid, "刪")
+        self.assertEqual([x["id"] for x in self.s.search("內文")], [])
+        self.assertIsNone(self.s.get(self.cid))
+        for fn in (lambda: self.s.add_summary(self.cid, "新", "好"),
+                   lambda: self.s.revise_summary(self.cid, self.sid, "新", "好"),
+                   lambda: self.s.revoke_summary(self.cid, self.sid, "好"),
+                   lambda: self.s.replace_body(self.cid, "新內文")):
+            with self.assertRaises(ValueError):
+                fn()
+        self.assertEqual(self.count("summary"), 1)
+
+    def test_blank_quote_rejected_nothing_changes(self):
+        before = (self.count("audit_log"), self.content_row(self.cid))
+        for q in ("", "   ", "　", "\t\n", None, 5):
+            with self.assertRaises(ValueError, msg=repr(q)):
+                self.s.delete_content(self.cid, q)
+        self.assertEqual((self.count("audit_log"), self.content_row(self.cid)), before)
+
+    def test_invalid_channel_rejected(self):
+        with self.assertRaises(ValueError):
+            self.s.delete_content(self.cid, "好", channel="x")
+        self.assertIsNone(self.content_row(self.cid)["deleted_at"])
+
+    def test_not_found_and_already_deleted_and_bad_id(self):
+        with self.assertRaises(ValueError):
+            self.s.delete_content(9999, "好")
+        self.s.delete_content(self.cid, "好")
+        n = self.count("audit_log")
+        with self.assertRaises(ValueError):
+            self.s.delete_content(self.cid, "好")
+        self.assertEqual(self.count("audit_log"), n)
+        self.assertEqual(self.content_row(self.cid)["source_key"], "youtube:AAAAAAAAAAA#deleted-%d" % self.cid)
+        for bad in (True, "1", None, 1.0):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                self.s.delete_content(bad, "好")
+
+    def test_atomic_audit_failure_rolls_back(self):
+        before = self.content_row(self.cid)
+        self.s.conn.execute("CREATE TRIGGER no_del_audit BEFORE INSERT ON audit_log "
+                            "WHEN NEW.action = 'delete' BEGIN SELECT RAISE(ABORT, 'boom'); END")
+        self.s.conn.commit()
+        with self.assertRaises(sqlite3.Error):
+            self.s.delete_content(self.cid, "好")
+        self.assertEqual(self.content_row(self.cid), before)
+        self.assertIsNone(before["deleted_at"])
+        self.assertEqual(len(self.audits("delete")), 0)
+        self.assertEqual(self.s.get(self.cid)["id"], self.cid)
+
+    def test_reimport_same_source_after_delete_is_new_content(self):
+        self.s.delete_content(self.cid, "好")
+        r = self.s.add_content("youtube", "https://www.youtube.com/watch?v=AAAAAAAAAAA", "標題甲", "頻道",
+                               "2026-11-19", "新內文")
+        self.assertEqual(r["status"], "imported")
+        self.assertNotEqual(r["id"], self.cid)
+        self.assertEqual(self.content_row(r["id"])["source_key"], "youtube:AAAAAAAAAAA")
+        self.assertTrue(self.content_row(self.cid)["source_key"].endswith("#deleted-%d" % self.cid))
+        self.assertEqual([x["id"] for x in self.s.search("新內文")], [r["id"]])
+        self.assertEqual(len(self.audits("delete")), 1)    # 刪除稽核仍在
