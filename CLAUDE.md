@@ -443,6 +443,16 @@ roundtrip-search 來源）。
   （存了金鑰不應意外啟動送第三方）。(7) macOS `/var`→`/private/var`，路徑比對一律用 `os.path.realpath`（已踩兩次）。
   ｜動作：以上皆已落成程式防呆與測試；quickstart 第 6、7 節留有接手備忘
 
+- 2026-11-25｜情境：FinMind 呼叫量優化（PR #49，已上線）。盤點推測「`TaiwanStockPrice` 每天 136 次是興櫃股 fallback 白打」，
+  依據是 `server.py:299` 的註解說興櫃在 FinMind 沒有該資料集；實測一檔上櫃（走櫃買官方，0 次 FinMind）與一檔興櫃
+  （走 FinMind，回 45 筆真實資料）後，推測被推翻——那批呼叫是必要的，沒有優化空間
+  ｜教訓：(1) 優化前先拿單一樣本實測，不要信程式註解或「應該查不到」的推論，否則會為不存在的浪費寫程式。
+  (2) 呼叫計數器只分 ok／err，回 200 但資料為空也算 ok，無法單靠計數判斷「白打」；要看資料是否為空，得另查
+  `market_scan_results` 的 `drawdown_pct` 是否為 NULL（最新兩次掃描候選股皆非空）。(3) 進程內快取只能省同一進程內的
+  重複（模組D 的 `TaiwanStockInfo` 約 44→1 次），跨進程不共用；價格若要再省需做歷史增量快取，但每日總量約 150～250 次、
+  err 長期為 0，判定不值得。(4) 模組D 耗時（971～2877 秒）波動與 FinMind 失敗無關，未查明原因
+  ｜動作：無程式修改；FinMind 呼叫量優化線到此收尾。計數檔 `poc/data/finmind_call_counts.json` 可隨時查各 dataset 每日 ok／err
+
 ## 相片整理工具（2026-10-04，分支 `function/photo-organizer`）
 
 MacBook 上的相片整理命令列工具，核心在 `poc/kb-mcp/photo_tool.py`（整理 `organize`／復原 `undo`／評分 `rate`／匯入 `import`／清理 `clean`／重建縮圖 `rebuild-thumbnails`），格式支援與縮圖在 `poc/kb-mcp/photo_formats.py`。與相簿功能的關係：先在 Finder 端整理＋評分，再匯入 AlphaVibe；匯入時評分/標籤由 `read_existing_tags()` 讀進資料庫。
