@@ -29,7 +29,7 @@ guid:
 - 區塊內每行 `key: value`（冒號後第一個空白之後為值，值可含冒號）；空行與 `#` 開頭註解行忽略。
 - 必填鍵：`source_type`、`url`、`title`、`author`、`date`。選填鍵：`guid`（Podcast 發布來源唯一識別）。未知鍵：忽略並在結果中提示。
 - `source_type`：`youtube` | `podcast` | `article`（小寫）。
-- `date`：`YYYY-MM-DD`。
+- `date`：`YYYY-MM-DD`。YouTube 自動填入的日期是**台灣時間（UTC+8）**的發布日期（PO 2026-11-25 決定）；PO 手動填寫則照 PO 填的。
 - 內文去除前後空白後為空 → 「內文為空」。
 - 編碼 UTF-8；單檔上限 2,000,000 字元（防呆）。
 - `create_inbox_file` 產生的檔案內文為空，故在 PO 貼入前永遠是「待填寫」。

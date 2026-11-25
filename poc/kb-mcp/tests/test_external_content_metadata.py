@@ -40,11 +40,49 @@ class ParseTest(unittest.TestCase):
                 M.parse_oembed(bad)
 
     def test_parse_upload_date(self):
-        self.assertEqual(M.parse_upload_date(PAGE_OK), "2009-10-24")
+        # 2009-10-24T23:57:33-07:00 = UTC 2009-10-25 06:57 = 台灣 2009-10-25（PO 決定換算成台灣日期）
+        self.assertEqual(M.parse_upload_date(PAGE_OK), "2009-10-25")
         self.assertEqual(M.parse_upload_date('"uploadDate" : "2026-11-19"'), "2026-11-19")
         self.assertIsNone(M.parse_upload_date("沒有日期"))
         self.assertIsNone(M.parse_upload_date('"uploadDate":"2026-02-30T00:00:00"'))
         self.assertIsNone(M.parse_upload_date(None))
+
+    def test_upload_date_converted_to_taiwan_time(self):
+        """PO 2026-11-25 決定：YouTube 的 uploadDate（美國太平洋時間）換算成台灣時間的日期。
+        三個案例取自 PO 提供的真實影片（原始字串逐字）。"""
+        def page(v):
+            return 'x{"uploadDate":"%s"}y' % v
+        # 02:04 PST → 台灣當天 18:04，日期不變
+        self.assertEqual(M.parse_upload_date(page("2026-11-24T02:04:49-08:00")), "2026-11-24")
+        # 21:00 PDT → 台灣隔天 12:00，日期 +1（PO 在 YouTube 看到 4/14）
+        self.assertEqual(M.parse_upload_date(page("2026-04-13T21:00:19-07:00")), "2026-04-14")
+        self.assertEqual(M.parse_upload_date(page("2026-01-07T02:24:05-08:00")), "2026-01-07")
+
+    def test_upload_date_offset_variants(self):
+        def page(v):
+            return '"uploadDate":"%s"' % v
+        # UTC：16:30Z = 台灣隔天 00:30
+        self.assertEqual(M.parse_upload_date(page("2026-05-01T16:30:00Z")), "2026-05-02")
+        self.assertEqual(M.parse_upload_date(page("2026-05-01T15:59:59Z")), "2026-05-01")
+        # 本來就是台灣時間
+        self.assertEqual(M.parse_upload_date(page("2026-05-01T23:59:59+08:00")), "2026-05-01")
+        self.assertEqual(M.parse_upload_date(page("2026-05-01T00:00:00+0800")), "2026-05-01")
+        # 跨月、跨年
+        self.assertEqual(M.parse_upload_date(page("2026-12-31T20:00:00-08:00")), "2027-01-01")
+        self.assertEqual(M.parse_upload_date(page("2026-02-28T22:00:00-08:00")), "2026-03-01")
+        # 含小數秒
+        self.assertEqual(M.parse_upload_date(page("2026-05-01T16:30:00.123Z")), "2026-05-02")
+        # 只有日期：原樣；有時間沒時區：原樣取日期部分
+        self.assertEqual(M.parse_upload_date(page("2026-05-01")), "2026-05-01")
+        self.assertEqual(M.parse_upload_date(page("2026-05-01T23:00:00")), "2026-05-01")
+
+    def test_upload_date_malformed_returns_none(self):
+        def page(v):
+            return '"uploadDate":"%s"' % v
+        for bad in ("2026-02-30T10:00:00-08:00", "2026-13-01T10:00:00Z",
+                    "2026-05-01T25:00:00Z", "2026-05-01T10:61:00Z",
+                    "2026-05-01T10:00:00+99:00", "2026-05-01T10:00:00+08:99"):
+            self.assertIsNone(M.parse_upload_date(page(bad)), bad)
 
 
 class UrlGuardTest(unittest.TestCase):
@@ -81,7 +119,7 @@ class FetchTest(unittest.TestCase):
     def test_success_only_canonical_urls_fetched(self):
         f = FakeFetcher({"https://www.youtube.com/oembed": OEMBED_OK, CANON: PAGE_OK})
         r = M.fetch_youtube_metadata("https://youtu.be/%s?si=zzz" % VID, fetcher=f)
-        self.assertEqual((r["title"], r["author"], r["date"]), ("範例影片", "範例頻道", "2009-10-24"))
+        self.assertEqual((r["title"], r["author"], r["date"]), ("範例影片", "範例頻道", "2009-10-25"))  # PAGE_OK 為太平洋時間 10-24 23:57 → 台灣 10-25
         self.assertEqual(r["missing"], [])
         self.assertEqual(len(f.calls), 2)
         for c in f.calls:
@@ -106,7 +144,7 @@ class FetchTest(unittest.TestCase):
         f = FakeFetcher({"https://www.youtube.com/oembed": big, CANON: PAGE_OK})
         r = M.fetch_youtube_metadata("https://www.youtube.com/watch?v=" + VID, fetcher=f)
         self.assertIn("title", r["missing"])
-        self.assertEqual(r["date"], "2009-10-24")
+        self.assertEqual(r["date"], "2009-10-25")  # 台灣時間（PO 2026-11-25 決定）
 
     def test_bad_url_raises_and_fetcher_untouched(self):
         f = FakeFetcher({})

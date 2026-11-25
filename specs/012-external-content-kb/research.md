@@ -49,6 +49,7 @@
 
 - **Decision**: 服務端 `create_inbox_file` 對 YouTube 連結盡力自動填：標題與頻道用 oEmbed（`https://www.youtube.com/oembed?url=…&format=json`，不需金鑰），發布日期從影片網頁內嵌的 `uploadDate` 擷取；逾時 10 秒；**SSRF 防護**：只接受 `https` 且主機精確比對於 YouTube 主機清單；以解析出的 11 碼影片 ID **重組標準網址**（`https://www.youtube.com/watch?v=<id>`）再請求，不使用 PO 給的原始字串；禁止跨主機轉址（轉址目標主機必須仍在清單內）；回應大小上限 2 MB。任一欄位拿不到就回「缺欄位清單」，由 agent 問 PO，**不猜**。Podcast／文章第一版不自動填，欄位由 agent 在呼叫時提供。
 - **Rationale**: 2026-11-25 實測（本機 curl，以一支公開影片，僅驗證一支）：oEmbed 回 `title`、`author_name`；網頁含 `"uploadDate":"2009-10-24T23:57:33-07:00"`。由服務端發出而非 claude.ai，因此不受 claude.ai 網路能力限制（該能力未驗證）。
+- **日期時區（PO 2026-11-25 決定）**: `uploadDate` 是美國太平洋時間（例 `2026-04-13T21:00:19-07:00`，台灣已是 4/14，PO 在 YouTube 頁面看到 4/14），故換算成**台灣時間（UTC+8）**的日期存入；只有日期或沒有時區者原樣取用；不合法的時間或時區回 None（讓 agent 問 PO，不猜）。
 - **風險**: 網頁結構可能改版使日期擷取失效 → 以單元測試鎖定解析函式、失敗降級為問 PO；oEmbed 為官方公開端點但無 SLA。
 - **Alternatives**: 要求 PO 一律手填（多一步）；YouTube Data API（需金鑰，違反「無金鑰」假設）。
 

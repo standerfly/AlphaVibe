@@ -1,6 +1,6 @@
 """YouTube 中繼資料自動填（012 research R5，FR-018）。僅標準庫（Python 3.9 相容）。
 
-標題與頻道取自 oEmbed，發布日期取自影片網頁的 `"uploadDate":"YYYY-MM-DD..."`。
+標題與頻道取自 oEmbed，發布日期取自影片網頁的 `"uploadDate":"YYYY-MM-DDThh:mm:ss±hh:mm"`，並**換算成台灣時間（UTC+8）的日期**（PO 2026-11-25 決定，與系統其他日期一致；YouTube 原始值是美國太平洋時間，直接取日期部分會讓台灣上午發布的影片早一天）。
 SSRF 防護：只接受 https 且主機精確比對於 YOUTUBE_HOSTS；以 11 碼影片 ID 重組標準網址再請求
 （不用 PO 給的原始字串）；禁止跨主機轉址；回應上限 2 MB；逾時 10 秒；fetcher 可注入。
 拿不到的欄位明確列入 `missing`，絕不猜測。
@@ -18,7 +18,10 @@ TIMEOUT_SECONDS = 10
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 ALLOWED_HOSTS = identity.YOUTUBE_HOSTS
 
-_UPLOAD_DATE_RE = re.compile(r'"uploadDate"\s*:\s*"(\d{4}-\d{2}-\d{2})')
+_UPLOAD_DATE_RE = re.compile(
+    r'"uploadDate"\s*:\s*"(\d{4}-\d{2}-\d{2})'
+    r'(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?')
+TAIWAN_OFFSET = datetime.timedelta(hours=8)
 
 
 class MetadataError(Exception):
@@ -66,17 +69,40 @@ def parse_oembed(text):
 
 
 def parse_upload_date(html):
-    """從影片網頁取 `"uploadDate":"YYYY-MM-DD..."` 的日期部分；找不到或不是真實日期回 None。"""
+    """從影片網頁取 `"uploadDate"`，回傳**台灣時間（UTC+8）**的 `YYYY-MM-DD`。
+
+    - 帶時間與時區（`T02:04:49-08:00`、`...Z`、`+0800`）：換算成 UTC+8 後取日期。
+    - 只有日期（`2026-11-19`）：原樣回傳（沒有時間無法換算）。
+    - 有時間但沒有時區：無法判斷，原樣回傳日期部分。
+    - 找不到、不是真實日期、時間或時區不合法：回 None（寧可讓 agent 問 PO，也不猜）。
+    """
     if not isinstance(html, str):
         return None
     m = _UPLOAD_DATE_RE.search(html)
     if not m:
         return None
+    date_s, hh, mm, ss, tz = m.groups()
     try:
-        datetime.date.fromisoformat(m.group(1))
+        d = datetime.date.fromisoformat(date_s)
     except ValueError:
         return None
-    return m.group(1)
+    if hh is None or tz is None:
+        return date_s
+    try:
+        dt = datetime.datetime(d.year, d.month, d.day, int(hh), int(mm), int(ss or 0))
+        if tz == "Z":
+            off = datetime.timedelta(0)
+        else:
+            sign = -1 if tz[0] == "-" else 1
+            digits = tz[1:].replace(":", "")
+            oh, om = int(digits[:2]), int(digits[2:])
+            if oh > 14 or om > 59:
+                return None
+            off = sign * datetime.timedelta(hours=oh, minutes=om)
+        tw = dt - off + TAIWAN_OFFSET
+    except ValueError:
+        return None
+    return tw.date().isoformat()
 
 
 # ---------------------------------------------------------------- 實際網路（可被注入的 fetcher 取代）
