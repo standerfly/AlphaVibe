@@ -25,6 +25,11 @@ SUMMARY_STATUSES = ("confirmed", "revoked")
 AUDIT_ACTIONS = ("import", "replace", "delete", "summary_confirm", "summary_revise", "summary_revoke")
 CHANNELS = ("http", "stdio")
 
+DEFAULT_SEARCH_LIMIT = 10
+MAX_SEARCH_LIMIT = 30
+SNIPPET_RADIUS = 60
+MAX_SNIPPETS = 2
+
 # 空白判斷：SQLite 的 trim() 預設只去空格，故明確加上 tab／LF／CR。
 # published_on 格式：資料庫層只擋形狀（YYYY-MM-DD），真實日曆日期（例如 2026-02-30）由業務層驗證。
 SCHEMA = """
@@ -218,3 +223,102 @@ class ExternalContentStore(object):
             raise
         return {"status": "imported", "id": cid, "title": vals["title"], "source_key": key,
                 "same_body_elsewhere": self._same_body_elsewhere(sha, key)}
+
+    # ------------------------------------------------------------ 查詢（US2；唯讀連線也可用）
+
+    @staticmethod
+    def _like_pattern(keyword):
+        esc = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return "%" + esc + "%"
+
+    @staticmethod
+    def _snippets(text, keywords, radius=SNIPPET_RADIUS, max_segments=MAX_SNIPPETS):
+        """每個關鍵字取第一次出現處的前後 radius 字；重疊的片段不重複；最多 max_segments 段。"""
+        low = text.lower()
+        spans = []
+        for kw in keywords:
+            idx = low.find(kw.lower())
+            if idx < 0:
+                continue
+            start, end = max(0, idx - radius), min(len(text), idx + len(kw) + radius)
+            if any(start < e and end > s for s, e in spans):
+                continue
+            spans.append((start, end))
+            if len(spans) >= max_segments:
+                break
+        spans.sort()
+        return [("…" if s > 0 else "") + text[s:e].replace("\n", " ") + ("…" if e < len(text) else "")
+                for s, e in spans]
+
+    def _confirmed_summaries(self, content_id):
+        rows = self.conn.execute(
+            "SELECT id, text, confirmed_at FROM summary WHERE content_id = ? AND status = 'confirmed' "
+            "ORDER BY id", (content_id,)).fetchall()
+        return [{"summary_id": r["id"], "text": r["text"], "confirmed_at": r["confirmed_at"]} for r in rows]
+
+    def search(self, query, source_type=None, limit=DEFAULT_SEARCH_LIMIT):
+        """全文搜尋（標題＋內文，LIKE ESCAPE，空白切詞 AND）。排除軟刪除；日期新到舊。
+
+        limit：None 或 <=0 用預設 10；超過 30 夾到 30。query 全空白、source_type 不合法、limit 非整數 → ValueError。
+        每筆回 id／source_type／title／author／published_on／url／snippets／summary_count／summary_ids。"""
+        keywords = (query or "").split() if isinstance(query, str) else []
+        if not keywords:
+            raise ValueError("query 不可為空，請給至少一個關鍵字")
+        if source_type is not None and source_type not in SOURCE_TYPES:
+            raise ValueError("source_type 必須是 %s 其中之一" % "、".join(SOURCE_TYPES))
+        if limit is None:
+            limit = DEFAULT_SEARCH_LIMIT
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise ValueError("limit 必須是整數")
+        if limit <= 0:
+            limit = DEFAULT_SEARCH_LIMIT
+        limit = min(limit, MAX_SEARCH_LIMIT)
+        conds, params = ["deleted_at IS NULL"], []
+        if source_type:
+            conds.append("source_type = ?")
+            params.append(source_type)
+        for kw in keywords:
+            pat = self._like_pattern(kw)
+            conds.append("(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')")
+            params += [pat, pat]
+        sql = ("SELECT id, source_type, title, author, published_on, url, body FROM content WHERE "
+               + " AND ".join(conds) + " ORDER BY published_on DESC, id DESC LIMIT ?")
+        params.append(limit)
+        out = []
+        for r in self.conn.execute(sql, params).fetchall():
+            sums = self._confirmed_summaries(r["id"])
+            out.append({
+                "id": r["id"], "source_type": r["source_type"], "title": r["title"], "author": r["author"],
+                "published_on": r["published_on"], "url": r["url"],
+                "snippets": self._snippets(r["body"], keywords),
+                "summary_count": len(sums), "summary_ids": [x["summary_id"] for x in sums]})
+        return out
+
+    def get(self, content_id, offset=0, length=None):
+        """取單筆：中繼資料、body 的 [offset, offset+length) 字元範圍、總字數、已確認摘要。
+        找不到或已軟刪除回 None（工具層轉 ToolError）；offset／length 為負或非整數 → ValueError；
+        offset 超出總長回空字串並 offset_beyond_end=True。"""
+        offset = 0 if offset is None else offset
+        for name, v in (("offset", offset), ("length", length)):
+            if v is None:
+                continue
+            if isinstance(v, bool) or not isinstance(v, int):
+                raise ValueError("%s 必須是整數" % name)
+            if v < 0:
+                raise ValueError("%s 不可為負數" % name)
+        r = self.conn.execute(
+            "SELECT id, source_key, source_type, title, author, published_on, url, body, guid, "
+            "created_at, updated_at FROM content WHERE id = ? AND deleted_at IS NULL", (content_id,)).fetchone()
+        if not r:
+            return None
+        body = r["body"]
+        total = len(body)
+        end = total if length is None else min(total, offset + length)
+        text = body[offset:end] if offset < total else ""
+        return {
+            "id": r["id"], "source_key": r["source_key"], "source_type": r["source_type"], "title": r["title"],
+            "author": r["author"], "published_on": r["published_on"], "url": r["url"], "guid": r["guid"],
+            "created_at": r["created_at"], "updated_at": r["updated_at"],
+            "total_chars": total, "offset": offset, "returned_chars": len(text),
+            "end": offset + len(text), "offset_beyond_end": offset >= total,
+            "text": text, "summaries": self._confirmed_summaries(r["id"])}

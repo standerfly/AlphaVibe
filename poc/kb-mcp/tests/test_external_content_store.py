@@ -287,5 +287,142 @@ class AddContentTest(Base):
         self.assertEqual((r["guid"], r["source_key"]), ("g-1", "podcast:guid:g-1"))
 
 
+class SearchTest(Base):
+    n = 0
+
+    def add(self, body="內文", title="標題", published_on="2026-11-19", source_type="article", **kw):
+        SearchTest.n += 1
+        return self.s.add_content(source_type=source_type, url="https://example.com/p%d" % SearchTest.n,
+                                  title=title, author="作者", published_on=published_on, body=body, **kw)["id"]
+
+    def ids(self, q, **kw):
+        return [h["id"] for h in self.s.search(q, **kw)]
+
+    def test_like_wildcards_are_literal(self):
+        a = self.add(body="漲幅達 100% 以上")
+        b = self.add(body="變數 a_b 與 axb")
+        c = self.add(body=r"路徑 C:\\temp\\x")
+        self.add(body="100 元沒有百分號")
+        self.assertEqual(self.ids("100%"), [a])
+        self.assertEqual(self.ids("a_b"), [b])
+        self.assertEqual(self.ids("\\temp"), [c])
+        self.assertEqual(self.ids("%"), [a])
+        self.assertEqual(self.ids("_"), [b])
+
+    def test_whitespace_and_semantics(self):
+        a = self.add(body="財測 上修 毛利")
+        self.add(body="財測 下修")
+        self.assertEqual(self.ids("財測 毛利"), [a])
+        self.assertEqual(self.ids("  財測   毛利 "), [a])
+        self.assertEqual(self.ids("財測 毛利 不存在"), [])
+
+    def test_title_also_searched(self):
+        a = self.add(title="半導體展望", body="完全無關")
+        hit = self.s.search("半導體")[0]
+        self.assertEqual(hit["id"], a)
+        self.assertEqual(hit["snippets"], [])
+
+    def test_two_char_chinese_terms(self):
+        body = "財測上修，毛利改善，產能擴張，客戶拉貨，庫存回補"
+        self.add(body=body)
+        for t in ("財測", "毛利", "產能", "客戶", "庫存"):
+            self.assertEqual(len(self.s.search(t)), 1, t)
+
+    def test_source_type_filter_and_validation(self):
+        a = self.add(body="財測", source_type="article")
+        b = self.add(body="財測", source_type="podcast")
+        self.assertEqual(self.ids("財測", source_type="podcast"), [b])
+        self.assertEqual(sorted(self.ids("財測")), [a, b])
+        with self.assertRaises(ValueError):
+            self.s.search("財測", source_type="tweet")
+
+    def test_empty_query_rejected(self):
+        for q in ("", "   ", None):
+            with self.assertRaises(ValueError):
+                self.s.search(q)
+
+    def test_limit_default_cap_and_nonpositive(self):
+        for i in range(35):
+            self.add(body="共同關鍵字 %d" % i)
+        self.assertEqual(len(self.s.search("共同關鍵字")), 10)
+        self.assertEqual(len(self.s.search("共同關鍵字", limit=5)), 5)
+        self.assertEqual(len(self.s.search("共同關鍵字", limit=999)), 30)
+        self.assertEqual(len(self.s.search("共同關鍵字", limit=0)), 10)    # <=0 回預設
+        self.assertEqual(len(self.s.search("共同關鍵字", limit=-3)), 10)
+        with self.assertRaises(ValueError):
+            self.s.search("共同關鍵字", limit="x")
+
+    def test_snippet_radius_and_max_two(self):
+        body = "甲" * 200 + "財測" + "乙" * 200 + "毛利" + "丙" * 200 + "產能" + "丁" * 200
+        self.add(body=body)
+        hit = self.s.search("財測 毛利 產能")[0]
+        self.assertEqual(len(hit["snippets"]), 2)
+        s1 = hit["snippets"][0]
+        self.assertEqual(s1, "…" + "甲" * 60 + "財測" + "乙" * 60 + "…")
+
+    def test_snippet_no_ellipsis_at_edges_and_overlap_merged(self):
+        self.add(body="財測 毛利")
+        sn = self.s.search("財測 毛利")[0]["snippets"]
+        self.assertEqual(sn, ["財測 毛利"])
+
+    def test_order_newest_first(self):
+        a = self.add(body="財測", published_on="2026-01-01")
+        b = self.add(body="財測", published_on="2026-06-01")
+        c = self.add(body="財測", published_on="2026-03-01")
+        self.assertEqual(self.ids("財測"), [b, c, a])
+
+    def test_soft_deleted_excluded(self):
+        a = self.add(body="財測")
+        b = self.add(body="財測")
+        self.s.conn.execute("UPDATE content SET deleted_at = ? WHERE id = ?", ("2026-11-26T00:00:00+00:00", a))
+        self.s.conn.commit()
+        self.assertEqual(self.ids("財測"), [b])
+        self.assertIsNone(self.s.get(a))
+
+    def test_result_fields_and_confirmed_summaries(self):
+        a = self.add(body="財測 內文", title="T")
+        for st in ("confirmed", "revoked", "confirmed"):
+            self.s.conn.execute("INSERT INTO summary (content_id,text,status,confirmed_at,po_quote) "
+                                "VALUES (?,?,?,?,?)", (a, "s", st, "2026-11-26T00:00:00+00:00", "好"))
+        self.s.conn.commit()
+        h = self.s.search("財測")[0]
+        for k in ("id", "source_type", "title", "author", "published_on", "url", "snippets"):
+            self.assertIn(k, h)
+        self.assertEqual((h["summary_count"], h["summary_ids"]), (2, [1, 3]))
+
+    def test_works_on_readonly_connection(self):
+        a = self.add(body="財測")
+        ro = S.ExternalContentStore.open_readonly(self.tmp)
+        self.addCleanup(ro.close)
+        self.assertEqual([h["id"] for h in ro.search("財測")], [a])
+        self.assertEqual(ro.get(a)["total_chars"], 2)
+
+    def test_get_range_and_boundaries(self):
+        a = self.add(body="0123456789")
+        g = self.s.get(a)
+        self.assertEqual((g["text"], g["total_chars"], g["offset_beyond_end"]), ("0123456789", 10, False))
+        g = self.s.get(a, offset=2, length=3)
+        self.assertEqual((g["text"], g["offset"], g["end"], g["returned_chars"]), ("234", 2, 5, 3))
+        self.assertEqual(self.s.get(a, offset=8, length=99)["text"], "89")
+        self.assertEqual(self.s.get(a, length=0)["text"], "")
+        g = self.s.get(a, offset=10)
+        self.assertEqual((g["text"], g["offset_beyond_end"]), ("", True))
+        self.assertEqual(self.s.get(a, offset=99)["text"], "")
+        for kw in ({"offset": -1}, {"length": -1}, {"offset": 1.5}):
+            with self.assertRaises(ValueError):
+                self.s.get(a, **kw)
+        self.assertIsNone(self.s.get(9999))
+
+    def test_get_summaries_only_confirmed(self):
+        a = self.add(body="x")
+        for st in ("confirmed", "revoked"):
+            self.s.conn.execute("INSERT INTO summary (content_id,text,status,confirmed_at,po_quote) "
+                                "VALUES (?,?,?,?,?)", (a, "t-" + st, st, "2026-11-26T00:00:00+00:00", "好"))
+        self.s.conn.commit()
+        sm = self.s.get(a)["summaries"]
+        self.assertEqual([(x["summary_id"], x["text"]) for x in sm], [(1, "t-confirmed")])
+        self.assertIn("confirmed_at", sm[0])
+
+
 if __name__ == "__main__":
     unittest.main()

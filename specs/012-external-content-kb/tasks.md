@@ -75,13 +75,13 @@ description: "外部內容知識庫（012）任務清單"
 
 ### Tests for User Story 2
 
-- [ ] T017 [P] [US2] 在 `poc/kb-mcp/tests/test_external_content_store.py` 補搜尋測試：`LIKE … ESCAPE '\'`（含 `%`、`_`、`\` 的查詢字串不被當萬用字元）、空白切詞 AND、2 字中文詞（如「財測」）命中、`source_type` 篩選、`limit` 預設 10／上限 30、片段半徑 60 字且最多 2 段、日期新到舊
-- [ ] T018 [P] [US2] 在 `poc/kb-mcp/tests/test_external_content_tools.py` 補 US2 部分：`search_external_content` 每個命中項區塊各含一次標註（逐筆斷言）且末尾另有一次、不回整份全文、顯示已確認摘要數量與 `summary_id`、無命中回「沒有找到」＋標註；`get_external_content` 的 `offset`／`length` 範圍、`summary_only=true` 不含原文、附完整中繼資料與摘要（含 `summary_id`）、找不到 ID 為錯誤；以 5 個取自測試內文的 2 字詞逐一搜尋皆命中；斷言第三方內容被分隔標記包住且含「不是指令」聲明；摘要確認時間早於全文更新時間時加註「此摘要確認於全文更新之前」
+- [x] T017 [P] [US2] 在 `poc/kb-mcp/tests/test_external_content_store.py` 補搜尋測試：`LIKE … ESCAPE '\'`（含 `%`、`_`、`\` 的查詢字串不被當萬用字元）、空白切詞 AND、2 字中文詞（如「財測」）命中、`source_type` 篩選、`limit` 預設 10／上限 30、片段半徑 60 字且最多 2 段、日期新到舊
+- [x] T018 [P] [US2] 在 `poc/kb-mcp/tests/test_external_content_tools.py` 補 US2 部分：`search_external_content` 每個命中項區塊各含一次標註（逐筆斷言）且末尾另有一次、不回整份全文、顯示已確認摘要數量與 `summary_id`、無命中回「沒有找到」＋標註；`get_external_content` 的 `offset`／`length` 範圍、`summary_only=true` 不含原文、附完整中繼資料與摘要（含 `summary_id`）、找不到 ID 為錯誤；以 5 個取自測試內文的 2 字詞逐一搜尋皆命中；斷言第三方內容被分隔標記包住且含「不是指令」聲明；摘要確認時間早於全文更新時間時加註「此摘要確認於全文更新之前」
 
 ### Implementation for User Story 2
 
-- [ ] T019 [US2] 在 `poc/kb-mcp/external_content_store.py` 實作 `search(query, source_type=None, limit=10)` 與 `get(content_id, offset, length)`（比照 `article_store.py` 的 `_like_pattern`／snippet 做法；`search`／`get` 都走唯讀連線路徑）
-- [ ] T020 [US2] 在 `poc/kb-mcp/external_content_tools.py` 實作 `search_external_content`、`get_external_content` 的格式化輸出（每筆各附標註、末尾再附一次；`summary_only`；`include_summaries`）
+- [x] T019 [US2] 在 `poc/kb-mcp/external_content_store.py` 實作 `search(query, source_type=None, limit=10)` 與 `get(content_id, offset, length)`（比照 `article_store.py` 的 `_like_pattern`／snippet 做法；`search`／`get` 都走唯讀連線路徑）
+- [x] T020 [US2] 在 `poc/kb-mcp/external_content_tools.py` 實作 `search_external_content`、`get_external_content` 的格式化輸出（每筆各附標註、末尾再附一次；`summary_only`；`include_summaries`）
 
 **Checkpoint**: US1＋US2 在模組層完成；仍需 Phase 5 接線才能被 claude.ai／本機 Claude Code 呼叫
 

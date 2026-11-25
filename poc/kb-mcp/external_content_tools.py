@@ -1,8 +1,8 @@
 """外部內容知識庫的 MCP 工具層骨架（012 contracts/tools.md）。
 
 含：固定標註、第三方文字分隔 helper、7 個工具的 schema、名稱分組、分派。
-US1 已實作 create_inbox_file、import_inbox、import_text；其餘 4 個工具（search_external_content、
-get_external_content、confirm_summary、delete_content）仍未實作，呼叫一律 `raise ToolError("尚未實作")`——`server.py` 只對**例外**標 isError，
+US1 已實作 create_inbox_file、import_inbox、import_text；US2 已實作 search_external_content、
+get_external_content；其餘 2 個工具（confirm_summary、delete_content）仍未實作，呼叫一律 `raise ToolError("尚未實作")`——`server.py` 只對**例外**標 isError，
 所以所有錯誤路徑都必須 raise。工具名稱不得含 article／verif／reviewed（避開既有守門測試）。
 """
 
@@ -493,6 +493,126 @@ def _create_inbox_file(args, data_dir, channel):
     return with_disclaimer(out)
 
 
+GUIDE_LINE = "提示：先用搜尋定位，需要才用 offset／length 分段取，或先用 summary_only；非必要不整份讀入。"
+NOT_FOUND_MSG = "沒有找到符合的外部內容。"
+
+
+def _ro_store(data_dir):
+    """查詢用：現開唯讀庫；庫不存在回 None（不建庫、不崩潰）。"""
+    try:
+        return store_mod.ExternalContentStore.open_readonly(data_dir)
+    except FileNotFoundError:
+        return None
+
+
+def _opt_int(args, key):
+    v = args.get(key)
+    if v is None:
+        return None
+    if isinstance(v, bool) or not isinstance(v, int):
+        raise ToolError("%s 必須是整數" % key)
+    return v
+
+
+def _search_external_content(args, data_dir, channel):
+    query = args.get("query")
+    if not isinstance(query, str) or not query.strip():
+        raise ToolError("query 不可為空，請給至少一個關鍵字")
+    st_type = args.get("source_type")
+    if st_type is not None and st_type not in store_mod.SOURCE_TYPES:
+        raise ToolError("source_type 必須是 %s 其中之一" % "、".join(store_mod.SOURCE_TYPES))
+    limit = _opt_int(args, "limit")
+    st = _ro_store(data_dir)
+    if st is None:
+        return with_disclaimer(NOT_FOUND_MSG)
+    try:
+        try:
+            hits = st.search(query, source_type=st_type, limit=limit)
+        except ValueError as e:
+            raise ToolError(str(e))
+    finally:
+        st.close()
+    if not hits:
+        return with_disclaimer(NOT_FOUND_MSG)
+    blocks = []
+    for h in hits:
+        lines = ["[ID %d] 來源類型：%s｜日期：%s" % (h["id"], h["source_type"], h["published_on"]),
+                 "標題：\n" + _tp(h["title"]), "作者：\n" + _tp(h["author"]), "連結：\n" + _tp(h["url"])]
+        if h["summary_count"]:
+            lines.append("已確認摘要：%d 則（summary_id：%s）"
+                         % (h["summary_count"], "、".join(str(i) for i in h["summary_ids"])))
+        else:
+            lines.append("已確認摘要：0 則")
+        if h["snippets"]:
+            lines.append("命中片段：\n" + "\n".join(_tp(x) for x in h["snippets"]))
+        else:
+            lines.append("命中片段：（命中於標題，內文無片段）")
+        lines.append(DISCLAIMER)
+        blocks.append("\n".join(lines))
+    head = "共 %d 筆命中（只回片段，不回全文；要看內文請用 get_external_content 的 id）。" % len(hits)
+    return with_disclaimer(head + "\n\n" + "\n\n".join(blocks))
+
+
+def _summary_stale(confirmed_at, updated_at):
+    try:
+        a = store_mod._aware(store_mod.datetime.datetime.fromisoformat(confirmed_at))
+        b = store_mod._aware(store_mod.datetime.datetime.fromisoformat(updated_at))
+        return a < b
+    except (TypeError, ValueError):
+        return str(confirmed_at) < str(updated_at)
+
+
+def _get_external_content(args, data_dir, channel):
+    cid = args.get("id")
+    if isinstance(cid, bool) or not isinstance(cid, int):
+        raise ToolError("id 必須是整數（內容 ID，來自 search_external_content）")
+    offset, length = _opt_int(args, "offset"), _opt_int(args, "length")
+    summary_only = args.get("summary_only")
+    summary_only = False if summary_only is None else summary_only
+    include = args.get("include_summaries")
+    include = True if include is None else include
+    if not isinstance(summary_only, bool) or not isinstance(include, bool):
+        raise ToolError("summary_only、include_summaries 必須是布林值")
+    st = _ro_store(data_dir)
+    if st is None:
+        raise ToolError("找不到 ID %d 的外部內容（外部內容庫尚未建立）" % cid)
+    try:
+        try:
+            r = st.get(cid, offset=offset, length=length)
+        except ValueError as e:
+            raise ToolError(str(e))
+    finally:
+        st.close()
+    if r is None:
+        raise ToolError("找不到 ID %d 的外部內容（不存在或已刪除）" % cid)
+    parts = [GUIDE_LINE,
+             "[ID %d] 來源類型：%s｜日期：%s｜入庫：%s｜全文更新：%s｜總字數：%d"
+             % (r["id"], r["source_type"], r["published_on"], r["created_at"], r["updated_at"], r["total_chars"]),
+             "標題：\n" + _tp(r["title"]), "作者：\n" + _tp(r["author"]), "連結：\n" + _tp(r["url"])]
+    if include or summary_only:
+        if r["summaries"]:
+            sl = ["已確認摘要（%d 則；以下與原文分開，各附 summary_id）：" % len(r["summaries"])]
+            for sm in r["summaries"]:
+                head = "摘要 summary_id=%d（確認於 %s）" % (sm["summary_id"], sm["confirmed_at"])
+                if _summary_stale(sm["confirmed_at"], r["updated_at"]):
+                    head += "｜此摘要確認於全文更新之前"
+                sl.append(head + "：\n" + _tp(sm["text"]))
+            parts.append("\n".join(sl))
+        else:
+            parts.append("已確認摘要：0 則")
+    if summary_only:
+        parts.append("（summary_only=true：不回原文；總字數 %d）" % r["total_chars"])
+    else:
+        if r["offset_beyond_end"]:
+            rng = "offset %d 超出全文長度 %d，本次回傳空字串" % (r["offset"], r["total_chars"])
+        else:
+            rng = "本次範圍：第 %d～%d 字（共 %d 字，回傳 %d 字）" % (
+                r["offset"], r["end"], r["total_chars"], r["returned_chars"])
+        parts.append("原文（%s）：\n%s" % (rng, _tp(r["text"])))
+    parts.append(DISCLAIMER)
+    return with_disclaimer("\n\n".join(parts))
+
+
 def call_external_content_tool(name, args, data_dir, channel="stdio"):
     """分派。未知名稱與尚未實作的工具一律 raise ToolError（server.py 只對例外標 isError）。"""
     if name not in TOOL_NAMES:
@@ -500,6 +620,10 @@ def call_external_content_tool(name, args, data_dir, channel="stdio"):
     if name in WRITE_TOOL_NAMES:
         ensure_write_allowed(data_dir)
     args = args or {}
+    if name == "search_external_content":
+        return _search_external_content(args, data_dir, channel)
+    if name == "get_external_content":
+        return _get_external_content(args, data_dir, channel)
     if name == "create_inbox_file":
         return _create_inbox_file(args, data_dir, channel)
     if name == "import_inbox":
