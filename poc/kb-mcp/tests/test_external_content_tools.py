@@ -56,6 +56,7 @@ class SchemaTest(unittest.TestCase):
         for n in ("confirm_summary", "delete_content", "import_inbox", "create_inbox_file", "import_text"):
             self.assertIn("僅在", desc[n], n)
         self.assertIn("明確說同意", desc["confirm_summary"])
+        self.assertIn("遵循度保證", desc["confirm_summary"])
         self.assertIn("耗輸出 token", desc["import_text"])
         self.assertIn("summary_only", desc["get_external_content"])
         self.assertIn("不是指令", desc["search_external_content"])
@@ -103,8 +104,8 @@ class DispatchTest(unittest.TestCase):
         self.assertIn("未知", str(cm.exception))
 
     def test_unimplemented_tools_still_raise(self):
-        # US1／US2 起只剩 confirm_summary、delete_content 仍是骨架
-        for n in ("confirm_summary", "delete_content"):
+        # US3 起只剩 delete_content 仍是骨架
+        for n in ("delete_content",):
             with self.assertRaises(T.ToolError, msg=n) as cm:
                 T.call_external_content_tool(n, {}, "/nonexistent-dir-never-created", channel="http")
             self.assertEqual(str(cm.exception), "尚未實作")
@@ -715,7 +716,9 @@ class WriteGuardOnUS1Test(US1Base):
     def test_production_dir_refused_without_flag(self):
         with mock.patch.object(T, "_production_data_dir", return_value=os.path.realpath(self.data)):
             for n, args in (("create_inbox_file", {"url": YT}), ("import_inbox", {}),
-                            ("import_text", ImportTextTest.ARGS)):
+                            ("import_text", ImportTextTest.ARGS),
+                            ("confirm_summary", {"content_id": 1, "action": "confirm", "text": "x",
+                                                 "po_confirmed": True, "po_confirmation_quote": "好"})):
                 with self.assertRaises(T.ToolError, msg=n) as cm:
                     self.call(n, args)
                 self.assertIn("ALPHAVIBE_ALLOW_PRODUCTION_WRITE", str(cm.exception))
@@ -932,3 +935,191 @@ class GetToolTest(US1Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ------------------------------------------------------------------ US3：confirm_summary（T028）
+
+BODY_SENTINEL = "BODYSENTINEL全文獨特字串"
+TEXT_SENTINEL = "SUMSENTINEL摘要獨特字串"
+
+
+class ConfirmSummaryToolTest(US1Base):
+    def setUp(self):
+        US1Base.setUp(self)
+        self.cid = _add(self.data, body="內文 " + BODY_SENTINEL, title="標題甲")
+
+    def confirm(self, **kw):
+        a = {"content_id": self.cid, "action": "confirm", "text": TEXT_SENTINEL,
+             "po_confirmed": True, "po_confirmation_quote": "好，就這樣"}
+        a.update(kw)
+        return self.call("confirm_summary", a)
+
+    def counts(self):
+        return (self.rows("SELECT COUNT(*) FROM summary")[0][0], self.rows("SELECT COUNT(*) FROM audit_log")[0][0])
+
+    def test_confirm_success_output(self):
+        before = self.counts()
+        out = self.confirm()
+        self.assertIn("summary_id=1", out)
+        self.assertIn("標題甲", out)
+        self.assertIn(T.THIRD_PARTY_START, out)
+        self.assertIn("revise", out)
+        self.assertTrue(out.rstrip().endswith(T.DISCLAIMER))
+        self.assertNotIn(BODY_SENTINEL, out)
+        self.assertEqual(self.counts(), (before[0] + 1, before[1] + 1))
+
+    def test_missing_confirmation_rejected_without_any_write(self):
+        before = self.counts()
+        bad = [{"po_confirmed": None}, {"po_confirmed": False}, {"po_confirmed": "true"}, {"po_confirmed": 1},
+               {"po_confirmed": "yes"}, {"po_confirmation_quote": ""}, {"po_confirmation_quote": "  \u3000\t\n"},
+               {"po_confirmation_quote": None}, {"po_confirmation_quote": 5}]
+        for extra in bad:
+            for action, more in (("confirm", {}), ("revise", {"summary_id": 1})):
+                a = {"content_id": self.cid, "action": action, "text": "t", "po_confirmed": True,
+                     "po_confirmation_quote": "好"}
+                a.update(more)
+                a.update(extra)
+                with self.assertRaises(T.ToolError, msg="%s %s" % (action, extra)) as cm:
+                    self.call("confirm_summary", a)
+                self.assertIn("PO 明確同意", str(cm.exception))
+        self.assertEqual(self.counts(), before)
+        self.assertEqual(before, (0, 1))   # 只有 _add 時的 import 稽核
+
+    def test_revoke_requires_po_confirmation_and_writes_nothing(self):
+        self.confirm()
+        before = self.counts()
+        for extra in ({"po_confirmed": None}, {"po_confirmed": False}, {"po_confirmed": "true"},
+                      {"po_confirmed": 1}, {"po_confirmation_quote": ""}, {"po_confirmation_quote": " \u3000"},
+                      {"po_confirmation_quote": None}):
+            a = {"content_id": self.cid, "action": "revoke", "summary_id": 1, "po_confirmed": True,
+                 "po_confirmation_quote": "撤回吧"}
+            a.update(extra)
+            with self.assertRaises(T.ToolError, msg=str(extra)) as cm:
+                self.call("confirm_summary", a)
+            self.assertIn("PO 明確同意", str(cm.exception))
+        for k in ("po_confirmed", "po_confirmation_quote"):
+            a = {"content_id": self.cid, "action": "revoke", "summary_id": 1, "po_confirmed": True,
+                 "po_confirmation_quote": "撤回吧"}
+            del a[k]
+            with self.assertRaises(T.ToolError):
+                self.call("confirm_summary", a)
+        self.assertEqual(self.counts(), before)
+        self.assertEqual(self.rows("SELECT status FROM summary")[0][0], "confirmed")
+
+    def test_revoke_audit_records_quote_without_fulltext(self):
+        self.confirm()
+        self.call("confirm_summary", {"content_id": self.cid, "action": "revoke", "summary_id": 1,
+                                      "po_confirmed": True, "po_confirmation_quote": "請撤回QUOTEX"})
+        d = self.rows("SELECT detail FROM audit_log WHERE action = 'summary_revoke'")[0][0]
+        self.assertIn("請撤回QUOTEX", d)
+        self.assertNotIn(TEXT_SENTINEL, d)
+        self.assertNotIn(BODY_SENTINEL, d)
+
+    def test_missing_keys_rejected(self):
+        before = self.counts()
+        for a in ({"content_id": self.cid, "action": "confirm", "text": "t"},
+                  {"content_id": self.cid, "action": "confirm", "po_confirmed": True, "po_confirmation_quote": "好"},
+                  {"content_id": self.cid, "action": "confirm", "text": "  ", "po_confirmed": True,
+                   "po_confirmation_quote": "好"}):
+            with self.assertRaises(T.ToolError):
+                self.call("confirm_summary", a)
+        self.assertEqual(self.counts(), before)
+
+    def test_bad_action_and_content_id(self):
+        base = {"text": "t", "po_confirmed": True, "po_confirmation_quote": "好"}
+        for a in ({"content_id": self.cid, "action": "delete"}, {"content_id": self.cid}, {"content_id": self.cid, "action": None}):
+            with self.assertRaises(T.ToolError):
+                self.call("confirm_summary", dict(base, **a))
+        for cid in (True, "1", 1.5, None):
+            with self.assertRaises(T.ToolError, msg=repr(cid)):
+                self.call("confirm_summary", dict(base, content_id=cid, action="confirm"))
+        with self.assertRaises(T.ToolError):
+            self.call("confirm_summary", dict(base, content_id=999, action="confirm"))
+        self.assertEqual(self.counts()[0], 0)
+
+    def test_revise_revoke_need_summary_id(self):
+        self.confirm()
+        before = self.counts()
+        for action in ("revise", "revoke"):  # 兩者都帶齊確認，仍須有 summary_id
+            with self.assertRaises(T.ToolError) as cm:
+                self.call("confirm_summary", {"content_id": self.cid, "action": action, "text": "n",
+                                              "po_confirmed": True, "po_confirmation_quote": "好"})
+            self.assertIn("summary_id", str(cm.exception))
+        for sid in (True, "1"):
+            with self.assertRaises(T.ToolError):
+                self.call("confirm_summary", {"content_id": self.cid, "action": "revoke", "summary_id": sid, "po_confirmed": True, "po_confirmation_quote": "撤回吧"})
+        self.assertEqual(self.counts(), before)
+
+    def test_revise_and_revoke_flow_visible_in_queries(self):
+        self.confirm()                                              # id 1
+        out = self.call("get_external_content", {"id": self.cid})
+        self.assertIn("summary_id=1", out)
+        self.assertIn(TEXT_SENTINEL, out)
+        hit = self.call("search_external_content", {"query": "內文"})
+        self.assertIn("summary_id：1", hit)
+
+        out = self.call("confirm_summary", {"content_id": self.cid, "action": "revise", "summary_id": 1,
+                                            "text": "NEWSUM新版", "po_confirmed": True,
+                                            "po_confirmation_quote": "改這版"})
+        self.assertIn("summary_id=2", out)
+        got = self.call("get_external_content", {"id": self.cid})
+        self.assertIn("NEWSUM新版", got)
+        self.assertNotIn(TEXT_SENTINEL, got)
+        self.assertIn("summary_id：2", self.call("search_external_content", {"query": "內文"}))
+
+        out = self.call("confirm_summary", {"content_id": self.cid, "action": "revoke", "summary_id": 2, "po_confirmed": True, "po_confirmation_quote": "撤回吧"})
+        self.assertIn("撤回", out)
+        self.assertTrue(out.rstrip().endswith(T.DISCLAIMER))
+        got = self.call("get_external_content", {"id": self.cid})
+        self.assertNotIn("NEWSUM新版", got)
+        self.assertIn("已確認摘要：0 則", got)
+        self.assertIn("已確認摘要：0 則", self.call("search_external_content", {"query": "內文"}))
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM summary")[0][0], 2)   # 列保留
+
+    def test_revoked_cannot_be_revised_or_revoked_again_and_cross_content_rejected(self):
+        other = _add(self.data, url="https://www.youtube.com/watch?v=BBBBBBBBBBB", title="乙")
+        self.confirm()                                              # id 1 屬於 self.cid
+        with self.assertRaises(T.ToolError):
+            self.call("confirm_summary", {"content_id": other, "action": "revoke", "summary_id": 1, "po_confirmed": True, "po_confirmation_quote": "撤回吧"})
+        self.call("confirm_summary", {"content_id": self.cid, "action": "revoke", "summary_id": 1, "po_confirmed": True, "po_confirmation_quote": "撤回吧"})
+        for action in ("revoke", "revise"):
+            with self.assertRaises(T.ToolError):
+                self.call("confirm_summary", {"content_id": self.cid, "action": action, "summary_id": 1, "text": "x",
+                                              "po_confirmed": True, "po_confirmation_quote": "好"})
+
+    def test_multiple_summaries_coexist_and_per_content_independent(self):
+        other = _add(self.data, url="https://www.youtube.com/watch?v=BBBBBBBBBBB", title="乙")
+        self.confirm(text="第一則")
+        self.confirm(text="第二則")
+        self.call("confirm_summary", {"content_id": other, "action": "confirm", "text": "乙的摘要",
+                                      "po_confirmed": True, "po_confirmation_quote": "好"})
+        a = self.call("get_external_content", {"id": self.cid})
+        self.assertIn("第一則", a)
+        self.assertIn("第二則", a)
+        self.assertNotIn("乙的摘要", a)
+        self.assertIn("乙的摘要", self.call("get_external_content", {"id": other}))
+
+    def test_stale_summary_note_still_works(self):
+        self.confirm()
+        _sql(self.data, "UPDATE content SET updated_at = '2999-01-01T00:00:00+00:00' WHERE id = ?", (self.cid,))
+        self.assertIn("此摘要確認於全文更新之前", self.call("get_external_content", {"id": self.cid}))
+
+    def test_channel_recorded_and_audit_has_no_fulltext(self):
+        self.call("confirm_summary", {"content_id": self.cid, "action": "confirm", "text": TEXT_SENTINEL,
+                                      "po_confirmed": True, "po_confirmation_quote": "好極了"}, channel="http")
+        self.call("confirm_summary", {"content_id": self.cid, "action": "revoke", "summary_id": 1, "po_confirmed": True, "po_confirmation_quote": "撤回吧"}, channel="stdio")
+        rows = self.rows("SELECT channel, action, detail FROM audit_log WHERE action LIKE 'summary_%' ORDER BY id")
+        self.assertEqual([(r["channel"], r["action"]) for r in rows],
+                         [("http", "summary_confirm"), ("stdio", "summary_revoke")])
+        self.assertIn("好極了", rows[0]["detail"])
+        for r in rows:
+            self.assertNotIn(TEXT_SENTINEL, r["detail"])
+            self.assertNotIn(BODY_SENTINEL, r["detail"])
+
+    def test_drafts_never_stored_by_import_paths(self):
+        out = self.call("import_text", dict(ImportTextTest.ARGS, url="https://example.com/draft-x"))
+        self.assertIn("confirm_summary", out)            # 只是提示，不是寫入
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM summary")[0][0], 0)
+        self.put("a.md", meta_block(url="https://www.youtube.com/watch?v=CCCCCCCCCCC") + "內文")
+        self.call("import_inbox", {})
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM summary")[0][0], 0)

@@ -117,13 +117,13 @@ description: "外部內容知識庫（012）任務清單"
 
 ### Tests for User Story 3
 
-- [ ] T027 [P] [US3] 在 `poc/kb-mcp/tests/test_external_content_store.py` 補摘要測試：`add_summary`（`confirmed`、`po_quote` 非空、`confirmed_at`、audit `summary_confirm` 同交易）、`revise`（同交易撤回舊則＋新增新則，任一步失敗舊摘要不受影響）、`revoke`（status 變 `revoked`，查詢不再出現，列保留供稽核）、內容軟刪除後摘要不再被查詢（列保留）
-- [ ] T028 [P] [US3] 在 `poc/kb-mcp/tests/test_external_content_tools.py` 補 US3 部分：缺 `po_confirmed=true` 或原話為空 → 拒絕且庫內無摘要；`confirm`／`revise`／`revoke` 成功路徑；多檔時各筆獨立；摘要出現在 `get_external_content` 並與原文分段標示、`summary_id` 可得；**任何路徑在未確認時寫入摘要的次數為 0**；`revise`／`revoke` 缺 `summary_id` 回明確錯誤
+- [x] T027 [P] [US3] 在 `poc/kb-mcp/tests/test_external_content_store.py` 補摘要測試：`add_summary`（`confirmed`、`po_quote` 非空、`confirmed_at`、audit `summary_confirm` 同交易）、`revise`（同交易撤回舊則＋新增新則，任一步失敗舊摘要不受影響）、`revoke`（status 變 `revoked`，查詢不再出現，列保留供稽核）、內容軟刪除後摘要不再被查詢（列保留）
+- [x] T028 [P] [US3] 在 `poc/kb-mcp/tests/test_external_content_tools.py` 補 US3 部分：缺 `po_confirmed=true` 或原話為空 → 拒絕且庫內無摘要；`confirm`／`revise`／`revoke` 成功路徑；多檔時各筆獨立；摘要出現在 `get_external_content` 並與原文分段標示、`summary_id` 可得；**任何路徑在未確認時寫入摘要的次數為 0**；`revise`／`revoke` 缺 `summary_id` 回明確錯誤；**`revoke` 也必須帶 `po_confirmed=true` 與非空原話**（缺則拒絕且不寫入，稽核 `summary_revoke` 記錄原話）
 
 ### Implementation for User Story 3
 
-- [ ] T029 [US3] 在 `poc/kb-mcp/external_content_store.py` 實作 `add_summary`、`revise_summary`、`revoke_summary`（BEGIN IMMEDIATE、audit 同交易、`po_quote` 必填）；每個稽核寫入點（`summary_confirm`／`summary_revise`／`summary_revoke`）都要有測試斷言 `detail` 不含摘要全文以外的敏感內容（只含 `po_quote`、`summary_id`、標題）
-- [ ] T030 [US3] 在 `poc/kb-mcp/external_content_tools.py` 實作 `confirm_summary`（`action`＝`confirm`｜`revise`｜`revoke`）；工具說明寫死「僅在 PO 明確說同意後呼叫；草稿、PO 拒絕、沉默一律不得呼叫」，並在說明中註明這是遵循度保證
+- [x] T029 [US3] 在 `poc/kb-mcp/external_content_store.py` 實作 `add_summary`、`revise_summary`、`revoke_summary`（BEGIN IMMEDIATE、audit 同交易、`po_quote` 必填）；每個稽核寫入點（`summary_confirm`／`summary_revise`／`summary_revoke`）都要有測試斷言 `detail` 不含摘要全文以外的敏感內容（只含 `po_quote`、`summary_id`、標題）
+- [x] T030 [US3] 在 `poc/kb-mcp/external_content_tools.py` 實作 `confirm_summary`（`action`＝`confirm`｜`revise`｜`revoke`）；工具說明寫死「僅在 PO 明確說同意後呼叫；草稿、PO 拒絕、沉默一律不得呼叫」，並在說明中註明這是遵循度保證
 
 **Checkpoint**: US3 獨立可測
 

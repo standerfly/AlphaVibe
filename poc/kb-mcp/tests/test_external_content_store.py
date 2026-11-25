@@ -426,3 +426,171 @@ class SearchTest(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ------------------------------------------------------------------ US3：摘要（T027）
+
+import json  # noqa: E402
+
+BODY_S = "BODYSENTINEL全文獨特字串"
+TEXT_S = "SUMSENTINEL摘要獨特字串"
+
+
+class SummaryBase(Base):
+    def setUp(self):
+        Base.setUp(self)
+        r = self.s.add_content("youtube", "https://www.youtube.com/watch?v=AAAAAAAAAAA", "標題甲", "頻道",
+                               "2026-11-19", "內文 " + BODY_S)
+        self.cid = r["id"]
+        r2 = self.s.add_content("youtube", "https://www.youtube.com/watch?v=BBBBBBBBBBB", "標題乙", "頻道",
+                                "2026-11-19", "別篇")
+        self.cid2 = r2["id"]
+
+    def summaries(self):
+        return [dict(r) for r in self.s.conn.execute("SELECT * FROM summary ORDER BY id")]
+
+    def audits(self, action):
+        return [dict(r) for r in self.s.conn.execute(
+            "SELECT * FROM audit_log WHERE action = ? ORDER BY id", (action,))]
+
+
+class AddSummaryTest(SummaryBase):
+    def test_success(self):
+        self.clock[0] = T0 + datetime.timedelta(hours=1)
+        r = self.s.add_summary(self.cid, TEXT_S, "好，存吧", channel="http")
+        self.assertEqual(r["summary_id"], 1)
+        row_ = self.summaries()[0]
+        self.assertEqual((row_["status"], row_["po_quote"], row_["content_id"]), ("confirmed", "好，存吧", self.cid))
+        self.assertEqual(row_["confirmed_at"], self.clock[0].isoformat())
+        a = self.audits("summary_confirm")
+        self.assertEqual(len(a), 1)
+        self.assertEqual((a[0]["channel"], a[0]["content_id"]), ("http", self.cid))
+        d = json.loads(a[0]["detail"])
+        self.assertEqual(d, {"summary_id": 1, "title": "標題甲", "po_quote": "好，存吧"})
+        self.assertNotIn(TEXT_S, a[0]["detail"])
+        self.assertNotIn(BODY_S, a[0]["detail"])
+
+    def test_blank_text_or_quote_rejected_including_fullwidth(self):
+        for text, quote in (("", "好"), (" \t\n", "好"), ("\u3000", "好"), ("x", ""), ("x", "  "),
+                            ("x", "\u3000\u3000"), ("x", None), (None, "好")):
+            with self.assertRaises(ValueError, msg=repr((text, quote))):
+                self.s.add_summary(self.cid, text, quote)
+        self.assertEqual((self.count("summary"), len(self.audits("summary_confirm"))), (0, 0))
+
+    def test_content_missing_or_soft_deleted_rejected(self):
+        with self.assertRaises(ValueError):
+            self.s.add_summary(999, "x", "好")
+        self.s.conn.execute("UPDATE content SET deleted_at = ? WHERE id = ?", (T0.isoformat(), self.cid))
+        self.s.conn.commit()
+        with self.assertRaises(ValueError):
+            self.s.add_summary(self.cid, "x", "好")
+        self.assertEqual(self.count("summary"), 0)
+
+    def test_audit_failure_rolls_back_summary(self):
+        self.s.conn.execute("DROP TABLE audit_log")
+        self.s.conn.commit()
+        with self.assertRaises(sqlite3.Error):
+            self.s.add_summary(self.cid, "x", "好")
+        self.assertEqual(self.count("summary"), 0)
+
+    def test_multiple_coexist_and_visible_in_get(self):
+        self.s.add_summary(self.cid, "一", "好")
+        self.s.add_summary(self.cid, "二", "好")
+        self.assertEqual([x["text"] for x in self.s.get(self.cid)["summaries"]], ["一", "二"])
+
+    def test_soft_deleted_content_hides_summaries_but_keeps_rows(self):
+        self.s.add_summary(self.cid, "一", "好")
+        self.s.conn.execute("UPDATE content SET deleted_at = ? WHERE id = ?", (T0.isoformat(), self.cid))
+        self.s.conn.commit()
+        self.assertIsNone(self.s.get(self.cid))
+        self.assertEqual(self.s.search("內文"), [])
+        self.assertEqual(self.count("summary"), 1)
+
+    def test_no_summary_written_by_add_content(self):
+        self.assertEqual(self.count("summary"), 0)
+
+
+class ReviseRevokeTest(SummaryBase):
+    def setUp(self):
+        SummaryBase.setUp(self)
+        self.sid = self.s.add_summary(self.cid, "舊版", "好")["summary_id"]
+
+    def test_revise_atomic_swap(self):
+        r = self.s.revise_summary(self.cid, self.sid, TEXT_S, "改這版", channel="stdio")
+        self.assertEqual(r["old_summary_id"], self.sid)
+        rows = self.summaries()
+        self.assertEqual([(x["status"], x["text"]) for x in rows], [("revoked", "舊版"), ("confirmed", TEXT_S)])
+        self.assertEqual(rows[1]["po_quote"], "改這版")
+        self.assertEqual([x["text"] for x in self.s.get(self.cid)["summaries"]], [TEXT_S])
+        a = self.audits("summary_revise")
+        self.assertEqual(len(a), 1)
+        d = json.loads(a[0]["detail"])
+        self.assertEqual((d["old_summary_id"], d["new_summary_id"], d["title"], d["po_quote"]),
+                         (self.sid, r["summary_id"], "標題甲", "改這版"))
+        for t in (TEXT_S, "舊版", BODY_S):
+            self.assertNotIn(t, a[0]["detail"])
+
+    def test_revise_failure_leaves_old_summary_confirmed(self):
+        # 讓「新增」那步失敗：以 trigger 擋 INSERT（舊列的 UPDATE 已先執行，必須被回滾）
+        self.s.conn.execute("CREATE TRIGGER no_ins BEFORE INSERT ON summary BEGIN "
+                            "SELECT RAISE(ABORT, 'boom'); END")
+        self.s.conn.commit()
+        with self.assertRaises(sqlite3.Error):
+            self.s.revise_summary(self.cid, self.sid, "新", "好")
+        self.assertEqual([(x["status"], x["text"]) for x in self.summaries()], [("confirmed", "舊版")])
+        self.assertEqual(len(self.audits("summary_revise")), 0)
+        self.assertEqual([x["text"] for x in self.s.get(self.cid)["summaries"]], ["舊版"])
+
+    def test_revise_audit_failure_rolls_back_everything(self):
+        self.s.conn.execute("DROP TABLE audit_log")
+        self.s.conn.commit()
+        with self.assertRaises(sqlite3.Error):
+            self.s.revise_summary(self.cid, self.sid, "新", "好")
+        self.assertEqual([x["status"] for x in self.summaries()], ["confirmed"])
+
+    def test_revise_validation(self):
+        for args in ((self.cid, self.sid, "", "好"), (self.cid, self.sid, "新", " \u3000"),
+                     (self.cid, 999, "新", "好"), (self.cid2, self.sid, "新", "好"), (999, self.sid, "新", "好"),
+                     (self.cid, True, "新", "好")):
+            with self.assertRaises(ValueError, msg=repr(args)):
+                self.s.revise_summary(*args)
+        self.assertEqual([x["status"] for x in self.summaries()], ["confirmed"])
+
+    def test_revoke(self):
+        r = self.s.revoke_summary(self.cid, self.sid, "撤回吧", channel="http")
+        self.assertEqual(r["summary_id"], self.sid)
+        self.assertEqual([x["status"] for x in self.summaries()], ["revoked"])
+        self.assertEqual(self.s.get(self.cid)["summaries"], [])
+        self.assertEqual(self.s.search("內文")[0]["summary_count"], 0)
+        a = self.audits("summary_revoke")
+        self.assertEqual((len(a), a[0]["channel"]), (1, "http"))
+        d = json.loads(a[0]["detail"])
+        self.assertEqual((d["summary_id"], d["title"], d["po_quote"]), (self.sid, "標題甲", "撤回吧"))
+        self.assertNotIn("舊版", a[0]["detail"])
+        self.assertNotIn(BODY_S, a[0]["detail"])
+
+    def test_revoke_validation(self):
+        with self.assertRaises(ValueError):
+            self.s.revoke_summary(self.cid2, self.sid, "好")          # 屬於別筆內容
+        with self.assertRaises(ValueError):
+            self.s.revoke_summary(self.cid, 999, "好")
+        self.s.revoke_summary(self.cid, self.sid, "好")
+        with self.assertRaises(ValueError):                      # 已撤回
+            self.s.revoke_summary(self.cid, self.sid, "好")
+        with self.assertRaises(ValueError):
+            self.s.revise_summary(self.cid, self.sid, "新", "好")
+        self.assertEqual(len(self.audits("summary_revoke")), 1)
+
+    def test_revoke_blank_quote_rejected(self):
+        for q in ("", "  ", "\u3000", None):
+            with self.assertRaises(ValueError, msg=repr(q)):
+                self.s.revoke_summary(self.cid, self.sid, q)
+        self.assertEqual([x["status"] for x in self.summaries()], ["confirmed"])
+        self.assertEqual(len(self.audits("summary_revoke")), 0)
+
+    def test_revoke_audit_failure_rolls_back(self):
+        self.s.conn.execute("DROP TABLE audit_log")
+        self.s.conn.commit()
+        with self.assertRaises(sqlite3.Error):
+            self.s.revoke_summary(self.cid, self.sid, "好")
+        self.assertEqual([x["status"] for x in self.summaries()], ["confirmed"])

@@ -59,12 +59,13 @@
 
 ### `confirm_summary`
 把 PO **已明確同意**的摘要存入（FR-011/012）。
-- 輸入：`content_id`、`action`（`confirm`｜`revise`｜`revoke`）、`text`（`confirm`、`revise` 必填）、`summary_id`（`revise`、`revoke` 必填；可由 `search_external_content`／`get_external_content` 的輸出取得）、`po_confirmed`（`confirm`、`revise` 時必須為 true）、`po_confirmation_quote`（`confirm`、`revise` 時必填，PO 同意的原話）。
+- 輸入：`content_id`、`action`（`confirm`｜`revise`｜`revoke`）、`text`（`confirm`、`revise` 必填）、`summary_id`（`revise`、`revoke` 必填；可由 `search_external_content`／`get_external_content` 的輸出取得）、`po_confirmed`（`confirm`、`revise`、`revoke` 時都必須為 true）、`po_confirmation_quote`（`confirm`、`revise`、`revoke` 時都必填，PO 同意的原話；2026-11-25 實作階段決定：撤回等於把已確認摘要從查詢中拿掉且第一版無還原工具，故與確認同樣要求）。
 - `revise` 在**同一交易**內撤回舊則並新增新則（視同重新確認，需新的原話）；任一步失敗整筆回滾、舊摘要不受影響。
 - 工具描述須寫死：僅在 PO 明確說同意後呼叫；草稿、PO 拒絕、沉默一律不得呼叫。
 - 缺 `po_confirmed=true` 或原話為空 → 拒絕並說明須 PO 明確同意（錯誤，不入庫）。
 - 稽核：記錄原話與時間（`summary_confirm`／`summary_revise`／`summary_revoke`）。
 - 已知限制：系統無法驗證原話真偽，屬遵循度保證（research R7）。
+- **第一版已知取捨（US3 驗收揭露，2026-11-25）**：(1) 摘要 `text` 不設長度上限（5,000 字可入庫），草稿被誘導寫入時可能很長；之後若觀察到濫用再加上限。(2) 對不存在的 `content_id` 呼叫 `confirm_summary`，在全新資料目錄會先建出空的 `external_content.db` 再回「找不到」，行為與匯入工具一致，可接受。(3) `text` 與確認欄位同時缺失時，先回 `text` 為空的錯誤，仍被拒絕且不寫入。
 
 ### `delete_content`
 刪除單筆內容（FR-013）。

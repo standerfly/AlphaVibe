@@ -2,7 +2,7 @@
 
 含：固定標註、第三方文字分隔 helper、7 個工具的 schema、名稱分組、分派。
 US1 已實作 create_inbox_file、import_inbox、import_text；US2 已實作 search_external_content、
-get_external_content；其餘 2 個工具（confirm_summary、delete_content）仍未實作，呼叫一律 `raise ToolError("尚未實作")`——`server.py` 只對**例外**標 isError，
+get_external_content；US3 已實作 confirm_summary；其餘 1 個工具（delete_content）仍未實作，呼叫一律 `raise ToolError("尚未實作")`——`server.py` 只對**例外**標 isError，
 所以所有錯誤路徑都必須 raise。工具名稱不得含 article／verif／reviewed（避開既有守門測試）。
 """
 
@@ -160,7 +160,8 @@ TOOL_SCHEMAS = [
             "【寫入】把 PO 已明確同意的摘要存入。僅在 PO 明確說同意後呼叫；草稿、PO 拒絕、沉默一律不得呼叫。"
             "action：confirm（新增）｜revise（同一交易撤回舊則並新增，視同重新確認）｜revoke（撤回）。"
             "confirm／revise 必須 po_confirmed=true 並附 po_confirmation_quote（PO 同意的原話），否則拒絕；"
-            "revise／revoke 必須給 summary_id。原話與時間會留稽核。"),
+            "revoke 同樣必須 po_confirmed=true 並附原話；revise／revoke 必須給 summary_id。原話與時間會留稽核。"
+            "注意：系統無法驗證 PO 是否真的同意，這是遵循度保證（靠呼叫者遵守），不是強制力。"),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -168,8 +169,8 @@ TOOL_SCHEMAS = [
                 "action": {"type": "string", "enum": ["confirm", "revise", "revoke"], "description": "confirm｜revise｜revoke。"},
                 "text": {"type": "string", "description": "摘要文字（confirm、revise 必填）。"},
                 "summary_id": {"type": "integer", "description": "既有摘要 ID（revise、revoke 必填）。"},
-                "po_confirmed": {"type": "boolean", "description": "PO 已明確同意（confirm、revise 必須為 true）。"},
-                "po_confirmation_quote": {"type": "string", "description": "PO 同意的原話（confirm、revise 必填，非空）。"},
+                "po_confirmed": {"type": "boolean", "description": "PO 已明確同意（confirm、revise、revoke 必須為 true）。"},
+                "po_confirmation_quote": {"type": "string", "description": "PO 同意的原話（confirm、revise、revoke 必填，非空）。"},
             },
             "required": ["content_id", "action"],
         },
@@ -613,6 +614,61 @@ def _get_external_content(args, data_dir, channel):
     return with_disclaimer("\n\n".join(parts))
 
 
+def _po_gate(args, action):
+    """confirm／revise／revoke 的確認閘：po_confirmed 必須恰為布林 True、原話 strip 後非空。
+    這是遵循度保證（系統無法驗證 PO 是否真的同意），不是防護。"""
+    if args.get("po_confirmed") is not True:
+        raise ToolError("拒絕寫入：%s 須 PO 明確同意（po_confirmed 必須為布林 true）；草稿、PO 拒絕或沉默都不得呼叫。"
+                        % action)
+    quote = args.get("po_confirmation_quote")
+    if not isinstance(quote, str) or not quote.strip():
+        raise ToolError("拒絕寫入：%s 須 PO 明確同意，請附上 PO 同意的原話（po_confirmation_quote 不可為空）。" % action)
+    return quote
+
+
+def _confirm_summary(args, data_dir, channel):
+    cid = args.get("content_id")
+    if isinstance(cid, bool) or not isinstance(cid, int):
+        raise ToolError("content_id 必須是整數（內容 ID）")
+    action = args.get("action")
+    if action not in ("confirm", "revise", "revoke"):
+        raise ToolError("action 必須是 confirm、revise、revoke 其中之一")
+    text = args.get("text")
+    sid = args.get("summary_id")
+    quote = None
+    if action in ("confirm", "revise"):
+        if not isinstance(text, str) or not text.strip():
+            raise ToolError("%s 必須提供非空的 text（摘要文字）" % action)
+    if action in ("confirm", "revise", "revoke"):
+        quote = _po_gate(args, action)
+    if action in ("revise", "revoke"):
+        if sid is None:
+            raise ToolError("%s 必須提供 summary_id（可由 search_external_content／get_external_content 取得）" % action)
+        if isinstance(sid, bool) or not isinstance(sid, int):
+            raise ToolError("summary_id 必須是整數")
+    st = store_mod.ExternalContentStore(data_dir)
+    try:
+        try:
+            if action == "confirm":
+                r = st.add_summary(cid, text, quote, channel=channel)
+            elif action == "revise":
+                r = st.revise_summary(cid, sid, text, quote, channel=channel)
+            else:
+                r = st.revoke_summary(cid, sid, quote, channel=channel)
+        except ValueError as e:      # ContentValidationError 是 ValueError 子類
+            raise ToolError(str(e))
+    finally:
+        st.close()
+    done = {"confirm": "已新增並確認摘要", "revise": "已修訂摘要（舊則 summary_id=%s 已撤回，新增新則）" % sid,
+            "revoke": "已撤回摘要"}[action]
+    lines = ["%s。summary_id=%d" % (done, r["summary_id"]), "內容 ID %d，標題：\n%s" % (cid, _tp(r["title"]))]
+    if action == "revoke":
+        lines.append("該摘要已撤回，不會再被查詢到（列保留供稽核）。")
+    else:
+        lines.append("摘要已入庫並可被查詢；之後修改請用 revise（action=revise 並附新的 PO 原話）。")
+    return with_disclaimer("\n".join(lines))
+
+
 def call_external_content_tool(name, args, data_dir, channel="stdio"):
     """分派。未知名稱與尚未實作的工具一律 raise ToolError（server.py 只對例外標 isError）。"""
     if name not in TOOL_NAMES:
@@ -630,4 +686,6 @@ def call_external_content_tool(name, args, data_dir, channel="stdio"):
         return _import_inbox(args, data_dir, channel)
     if name == "import_text":
         return _import_text(args, data_dir, channel)
+    if name == "confirm_summary":
+        return _confirm_summary(args, data_dir, channel)
     raise ToolError("尚未實作")

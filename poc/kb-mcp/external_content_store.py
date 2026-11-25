@@ -322,3 +322,76 @@ class ExternalContentStore(object):
             "total_chars": total, "offset": offset, "returned_chars": len(text),
             "end": offset + len(text), "offset_beyond_end": offset >= total,
             "text": text, "summaries": self._confirmed_summaries(r["id"])}
+
+    # ------------------------------------------------------------ 摘要（US3；FR-011/012）
+    # 草稿永遠不入庫；本區只在 PO 同意後由 confirm_summary 工具呼叫。系統無法驗證 po_quote 真偽（遵循度保證）。
+
+    @staticmethod
+    def _need_text(name, v):
+        if not isinstance(v, str) or not v.strip():
+            raise ContentValidationError("%s 不可為空白" % name)
+        return v
+
+    def _live_content_title(self, content_id):
+        r = self.conn.execute("SELECT title FROM content WHERE id = ? AND deleted_at IS NULL",
+                              (content_id,)).fetchone()
+        if not r:
+            raise ContentValidationError("找不到 ID %s 的外部內容（不存在或已刪除）" % content_id)
+        return r["title"]
+
+    def _confirmed_summary_row(self, content_id, summary_id):
+        if isinstance(summary_id, bool) or not isinstance(summary_id, int):
+            raise ContentValidationError("summary_id 必須是整數")
+        r = self.conn.execute("SELECT id FROM summary WHERE id = ? AND content_id = ? AND status = 'confirmed'",
+                              (summary_id, content_id)).fetchone()
+        if not r:
+            raise ContentValidationError(
+                "summary_id %d 不是內容 %d 的有效（已確認）摘要，可能屬於其他內容或已撤回" % (summary_id, content_id))
+
+    def _insert_summary(self, c, content_id, text, po_quote):
+        cur = c.execute(
+            "INSERT INTO summary (content_id, text, status, confirmed_at, po_quote) VALUES (?,?,?,?,?)",
+            (content_id, text, "confirmed", self.now_iso(), po_quote))
+        return cur.lastrowid
+
+    def add_summary(self, content_id, text, po_quote, channel="stdio"):
+        """新增一則已確認摘要；單一交易（摘要＋audit summary_confirm）。
+        audit detail 只含 summary_id、標題、po_quote，不含摘要全文或內容全文。"""
+        self._need_text("摘要文字", text)
+        self._need_text("PO 同意原話", po_quote)
+        if channel not in CHANNELS:
+            raise ContentValidationError("channel 必須是 http 或 stdio")
+        with self._tx() as c:
+            title = self._live_content_title(content_id)
+            sid = self._insert_summary(c, content_id, text, po_quote)
+            self._audit("summary_confirm", content_id, channel,
+                        {"summary_id": sid, "title": title, "po_quote": po_quote})
+        return {"summary_id": sid, "content_id": content_id, "title": title}
+
+    def revise_summary(self, content_id, summary_id, text, po_quote, channel="stdio"):
+        """同一交易內撤回舊則並新增新則（需新的原話）；任一步失敗整筆回滾。"""
+        self._need_text("摘要文字", text)
+        self._need_text("PO 同意原話", po_quote)
+        if channel not in CHANNELS:
+            raise ContentValidationError("channel 必須是 http 或 stdio")
+        with self._tx() as c:
+            title = self._live_content_title(content_id)
+            self._confirmed_summary_row(content_id, summary_id)
+            c.execute("UPDATE summary SET status = 'revoked' WHERE id = ?", (summary_id,))
+            new_id = self._insert_summary(c, content_id, text, po_quote)
+            self._audit("summary_revise", content_id, channel,
+                        {"old_summary_id": summary_id, "new_summary_id": new_id, "summary_id": new_id,
+                         "title": title, "po_quote": po_quote})
+        return {"summary_id": new_id, "old_summary_id": summary_id, "content_id": content_id, "title": title}
+
+    def revoke_summary(self, content_id, summary_id, po_quote, channel="stdio"):
+        """撤回摘要：status 改 revoked，列保留供稽核；需 PO 原話（遵循度保證）。"""
+        self._need_text("PO 同意原話", po_quote)
+        if channel not in CHANNELS:
+            raise ContentValidationError("channel 必須是 http 或 stdio")
+        with self._tx() as c:
+            title = self._live_content_title(content_id)
+            self._confirmed_summary_row(content_id, summary_id)
+            c.execute("UPDATE summary SET status = 'revoked' WHERE id = ?", (summary_id,))
+            self._audit("summary_revoke", content_id, channel, {"summary_id": summary_id, "title": title, "po_quote": po_quote})
+        return {"summary_id": summary_id, "content_id": content_id, "title": title}
