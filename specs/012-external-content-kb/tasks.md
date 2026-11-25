@@ -95,15 +95,15 @@ description: "外部內容知識庫（012）任務清單"
 
 ### Tests
 
-- [ ] T021 [P] [US6] 建立 `poc/kb-mcp/tests/test_external_content_readonly.py`：`server_readonly` 的 `tools/list` 只含 `search_external_content`、`get_external_content`；呼叫 `create_inbox_file`／`import_inbox`／`import_text`／`confirm_summary`／`delete_content` 皆回「沒有授權呼叫寫入工具」類錯誤；外部內容工具名稱不含 `article`／`verif`／`reviewed`；另加美股實查（US2-5）：以同一關鍵字分別經 `server.py` 與 `us_stock_mcp_server.py` 的 `call_tool` 查詢同一份測試庫，確認兩邊都查得到同一筆（此測試在 T025 接線後才會轉綠）
-- [ ] T022 [P] [US6] 更新守門測試：`poc/kb-mcp/tests/test_pnl.py`（`len(server.TOOLS)` 50→57、`len(READONLY_TOOLS)` 31→33）、`poc/kb-mcp/tests/test_traceability.py`（50→57，建議順手把測試名 `test_tools_list_has_fifty` 改為不含數字）、`poc/kb-mcp/tests/test_us_stock_mcp_server.py`（名稱集合加入 2 個查詢工具；美股工具總數 10→12）
+- [x] T021 [P] [US6] 建立 `poc/kb-mcp/tests/test_external_content_readonly.py`：`server_readonly` 的 `tools/list` 只含 `search_external_content`、`get_external_content`；呼叫 `create_inbox_file`／`import_inbox`／`import_text`／`confirm_summary`／`delete_content` 皆回「沒有授權呼叫寫入工具」類錯誤；外部內容工具名稱不含 `article`／`verif`／`reviewed`；另加美股實查（US2-5）：以同一關鍵字分別經 `server.py` 與 `us_stock_mcp_server.py` 的 `call_tool` 查詢同一份測試庫，確認兩邊都查得到同一筆（此測試在 T025 接線後才會轉綠）
+- [x] T022 [P] [US6] 更新守門測試：`poc/kb-mcp/tests/test_pnl.py`（`len(server.TOOLS)` 50→57、`len(READONLY_TOOLS)` 31→33）、`poc/kb-mcp/tests/test_traceability.py`（50→57，建議順手把測試名 `test_tools_list_has_fifty` 改為不含數字）、`poc/kb-mcp/tests/test_us_stock_mcp_server.py`（名稱集合加入 2 個查詢工具；美股工具總數 10→12）
 
 ### Implementation
 
-- [ ] T023 [US6] 修改 `poc/kb-mcp/server.py`：`TOOLS` 併入 7 個外部內容工具 schema；`call_tool` 開頭攔截外部內容工具名稱並交給 `call_external_content_tool`（比照 article 工具的 `server.py` 掛法）；data dir 沿用現有解析
-- [ ] T024 [US6] 修改 `poc/kb-mcp/server_readonly.py`：`READONLY_TOOLS` 白名單加入 `search_external_content`、`get_external_content`（**寫入 5 個不得加入**）；同步檔內註解的工具數字
-- [ ] T025 [US6] 修改 `poc/kb-mcp/us_stock_mcp_server.py`：只併入 2 個查詢工具 schema 與 `call_tool` 分派（寫入工具不掛美股端）
-- [ ] T026 [US6] 跑接線後的守門測試與全套：`python3 -m unittest discover -s poc/kb-mcp/tests`，與 T002 基準比對（失敗數不得增加；新增測試全綠）
+- [x] T023 [US6] 修改 `poc/kb-mcp/server.py`：`TOOLS` 併入 7 個外部內容工具 schema；`call_tool` 開頭攔截外部內容工具名稱並交給 `call_external_content_tool`（比照 article 工具的 `server.py` 掛法）；data dir 沿用現有解析
+- [x] T024 [US6] 修改 `poc/kb-mcp/server_readonly.py`：`READONLY_TOOLS` 白名單加入 `search_external_content`、`get_external_content`（**寫入 5 個不得加入**）；同步檔內註解的工具數字
+- [x] T025 [US6] 修改 `poc/kb-mcp/us_stock_mcp_server.py`：只併入 2 個查詢工具 schema 與 `call_tool` 分派（寫入工具不掛美股端）
+- [x] T026 [US6] 跑接線後的守門測試與全套：`python3 -m unittest discover -s poc/kb-mcp/tests`，與 T002 基準比對（失敗數不得增加；新增測試全綠）；**結果（2026-11-25）**：Ran 2540 tests（基準 2340＋本功能 200），FAILED（failures=6, errors=4, skipped=3），失敗名單與 T002 基準逐項相同，未新增任何失敗
 
 **Checkpoint**: 程式面 MVP 完成——US1＋US2 已掛上伺服器、守門測試全綠（尚未對 claude.ai 生效，需 T037 專案指示與 T045 部署）
 

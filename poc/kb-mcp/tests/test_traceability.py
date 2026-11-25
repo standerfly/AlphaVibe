@@ -249,7 +249,7 @@ class ServerToolsTest(unittest.TestCase):
         self.server.store.close()
         shutil.rmtree(self.tmp)
 
-    def test_tools_list_has_fifty(self):
+    def test_tools_list_count_matches_server(self):
         """2026-08-19：40→43。save_position_plan／get_position_plan（加碼
         計畫總額度）＋check_auto_score（Score自動化四項評分）。
         2026-09-02：43→45。get_position_pnl／get_price_position
@@ -259,7 +259,7 @@ class ServerToolsTest(unittest.TestCase):
         2026-10-28：47→48。get_today_highlights（claude.ai 連接器讀今日重點）。
         2026-11：48→50。search_articles／get_article（010 定錨文章查詢，唯讀）。"""
         names = [t["name"] for t in server.TOOLS]
-        self.assertEqual(len(names), 50)
+        self.assertEqual(len(names), 57)
         for expected in ("save_snapshot", "get_snapshots",
                          "save_holdings", "get_holdings",
                          "save_stock_alias", "get_stock_alias",

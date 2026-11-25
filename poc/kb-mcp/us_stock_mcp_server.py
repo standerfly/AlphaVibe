@@ -54,6 +54,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import us_trade_text_parser  # noqa: E402
 import article_tools  # noqa: E402
+import external_content_tools  # noqa: E402
 from us_stock_store import USStockStore  # noqa: E402
 
 SUPPORTED_PROTOCOL_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18")
@@ -205,7 +206,10 @@ TOOLS = [
             },
         },
     },
-] + article_tools.ARTICLE_TOOL_SCHEMAS  # 010 US2：定錨文章查詢（唯讀，與台股連接器共用 articles.db）
+] + article_tools.ARTICLE_TOOL_SCHEMAS + [  # 010 US2：定錨文章查詢（唯讀，與台股連接器共用 articles.db）
+    s for s in external_content_tools.TOOL_SCHEMAS
+    if s["name"] in external_content_tools.QUERY_TOOL_NAMES  # 012：只掛 2 個查詢，寫入工具不上美股端
+]
 
 
 def _default_data_dir():
@@ -229,6 +233,10 @@ class Server:
         if name in article_tools.ARTICLE_TOOL_NAMES:
             # 唯讀開 <data_dir>/articles.db（mode=ro），不寫入 us_stocks.db
             return article_tools.call_article_tool(self.data_dir, name, args)
+        if name in external_content_tools.QUERY_TOOL_NAMES:
+            # 012：外部內容查詢（唯讀開 external_content.db）；寫入工具不在此分派
+            return external_content_tools.call_external_content_tool(
+                name, args, self.data_dir)
         # 代號一律大寫（2026-10-28）：parse_and_save_us_trade 本來就會轉大寫，
         # 其他工具沒轉，claude.ai 傳 "net" 會跟既有 "NET" 分成兩檔、查詢也查不到。
         ticker_arg = args.get("ticker")

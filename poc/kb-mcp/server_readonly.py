@@ -3,10 +3,10 @@
 background：server.py 本身沒有 per-tool 開關，Cline 的 cline_mcp_settings.json
 也沒有 per-tool allow/deny 欄位（只能整個 server 開/關，見
 ~/.claude/rules/10-model-dispatch.md 分流章節的教訓）。Cline 一次性呼叫走
-`-y`（全自動核准），若直接接 server.py 全部 50 個工具（2026-11 更新），模型誤判或被
+`-y`（全自動核准），若直接接 server.py 全部 57 個工具（2026-11 更新），模型誤判或被
 prompt injection 誘導時可能真的呼叫到 save_holdings/run_market_scan 這類
 寫入工具。這支檔案在 transport 層過濾，只轉發跟 stock-researcher 全域
-subagent 同一份唯讀工具白名單（2026-11 起 31 個，新增 search_articles、get_article；
+subagent 同一份唯讀工具白名單（2026-11 起 33 個，新增 search_articles、get_article、search_external_content、get_external_content；
 Mac 上 ~/.claude 的 stock-researcher 白名單需手動同步，不在 repo 內），其餘一律拒絕、也不出現在 tools/list。
 
 資料目錄跟 server.py 解析邏輯相同（同一個 __file__ 推算路徑），
@@ -38,6 +38,8 @@ READONLY_TOOLS = {
     "get_exit_threshold",
     # 010 US2：定錨文章查詢，唯讀（mode=ro 開 articles.db）
     "search_articles", "get_article",
+    # 012：外部內容知識庫查詢，唯讀（寫入 5 個刻意不加）
+    "search_external_content", "get_external_content",
 }
 
 READONLY_TOOL_SCHEMAS = [t for t in kb_server.TOOLS if t["name"] in READONLY_TOOLS]
