@@ -53,7 +53,7 @@ python3 -m unittest discover -s poc/kb-mcp/tests                              # 
 | V11 | FR-027 | `test_substack_isolation`：`.gitignore` 涵蓋 `poc/data/`；`app/`、`server*.py`、`us_stock_mcp_server.py` 不含 `substack`；備份目的地在家目錄；通知文字不含 `http` 與任何文章網址片段 | 全過 |
 | V12 | 重判（US2-AS6/7、FR-033、SC-012） | `test_substack_reclassify`：重判前後 `article` 位元組不變、`reclassification` 逐次新增、`article_effective` 取最近一筆、攔截網路與 subprocess 為 0 次；N→F 重判後 `derived_body_text` 由 `content_html` 產生、`effective_body_text` 非空 | 原判斷與歷史皆保留 |
 | V13 | 圖片白名單（US3-AS4、FR-034、SC-013） | `test_substack_images`：非白名單主機的圖零請求、記 `host_not_allowed`；`add-image-host` 後可 `--retry-images` | 如左 |
-| V14 | 通知內容與摘要（FR-025、SC-014） | `test_substack_import`：逐篇通知含作者／標題／完整度、無連結；追補逐篇；有告警無新文章也發含空間現況的摘要；N 類通知含 FR-035 固定提醒、再跑不重複提醒（SC-015） | 如左 |
+| V14 | 通知內容與摘要（FR-025、SC-014） | `test_substack_import`：逐篇通知含作者／標題／完整度、無連結；追補逐篇；有告警無新文章也發含空間現況的摘要；N 類逐篇通知含 FR-035 固定提醒、再跑不重複提醒、摘要不含提醒句但列非文字篇數（SC-015） | 如左 |
 | V15 | 預算強制中止與交易回滾（research R2／R8） | 假時鐘＋卡住的假 HTTP；回滾注入測試 | 預算內中止、鎖釋放、無 `.part`、無半寫入 |
 | V16 | 手動轉寫不動 010（T-C 執行期） | `test_substack_isolation`：攔截 `sqlite3.connect`／`open`，全程未開啟 `articles.db`；`XPC_SERVICE_NAME` 三種值案例 | 全過 |
 

@@ -265,4 +265,4 @@ abandoned ──PO 要求重試（--retry-images）──▶ missing(fail_count=
 | FR-032 | research R4；§1.1 `consecutive_failures`、§2.4（`challenge_html` 立即告警）；設定 `alert_policy`；`contracts/notifications.md §3` |
 | FR-033（新增） | research R11；§1.2 視圖 `article_effective`、§1.9 `reclassification`（含 `derived_body_text`：N 重判為 F／P 的內文產生）、§2.2b、§3；`contracts/cli.md §1 --reclassify／--reclassify-history` |
 | FR-034（新增） | research R6 圖片下載（白名單）；設定 `image_hosts`（`contracts/config-format.md`）；`contracts/cli.md §2 add-image-host／remove-image-host`；§1.3 `host_not_allowed`、§3 |
-| FR-035（新增，Q14） | `contracts/notifications.md §1（N 類逐篇提醒）、§2（摘要附提醒）`；§2.2 N 類提醒為一次性（沿用 `notify_status`，無獨立欄位）；§3 通知文字驗證規則；research R4（通知內容） |
+| FR-035（新增，Q14） | `contracts/notifications.md §1（N 類逐篇提醒）、§2（摘要只列非文字篇數、不附提醒，Q15）`；§2.2 N 類提醒為一次性（沿用 `notify_status`，無獨立欄位）；§3 通知文字驗證規則；research R4（通知內容） |
