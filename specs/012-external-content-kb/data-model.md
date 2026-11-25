@@ -20,6 +20,7 @@
 | `guid` | TEXT NULL | Podcast 發布來源唯一識別（可選） |
 | `created_at` | TEXT NOT NULL | 入庫時間（UTC ISO） |
 | `updated_at` | TEXT NOT NULL | 最後取代全文時間 |
+| `deleted_at` | TEXT NULL | 軟刪除時間；非 NULL 者 `search`／`get` 一律排除。軟刪除時同時把 `source_key` 改為 `<原 key>#deleted-<id>` 以釋放唯一鍵（之後可重新匯入同一來源）；還原只能手動（見 quickstart），第一版不提供還原工具 |
 
 索引：`UNIQUE(source_key)`、`INDEX(body_sha256)`、`INDEX(published_on)`。
 不儲存免責標註——標註由輸出層固定附加（FR-003），避免被資料覆蓋或遺漏。
@@ -29,7 +30,7 @@
 | 欄位 | 型別 | 規則 |
 |---|---|---|
 | `id` | INTEGER PK AUTOINCREMENT | |
-| `content_id` | INTEGER NOT NULL | FK → content.id（刪除內容時一併刪） |
+| `content_id` | INTEGER NOT NULL | FK → content.id（內容軟刪除時摘要列保留、不再被查詢） |
 | `text` | TEXT NOT NULL | 摘要文字（非空） |
 | `status` | TEXT NOT NULL | `confirmed` \| `revoked`（撤回後不再被查詢，但保留列供稽核） |
 | `confirmed_at` | TEXT NOT NULL | UTC ISO |
@@ -43,6 +44,7 @@
 |---|---|---|
 | `id` | INTEGER PK AUTOINCREMENT | |
 | `ts` | TEXT NOT NULL | UTC ISO |
+| `channel` | TEXT NOT NULL | 入口：`http`（claude.ai／ngrok 經 gateway）｜`stdio`（本機 Claude Code） |
 | `action` | TEXT NOT NULL | `import` \| `replace` \| `delete` \| `summary_confirm` \| `summary_revise` \| `summary_revoke` |
 | `content_id` | INTEGER NULL | 刪除後仍保留紀錄，故不設 FK |
 | `detail` | TEXT NOT NULL | JSON 字串：來源 key、標題、檔名（若有）、PO 原話（摘要時）等；**不放全文** |
@@ -72,12 +74,12 @@
 | `body_sha256` 相同但 `source_key` 不同 → 仍入庫並在結果附 `same_body_elsewhere` 警告（`imported` 與 `duplicate` 皆附） | FR-010 |
 | 去重判斷在驗內文之前：已存在的來源不驗內文非空；內文雜湊與庫內相同 → `already_processed` | FR-010、FR-004 |
 | 單檔入庫：`content`＋`audit_log` 同一交易，失敗整筆回滾 | FR-007 |
-| 取代全文：只更新 `body`、`body_sha256`、`updated_at`；`summary` 保留 | FR-010、場景 4 |
+| 取代全文：只更新 `body`、`body_sha256`、`updated_at`；`summary` 保留；查詢時若摘要 `confirmed_at` 早於內容 `updated_at`，輸出加註「此摘要確認於全文更新之前」 | FR-010、場景 4 |
 | 讀檔只允許 realpath 在 `<data_dir>/inbox/` 內 | FR-019 |
 
 ## 關係
 
 ```
-content 1 ──── 0..n summary          （summary.content_id → content.id，內容刪除時一併刪）
+content 1 ──── 0..n summary          （summary.content_id → content.id；內容為軟刪除，摘要隨之不可被查詢，列保留）
 content ·····  audit_log             （以 content_id 邏輯關聯，不設 FK，刪除後紀錄仍在）
 ```

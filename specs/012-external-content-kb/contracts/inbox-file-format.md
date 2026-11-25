@@ -33,6 +33,8 @@ guid:
 - 內文去除前後空白後為空 → 「內文為空」。
 - 編碼 UTF-8；單檔上限 2,000,000 字元（防呆）。
 - `create_inbox_file` 產生的檔案內文為空，故在 PO 貼入前永遠是「待填寫」。
+- 內文開頭若又出現第二個 `---` 中繼資料區塊（常見操作錯誤：把 AI Studio 完整檔貼進建好的範本）→ 該檔失敗並提示移除重複區塊。
+- Apple Podcasts 身分改取「節目 ID（網址中的 `id<數字>`）＋單集 `i=<數字>`」，不用整條網址（含國家碼與節目名稱）。
 
 ## 身分規則（`source_key`）
 
@@ -40,7 +42,7 @@ guid:
 |---|---|---|
 | YouTube（**以網址主機判斷，不看 `source_type`**；PO 把含 YouTube 連結的內容標成 `podcast` 也走此規則，`source_type` 與主機不符時只在結果中提示） | `youtube:<11 碼影片 ID>`。主機：精確比對 `youtube.com`、`www.youtube.com`、`m.youtube.com`、`music.youtube.com`、`youtu.be`（不得用子字串或後綴比對，防 `youtube.com.evil.com`）。ID 來自 `watch?v=`、`/shorts/<id>`、`/live/<id>`、`/embed/<id>`、`youtu.be/<id>`。忽略 `si`、`feature`、`t`、`start`、`list`、`utm_*`、`pp`。 | `youtu.be/ABC?si=x&t=30` 與 `youtube.com/watch?v=ABC` → 同一個 `youtube:ABC` |
 | Podcast（有 `guid`） | `podcast:guid:<guid 原樣>` | |
-| Podcast（無 `guid`） | 一般網址規則；Apple Podcasts（`podcasts.apple.com`）保留 `i=` 參數。 | |
+| Podcast（無 `guid`） | 一般網址規則；Apple Podcasts（`podcasts.apple.com`）取 `podcast:apple:<節目id>:<單集i>`。 | |
 | 一般網址（含文章、無 guid 的 Podcast） | `url:<規則化網址>`：強制 `https`、主機小寫並去 `www.`、去 fragment、去追蹤參數（`utm_*`、`fbclid`、`gclid`、`si`、`ref`）、其餘 query 依鍵排序保留、去尾斜線。 | |
 
 無法得出 `source_key`（如 YouTube 網址找不到 ID、網址不是 http/https）→ 該檔不入庫並說明。
