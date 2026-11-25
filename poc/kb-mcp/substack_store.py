@@ -328,8 +328,15 @@ class SubstackStore(object):
                               (1 if enabled else 0, author_key))
 
     def record_feed_request(self, author_key, at, outcome, http_status=None, etag=None,
-                            success=False, requested=True):
-        """更新作者的請求狀態；200／304 把連續失敗歸零，間隔跳過（requested=False）不增不減。"""
+                            success=False, requested=True, count_failure=None):
+        """更新作者的請求狀態；200／304 把連續失敗歸零，間隔跳過（requested=False）不增不減。
+
+        `requested` 指「對 feed 實際發出請求」（決定 `last_request_at` 與最小間隔，FR-004）；
+        `count_failure` 指「這次要不要把 consecutive_failures +1」，省略時跟隨 `requested`。
+        兩者會分開的唯一情形是 robots 判斷失敗（`robots_disallow`／`robots_unavailable`）：
+        沒有發出 feed 請求（requested=False），但 data-model §2.4 明定算一次失敗。
+        """
+        count_failure = requested if count_failure is None else bool(count_failure)
         with self.transaction():
             if requested:
                 self.conn.execute(
@@ -345,7 +352,7 @@ class SubstackStore(object):
                 self.conn.execute(
                     "UPDATE author SET last_success_at=?, consecutive_failures=0 "
                     "WHERE author_key=?", (at, author_key))
-            elif requested:
+            elif count_failure:
                 self.conn.execute(
                     "UPDATE author SET consecutive_failures=consecutive_failures+1 "
                     "WHERE author_key=?", (author_key,))

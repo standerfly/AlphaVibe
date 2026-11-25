@@ -10,11 +10,15 @@ T-A 靜態隔離：`poc/kb-mcp/substack_*.py` 全文（連註解、docstring、�
 FR-019 靜態：011 的模組不得 import 模型／子行程／鑰匙圈相關模組。
 FR-027 可驗證項：資料只在 gitignore 的資料目錄、沒有任何 STND／MCP 入口、備份目的地在家目錄底下。
 
-T-B（流水線不選取 011）與執行期攔截在 T026 另加。
+T-B（T026）：010 的排程轉寫流水線不會選取 011 的圖——同一個資料目錄下同時存在 010 的
+文章庫與 011 的 `substack.db`（含已下載圖檔、含圖位標記的內文），010 的五個選取查詢與
+`transcription_pipeline --dry-run` 都只能看到 010 自己的圖，`substack.db` 位元組與 mtime 不變。
 """
+import datetime
 import glob
 import os
 import re
+import shutil
 import sys
 import tempfile
 import unittest
@@ -189,6 +193,97 @@ class Fr027Test(unittest.TestCase):
         dest = os.path.expanduser(match.group(1))
         self.assertTrue(dest.startswith(os.path.expanduser("~")),
                         "備份目的地必須在家目錄底下（不得指向對外位置）")
+
+
+class PipelineDoesNotSelectSubstackTest(unittest.TestCase):
+    """T-B：011 文章不得進入 010 的排程轉寫流水線（FR-021、SC-003；research R1）。
+
+    設計正確時本測試建立即為綠；若失敗代表 010 會選到 011，必須停下回報，**不得改 010**。
+    """
+
+    def setUp(self):
+        import _pipeline_fixture as PF
+        import _substack_fixture as SF
+        import article_store
+        import substack_store
+
+        self.data = os.path.realpath(tempfile.mkdtemp(prefix="substack-tb-"))
+        self.addCleanup(shutil.rmtree, self.data, ignore_errors=True)
+        # 010：1 篇文章、3 張待轉寫圖（真的 PNG 檔）
+        self.ten_images = PF.build_data_dir(self.data, 3)
+        store = article_store.ArticleStore(self.data)
+        self.ten_ids = sorted(r["id"] for r in store.images_to_transcribe())
+        store.close()
+        self.assertEqual(len(self.ten_ids), 3, "010 fixture 必須真的有待轉寫圖，否則守門空轉")
+
+        # 011：同一個資料目錄下的獨立庫，含「已下載」圖檔與含圖位標記的內文
+        sub = substack_store.SubstackStore(self.data)
+        article_id = sub.insert_article_with_images(
+            SF.article_row(body_text="內文〔圖 1｜圖說：合成圖說｜alt：合成 alt〕內文"),
+            SF.image_rows(2))
+        image_dir = os.path.join(self.data, "substack_images", str(article_id))
+        os.makedirs(image_dir, exist_ok=True)
+        self.sub_image_ids = []
+        for image in sub.list_images(article_id):
+            rel = os.path.join("substack_images", str(article_id), "%d.png" % image["seq"])
+            with open(os.path.join(self.data, rel), "wb") as f:
+                f.write(PF.make_png(200, 150, shade=image["seq"]))
+            sub.set_image_downloaded(image["id"], rel, sha256="x" * 64, size_bytes=10)
+            self.sub_image_ids.append(image["id"])
+        sub.close()
+        self.sub_db = os.path.join(self.data, substack_store.DB_FILENAME)
+        self.before = os.stat(self.sub_db)
+
+    def _assert_substack_db_untouched(self):
+        after = os.stat(self.sub_db)
+        self.assertEqual(after.st_size, self.before.st_size, "substack.db 位元組不得改變")
+        self.assertEqual(after.st_mtime, self.before.st_mtime, "substack.db mtime 不得改變")
+
+    def test_ten_selection_queries_only_return_ten_images(self):
+        import article_store
+        store = article_store.ArticleStore.open_readonly(self.data)
+        try:
+            selections = {
+                "images_to_transcribe": store.images_to_transcribe(),
+                "images_to_backfill": store.images_to_backfill(100),
+                "pipeline_images_to_verify": store.pipeline_images_to_verify(100),
+                "images_for_manual_export": store.images_for_manual_export(),
+            }
+            counts = store.pipeline_pending_counts()
+        finally:
+            store.close()
+        for name, rows in selections.items():
+            ids = sorted(r["id"] for r in rows)
+            self.assertTrue(set(ids) <= set(self.ten_ids),
+                            "%s 選到了非 010 的圖：%s" % (name, ids))
+            for row in rows:
+                self.assertNotIn("substack", str(row.get("file_path") or "").lower(),
+                                 "%s 選到 011 的圖檔路徑" % name)
+        self.assertEqual(sorted(r["id"] for r in selections["images_to_transcribe"]),
+                         self.ten_ids)
+        self.assertEqual(counts["pending"], 3)
+        self.assertEqual(counts["to_verify"], 0)
+        self._assert_substack_db_untouched()
+
+    def test_pipeline_dry_run_only_lists_ten_images(self):
+        import transcription_pipeline
+        lines = []
+        code = transcription_pipeline.run(
+            ["--data-dir", self.data, "--dry-run", "--claude-bin", "/usr/bin/true"],
+            say=lines.append,
+            deps={"token_getter": lambda: None, "paddle_batch": lambda paths: [],
+                  "notify_fn": lambda text: None,
+                  "now": lambda: datetime.datetime(2026, 11, 25, 23, 40,
+                                                   tzinfo=datetime.timezone(
+                                                       datetime.timedelta(hours=8)))},
+            env={})
+        text = "\n".join(lines)
+        self.assertEqual(code, 0, text)
+        self.assertNotIn("substack", text.lower(), "流水線 dry-run 不得提到 011 的任何東西")
+        listed = sorted(int(m) for m in re.findall(r"image_id=(\d+)", text))
+        self.assertEqual(listed, self.ten_ids, text)
+        self.assertFalse(set(listed) & set(self.sub_image_ids) - set(self.ten_ids))
+        self._assert_substack_db_untouched()
 
 
 if __name__ == "__main__":
