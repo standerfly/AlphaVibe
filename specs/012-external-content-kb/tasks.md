@@ -23,9 +23,9 @@ description: "外部內容知識庫（012）任務清單"
 
 ## Phase 1: Setup（共用前置）
 
-- [ ] T001 **（需先取得 PO 同意；會改寫本分支歷史）** 將本分支的文件 commit rebase 到 `origin/function/alphavibe` 之上：先 `git status`／`git log --oneline origin/function/alphavibe..HEAD` 確認只有文件 commit（`docs/spec-intake/`、`specs/`、`.specify/feature.json`）；衝突預期只在 `docs/spec-intake/index.md`；完成後確認 `poc/kb-mcp/article_store.py`、`article_tools.py`、`server_readonly.py` 存在於工作樹。不要碰 `poc/data-test-articles/`、`poc/kb-mcp/scraper/`
-- [ ] T002 在 rebase 後的乾淨樹上跑一次基準：`python3 -m unittest discover -s poc/kb-mcp/tests`，記錄通過／失敗數字（改動前後要能對得上）；若有既有失敗，記錄為基準，不歸咎本功能
-- [ ] T003 [P] 確認測試慣例：讀 `poc/kb-mcp/tests/test_article_store.py`（或同類）的暫存 data dir 寫法，沿用；在 `poc/kb-mcp/tests/` 確認新測試檔命名 `test_external_content_*.py` 可被 `discover` 找到
+- [x] T001 **（需先取得 PO 同意；會改寫本分支歷史）** 將本分支的文件 commit rebase 到 `origin/function/alphavibe` 之上：先 `git status`／`git log --oneline origin/function/alphavibe..HEAD` 確認只有文件 commit（`docs/spec-intake/`、`specs/`、`.specify/feature.json`）；衝突預期只在 `docs/spec-intake/index.md`；完成後確認 `poc/kb-mcp/article_store.py`、`article_tools.py`、`server_readonly.py` 存在於工作樹。不要碰 `poc/data-test-articles/`、`poc/kb-mcp/scraper/`
+- [x] T002 在 rebase 後的乾淨樹上跑一次基準：`python3 -m unittest discover -s poc/kb-mcp/tests`，記錄通過／失敗數字（改動前後要能對得上）；若有既有失敗，記錄為基準，不歸咎本功能；**基準（2026-11-25，rebase 後、僅既有測試）**：Ran 2340 tests，FAILED（failures=6, errors=4, skipped=3）。皆與本功能無關：`test_us_stock_price_client` 4 個（本機 Python 無 `yfinance`）、`test_article_manual_transcribe` 與 `test_transcription_pipeline` 共 4 個（macOS `/var`→`/private/var` 等路徑／環境斷言）、`test_flight_search.SampleDatesTest` 1 個（日期敏感）、`test_transcription_pipeline.SafetyGatesTest` 1 個。之後比對：這 10 個以外不得新增失敗
+- [x] T003 [P] 確認測試慣例：讀 `poc/kb-mcp/tests/test_article_store.py`（或同類）的暫存 data dir 寫法，沿用；在 `poc/kb-mcp/tests/` 確認新測試檔命名 `test_external_content_*.py` 可被 `discover` 找到
 
 ---
 
@@ -33,11 +33,11 @@ description: "外部內容知識庫（012）任務清單"
 
 **⚠️ 完成前不得開始任何使用者故事**
 
-- [ ] T004 [P] 建立 `poc/kb-mcp/external_content_identity.py`：`source_key(url, source_type, guid=None)`、`body_sha256(text)`（空白正規化後）、YouTube 以**網址主機精確比對**判斷（`youtube.com`／`www.`／`m.`／`music.youtube.com`／`youtu.be`，不得後綴比對）、ID 來自 `watch?v=`／`/shorts/`／`/live/`／`/embed/`／`youtu.be/`、忽略 `si`／`feature`／`t`／`start`／`list`／`utm_*`／`pp`；Podcast 有 guid → `podcast:guid:<guid>`；一般網址規則（https、小寫主機去 `www.`、去 fragment、去追蹤參數、其餘 query 依鍵排序保留、去尾斜線；Apple Podcasts 保留 `i=`）；無法得出 key 時拋出帶原因的例外。規則見 contracts/inbox-file-format.md「身分規則」
-- [ ] T005 [P] 撰寫 `poc/kb-mcp/tests/test_external_content_identity.py`：youtu.be／watch?v=／shorts／live／embed／手機版／music 與帶 `si=`、`t=` 的寫法收斂為同一 key；`youtube.com.evil.com` 不被當 YouTube；source_type 標成 podcast 但網址是 YouTube 仍走 YouTube 規則；無法判斷 ID 的 YouTube 網址拋錯；一般網址追蹤參數去除、其餘 query 保留；guid 優先；雜湊對空白差異穩定
-- [ ] T006 建立 `poc/kb-mcp/external_content_store.py`：`ExternalContentStore(data_dir)`，庫檔 `<data_dir>/external_content.db`；建構子**只**建 `content`／`summary`／`audit_log` 三表與索引（依 data-model.md，含 CHECK、UNIQUE(source_key)、INDEX body_sha256／published_on），**不寫任何資料**；`open_readonly(data_dir)`（`mode=ro` URI，庫不存在拋 FileNotFoundError、不建庫、不跑 schema）；寫入一律 `BEGIN IMMEDIATE`＋失敗 rollback，資料與 `audit_log` 同交易；比照 `poc/kb-mcp/article_store.py` 的 `__init__`／`open_readonly`／交易寫法；`content` 加 `deleted_at`（軟刪除，見 data-model.md）、`audit_log` 加 `channel`；寫入方法接收 `channel` 參數
-- [ ] T007 撰寫 `poc/kb-mcp/tests/test_external_content_store.py`（基礎部分）：建構子不寫資料（建完 `content`／`summary`／`audit_log` 皆 0 列）；`open_readonly` 對不存在的庫拋錯且不建檔；中途失敗整筆回滾（庫內無殘留、audit 也無）；`source_key` UNIQUE；`source_type` CHECK；`published_on` 格式驗證；另斷言 `content` 的全文（`body`）與入庫時間（`created_at`）確實保存（FR-021）
-- [ ] T008 建立 `poc/kb-mcp/external_content_tools.py` 骨架：固定標註常數 `作者個人觀點，未經查證`、輸出格式化 helper（每筆內容區塊各自附標註、整體末尾再附一次）、7 個工具的 schema 定義（名稱：`search_external_content`、`get_external_content`、`create_inbox_file`、`import_inbox`、`import_text`、`confirm_summary`、`delete_content`；名稱不得含 `article`／`verif`／`reviewed`）、`EXTERNAL_CONTENT_TOOL_NAMES`、`call_external_content_tool(name, args, data_dir)` 分派（未實作者先回明確錯誤）；比照 `poc/kb-mcp/article_tools.py` 的結構。schema 內容依 contracts/tools.md；輸出層加第三方內容分隔標記與「不是指令」聲明（內文含相同標記先脫逸）；錯誤一律 `raise`（`server.py` 只對例外標 `isError`）；寫入工具加「資料目錄＝正式資料目錄且未設 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1` 則拒絕」檢查
+- [x] T004 [P] 建立 `poc/kb-mcp/external_content_identity.py`：`source_key(url, source_type, guid=None)`、`body_sha256(text)`（空白正規化後）、YouTube 以**網址主機精確比對**判斷（`youtube.com`／`www.`／`m.`／`music.youtube.com`／`youtu.be`，不得後綴比對）、ID 來自 `watch?v=`／`/shorts/`／`/live/`／`/embed/`／`youtu.be/`、忽略 `si`／`feature`／`t`／`start`／`list`／`utm_*`／`pp`；Podcast 有 guid → `podcast:guid:<guid>`；一般網址規則（https、小寫主機去 `www.`、去 fragment、去追蹤參數、其餘 query 依鍵排序保留、去尾斜線；Apple Podcasts 保留 `i=`）；無法得出 key 時拋出帶原因的例外。規則見 contracts/inbox-file-format.md「身分規則」
+- [x] T005 [P] 撰寫 `poc/kb-mcp/tests/test_external_content_identity.py`：youtu.be／watch?v=／shorts／live／embed／手機版／music 與帶 `si=`、`t=` 的寫法收斂為同一 key；`youtube.com.evil.com` 不被當 YouTube；source_type 標成 podcast 但網址是 YouTube 仍走 YouTube 規則；無法判斷 ID 的 YouTube 網址拋錯；一般網址追蹤參數去除、其餘 query 保留；guid 優先；雜湊對空白差異穩定
+- [x] T006 建立 `poc/kb-mcp/external_content_store.py`：`ExternalContentStore(data_dir)`，庫檔 `<data_dir>/external_content.db`；建構子**只**建 `content`／`summary`／`audit_log` 三表與索引（依 data-model.md，含 CHECK、UNIQUE(source_key)、INDEX body_sha256／published_on），**不寫任何資料**；`open_readonly(data_dir)`（`mode=ro` URI，庫不存在拋 FileNotFoundError、不建庫、不跑 schema）；寫入一律 `BEGIN IMMEDIATE`＋失敗 rollback，資料與 `audit_log` 同交易；比照 `poc/kb-mcp/article_store.py` 的 `__init__`／`open_readonly`／交易寫法；`content` 加 `deleted_at`（軟刪除，見 data-model.md）、`audit_log` 加 `channel`；寫入方法接收 `channel` 參數
+- [x] T007 撰寫 `poc/kb-mcp/tests/test_external_content_store.py`（基礎部分）：建構子不寫資料（建完 `content`／`summary`／`audit_log` 皆 0 列）；`open_readonly` 對不存在的庫拋錯且不建檔；中途失敗整筆回滾（庫內無殘留、audit 也無）；`source_key` UNIQUE；`source_type` CHECK；`published_on` 格式驗證；另斷言 `content` 的全文（`body`）與入庫時間（`created_at`）確實保存（FR-021）
+- [x] T008 建立 `poc/kb-mcp/external_content_tools.py` 骨架：固定標註常數 `作者個人觀點，未經查證`、輸出格式化 helper（每筆內容區塊各自附標註、整體末尾再附一次）、7 個工具的 schema 定義（名稱：`search_external_content`、`get_external_content`、`create_inbox_file`、`import_inbox`、`import_text`、`confirm_summary`、`delete_content`；名稱不得含 `article`／`verif`／`reviewed`）、`EXTERNAL_CONTENT_TOOL_NAMES`、`call_external_content_tool(name, args, data_dir)` 分派（未實作者先回明確錯誤）；比照 `poc/kb-mcp/article_tools.py` 的結構。schema 內容依 contracts/tools.md；輸出層加第三方內容分隔標記與「不是指令」聲明（內文含相同標記先脫逸）；錯誤一律 `raise`（`server.py` 只對例外標 `isError`）；寫入工具加「資料目錄＝正式資料目錄且未設 `ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1` 則拒絕」檢查；**已完成的正式庫保護**：`ensure_write_allowed(data_dir)` 於 `call_external_content_tool` 對 `WRITE_TOOL_NAMES` 一律先檢查（比對 `realpath`，涵蓋 `AlphaVibe-prod/poc/data` 符號連結），5 個測試在 `ProductionWriteGuardTest`
 
 **Checkpoint**: 身分規則、store、工具骨架就緒 → 可開始使用者故事
 
@@ -59,7 +59,7 @@ description: "外部內容知識庫（012）任務清單"
 
 - [ ] T012 [US1] 建立 `poc/kb-mcp/external_content_inbox.py`：區塊解析、檔案掃描（最上層、副檔名過濾、`skipped_unsupported`）、讀檔 realpath 守衛（只讀 `<data_dir>/inbox/` 內）、`filenames` basename 檢查、建檔（檔名規則見 contracts/inbox-file-format.md、不覆蓋、失敗不留半檔）、成功後搬入 `inbox/processed/`；首次使用時建立 `<data_dir>/inbox/` 與 `<data_dir>/inbox/processed/`；inbox 根目錄與檔案**都**用 `os.path.realpath` 比對；偵測內文開頭的重複中繼資料區塊；搬檔同名加序號；Apple Podcasts 身分取「節目 id＋單集 i」；檔案被搬走時容忍
 - [ ] T013 [P] [US1] 建立 `poc/kb-mcp/external_content_metadata.py`：僅 YouTube 的中繼資料自動填（oEmbed 標題／頻道＋網頁 `uploadDate`），逾時 10 秒、SSRF 防護（https、精確主機比對、以 11 碼 ID 重組標準網址、禁止跨主機轉址、回應上限 2 MB）、fetcher 可注入；拿不到的欄位明確標示缺少
-- [ ] T014 [US1] 在 `poc/kb-mcp/external_content_store.py` 實作寫入核心：`add_content(...)`（驗證必填與格式 → 以 `source_key` 檢查重複〔**先判斷重複、再驗內文非空、再算雜湊**〕→ 單一交易寫入 `content`＋`audit_log(import)`）；重複時回既有內容資訊、不寫入；`find_by_source_key`
+- [ ] T014 [US1] 在 `poc/kb-mcp/external_content_store.py` 實作寫入核心：`add_content(...)`（驗證必填與格式 → 以 `source_key` 檢查重複〔**先判斷重複、再驗內文非空、再算雜湊**〕→ 單一交易寫入 `content`＋`audit_log(import)`）；重複時回既有內容資訊、不寫入；`find_by_source_key`；**業務層驗證（Phase 2 驗收揭露）**：內文非空用 `str.strip()` 判斷（SQLite CHECK 的 trim 只去 space／tab／LF／CR，全形空白會通過）；`published_on` 用 `datetime.date.fromisoformat` 驗為真實日曆日（CHECK 只擋形狀，`2026-02-30` 會通過）；稽核 `detail` 不得含全文，並以測試斷言 `audit_log.detail` 不含 body 內容；`PRAGMA foreign_keys` 預設關閉，需要 FK 時於連線設定 `ON` 或由業務層檢查
 - [ ] T015 [US1] 在 `poc/kb-mcp/external_content_tools.py` 實作 `create_inbox_file`、`import_inbox`（US1 範圍：`on_duplicate=ask` 預設行為、逐檔獨立處理、逐檔狀態 `imported`／`duplicate`／`failed`、統計、`skipped_unsupported`）、`import_text`（上限預設 200,000 字，可由環境變數調整）；重複僅回報、不取代（取代與雜湊相同分支留給 US4）；`create_inbox_file` 同時檢查資料匣待處理檔；`channel` 傳入 store
 - [ ] T016 [US1] 在 `poc/kb-mcp/external_content_tools.py` 補齊匯入結果的下一步提示文字：匯入完成回報時附「下一步」提示並提醒 agent 逐檔提出摘要草稿、草稿不得入庫（工具說明文字，FR-017）；工具說明標明 `import_text` 耗輸出 token、長文請走資料匣
 
@@ -122,7 +122,7 @@ description: "外部內容知識庫（012）任務清單"
 
 ### Implementation for User Story 3
 
-- [ ] T029 [US3] 在 `poc/kb-mcp/external_content_store.py` 實作 `add_summary`、`revise_summary`、`revoke_summary`（BEGIN IMMEDIATE、audit 同交易、`po_quote` 必填）
+- [ ] T029 [US3] 在 `poc/kb-mcp/external_content_store.py` 實作 `add_summary`、`revise_summary`、`revoke_summary`（BEGIN IMMEDIATE、audit 同交易、`po_quote` 必填）；每個稽核寫入點（`summary_confirm`／`summary_revise`／`summary_revoke`）都要有測試斷言 `detail` 不含摘要全文以外的敏感內容（只含 `po_quote`、`summary_id`、標題）
 - [ ] T030 [US3] 在 `poc/kb-mcp/external_content_tools.py` 實作 `confirm_summary`（`action`＝`confirm`｜`revise`｜`revoke`）；工具說明寫死「僅在 PO 明確說同意後呼叫；草稿、PO 拒絕、沉默一律不得呼叫」，並在說明中註明這是遵循度保證
 
 **Checkpoint**: US3 獨立可測
