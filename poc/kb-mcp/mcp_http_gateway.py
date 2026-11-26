@@ -205,7 +205,12 @@ def handle_mcp_post(headers, body_bytes, data_dir=None, server_module=None):
     # 5) 呼叫既有 Server.handle()——單一請求處理失敗（包含非預期例外）
     # 不可讓常駐服務掛掉，比照專案既有的 try/except-per-request 防護風格。
     msg_id = msg.get("id") if isinstance(msg, dict) else None
-    server_instance = server_module.Server(data_dir=data_dir)
+    # 012：台股 kb server 記錄入口 channel="http"（外部內容寫入稽核）；
+    # 美股 Server 沒有 channel 參數，維持原呼叫。
+    if server_module is kb_server:
+        server_instance = server_module.Server(data_dir=data_dir, channel="http")
+    else:
+        server_instance = server_module.Server(data_dir=data_dir)
     try:
         response = server_instance.handle(msg)
     except Exception as exc:

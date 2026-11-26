@@ -32,6 +32,12 @@ claude.ai 會暫存連接器的**工具清單與工具說明**，伺服器更新
 `is_fallback`／`checked_count`）同時寫進 `ALPHAVIBE_CONTEXT.md`，就算
 claude.ai 還沒重抓說明也不會讀錯。
 
+## 外部內容庫（2026-11-25 新增）
+
+`ALPHAVIBE_CONTEXT.md` 新增「外部內容庫」段落後，**須重貼整份到專案指示並開新對話**才會套用；
+新增的 7 個工具也要依上一節重新連線連接器。段落來由、AI Studio 逐字稿 prompt 與使用說明見
+`docs/runbooks/external-content-project-instructions.md`。
+
 ## 規則的來由（改指示前先讀）
 
 | 規則 | 為什麼 |

@@ -133,6 +133,68 @@ class BackupTest(unittest.TestCase):
         self.assertEqual(len([f for f in os.listdir(m) if f.startswith("alphavibe-")]), 26)
 
 
+class ExternalContentBackupTest(unittest.TestCase):
+    """012 T042 修正：external_content.db 以可選資料庫納入備份（語意同 articles.db）。"""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="alphavibe-bkext-")
+        self.data = os.path.join(self.root, "data")
+        self.dest = os.path.join(self.root, "dest")
+        os.makedirs(self.data)
+        self.addCleanup(shutil.rmtree, self.root, True)
+
+    def _make_core(self):
+        for n in bk.DATABASES:
+            _mkdb(os.path.join(self.data, n), n)
+
+    def _daily(self):
+        return sorted(os.listdir(os.path.join(self.dest, "daily")))
+
+    def test_membership(self):
+        self.assertIn("external_content.db", bk.OPTIONAL_DATABASES)
+        self.assertNotIn("external_content.db", bk.DATABASES)
+
+    def test_missing_no_failure_no_file(self):
+        self._make_core()
+        rc, out = _run(self.data, self.dest)
+        self.assertEqual(rc, 0)
+        self.assertIn("external_content.db 略過（尚未建立）", out)
+        self.assertFalse(os.path.exists(os.path.join(self.data, "external_content.db")))
+        self.assertFalse([f for f in self._daily() if f.startswith("external_content-")])
+
+    def test_present_backup_readable_and_identical(self):
+        self._make_core()
+        _mkdb(os.path.join(self.data, "external_content.db"), "ext-marker")
+        rc, _ = _run(self.data, self.dest)
+        self.assertEqual(rc, 0)
+        f = [x for x in self._daily() if x.startswith("external_content-")]
+        self.assertEqual(len(f), 1)
+        out = os.path.join(self.root, "restored.db")
+        with gzip.open(os.path.join(self.dest, "daily", f[0])) as fi, open(out, "wb") as fo:
+            shutil.copyfileobj(fi, fo)
+        c = sqlite3.connect(out)
+        try:
+            self.assertEqual(c.execute("SELECT v FROM t").fetchall(), [("ext-marker",)])
+        finally:
+            c.close()
+
+    def test_core_missing_still_fails_with_external_present(self):
+        _mkdb(os.path.join(self.data, "external_content.db"), "x")
+        rc, out = _run(self.data, self.dest)
+        self.assertEqual(rc, 1)
+        self.assertIn("來源不存在", out)
+
+    def test_symlinked_data_dir_is_backed_up(self):
+        # 正式環境：AlphaVibe-prod/poc/data 是指向實際資料目錄的符號連結
+        self._make_core()
+        _mkdb(os.path.join(self.data, "external_content.db"), "via-link")
+        link = os.path.join(self.root, "link")
+        os.symlink(self.data, link)
+        rc, _ = _run(link, self.dest)
+        self.assertEqual(rc, 0)
+        self.assertEqual(len([x for x in self._daily() if x.startswith("external_content-")]), 1)
+
+
 class HealthCheckUnaffectedTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="alphavibe-bkhealth-")

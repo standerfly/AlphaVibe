@@ -17,7 +17,7 @@ import us_stock_mcp_server  # noqa: E402
 
 
 class ToolsListTest(unittest.TestCase):
-    def test_ten_tools_registered(self):
+    def test_tools_registered(self):
         names = {t["name"] for t in us_stock_mcp_server.TOOLS}
         self.assertEqual(names, {
             "parse_and_save_us_trade", "get_us_holdings",
@@ -26,6 +26,8 @@ class ToolsListTest(unittest.TestCase):
             "save_us_watch_condition", "get_us_watch_conditions",
             # 2026-11 010 定錨文章查詢（唯讀，與台股連接器共讀 articles.db）
             "search_articles", "get_article",
+            # 2026-11 012 外部內容知識庫查詢（唯讀；寫入 5 個不掛美股端）
+            "search_external_content", "get_external_content",
         })
 
     def test_each_tool_has_input_schema(self):
