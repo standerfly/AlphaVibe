@@ -570,6 +570,12 @@ class NotifyTest(FlowBase):
                 self.assertNotIn(row["link_norm"], text)
                 self.assertNotIn(F.SLUG_MARK, text)
 
+    def test_notice_strips_url_embedded_in_title(self):
+        """(2) 標題本身含真實 URL 時，組出的通知文字仍不得含 http(s)（FR-027／SC-005）。"""
+        text = IMP.format_article_notice(
+            "作者A", "重磅：半導體法說 https://example.com/p/abc 整理", "F")
+        self.assertNotRegex(text, r"https?://")
+
     def test_throttle_between_messages(self):
         """(3) 相鄰兩則之間 sleep(1.5)。"""
         self.serve()

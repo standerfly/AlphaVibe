@@ -51,7 +51,7 @@ FORBIDDEN_IMPORTS = ("claude_cli_runner", "article_transcribe", "transcription_p
                      "subprocess", "keychain_secrets")
 FR019_MODULES = ("substack_import.py", "substack_feed.py", "substack_html.py",
                  "substack_images.py", "substack_store.py", "substack_config.py",
-                 "substack_reclassify.py")
+                 "substack_reclassify.py", "substack_health.py")
 # 010 的這些模組不得認得 011
 TEN_MODULES_MUST_NOT_KNOW = ("transcription_pipeline.py", TEN_MODULE + ".py",
                              "investanchors_import.py")

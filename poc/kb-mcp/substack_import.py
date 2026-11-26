@@ -25,6 +25,7 @@ import datetime
 import fcntl
 import math
 import os
+import re
 import sys
 import time
 
@@ -63,6 +64,8 @@ NO_TITLE = "（無標題）"
 COMPLETENESS_LABEL = {"F": "全文", "P": "僅預覽", "N": "非文字"}
 # N 類的固定提醒句：逐字同 contracts/notifications.md §1（FR-035，PO 決定 Q14）
 NON_TEXT_REMINDER = "⚠️ 此文為非文字、內文未保存，請決定是否要處理。"
+
+URL_PATTERN = re.compile(r"https?://\S+")  # 通知絕不含文章連結（FR-027／SC-005）：標題若含網址一律遮蔽
 TRIGGER_LABEL = {"schedule": "排程", "catchup": "補跑", "manual": "手動", "backfill": "追補"}
 
 # 告警固定文字（contracts/notifications.md §3；比照 investanchors_import 的 ALERT_TEXTS 慣例）。
@@ -264,9 +267,14 @@ def _parse_iso(text):
 
 # ---------------------------------------------------------------- 通知文字（FR-025、FR-035）
 def format_article_notice(display_name, title, completeness):
-    """逐篇通知：作者＋標題＋完整度，**沒有連結**；N 類多一行固定提醒（FR-035）。"""
+    """逐篇通知：作者＋標題＋完整度，**沒有連結**；N 類多一行固定提醒（FR-035）。
+
+    標題是外部 feed 提供的原文，不可信任：若其中夾帶真實 URL（例如作者自己貼的連結），
+    一律遮蔽，確保通知文字絕不含文章連結（FR-027／SC-005）。
+    """
+    safe_title = re.sub(r"\s{2,}", " ", URL_PATTERN.sub("", title)).strip()
     lines = ["📰 Substack 新文章｜%s" % display_name,
-             title,
+             safe_title,
              "完整度：%s" % COMPLETENESS_LABEL[completeness]]
     if completeness == "N":
         lines.append(NON_TEXT_REMINDER)

@@ -55,7 +55,7 @@ python3 -m unittest discover -s poc/kb-mcp/tests                              # 
 | V13 | 圖片白名單（US3-AS4、FR-034、SC-013） | `test_substack_images`：非白名單主機的圖零請求、記 `host_not_allowed`；`add-image-host` 後可 `--retry-images` | 如左 |
 | V14 | 通知內容與摘要（FR-025、SC-014） | `test_substack_import`：逐篇通知含作者／標題／完整度、無連結；追補逐篇；有告警無新文章也發含空間現況的摘要；N 類逐篇通知含 FR-035 固定提醒、再跑不重複提醒、摘要不含提醒句但列非文字篇數（SC-015） | 如左 |
 | V15 | 預算強制中止與交易回滾（research R2／R8） | 假時鐘＋卡住的假 HTTP；回滾注入測試 | 預算內中止、鎖釋放、無 `.part`、無半寫入 |
-| V16 | 手動轉寫不動 010（T-C 執行期） | `test_substack_isolation`：攔截 `sqlite3.connect`／`open`，全程未開啟 `articles.db`；`XPC_SERVICE_NAME` 三種值案例 | 全過 |
+| V16 | 手動轉寫不動 010（T-C 執行期） | `test_substack_isolation`：攔截 `sqlite3.connect`／`open`，全程未開啟 `articles.db`；`XPC_SERVICE_NAME` 三種值案例在 `test_substack_transcribe.XpcServiceNameTest`（2026-11-26 GATE 驗收發現並修正本行，原寫法誤植於同一份測試檔） | 全過 |
 
 ## 5. 上線（PO 在場；安裝排程與首次真實抓取都要 PO 當下確認，FR-020）
 
