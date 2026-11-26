@@ -161,5 +161,116 @@ class HealthCheckUnaffectedTest(unittest.TestCase):
         self.assertEqual(checker.check_backups(self.tmp)[0][0], "critical")
 
 
+class SubstackBackupTest(unittest.TestCase):
+    """011 US7（T052；US7-AS3、V9）：substack.db 以可選資料庫納入每日備份；
+    substack_images/ 以增量鏡像備份（只複製新檔或大小不同者、不刪目的端、完成寫 .last_sync）。"""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="alphavibe-bk011-")
+        self.data = os.path.join(self.root, "data")
+        self.dest = os.path.join(self.root, "dest")
+        os.makedirs(self.data)
+        self.addCleanup(shutil.rmtree, self.root, True)
+        for n in bk.DATABASES:
+            _mkdb(os.path.join(self.data, n), n)
+
+    def _daily(self):
+        return sorted(os.listdir(os.path.join(self.dest, "daily")))
+
+    def _write(self, rel, data):
+        path = os.path.join(self.data, "substack_images", rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(data)
+        return path
+
+    def test_substack_registered_as_optional(self):
+        self.assertIn("substack.db", bk.OPTIONAL_DATABASES)
+        self.assertIn("articles.db", bk.OPTIONAL_DATABASES)
+        self.assertNotIn("substack.db", bk.DATABASES)
+        self.assertIn(("substack_images", "substack_images"), bk.OPTIONAL_DIR_MIRRORS)
+
+    def test_substack_missing_is_skipped_without_failure(self):
+        rc, out = _run(self.data, self.dest)
+        self.assertEqual(rc, 0)
+        self.assertIn("substack.db 略過（尚未建立）", out)
+        self.assertFalse(os.path.exists(os.path.join(self.data, "substack.db")))
+        self.assertFalse([f for f in self._daily() if f.startswith("substack-")])
+
+    def test_substack_present_backup_integrity_ok(self):
+        _mkdb(os.path.join(self.data, "substack.db"), "sub-marker")
+        rc, out = _run(self.data, self.dest)
+        self.assertEqual(rc, 0)
+        f = [x for x in self._daily() if x.startswith("substack-") and x.endswith(".db.gz")]
+        self.assertEqual(len(f), 1)
+        line = [ln for ln in out.splitlines() if f[0] in ln][0]
+        self.assertIn("完整性 ok", line)
+        out_db = os.path.join(self.root, "restored.db")
+        with gzip.open(os.path.join(self.dest, "daily", f[0])) as fi, open(out_db, "wb") as fo:
+            shutil.copyfileobj(fi, fo)
+        c = sqlite3.connect(out_db)
+        self.assertEqual(c.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        self.assertEqual(c.execute("SELECT v FROM t").fetchall(), [("sub-marker",)])
+        c.close()
+
+    def test_mirror_copies_new_and_resized_only_and_never_deletes(self):
+        src = os.path.join(self.data, "substack_images")
+        dst = os.path.join(self.root, "mirror", "substack_images")
+        self._write("1/1.png", b"a" * 10)
+        self._write("2/1.jpg", b"b" * 20)
+        copied, total = bk.mirror_dir(src, dst)
+        self.assertEqual((copied, total), (2, 2))
+        with open(os.path.join(dst, "2", "1.jpg"), "rb") as f:
+            self.assertEqual(f.read(), b"b" * 20)
+        self.assertTrue(os.path.isfile(os.path.join(dst, ".last_sync")))
+        # 目的端多出的檔案不刪；同大小不重抄；大小不同才重抄
+        extra = os.path.join(dst, "9", "old.png")
+        os.makedirs(os.path.dirname(extra))
+        with open(extra, "wb") as f:
+            f.write(b"keep")
+        self._write("1/1.png", b"c" * 11)                      # 大小改變
+        copied, total = bk.mirror_dir(src, dst)
+        self.assertEqual((copied, total), (1, 2))
+        with open(os.path.join(dst, "1", "1.png"), "rb") as f:
+            self.assertEqual(f.read(), b"c" * 11)
+        self.assertTrue(os.path.isfile(extra), "鏡像不得刪除目的端多出的檔案")
+        # 第二次（沒有變化）複製 0 個
+        self.assertEqual(bk.mirror_dir(src, dst), (0, 2))
+
+    def test_mirror_source_missing_skips_and_creates_nothing(self):
+        src = os.path.join(self.data, "substack_images")
+        dst = os.path.join(self.root, "mirror", "substack_images")
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            result = bk.mirror_dir(src, dst)
+        self.assertIsNone(result)
+        self.assertEqual(len([ln for ln in buf.getvalue().splitlines() if ln.strip()]), 1)
+        self.assertIn("略過", buf.getvalue())
+        self.assertFalse(os.path.exists(src))
+        self.assertFalse(os.path.exists(os.path.join(self.root, "mirror")))
+
+    def test_main_mirrors_after_database_loop(self):
+        _mkdb(os.path.join(self.data, "substack.db"), "s")
+        self._write("3/2.png", b"z" * 5)
+        rc, out = _run(self.data, self.dest)
+        self.assertEqual(rc, 0)
+        mirror = os.path.join(self.dest, "mirror", "substack_images")
+        self.assertTrue(os.path.isfile(os.path.join(mirror, "3", "2.png")))
+        self.assertTrue(os.path.isfile(os.path.join(mirror, ".last_sync")))
+        lines = out.splitlines()
+        db_idx = max(i for i, ln in enumerate(lines) if ".db.gz" in ln)
+        mirror_idx = min(i for i, ln in enumerate(lines) if "鏡像" in ln)
+        self.assertGreater(mirror_idx, db_idx, "鏡像要在資料庫迴圈之後")
+        # 第二次執行：鏡像複製 0 個
+        rc2, out2 = _run(self.data, self.dest)
+        self.assertEqual(rc2, 0)
+        self.assertIn("複製 0 個", out2)
+
+    def test_main_without_images_dir_does_not_create_mirror(self):
+        rc, out = _run(self.data, self.dest)
+        self.assertEqual(rc, 0)
+        self.assertFalse(os.path.exists(os.path.join(self.dest, "mirror")))
+        self.assertFalse(os.path.exists(os.path.join(self.data, "substack_images")))
+
+
 if __name__ == "__main__":
     unittest.main()

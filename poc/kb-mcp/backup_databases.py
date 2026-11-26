@@ -42,7 +42,15 @@ DATABASES = ("alphavibe.db", "us_stocks.db", "flights.db")
 # 可選資料庫（2026-11-16，010 定錨文章匯入）：來源檔不存在時略過（記一行、
 # 不算失敗、不建檔、不影響 exit code）；存在時與 DATABASES 完全同一套
 # 備份＋輪替。articles_images/ 刻意不備份（見 specs/010-.../quickstart.md）。
-OPTIONAL_DATABASES = ("articles.db",)
+OPTIONAL_DATABASES = ("articles.db", "substack.db")
+# substack.db（2026-11，011 Substack 匯入）：同上，不存在就略過。
+
+# 可選目錄鏡像（011）：(資料目錄下的來源子目錄, <dest>/mirror/ 下的目的子目錄)。
+# 圖片下載後不再變動，只做增量鏡像（只複製目的端沒有或大小不同的檔案），
+# 不做每日 tar。已知限制（specs/011-substack-fetch-store/research.md R7）：
+# 不刪除目的端多出的檔案、占用翻倍、只比大小不比雜湊（無完整性驗證）。
+OPTIONAL_DIR_MIRRORS = (("substack_images", "substack_images"),)
+MIRROR_SYNC_MARKER = ".last_sync"
 
 
 def _log(msg):
@@ -112,6 +120,37 @@ def prune(dest_dir, prefix, keep, dry_run=False):
     return removed
 
 
+def mirror_dir(src, dest):
+    """增量鏡像 src → dest，回傳 (本次複製檔數, 來源檔數)；來源目錄不存在回 None。
+
+    只複製「目的端不存在或大小不同」的檔案（先寫暫存檔再 os.replace），不刪除目的端
+    多出的檔案；完成後寫 dest/.last_sync（健檢以其 mtime 判斷最後同步時間）。
+    來源目錄不存在 → 印一行略過，不建任何目錄。"""
+    if not os.path.isdir(src):
+        _log("  - %s 略過（來源目錄不存在）" % os.path.basename(os.path.normpath(src)))
+        return None
+    copied = total = 0
+    for root, _dirs, files in os.walk(src):
+        rel_root = os.path.relpath(root, src)
+        out_root = dest if rel_root == "." else os.path.join(dest, rel_root)
+        for name in sorted(files):
+            total += 1
+            s_path = os.path.join(root, name)
+            d_path = os.path.join(out_root, name)
+            if os.path.isfile(d_path) and os.path.getsize(d_path) == os.path.getsize(s_path):
+                continue
+            os.makedirs(out_root, exist_ok=True)
+            tmp_path = d_path + ".mirror-tmp"
+            shutil.copy2(s_path, tmp_path)
+            os.replace(tmp_path, d_path)
+            copied += 1
+    os.makedirs(dest, exist_ok=True)
+    with open(os.path.join(dest, MIRROR_SYNC_MARKER), "w", encoding="utf-8") as f:
+        f.write("%s files=%d copied=%d\n"
+                % (datetime.datetime.now().isoformat(timespec="seconds"), total, copied))
+    return copied, total
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="AlphaVibe 正式資料庫每日備份")
     ap.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
@@ -159,6 +198,24 @@ def main(argv=None):
         gone_m = prune(monthly_dir, base, MONTHLY_KEEP, args.dry_run)
         if gone_m:
             _log("  清理 monthly/%s 舊備份 %d 份" % (base, len(gone_m)))
+
+    # 011：資料庫迴圈之後做目錄鏡像（來源不存在就略過，不算失敗）
+    for src_name, dest_name in OPTIONAL_DIR_MIRRORS:
+        src_dir = os.path.join(data_dir, src_name)
+        mirror_dest = os.path.join(args.dest, "mirror", dest_name)
+        if args.dry_run:
+            _log("  (dry-run) 鏡像 %s → %s" % (src_dir, mirror_dest))
+            continue
+        try:
+            result = mirror_dir(src_dir, mirror_dest)
+        except OSError as exc:
+            detail = "%s 鏡像失敗：%s" % (src_name, exc)
+            _log("  ✗ %s" % detail)
+            failures.append(detail)
+            continue
+        if result is not None:
+            _log("  ✓ 鏡像 %s → %s（複製 %d 個，共 %d 個檔案）"
+                 % (src_name, mirror_dest, result[0], result[1]))
 
     if failures:
         _log("備份結束，有 %d 項失敗" % len(failures))
