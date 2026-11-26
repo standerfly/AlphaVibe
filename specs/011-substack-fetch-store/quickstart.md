@@ -22,7 +22,7 @@ python3 poc/kb-mcp/substack_config.py --data-dir poc/data-test-substack init
 python3 poc/kb-mcp/substack_config.py --data-dir poc/data-test-substack validate
 python3 poc/kb-mcp/substack_import.py --data-dir poc/data-test-substack --dry-run
 ```
-`poc/data-test-substack/` 要在 `.gitignore`（tasks 階段補一行；`poc/data-test/` 已在 `.gitignore:14`，但名稱不同不會自動涵蓋）。
+`poc/data-test-substack/` 已在 `.gitignore:23`（與 `poc/data-test/`〔`.gitignore:14`〕分開各一行，名稱不同不會自動涵蓋）。
 
 ## 3. 自動化測試
 

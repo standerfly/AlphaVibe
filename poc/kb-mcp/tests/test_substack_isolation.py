@@ -23,8 +23,10 @@ T049 T-C（ManualTranscribeDoesNotTouchTenTest）：全新子行程、攔截所�
 T-D（ScheduleScanTest）：`ops/launchd/*.plist` 皆不引用 `substack_transcribe`。
 """
 import datetime
+import fnmatch
 import glob
 import os
+import plistlib
 import re
 import shutil
 import subprocess
@@ -585,6 +587,75 @@ class ScheduleScanTest(unittest.TestCase):
         text = read_text(os.path.join(KB_DIR, "substack_transcribe.py"))
         self.assertNotIn('"--scheduled"', text)
         self.assertNotIn('"--enable"', text)
+
+
+class SubstackImportPlistTest(unittest.TestCase):
+    """T059：排程 plist 結構（FR-017、FR-029、research R9）。
+
+    這個測試在 T060 建立 `ops/launchd/com.alphavibe.substackimport.plist` 之前必須先失敗
+    （plist 不存在），確認失敗後才建立檔案讓它轉綠。
+    """
+
+    PLIST_PATH = os.path.join(REPO_DIR, "ops", "launchd",
+                               "com.alphavibe.substackimport.plist")
+    PROD_DIR = "/Users/stander/My_project/AlphaVibe-prod"
+
+    def setUp(self):
+        # 刻意不 skip：T060 完成前，plist 不存在，open() 會拋 FileNotFoundError，
+        # 讓本類別的每個測試都以 ERROR 收場——這正是 T059 要的「先確認會失敗」。
+        with open(self.PLIST_PATH, "rb") as f:
+            self.plist = plistlib.load(f)
+
+    def test_plist_file_exists(self):
+        self.assertTrue(os.path.isfile(self.PLIST_PATH),
+                        "找不到 %s（T060 尚未建立此檔案）" % self.PLIST_PATH)
+
+    def test_label(self):
+        self.assertEqual(self.plist.get("Label"), "com.alphavibe.substackimport")
+
+    def test_program_arguments(self):
+        expected = [
+            "/usr/bin/python3",
+            os.path.join(self.PROD_DIR, "poc", "kb-mcp", "substack_import.py"),
+            "--data-dir",
+            os.path.join(self.PROD_DIR, "poc", "data"),
+            "--scheduled",
+        ]
+        self.assertEqual(self.plist.get("ProgramArguments"), expected)
+
+    def test_start_calendar_interval_has_exactly_two_entries(self):
+        intervals = self.plist.get("StartCalendarInterval")
+        self.assertEqual(intervals, [
+            {"Hour": 22, "Minute": 0},
+            {"Hour": 1, "Minute": 0},
+        ])
+
+    def test_no_run_at_load_or_keep_alive(self):
+        self.assertNotIn("RunAtLoad", self.plist)
+        self.assertNotIn("KeepAlive", self.plist)
+
+    def test_environment_variables(self):
+        env = self.plist.get("EnvironmentVariables")
+        self.assertEqual(set(env.keys()), {"PATH", "ALPHAVIBE_ALLOW_PRODUCTION_WRITE"})
+        self.assertEqual(env.get("PATH"), "/usr/bin:/bin:/usr/sbin:/sbin")
+        self.assertEqual(env.get("ALPHAVIBE_ALLOW_PRODUCTION_WRITE"), "1")
+
+    def test_log_paths_match_rotate_logs_glob(self):
+        import rotate_logs
+        out_path = os.path.expanduser(self.plist.get("StandardOutPath") or "")
+        err_path = os.path.expanduser(self.plist.get("StandardErrorPath") or "")
+        self.assertEqual(out_path, os.path.expanduser("~/Library/Logs/alphavibe-substack.log"))
+        self.assertEqual(err_path,
+                         os.path.expanduser("~/Library/Logs/alphavibe-substack.err.log"))
+        self.assertTrue(fnmatch.fnmatch(out_path, rotate_logs.DEFAULT_LOG_GLOB),
+                        "%s 不符合 rotate_logs.DEFAULT_LOG_GLOB（%s）"
+                        % (out_path, rotate_logs.DEFAULT_LOG_GLOB))
+        self.assertTrue(fnmatch.fnmatch(err_path, rotate_logs.DEFAULT_LOG_GLOB),
+                        "%s 不符合 rotate_logs.DEFAULT_LOG_GLOB（%s）"
+                        % (err_path, rotate_logs.DEFAULT_LOG_GLOB))
+
+    def test_working_directory(self):
+        self.assertEqual(self.plist.get("WorkingDirectory"), self.PROD_DIR)
 
 
 if __name__ == "__main__":

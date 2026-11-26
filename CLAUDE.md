@@ -58,8 +58,16 @@ STND 是「個人一站入口」的定位（不只投資），會隨時間長出
 <!-- SPECKIT START -->
 `specs/011-substack-fetch-store/plan.md`（Substack 文章抓取與儲存，第 1 包：每日 22:00（補跑 01:00）公開 RSS
 條件請求、獨立 `substack.db`＋`substack_images/`、P／F／N 完整度判斷、逐篇 Telegram 通知、只能手動且須 PO 確認碼的轉寫試跑；
-需求基線 `docs/spec-intake/substack-import/`，2026-11-19 Accepted）**2026-11-19 現況：plan（Phase 0/1）完成、尚未產生 tasks、
-沒有程式碼**；15 項待決項 PO 已於 2026-11-20 回答，僅 FR-013 暫解讀待 PO 確認。接手前讀 `specs/011-substack-fetch-store/quickstart.md`。
+需求基線 `docs/spec-intake/substack-import/`，2026-11-19 Accepted）**2026-11-26 現況：US1～US7（T001～T058）全部實作完成並
+commit**（開發用獨立 worktree `/Users/stander/My_project/AlphaVibe-011`，分支 `011-substack-fetch-store`）：011 自動化測試
+`python3 -m unittest discover -s poc/kb-mcp/tests -p 'test_substack*.py'` → **384 項全綠**；全套回歸
+`python3 -m unittest discover -s poc/kb-mcp/tests` → 2767 項，failures=10／errors=4／skipped=59，與既有無關失敗同名同數、
+無新增（Polish 階段 T063 實跑）。**尚未部署、尚未安裝排程、尚未推送到 GitHub**。Polish 階段（T059～T064）已完成排程設定檔
+草稿（`ops/launchd/com.alphavibe.substackimport.plist`，僅建立檔案未安裝）與文件同步；仍有 10 項【須 PO 當下確認】的真實
+執行任務未做（T065 提交推送開 PR、T066 fresh agent 獨立驗收、T067 FR-013 暫解讀確認、T068 正式環境部署、T069 正式設定檔與
+dry-run、T070 首次真實抓取、T071 `XPC_SERVICE_NAME` 假設實測、T072 安裝排程、T073 隔天上線驗證、T074 消耗 claude.ai 訂閱
+額度的手動轉寫試跑）。15 項待決項 PO 已於 2026-11-20 回答，僅 FR-013 暫解讀仍待 PO 確認（T067）。接手前讀
+`specs/011-substack-fetch-store/quickstart.md`。
 
 `specs/010-investanchors-article-import/plan.md`（定錨產業筆記文章自動匯入：Gmail 通知信觸發＋
 全新無持久化 profile 的 Playwright 登入取文、跑完即登出、獨立 `articles.db`、表格圖視覺模型轉寫、
@@ -162,6 +170,13 @@ roundtrip-search 來源）。
 
 ## 常用查證點
 
+- **Substack 文章抓取與儲存（011，2026-11-26 新增）**：程式位置
+  `poc/kb-mcp/substack_*.py`（`substack_import.py`／`substack_feed.py`／`substack_html.py`／
+  `substack_images.py`／`substack_store.py`／`substack_config.py`／`substack_reclassify.py`／
+  `substack_transcribe.py`／`substack_health.py`）；測試指令
+  `python3 -m unittest discover -s poc/kb-mcp/tests -p 'test_substack*.py'`；手動測試用獨立資料目錄
+  `poc/data-test-substack/`（已 gitignore，不碰正式庫）。接手前先讀
+  `specs/011-substack-fetch-store/quickstart.md`。
 - **claude.ai 連接器（2026-10-28 起台美各一）**：台股 `/mcp/<密鑰>`、美股
   `/mcp/us/<密鑰>`（`app/routers/mcp.py`），刻意分開不合併工具清單（台美獨立）。
   claude.ai 負責即時匯入/詢問/一次性分析，網頁負責常用畫面與排程結果；
