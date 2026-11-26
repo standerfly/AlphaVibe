@@ -13,12 +13,21 @@ FR-027 可驗證項：資料只在 gitignore 的資料目錄、沒有任何 STND
 T-B（T026）：010 的排程轉寫流水線不會選取 011 的圖——同一個資料目錄下同時存在 010 的
 文章庫與 011 的 `substack.db`（含已下載圖檔、含圖位標記的內文），010 的五個選取查詢與
 `transcription_pipeline --dry-run` 都只能看到 010 自己的圖，`substack.db` 位元組與 mtime 不變。
+
+T048 攔截法可行性（InterceptFeasibilityTest）：先證明「在全新 /usr/bin/python3 子行程裡 monkeypatch
+`sqlite3.connect`／`builtins.open`／`os.open` 能攔到四種開檔方式」，T-C 才有意義。
+
+T049 T-C（ManualTranscribeDoesNotTouchTenTest）：全新子行程、攔截所有開檔路徑、讓 010 儲存類別
+一被建構就拋例外，跑完 `substack_transcribe.py --plan` 與 `--run --confirm`（假 claude 腳本），
+斷言沒有任何開啟路徑是 010 文章庫、010 文章庫位元組不變、未新建、LaunchAgents 無新檔。
+T-D（ScheduleScanTest）：`ops/launchd/*.plist` 皆不引用 `substack_transcribe`。
 """
 import datetime
 import glob
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -284,6 +293,298 @@ class PipelineDoesNotSelectSubstackTest(unittest.TestCase):
         self.assertEqual(listed, self.ten_ids, text)
         self.assertFalse(set(listed) & set(self.sub_image_ids) - set(self.ten_ids))
         self._assert_substack_db_untouched()
+
+
+# ================================================================ T048／T049 執行期攔截
+SYSTEM_PYTHON = "/usr/bin/python3"          # 3.9.6；T-C 必須在與正式環境相同的直譯器跑
+SUBPROCESS_TIMEOUT = 120
+
+# 包裝腳本：先攔截再 runpy 目標腳本。用法：
+#   python3 wrapper.py <記錄檔> <plain|guard010> <目標腳本> [目標參數...]
+# 記錄檔每行「種類<TAB>realpath」；記錄檔本身在攔截之前就開好（不會記到自己）。
+# guard010 模式另外：讓 010 儲存類別的建構子與唯讀開庫一被呼叫就記錄並拋例外，
+# 並記錄每個子行程的第一個參數（證明沒有執行 security 之類的鑰匙圈程式）。
+INTERCEPT_WRAPPER = r'''
+import builtins, io, os, runpy, sqlite3, sqlite3.dbapi2, sys, urllib.parse
+
+LOG_PATH, MODE, TARGET = sys.argv[1], sys.argv[2], sys.argv[3]
+_orig_open, _orig_os_open, _orig_connect = builtins.open, os.open, sqlite3.connect
+_log = _orig_open(LOG_PATH, "a", encoding="utf-8")
+
+
+def _record(kind, path):
+    try:
+        path = os.fspath(path)
+    except TypeError:
+        return
+    if isinstance(path, bytes):
+        path = path.decode("utf-8", "replace")
+    if not isinstance(path, str) or not path:
+        return
+    _log.write("%s\t%s\n" % (kind, os.path.realpath(path)))
+    _log.flush()
+
+
+def _open(file, *a, **k):
+    if not isinstance(file, int):
+        _record("open", file)
+    return _orig_open(file, *a, **k)
+
+
+def _os_open(path, *a, **k):
+    _record("os.open", path)
+    return _orig_os_open(path, *a, **k)
+
+
+def _connect(database, *a, **k):
+    if isinstance(database, str) and database.startswith("file:"):
+        _record("sqlite-uri", urllib.parse.unquote(database[5:].split("?", 1)[0]))
+    else:
+        _record("sqlite", database)
+    return _orig_connect(database, *a, **k)
+
+
+builtins.open = _open
+io.open = _open
+os.open = _os_open
+sqlite3.connect = _connect
+sqlite3.dbapi2.connect = _connect
+
+if MODE == "guard010":
+    import subprocess
+    sys.path.insert(0, os.path.dirname(os.path.abspath(TARGET)))
+    mod_name = "article" + "_store"
+    cls_name = "Article" + "Store"
+    mod = __import__(mod_name)
+    cls = getattr(mod, cls_name)
+
+    def _boom(*a, **k):
+        _log.write("TEN_STORE_CALLED\t-\n")
+        _log.flush()
+        raise RuntimeError("010 storage must not be used")
+
+    cls.__init__ = _boom
+    cls.open_readonly = classmethod(_boom)
+    _OrigPopen = subprocess.Popen
+
+    class _LoggingPopen(_OrigPopen):
+        def __init__(self, args, *a, **k):
+            first = args[0] if isinstance(args, (list, tuple)) else args
+            _log.write("popen\t%s\n" % os.path.basename(str(first)))
+            _log.flush()
+            _OrigPopen.__init__(self, args, *a, **k)
+
+    subprocess.Popen = _LoggingPopen
+
+sys.argv = [TARGET] + sys.argv[4:]
+code = 0
+try:
+    runpy.run_path(TARGET, run_name="__main__")
+except SystemExit as exc:
+    code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
+_log.close()
+sys.exit(code)
+'''
+
+# T048 的最小目標腳本：四種開檔方式＋「攔截之後才 import 的模組」
+FEASIBILITY_TARGET = r'''
+import os, sqlite3, sys
+d = sys.argv[1]
+sys.path.insert(0, d)
+sqlite3.connect(os.path.join(d, "via_connect.db")).close()
+sqlite3.connect("file:%s?mode=rwc" % os.path.join(d, "via_uri.db"), uri=True).close()
+with open(os.path.join(d, "via_open.txt"), "w") as f:
+    f.write("x")
+fd = os.open(os.path.join(d, "via_open.txt"), os.O_RDONLY)
+os.close(fd)
+import late_helper                      # 攔截之後才 import、模組頂層 import sqlite3
+late_helper.touch(os.path.join(d, "via_late.db"))
+from sqlite3 import dbapi2              # 標準庫子模組
+dbapi2.connect(os.path.join(d, "via_dbapi2.db")).close()
+from sqlite3 import connect as late_connect
+late_connect(os.path.join(d, "via_from_import.db")).close()
+'''
+
+LATE_HELPER = "import sqlite3\n\n\ndef touch(path):\n    sqlite3.connect(path).close()\n"
+
+
+def child_env(home):
+    user = os.environ.get("USER") or "tester"
+    return {"PATH": "/usr/bin:/bin", "HOME": home, "LANG": "C",
+            "USER": user, "LOGNAME": os.environ.get("LOGNAME") or user}
+
+
+def run_wrapped(work, mode, target, args, home):
+    """以全新的 /usr/bin/python3 子行程跑包裝腳本；回傳 (returncode, stdout, stderr, 記錄列)。"""
+    wrapper = os.path.join(work, "intercept_wrapper.py")
+    with open(wrapper, "w", encoding="utf-8") as f:
+        f.write(INTERCEPT_WRAPPER)
+    log_path = os.path.join(work, "intercept-%s.log" % len(os.listdir(work)))
+    open(log_path, "w").close()
+    proc = subprocess.run([SYSTEM_PYTHON, wrapper, log_path, mode, target] + list(args),
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=work,
+                          env=child_env(home), timeout=SUBPROCESS_TIMEOUT,
+                          universal_newlines=True)
+    with open(log_path, encoding="utf-8") as f:
+        rows = [tuple(ln.rstrip("\n").split("\t", 1)) for ln in f if ln.strip()]
+    return proc.returncode, proc.stdout, proc.stderr, rows
+
+
+def db_bytes(path):
+    """比照 tests/test_article_verification.py 的 db_bytes()：整檔位元組（不存在回 None）。"""
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as f:
+        return f.read()
+
+
+@unittest.skipUnless(os.path.isfile(SYSTEM_PYTHON), "需要 /usr/bin/python3")
+class InterceptFeasibilityTest(unittest.TestCase):
+    """T048：攔截法本身先被證明可行（否則 T-C 會是偽陰性）。"""
+
+    def setUp(self):
+        self.work = os.path.realpath(tempfile.mkdtemp(prefix="substack-intercept-"))
+        self.addCleanup(shutil.rmtree, self.work, ignore_errors=True)
+        self.files = os.path.join(self.work, "files")
+        os.makedirs(self.files)
+        with open(os.path.join(self.files, "late_helper.py"), "w") as f:
+            f.write(LATE_HELPER)
+        self.target = os.path.join(self.work, "feasibility_target.py")
+        with open(self.target, "w") as f:
+            f.write(FEASIBILITY_TARGET)
+
+    def test_child_is_python_39(self):
+        out = subprocess.run([SYSTEM_PYTHON, "-c", "import sys;print(sys.version_info[:2])"],
+                             stdout=subprocess.PIPE, universal_newlines=True,
+                             timeout=SUBPROCESS_TIMEOUT).stdout
+        self.assertEqual(out.strip(), "(3, 9)")
+
+    def test_all_open_methods_are_recorded(self):
+        import builtins
+        import sqlite3
+        parent = (builtins.open, os.open, sqlite3.connect)
+        code, out, err, rows = run_wrapped(self.work, "plain", self.target, [self.files],
+                                           self.work)
+        self.assertEqual(code, 0, err)
+        f = lambda name: os.path.join(self.files, name)       # noqa: E731
+        expected = [
+            ("sqlite", f("via_connect.db")),
+            ("sqlite-uri", f("via_uri.db")),
+            ("open", f("via_open.txt")),
+            ("os.open", f("via_open.txt")),
+            ("sqlite", f("via_late.db")),
+            ("sqlite", f("via_dbapi2.db")),
+            ("sqlite", f("via_from_import.db")),
+        ]
+        for item in expected:
+            self.assertIn(item, rows, "攔不到：%s（記錄：%s）" % (item, rows))
+        self.assertEqual((builtins.open, os.open, sqlite3.connect), parent,
+                         "子行程的攔截不得污染父行程")
+
+
+@unittest.skipUnless(os.path.isfile(SYSTEM_PYTHON), "需要 /usr/bin/python3")
+class ManualTranscribeDoesNotTouchTenTest(unittest.TestCase):
+    """T049 T-C：手動轉寫全程（含 import 階段）不開 010 文章庫、不建構 010 儲存類別。"""
+
+    TEN_SUFFIXES = (TEN_DB_FILENAME, TEN_DB_FILENAME + "-journal", TEN_DB_FILENAME + "-wal",
+                    TEN_DB_FILENAME + "-shm")
+
+    def setUp(self):
+        import _pipeline_fixture as PF
+        self.PF = PF
+        self.work = os.path.realpath(tempfile.mkdtemp(prefix="substack-tc-"))
+        self.addCleanup(shutil.rmtree, self.work, ignore_errors=True)
+        self.home = os.path.join(self.work, "home")
+        os.makedirs(self.home)
+        self.agents = os.path.join(self.home, "Library", "LaunchAgents")
+        self.stub = PF.Stub(self.work)
+        self.stub.respond("sonnet", {"kind": "ok", "text": PF.TABLE_A})
+        self.stub.respond("opus", {"kind": "verify", "so": {"verdict": "ok", "issues": []}})
+        self.target = os.path.join(KB_DIR, "substack_transcribe.py")
+
+    def _build_substack(self, data):
+        import _substack_fixture as SF
+        import substack_store
+        SF.write_config(data)
+        sub = substack_store.SubstackStore(data)
+        try:
+            article_id = sub.insert_article_with_images(SF.article_row(), SF.image_rows(2))
+            for image in sub.list_images(article_id):
+                rel = os.path.join("substack_images", str(article_id), "%d.png" % image["seq"])
+                os.makedirs(os.path.join(data, os.path.dirname(rel)), exist_ok=True)
+                with open(os.path.join(data, rel), "wb") as f:
+                    f.write(self.PF.make_png(220 + image["seq"], 150, shade=image["seq"]))
+                sub.set_image_downloaded(image["id"], rel, sha256="0" * 64, size_bytes=10)
+        finally:
+            sub.close()
+
+    def _plan_and_run(self, data):
+        code, out, err, rows_plan = run_wrapped(self.work, "guard010", self.target,
+                                                ["--data-dir", data, "--plan"], self.home)
+        self.assertEqual(code, 0, out + err)
+        m = re.search(r"確認碼：([0-9a-f]{6})", out)
+        self.assertIsNotNone(m, out + err)
+        code, out, err, rows_run = run_wrapped(
+            self.work, "guard010", self.target,
+            ["--data-dir", data, "--run", "--confirm", m.group(1), "--claude-bin",
+             self.stub.path, "--timeout-sec", "60"], self.home)
+        self.assertEqual(code, 0, out + err)
+        self.assertIn("結果=ok", out)
+        return rows_plan + rows_run
+
+    def _assert_never_opened_ten(self, rows):
+        opened = [p for kind, p in rows if kind in ("open", "os.open", "sqlite", "sqlite-uri")]
+        self.assertTrue(any(p.endswith(os.sep + "substack.db") for p in opened),
+                        "攔截記錄裡沒有 substack.db：攔截可能失效（偽陰性）")
+        bad = [p for p in opened if p.endswith(self.TEN_SUFFIXES)]
+        self.assertEqual(bad, [], "手動轉寫開啟了 010 文章庫：%s" % bad)
+        self.assertNotIn(("TEN_STORE_CALLED", "-"), rows, "010 儲存類別被建構或唯讀開庫")
+        popen = [p for kind, p in rows if kind == "popen"]
+        self.assertTrue(popen, "沒有任何子行程：假 claude 沒被呼叫，測試空轉")
+        self.assertEqual(set(popen), {"claude"}, "只能執行 --claude-bin（不得執行鑰匙圈程式）")
+
+    def test_full_flow_with_ten_db_present(self):
+        data = os.path.join(self.work, "data")
+        os.makedirs(data)
+        self.PF.build_data_dir(data, 2)            # 010 fixture（父行程建立；子行程不得碰）
+        self._build_substack(data)
+        ten_db = os.path.join(data, TEN_DB_FILENAME)
+        before = db_bytes(ten_db)
+        self.assertIsNotNone(before)
+        listing_before = set(os.listdir(data))
+        rows = self._plan_and_run(data)
+        self._assert_never_opened_ten(rows)
+        self.assertEqual(db_bytes(ten_db), before, "010 文章庫位元組不得改變")
+        new_entries = set(os.listdir(data)) - listing_before
+        self.assertTrue(new_entries <= {".substack_import.lock"}, new_entries)
+        self.assertEqual(len(self.stub.calls()), 4, "2 張圖 × (reader-1＋驗證者)")
+        self.assertFalse(os.path.isdir(self.agents) and os.listdir(self.agents),
+                         "不得寫入任何 LaunchAgents plist")
+
+    def test_ten_db_not_created_when_absent(self):
+        data = os.path.join(self.work, "data-no-ten")
+        os.makedirs(data)
+        self._build_substack(data)
+        rows = self._plan_and_run(data)
+        self._assert_never_opened_ten(rows)
+        for suffix in self.TEN_SUFFIXES:
+            self.assertFalse(os.path.exists(os.path.join(data, suffix)), "不得新建 %s" % suffix)
+        self.assertFalse(os.path.isdir(self.agents) and os.listdir(self.agents))
+
+
+class ScheduleScanTest(unittest.TestCase):
+    """T049 T-D：手動轉寫不得被排程（FR-022）。"""
+
+    def test_no_launchd_plist_references_transcribe(self):
+        plists = glob.glob(os.path.join(REPO_DIR, "ops", "launchd", "*.plist"))
+        self.assertTrue(plists, "ops/launchd/ 沒有任何 plist，掃描空轉")
+        for path in plists:
+            self.assertNotIn("substack_transcribe", read_text(path), path)
+
+    def test_transcribe_has_no_scheduled_or_enable_option(self):
+        text = read_text(os.path.join(KB_DIR, "substack_transcribe.py"))
+        self.assertNotIn('"--scheduled"', text)
+        self.assertNotIn('"--enable"', text)
 
 
 if __name__ == "__main__":

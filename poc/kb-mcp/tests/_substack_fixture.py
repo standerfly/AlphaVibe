@@ -12,7 +12,8 @@
   FakeHttp                  —— 依 URL 回傳腳本化回應，記錄每筆請求（URL、headers、timeout）
   FakeClock                 —— 可設定的台北時間（+08:00）與 monotonic；sleep 只記錄不真睡
   FakeNotifier              —— 記錄每則通知文字，可腳本化失敗（錯誤字串含假 Bot token）
-  FakeClaudeRunner          —— 記錄模型呼叫（本包不應該有任何呼叫）
+  FakeClaudeRunner          —— 記錄模型呼叫；US6 起依 claude_cli_runner 的
+                               runner(argv, input_text, env, cwd, timeout) 協定回應（絕不執行真的 claude）
   temp_data_dir()           —— tempfile.mkdtemp() 經 os.path.realpath
   write_config(data_dir)    —— 寫出合法設定檔
 
@@ -440,16 +441,92 @@ class FakeNotifier(object):
 
 
 # ---------------------------------------------------------------- 假 claude runner
-class FakeClaudeRunner(object):
-    """本包（T001～T028）不應該有任何模型呼叫；留給 US6 用，也供斷言「呼叫次數為 0」。"""
+FAKE_TABLE_TEXT = "| 項目 | 數值 |\n| --- | --- |\n| 甲公司 | 1,234 |"
+# claude --help 的假輸出：列出 claude_cli_runner.REQUIRED_FLAGS 全部＋唯一選用旗標
+FAKE_HELP = "\n".join("  %s <x>  desc" % flag for flag in (
+    "--print", "--model", "--tools", "--allowedTools", "--disallowedTools", "--permission-mode",
+    "--output-format", "--json-schema", "--no-session-persistence", "--add-dir", "--system-prompt",
+    "--setting-sources", "--strict-mcp-config", "--disable-slash-commands",
+    "--permission-prompts")) + "\n"
+FAKE_AUTH_OK = {"loggedIn": True, "authMethod": "claude.ai", "apiProvider": "firstParty"}
 
-    def __init__(self, text="（假轉寫結果）"):
+
+class FakeClaudeRunner(object):
+    """假的 `claude` 子行程（**絕不執行真的 claude、絕不消耗訂閱額度**）。
+
+    T001～T045 不應該有任何呼叫：`calls` 供斷言「呼叫次數為 0」。
+    US6（T046 起）依 `claude_cli_runner.ClaudeCli` 的 runner 協定
+    `runner(argv, input_text, env, cwd, timeout) -> (rc, stdout, stderr)` 回應：
+      * `--help` → `help_text`（預設含全部必要旗標）
+      * `auth status` → `auth`（dict 會轉 JSON；字串原樣）
+      * 模型呼叫：依角色（`reader`＝轉寫、`verifier`＝提示含「待查轉寫」）取 `responses[角色]`
+        的下一個回應（超過時重複最後一個）。回應 kind：
+        table（text）｜not_table｜verify_ok｜verify_issues｜limit｜login｜error
+    `model_calls` 只記模型呼叫（model、role、argv、env、cwd、timeout、stdin）。
+    """
+
+    def __init__(self, text=FAKE_TABLE_TEXT, responses=None, auth=None, help_text=None):
         self.calls = []
+        self.model_calls = []
         self.text = text
+        self.responses = responses or {}
+        self.auth = FAKE_AUTH_OK if auth is None else auth
+        self.help_text = FAKE_HELP if help_text is None else help_text
+        self._idx = {}
+
+    def _next(self, role):
+        default = ({"kind": "table", "text": self.text} if role == "reader"
+                   else {"kind": "verify_ok"})
+        seq = self.responses.get(role) or [default]
+        i = self._idx.get(role, 0)
+        self._idx[role] = i + 1
+        return seq[min(i, len(seq) - 1)]
+
+    @staticmethod
+    def _result(**kw):
+        d = {"type": "result", "subtype": "success", "is_error": False, "result": ""}
+        d.update(kw)
+        return json.dumps(d, ensure_ascii=False)
 
     def __call__(self, *args, **kwargs):
         self.calls.append({"args": args, "kwargs": kwargs})
-        return self.text
+        if len(args) < 5:                     # 舊用法（T001～T045 從不呼叫）
+            return self.text
+        argv, input_text, env, cwd, timeout = args[:5]
+        rest = list(argv[1:])
+        if rest[:1] == ["--help"]:
+            return 0, self.help_text, ""
+        if rest[:2] == ["auth", "status"]:
+            out = self.auth if isinstance(self.auth, str) else json.dumps(self.auth)
+            return 0, out, ""
+        model = rest[rest.index("--model") + 1]
+        role = "verifier" if "待查轉寫" in (input_text or "") else "reader"
+        self.model_calls.append({"model": model, "role": role, "argv": list(argv),
+                                 "env": dict(env or {}), "cwd": cwd, "timeout": timeout,
+                                 "stdin": input_text})
+        resp = self._next(role)
+        kind = resp["kind"]
+        if kind == "table":
+            return 0, self._result(structured_output={"is_table": True,
+                                                      "text": resp.get("text", self.text)}), ""
+        if kind == "not_table":
+            return 0, self._result(structured_output={"is_table": False, "text": ""}), ""
+        if kind == "verify_ok":
+            return 0, self._result(structured_output={"verdict": "ok", "issues": []}), ""
+        if kind == "verify_issues":
+            issues = resp.get("issues") or [{"where": "L003", "found": "1,234",
+                                             "expected": "1,243", "kind": "wrong-number"}]
+            return 0, self._result(structured_output={"verdict": "issues",
+                                                      "issues": issues}), ""
+        if kind == "limit":
+            return 1, self._result(is_error=True, subtype="error",
+                                   result="You've hit your session limit · resets 3:45pm"), ""
+        if kind == "login":
+            return 1, self._result(is_error=True, subtype="error",
+                                   result="OAuth token has expired. Expired — log in again"), ""
+        if kind == "error":
+            return 1, self._result(is_error=True, subtype="error", result="some failure"), ""
+        raise AssertionError("未知的假回應種類：%s" % kind)
 
 
 # ---------------------------------------------------------------- 文章列（直接插庫用）
