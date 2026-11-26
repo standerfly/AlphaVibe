@@ -8,8 +8,9 @@
 * 第一步一律 `article_data_guard.resolve_data_dir()`：指向正式資料目錄要有明確旗標才允許
   （2026-08-22 資產表污染事故教訓）。
 
-目前已實作的子命令：`init`／`show`／`validate`／`add-image-host`／`remove-image-host`（FR-034）／
-`set-alert-policy`（FR-032）；`add`／`enable`／`disable`／`set-interval` 在後續任務加入。
+子命令：`init`／`show`／`validate`／`add`／`enable`／`disable`（FR-002）／`set-interval`（FR-004）／
+`add-image-host`／`remove-image-host`（FR-034）／`set-alert-policy`（FR-032）。
+刻意**不提供刪除作者**：停用即可，已存文章保留（FR-002）。
 
 僅標準庫、Python 3.9 相容。
 """
@@ -319,6 +320,17 @@ def build_parser():
     add_host.add_argument("host", help="小寫網域名（不含路徑／埠／IP）")
     remove_host = sub.add_parser("remove-image-host", help="移除圖片下載白名單主機")
     remove_host.add_argument("host", help="已在 image_hosts 裡的主機")
+    add = sub.add_parser("add", help="新增追蹤作者（預設啟用；FR-002）")
+    add.add_argument("--key", dest="key", required=True, help="作者代號 ^[a-z0-9][a-z0-9-]{1,39}$")
+    add.add_argument("--name", dest="name", required=True, help="出版名稱（1～60 字）")
+    add.add_argument("--feed-url", dest="feed_url", required=True,
+                     help="https://<主機>/feed（不得含埠／query／帳密）")
+    enable = sub.add_parser("enable", help="啟用作者（下次執行生效）")
+    enable.add_argument("key", help="既有作者代號")
+    disable = sub.add_parser("disable", help="停用作者（不再輪詢，已存文章保留）")
+    disable.add_argument("key", help="既有作者代號")
+    interval = sub.add_parser("set-interval", help="同作者最小輪詢間隔（分鐘，10～1440；FR-004）")
+    interval.add_argument("minutes", help="整數分鐘，下限 10、上限 1440")
     policy = sub.add_parser("set-alert-policy", help="切換告警策略（FR-032）")
     policy.add_argument("policy", help="every_failure（每次失敗皆通知）或 consecutive_3（連續 3 次才通知）")
     return parser
@@ -341,8 +353,8 @@ def main(argv=None, env=None, out=None, err=None):
         err.write("拒絕執行：%s\n" % exc)
         return EXIT_REFUSED
     if not args.command:
-        err.write("請指定子命令：init／show／validate／add-image-host／remove-image-host／"
-                  "set-alert-policy\n")
+        err.write("請指定子命令：init／show／validate／add／enable／disable／set-interval／"
+                  "add-image-host／remove-image-host／set-alert-policy\n")
         return EXIT_REFUSED
     if args.command == "init":
         return _cmd_init(data_dir, out, err)
@@ -354,6 +366,12 @@ def main(argv=None, env=None, out=None, err=None):
         return _cmd_remove_image_host(data_dir, args.host, out, err)
     if args.command == "set-alert-policy":
         return _cmd_set_alert_policy(data_dir, args.policy, out, err)
+    if args.command == "add":
+        return _cmd_add(data_dir, args.key, args.name, args.feed_url, out, err)
+    if args.command in ("enable", "disable"):
+        return _cmd_set_enabled(data_dir, args.key, args.command == "enable", out, err)
+    if args.command == "set-interval":
+        return _cmd_set_interval(data_dir, args.minutes, out, err)
     return _cmd_validate(data_dir, out, err)
 
 
@@ -459,6 +477,89 @@ def _cmd_set_alert_policy(data_dir, policy, out, err):
     write_config(data_dir, cfg)
     out.write("告警策略：%s → %s（下一次執行生效；403／429／挑戰頁不論策略一律立即告警）\n"
               % (previous, policy))
+    return EXIT_OK
+
+
+def _write_or_refuse(data_dir, cfg, err):
+    """完整驗證後才寫；不合格印出原因並回 False（不寫檔、不產生備份）。"""
+    reasons = validate(cfg)
+    if reasons:
+        err.write("拒絕執行：修改後的設定不合格\n")
+        for reason in reasons:
+            err.write("  %s\n" % reason)
+        return False
+    write_config(data_dir, cfg)
+    return True
+
+
+def _cmd_add(data_dir, key, name, feed_url, out, err):
+    """新增作者（預設啟用）；驗證規則與設定檔一致（key／feed_url 不得重複等）。"""
+    cfg = _load_for_edit(data_dir, err)
+    if cfg is None:
+        return EXIT_REFUSED
+    if any(entry.get("key") == key for entry in cfg["authors"]):
+        err.write("拒絕執行：作者代號 %s 已存在（要恢復追蹤請用 enable）\n" % key)
+        return EXIT_REFUSED
+    if any(entry.get("feed_url") == feed_url for entry in cfg["authors"]):
+        err.write("拒絕執行：這個 feed 網址已被其他作者使用\n")
+        return EXIT_REFUSED
+    cfg["authors"] = list(cfg["authors"]) + [
+        {"key": key, "name": name, "feed_url": feed_url, "enabled": True}]
+    if not _write_or_refuse(data_dir, cfg, err):
+        return EXIT_REFUSED
+    out.write("已新增作者 %s（啟用；共 %d 位）。下一次執行生效，首次只收加入當天前 %d 天內的文章\n"
+              % (key, len(cfg["authors"]), 14))
+    return EXIT_OK
+
+
+def _cmd_set_enabled(data_dir, key, enabled, out, err):
+    cfg = _load_for_edit(data_dir, err)
+    if cfg is None:
+        return EXIT_REFUSED
+    target = None
+    for entry in cfg["authors"]:
+        if entry.get("key") == key:
+            target = entry
+    if target is None:
+        err.write("拒絕執行：找不到作者代號 %s（不會自動新增，請用 add）\n" % key)
+        return EXIT_REFUSED
+    previous = target["enabled"]
+    target["enabled"] = bool(enabled)
+    if not _write_or_refuse(data_dir, cfg, err):
+        return EXIT_REFUSED
+    if enabled:
+        note = ("下一次執行生效" if previous
+                else "下一次執行生效；重新啟用後只收當天前 14 天內的文章，更早的可用 --backfill 追補")
+    else:
+        note = "下一次執行起不再輪詢，已存文章保留"
+    out.write("作者 %s：%s → %s（%s）\n" % (key, "啟用" if previous else "停用",
+                                          "啟用" if enabled else "停用", note))
+    return EXIT_OK
+
+
+def _cmd_set_interval(data_dir, minutes_text, out, err):
+    """FR-004：只接受 10～1440 的整數分鐘；小於 10 一律拒絕並說明下限。"""
+    text = str(minutes_text).strip()
+    try:
+        minutes = int(text)
+    except ValueError:
+        err.write("拒絕執行：間隔必須是整數分鐘（收到 %r）；下限為 %d 分鐘、上限 %d 分鐘\n"
+                  % (minutes_text, MIN_POLL_MINUTES, MAX_POLL_MINUTES))
+        return EXIT_REFUSED
+    if minutes < MIN_POLL_MINUTES:
+        err.write("拒絕執行：最小輪詢間隔下限為 %d 分鐘（收到 %d）\n" % (MIN_POLL_MINUTES, minutes))
+        return EXIT_REFUSED
+    if minutes > MAX_POLL_MINUTES:
+        err.write("拒絕執行：最小輪詢間隔上限為 %d 分鐘（收到 %d）\n" % (MAX_POLL_MINUTES, minutes))
+        return EXIT_REFUSED
+    cfg = _load_for_edit(data_dir, err)
+    if cfg is None:
+        return EXIT_REFUSED
+    previous = cfg["min_poll_interval_minutes"]
+    cfg["min_poll_interval_minutes"] = minutes
+    if not _write_or_refuse(data_dir, cfg, err):
+        return EXIT_REFUSED
+    out.write("最小輪詢間隔：%d → %d 分鐘（下一次執行生效）\n" % (previous, minutes))
     return EXIT_OK
 
 

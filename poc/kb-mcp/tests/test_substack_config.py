@@ -503,5 +503,156 @@ class AlertPolicyCliTest(unittest.TestCase):
         self.assertEqual(code, 2, out.getvalue())
 
 
+class ManageAuthorsCliTest(unittest.TestCase):
+    """T040：`add`／`enable`／`disable`／`set-interval`（FR-002、FR-004；contracts/cli.md §2）。"""
+
+    NEW_URL = "https://zznewauthor.example.com/feed"
+
+    def setUp(self):
+        self.dir = F.temp_data_dir(self)
+        self.path = os.path.join(self.dir, C.CONFIG_FILENAME)
+        out = io.StringIO()
+        self.assertEqual(C.main(["--data-dir", self.dir, "init"], env={}, out=out), 0,
+                         out.getvalue())
+
+    def run_cli(self, *args):
+        out = io.StringIO()
+        code = C.main(["--data-dir", self.dir] + list(args), env={}, out=out)
+        return code, out.getvalue()
+
+    def cfg(self):
+        return C.load_config(self.dir)
+
+    def author(self, key):
+        for entry in self.cfg()["authors"]:
+            if entry["key"] == key:
+                return entry
+        return None
+
+    def backups(self):
+        return sorted(glob.glob(self.path + C.BACKUP_SUFFIX + "*"))
+
+    def assertRefusedUnchanged(self, args, needle=None):
+        before = read_bytes(self.path)
+        baks = self.backups()
+        code, text = self.run_cli(*args)
+        self.assertEqual(code, 2, "%r 應該被拒絕：%s" % (args, text))
+        self.assertEqual(read_bytes(self.path), before, "被拒絕時檔案位元組不得改變")
+        self.assertEqual(self.backups(), baks, "被拒絕時不得產生備份")
+        if needle:
+            self.assertIn(needle, text)
+        return text
+
+    # ---- add
+    def test_add_appends_enabled_author_and_backs_up(self):
+        before = read_bytes(self.path)
+        code, text = self.run_cli("add", "--key", "zznewauthor", "--name", "新作者",
+                                  "--feed-url", self.NEW_URL)
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.author("zznewauthor"),
+                         {"key": "zznewauthor", "name": "新作者", "feed_url": self.NEW_URL,
+                          "enabled": True})
+        expected = good()
+        expected["authors"].append({"key": "zznewauthor", "name": "新作者",
+                                    "feed_url": self.NEW_URL, "enabled": True})
+        self.assertEqual(self.cfg(), expected, "只新增一位作者，其餘欄位不動")
+        self.assertEqual(len(self.backups()), 1)
+        self.assertEqual(read_bytes(self.backups()[0]), before)
+
+    def test_add_validation_same_as_config_rules(self):
+        bad = [
+            ("Bad_Key", "名稱", self.NEW_URL),                       # key 格式
+            ("a", "名稱", self.NEW_URL),                              # key 太短
+            ("zzok", "", self.NEW_URL),                               # 名稱空白
+            ("zzok", "名" * 61, self.NEW_URL),                        # 名稱太長
+            ("zzok", "名稱", "http://zznewauthor.example.com/feed"),  # 非 https
+            ("zzok", "名稱", "https://zznewauthor.example.com/rss"),  # 路徑不是 /feed
+            ("zzok", "名稱", "https://127.0.0.1/feed"),               # IP
+            ("zzok", "名稱", "https://zznewauthor.example.com:8443/feed"),  # 埠
+        ]
+        for key, name, url in bad:
+            self.assertRefusedUnchanged(["add", "--key", key, "--name", name, "--feed-url", url])
+
+    def test_add_duplicate_key_or_feed_url_refused(self):
+        self.assertRefusedUnchanged(["add", "--key", "fomosoc", "--name", "重複",
+                                     "--feed-url", self.NEW_URL])
+        self.assertRefusedUnchanged(["add", "--key", "zzdupurl", "--name", "重複網址",
+                                     "--feed-url", "https://www.fomosoc.com/feed"])
+
+    def test_add_requires_all_three_options(self):
+        self.assertRefusedUnchanged(["add", "--key", "zznewauthor", "--name", "新作者"])
+        self.assertRefusedUnchanged(["add", "--key", "zznewauthor", "--feed-url", self.NEW_URL])
+        self.assertRefusedUnchanged(["add", "--name", "新作者", "--feed-url", self.NEW_URL])
+
+    # ---- enable／disable
+    def test_disable_then_enable(self):
+        code, text = self.run_cli("disable", "fomosoc")
+        self.assertEqual(code, 0, text)
+        self.assertIs(self.author("fomosoc")["enabled"], False)
+        self.assertIs(self.author("unclestocknotes")["enabled"], True, "不得動到其他作者")
+        self.assertEqual(len(self.cfg()["authors"]), 2, "停用不是刪除")
+        code, text = self.run_cli("enable", "fomosoc")
+        self.assertEqual(code, 0, text)
+        self.assertIs(self.author("fomosoc")["enabled"], True)
+        self.assertEqual(self.cfg(), good())
+        self.assertEqual(len(self.backups()), 2)
+
+    def test_enable_disable_unknown_key_refused(self):
+        self.assertRefusedUnchanged(["enable", "zznosuch"])
+        self.assertRefusedUnchanged(["disable", "zznosuch"])
+
+    def test_no_delete_author_subcommand(self):
+        for name in ("delete", "remove", "rm", "remove-author", "delete-author"):
+            self.assertRefusedUnchanged([name, "fomosoc"])
+        self.assertNotIn("delete", C.build_parser().format_help())
+
+    # ---- set-interval
+    def test_set_interval_30_ok_and_other_fields_unchanged(self):
+        code, text = self.run_cli("set-interval", "45")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.cfg()["min_poll_interval_minutes"], 45)
+        code, text = self.run_cli("set-interval", "30")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.cfg(), good())
+        self.assertEqual(len(self.backups()), 2)
+
+    def test_set_interval_bounds(self):
+        for value in ("10", "1440"):
+            code, text = self.run_cli("set-interval", value)
+            self.assertEqual(code, 0, text)
+            self.assertEqual(self.cfg()["min_poll_interval_minutes"], int(value))
+
+    def test_set_interval_below_ten_refused_with_message(self):
+        for value in ("9", "0", "-5"):
+            self.assertRefusedUnchanged(["set-interval", value], needle="下限為 10 分鐘")
+
+    def test_set_interval_above_max_or_not_integer_refused(self):
+        for value in ("1441", "abc", "30.5", ""):
+            self.assertRefusedUnchanged(["set-interval", value])
+
+    # ---- 共通
+    def test_each_write_backed_up_and_only_ten_kept(self):
+        for i in range(12):
+            code, text = self.run_cli("disable" if i % 2 == 0 else "enable", "fomosoc")
+            self.assertEqual(code, 0, text)
+        self.assertEqual(len(self.backups()), 10, "每次寫入有備份、只保留 10 份")
+
+    def test_missing_config_refused_for_all_write_commands(self):
+        other = F.temp_data_dir(self)
+        for args in (["add", "--key", "zznewauthor", "--name", "新作者", "--feed-url",
+                      self.NEW_URL], ["enable", "fomosoc"], ["disable", "fomosoc"],
+                     ["set-interval", "30"]):
+            out = io.StringIO()
+            code = C.main(["--data-dir", other] + args, env={}, out=out)
+            self.assertEqual(code, 2, out.getvalue())
+            self.assertFalse(os.path.exists(os.path.join(other, C.CONFIG_FILENAME)))
+
+    def test_production_data_dir_refused(self):
+        prod = article_data_guard.PRODUCTION_DATA_DIR
+        for args in (["enable", "fomosoc"], ["set-interval", "30"]):
+            out = io.StringIO()
+            self.assertEqual(C.main(["--data-dir", prod] + args, env={}, out=out), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

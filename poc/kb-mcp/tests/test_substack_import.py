@@ -178,12 +178,10 @@ class CliShapeTest(ImportTestBase):
             self.assertEqual(self.http.count(), 0)
 
     def test_unimplemented_action_reports_code(self):
-        import substack_store as S
-        F.write_config(self.dir)
-        store = S.SubstackStore(self.dir)
-        store.close()
-        code = self.go("--status")
-        self.assertEqual(code, IMP.EXIT_REFUSED)
+        """US5 起所有文件化的動作都已實作；dispatch 遇到未知動作仍回 exit 2＋not_implemented。"""
+        ctx = IMP.Context(None, "zzbogus", self.dir, None, None, None, None, self.clock,
+                          self.clock.sleep, {}, self.out, self.err, 0)
+        self.assertEqual(IMP.dispatch(ctx), IMP.EXIT_REFUSED)
         self.assertIn("not_implemented", self.text)
 
     def test_readonly_action_without_db_refuses_without_creating_it(self):
@@ -1485,6 +1483,505 @@ class AlertHelpersTest(unittest.TestCase):
         for text in IMP.ALERT_TEXTS.values():
             self.assertTrue(text.startswith("⚠️ Substack 匯入："))
             self.assertNotIn("title", text.lower())
+
+
+
+# ================================================================ T042 追蹤清單、最小間隔、追補（US5）
+import substack_config as CFG  # noqa: E402
+
+WAIT_RE = re.compile(r"還需等待 (\d+) 分鐘")
+
+
+class Us5Base(FlowBase):
+    def set_authors(self, *authors, **overrides):
+        """直接改寫設定檔的作者清單（模擬 Claude 代 PO 執行 add／enable／disable 後的結果）。"""
+        cfg = dict(self.cfg)
+        cfg["authors"] = [dict(a) for a in authors]
+        cfg.update(overrides)
+        self.cfg = F.write_config(self.dir, **cfg)
+
+    def cli(self, *args):
+        out = io.StringIO()
+        code = CFG.main(["--data-dir", self.dir] + list(args), env={}, out=out)
+        self.assertEqual(code, 0, out.getvalue())
+
+    def disabled(self, author):
+        entry = dict(author)
+        entry["enabled"] = False
+        return entry
+
+    def alerts(self):
+        return alerts_of(self.notifier)
+
+    def db_bytes(self):
+        with open(self.db_path(), "rb") as f:
+            return f.read()
+
+
+class TrackingListTest(Us5Base):
+    """(1)(2)(3)：停用／新增／重新啟用（FR-002、FR-008，US5-AS1／AS2／AS5）。"""
+
+    def test_disabled_author_not_requested_and_articles_kept(self):
+        self.serve_both(synth_items(F.DEFAULT_HOST, "a", count=2),
+                        synth_items(F.SECOND_HOST, "b", count=2))
+        self.assertEqual(self.go(), IMP.EXIT_OK, self.text)
+        b_rows = [r for r in self.articles() if r["author_key"] == KEY_B]
+        self.assertEqual(len(b_rows), 2)
+        self.cli("disable", KEY_B)
+        self.clock.advance(3600)
+        self.reset_output()
+        before_b = (self.http.count(FEED_B), self.http.count(ROBOTS_B))
+        self.assertEqual(self.go(), IMP.EXIT_OK, self.text)
+        self.assertEqual((self.http.count(FEED_B), self.http.count(ROBOTS_B)), before_b,
+                         "停用作者不得被請求（含 robots）")
+        self.assertEqual(self.http.count(FEED_A), 2, "其他作者照常")
+        self.assertEqual([dict(r) for r in self.articles() if r["author_key"] == KEY_B],
+                         [dict(r) for r in b_rows], "停用作者的已存文章保留、不變")
+        self.assertEqual(self.author_row(KEY_B)["last_seen_enabled"], 0)
+        self.assertFalse([p for p in self.polls(KEY_B) if p["run_id"] == self.runs()[-1]["id"]],
+                         "停用作者本次不寫輪詢紀錄")
+
+    def test_new_author_included_next_run_with_own_window(self):
+        self.set_authors(F.AUTHOR_A)
+        self.serve_feed(FEED_A, [], F.DEFAULT_HOST)
+        self.assertEqual(self.go(), IMP.EXIT_OK, self.text)
+        self.assertIsNone(self.author_row(KEY_B))
+        self.assertEqual(self.http.count(FEED_B), 0)
+        # 3 天後 PO 要求新增 B
+        self.clock.set_now("2026-11-23 22:00:00")
+        self.cli("add", "--key", KEY_B, "--name", NAME_B, "--feed-url", FEED_B)
+        items = synth_items(F.SECOND_HOST, "b", count=6, step_days=4,
+                            base=datetime.datetime(2026, 11, 23, 9, 0, tzinfo=F.TZ8))
+        self.serve_feed(FEED_B, items, F.SECOND_HOST)
+        self.reset_output()
+        self.assertEqual(self.go(), IMP.EXIT_OK, self.text)
+        row = self.author_row(KEY_B)
+        self.assertEqual(row["activated_at"], "2026-11-23T22:00:00+08:00")
+        self.assertEqual(row["window_from"], "2026-11-09")
+        stored = sorted(r["published_at"][:10] for r in self.articles()
+                        if r["author_key"] == KEY_B)
+        self.assertEqual(stored, ["2026-11-11", "2026-11-15", "2026-11-19", "2026-11-23"])
+        self.assertEqual(self.author_row(KEY_A)["activated_at"], "2026-11-20T22:00:00+08:00",
+                         "既有作者的啟用基準不受影響")
+
+    def test_reenable_rewrites_activation_and_window(self):
+        self.serve_both([], [])
+        self.assertEqual(self.go(), IMP.EXIT_OK, self.text)
+        self.assertEqual(self.author_row(KEY_B)["activated_at"], "2026-11-20T22:00:00+08:00")
+        self.cli("disable", KEY_B)
+        self.clock.set_now("2026-11-25 22:00:00")
+        self.reset_output()
+        self.assertEqual(self.go(), IMP.EXIT_OK, self.text)
+        self.assertEqual(self.author_row(KEY_B)["last_seen_enabled"], 0)
+        self.assertEqual(self.author_row(KEY_B)["activated_at"], "2026-11-20T22:00:00+08:00",
+                         "停用期間不改啟用基準")
+        self.cli("enable", KEY_B)
+        self.clock.set_now("2026-11-30 22:00:00")
+        items = [F.feed_item(host=F.SECOND_HOST, slug="%s-re-1" % F.SLUG_MARK,
+                             published=datetime.datetime(2026, 11, 18, 9, 0, tzinfo=F.TZ8)),
+                 F.feed_item(host=F.SECOND_HOST, slug="%s-re-2" % F.SLUG_MARK,
+                             published=datetime.datetime(2026, 11, 12, 9, 0, tzinfo=F.TZ8))]
+        self.http.routes[FEED_B] = [F.ok(F.make_feed(items, host=F.SECOND_HOST))]
+        self.reset_output()
+        self.assertEqual(self.go(), IMP.EXIT_OK, self.text)
+        row = self.author_row(KEY_B)
+        self.assertEqual(row["activated_at"], "2026-11-30T22:00:00+08:00", "重新啟用＝重寫基準")
+        self.assertEqual(row["window_from"], "2026-11-16")
+        self.assertEqual(row["last_seen_enabled"], 1)
+        self.assertEqual([r["published_at"][:10] for r in self.articles()
+                          if r["author_key"] == KEY_B], ["2026-11-18"])
+
+    def test_first_activation_written_even_if_fetch_fails_and_kept_on_rerun(self):
+        self.set_authors(F.AUTHOR_A)
+        self.http.route(FEED_A, F.timeout())
+        self.assertEqual(self.go(), IMP.EXIT_AUTHOR_FAILED, self.text)
+        self.assertEqual(self.author_row(KEY_A)["activated_at"], "2026-11-20T22:00:00+08:00")
+        self.clock.set_now("2026-11-21 22:00:00")
+        self.http.routes[FEED_A] = [F.ok(F.make_feed([], host=F.DEFAULT_HOST))]
+        self.reset_output()
+        self.assertEqual(self.go(), IMP.EXIT_OK, self.text)
+        row = self.author_row(KEY_A)
+        self.assertEqual(row["activated_at"], "2026-11-20T22:00:00+08:00", "重跑沿用同一基準日")
+        self.assertEqual(row["window_from"], "2026-11-06")
+
+    def test_dry_run_does_not_touch_last_seen_enabled(self):
+        self.serve_both([], [])
+        self.assertEqual(self.go(), IMP.EXIT_OK, self.text)
+        self.cli("disable", KEY_B)
+        self.clock.advance(3600)
+        self.reset_output()
+        self.go("--dry-run")
+        self.assertEqual(self.author_row(KEY_B)["last_seen_enabled"], 1,
+                         "--dry-run 不得寫 last_seen_enabled")
+        self.reset_output()
+        self.assertEqual(self.go(), IMP.EXIT_OK, self.text)        # 真的執行一次：記為停用
+        self.cli("enable", KEY_B)
+        self.clock.advance(3600)
+        self.reset_output()
+        self.go("--dry-run")
+        row = self.author_row(KEY_B)
+        self.assertEqual(row["last_seen_enabled"], 0)
+        self.assertEqual(row["activated_at"], "2026-11-20T22:00:00+08:00",
+                         "--dry-run 不得重寫啟用基準")
+
+
+class MinIntervalTest(Us5Base):
+    """(4)：最小間隔守衛（FR-004，US5-AS3／AS4）。"""
+
+    def test_scheduled_run_inside_interval_skips_quietly(self):
+        self.clock.set_now("2026-11-20 21:50:00")
+        self.serve_feed(FEED_A, [], F.DEFAULT_HOST)
+        self.http.route(FEED_B, F.timeout())
+        self.go()                                           # 手動：A 成功、B 失敗一次
+        self.assertEqual(self.author_row(KEY_B)["consecutive_failures"], 1)
+        alerts_before = len(self.alerts())
+        requests_before = self.http.count()
+        self.clock.set_now("2026-11-20 22:00:00")           # 10 分鐘後排程啟動
+        self.reset_output()
+        self.assertEqual(self.go("--scheduled"), IMP.EXIT_OK, self.text)
+        self.assertEqual(self.http.count(), requests_before, "間隔內零請求")
+        run_id = self.runs()[-1]["id"]
+        for key in (KEY_A, KEY_B):
+            logs = [p for p in self.polls(key) if p["run_id"] == run_id]
+            self.assertEqual(len(logs), 1)
+            self.assertEqual((logs[0]["outcome"], logs[0]["requested"]), ("skipped_interval", 0))
+        self.assertEqual(self.author_row(KEY_B)["consecutive_failures"], 1, "不增不減")
+        self.assertEqual(len(self.alerts()), alerts_before, "不告警")
+        self.assertEqual(self.runs()[-1]["authors_skipped_interval"], 2)
+        self.assertEqual(self.runs()[-1]["result"], "ok", "間隔跳過不算失敗")
+
+    def test_manual_run_inside_interval_says_how_long_to_wait(self):
+        self.serve_both([], [])
+        self.go()
+        self.clock.set_now("2026-11-20 22:10:00")
+        self.reset_output()
+        self.assertEqual(self.go(), IMP.EXIT_OK, self.text)
+        waits = [int(m) for m in WAIT_RE.findall(self.out.getvalue())]
+        # A 在 22:00:00 請求、B 在作者間隔 5 秒後請求 → 剩 20 與 20 分 5 秒（無條件進位成 21）
+        self.assertEqual(waits, [20, 21], self.text)
+        self.assertEqual(self.http.count(FEED_A), 1)
+
+    def test_changed_interval_applies_to_next_run(self):
+        self.serve_both([], [])
+        self.go()
+        self.cli("set-interval", "10")
+        self.clock.set_now("2026-11-20 22:15:00")
+        self.reset_output()
+        self.go()
+        self.assertEqual(self.http.count(FEED_A), 2, "改成 10 分鐘後，15 分鐘就可以再請求")
+        self.cli("set-interval", "60")
+        self.clock.set_now("2026-11-20 22:55:00")
+        self.reset_output()
+        self.go()
+        self.assertEqual(self.http.count(FEED_A), 2, "改成 60 分鐘後，40 分鐘仍在間隔內")
+        self.assertEqual([int(m) for m in WAIT_RE.findall(self.out.getvalue())], [20, 21])
+
+
+BACKFILL_HINT = "  提示：早於 %s 的文章 feed 已不提供，無法取得（不會改抓其他來源）。"
+
+
+class BackfillTest(Us5Base):
+    """(5)：`--backfill KEY`（FR-008、US5-AS5、research R5、PO 決定 B3）。"""
+
+    ETAG = 'W/"bf-1"'
+
+    def prime(self):
+        """一般執行：A 的 feed 20 篇（每 5 天一篇）只存 14 天窗內 3 篇；B 空。"""
+        self.http.route(FEED_A, F.ok(F.make_feed(synth_items(F.DEFAULT_HOST, "a"),
+                                                 host=F.DEFAULT_HOST), etag=self.ETAG))
+        self.serve_feed(FEED_B, [], F.SECOND_HOST)
+        self.assertEqual(self.go(), IMP.EXIT_OK, self.text)
+        self.assertEqual(len(self.articles()), 3)
+        self.assertEqual(self.author_row(KEY_A)["etag"], self.ETAG)
+
+    def notices(self):
+        return [t for t in self.notifier.texts if t.startswith("📰")]
+
+    def summaries(self):
+        return [t for t in self.notifier.texts if t.startswith("📚")]
+
+    def test_backfill_stores_older_items_ignoring_window(self):
+        self.prime()
+        old_rows = [dict(r) for r in self.articles()]
+        notices_before = len(self.notices())
+        self.clock.advance(31 * 60)
+        self.reset_output()
+        start = len(self.http.requests)
+        code = self.go("--backfill", KEY_A)
+        self.assertEqual(code, IMP.EXIT_OK, self.text)
+        lines = self.out.getvalue().splitlines()
+        self.assertIn("backfill %s: feed_items=20 already=3 stored=17 oldest_in_feed=2026-08-17"
+                      % KEY_A, lines)
+        self.assertIn(BACKFILL_HINT % "2026-08-17", lines)
+        rows = self.articles()
+        self.assertEqual(len(rows), 20)
+        self.assertEqual([dict(r) for r in rows[:3]], old_rows, "已存文章不重複、不覆寫")
+        self.assertEqual({r["source"] for r in rows[3:]}, {"backfill"})
+        run = self.runs()[-1]
+        self.assertEqual((run["trigger"], run["result"], run["new_articles"]),
+                         ("backfill", "ok", 17))
+        # 請求：只出現該作者的 robots 與 feed（不抓單篇網頁、不碰其他作者、不下載圖片）
+        urls = [r["url"] for r in self.http.requests[start:]]
+        self.assertTrue(set(urls) <= {ROBOTS_A, FEED_A}, urls)
+        self.assertEqual(urls.count(FEED_A), 1)
+        self.assertNotIn("If-None-Match", self.http.headers_for(FEED_A)[-1],
+                         "追補不帶 ETag（要拿完整 20 篇）")
+        # 通知：逐篇 17 則（不合併）＋摘要標「追補」
+        self.assertEqual(len(self.notices()) - notices_before, 17)
+        self.assertTrue(self.summaries()[-1].startswith(
+            "📚 Substack 匯入（追補）：新增 17 篇"), self.summaries()[-1])
+        self.assertNotIn(F.TITLE_MARK, self.text)
+        self.assertNotIn(F.SLUG_MARK, self.text)
+
+    def test_backfill_again_finds_nothing_new(self):
+        self.prime()
+        self.clock.advance(31 * 60)
+        self.go("--backfill", KEY_A)
+        self.clock.advance(31 * 60)
+        self.reset_output()
+        calls = self.notifier.calls
+        self.assertEqual(self.go("--backfill", KEY_A), IMP.EXIT_OK, self.text)
+        self.assertIn("backfill %s: feed_items=20 already=20 stored=0 oldest_in_feed=2026-08-17"
+                      % KEY_A, self.out.getvalue().splitlines())
+        self.assertEqual(len(self.articles()), 20)
+        self.assertEqual(self.notifier.calls, calls, "沒有新存文章就不發通知")
+
+    def test_backfill_inside_interval_refused_with_remaining_minutes(self):
+        self.prime()
+        self.clock.advance(10 * 60)
+        self.reset_output()
+        before = (self.http.count(), self.notifier.calls, len(self.runs()))
+        code = self.go("--backfill", KEY_A)
+        self.assertEqual(code, IMP.EXIT_REFUSED, self.text)
+        waits = [int(m) for m in WAIT_RE.findall(self.text)]
+        self.assertEqual(len(waits), 1, self.text)
+        self.assertTrue(19 <= waits[0] <= 20, waits)
+        self.assertEqual((self.http.count(), self.notifier.calls, len(self.runs())), before,
+                         "間隔內拒絕：零網路、不通知、不寫執行紀錄")
+        self.assertEqual(len(self.articles()), 3)
+
+    def test_backfill_counts_toward_interval_of_next_run(self):
+        self.prime()
+        self.clock.advance(31 * 60)
+        self.go("--backfill", KEY_A)
+        self.clock.advance(5 * 60)
+        self.reset_output()
+        feed_count = self.http.count(FEED_A)
+        self.go()
+        self.assertEqual(self.http.count(FEED_A), feed_count, "追補後 30 分鐘內一般執行也要跳過")
+
+    def test_backfill_for_never_polled_author(self):
+        self.set_authors(F.AUTHOR_A)
+        self.serve_feed(FEED_A, synth_items(F.DEFAULT_HOST, "a", count=4, step_days=30),
+                        F.DEFAULT_HOST)
+        self.assertEqual(self.go("--backfill", KEY_A), IMP.EXIT_OK, self.text)
+        self.assertEqual(len(self.articles()), 4, "追補忽略 14 天窗")
+        self.assertIn("backfill %s: feed_items=4 already=0 stored=4 oldest_in_feed=2026-08-22"
+                      % KEY_A, self.out.getvalue().splitlines())
+
+    def test_backfill_takes_the_lock(self):
+        self.prime()
+        self.clock.advance(31 * 60)
+        handle = open(os.path.join(self.dir, IMP.LOCK_NAME), "w")
+        self.addCleanup(handle.close)
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        before = self.http.count()
+        self.reset_output()
+        self.assertEqual(self.go("--backfill", KEY_A), IMP.EXIT_BUSY, self.text)
+        self.assertEqual(self.http.count(), before)
+        self.assertEqual(len(self.articles()), 3)
+
+    def test_backfill_unknown_or_disabled_author_refused_without_side_effects(self):
+        # 庫不存在：不建庫
+        for key in ("zznosuch", KEY_B):
+            if key == KEY_B:
+                self.set_authors(F.AUTHOR_A, self.disabled(F.AUTHOR_B))
+            self.reset_output()
+            self.assertEqual(self.go("--backfill", key), IMP.EXIT_REFUSED, self.text)
+            self.assertFalse(os.path.exists(self.db_path()), "拒絕時不得建庫")
+        self.assertEqual(self.http.count(), 0)
+        self.assertEqual(self.notifier.calls, 0)
+        # 庫已存在：位元組不變
+        self.set_authors(F.AUTHOR_A, F.AUTHOR_B)
+        self.prime()
+        self.set_authors(F.AUTHOR_A, self.disabled(F.AUTHOR_B))
+        self.clock.advance(3600)
+        before = (self.db_bytes(), self.http.count(), self.notifier.calls)
+        for key in ("zznosuch", KEY_B):
+            self.reset_output()
+            self.assertEqual(self.go("--backfill", key), IMP.EXIT_REFUSED, self.text)
+        self.assertEqual((self.db_bytes(), self.http.count(), self.notifier.calls), before)
+
+    def test_backfill_fetch_failure_exits_1_and_alerts(self):
+        self.prime()
+        self.clock.advance(31 * 60)
+        self.http.routes[FEED_A] = [F.status(403)]
+        self.reset_output()
+        self.assertEqual(self.go("--backfill", KEY_A), IMP.EXIT_AUTHOR_FAILED, self.text)
+        self.assertEqual(len(self.articles()), 3)
+        self.assertEqual(len(self.alerts()), 1)
+        self.assertEqual(self.runs()[-1]["trigger"], "backfill")
+        self.assertEqual(self.runs()[-1]["result"], "partial")
+
+
+
+# ================================================================ T044 --dry-run 與 --status（cli.md §1）
+DRY_REQUEST_RE = re.compile(r"^  (\S+): 會請求", re.M)
+DRY_SKIP_RE = re.compile(r"^  (\S+): 會因間隔跳過（還需等待 (\d+) 分鐘）", re.M)
+DRY_OFF_RE = re.compile(r"^  (\S+): 停用", re.M)
+DRY_MISSING_RE = re.compile(r"缺圖待補 (\d+) 張")
+ST_ARTICLES_RE = re.compile(r"文章（有效完整度）：共 (\d+) 篇｜全文 F=(\d+)／僅預覽 P=(\d+)／"
+                            r"非文字 N=(\d+)；被重判過 (\d+) 篇")
+ST_IMAGES_RE = re.compile(r"圖片：已下載 (\d+)／待下載 (\d+)／缺圖 (\d+)／放棄 (\d+)")
+ST_UNNOTIFIED_RE = re.compile(r"通知：未通知 (\d+) 篇")
+ST_RUN_RE = re.compile(r"^  run#(\d+) ", re.M)
+AUTHOR_C = {"key": "zzauthorc", "name": "測試出版C",
+            "feed_url": "https://zzfeedhost-c.example.com/feed", "enabled": True}
+
+
+class ReadonlyActionBase(Us5Base):
+    def populated(self):
+        """存一些文章：A 3 篇（圖 1 失敗→缺圖）、B 2 篇；通知全部失敗（未通知）。"""
+        self.http.routes[F.image_url(1)] = [F.status(404)]
+        self.serve_both(synth_items(F.DEFAULT_HOST, "a"),
+                        synth_items(F.SECOND_HOST, "b", count=2))
+        self.notifier.fail_all = True
+        self.assertEqual(self.go(), IMP.EXIT_OK, self.text)
+        self.notifier.fail_all = False
+        self.reset_output()
+
+    def snapshot(self):
+        return (self.db_bytes(), os.path.getmtime(self.db_path()), self.http.count(),
+                self.notifier.calls)
+
+
+class DryRunTest(ReadonlyActionBase):
+    def test_without_db_lists_authors_and_creates_nothing(self):
+        self.assertEqual(self.go("--dry-run"), IMP.EXIT_OK, self.text)
+        self.assertEqual(self.http.count(), 0, "零網路")
+        self.assertEqual(self.notifier.calls, 0)
+        self.assertFalse(os.path.exists(self.db_path()), "庫不存在時不建立")
+        self.assertEqual(sorted(DRY_REQUEST_RE.findall(self.out.getvalue())), [KEY_A, KEY_B])
+        self.assertEqual(DRY_MISSING_RE.findall(self.out.getvalue()), ["0"])
+
+    def test_lists_request_skip_disabled_and_missing_images(self):
+        self.populated()
+        self.set_authors(F.AUTHOR_A, self.disabled(F.AUTHOR_B), AUTHOR_C)
+        self.clock.set_now("2026-11-20 22:10:00")
+        before = self.snapshot()
+        expected_missing = self._read(lambda s: len(s.images_awaiting_download()))
+        self.assertGreater(expected_missing, 0)
+        self.assertEqual(self.go("--dry-run"), IMP.EXIT_OK, self.text)
+        self.assertEqual(self.snapshot(), before, "零網路、零通知、庫位元組與 mtime 不變")
+        text = self.out.getvalue()
+        self.assertEqual(DRY_REQUEST_RE.findall(text), [AUTHOR_C["key"]])
+        skips = DRY_SKIP_RE.findall(text)
+        self.assertEqual([k for k, _ in skips], [KEY_A])
+        self.assertIn(int(skips[0][1]), (19, 20))
+        self.assertEqual(DRY_OFF_RE.findall(text), [KEY_B])
+        self.assertEqual(DRY_MISSING_RE.findall(text), [str(expected_missing)])
+        self.assertEqual(F.marks_in(self.text), [], "輸出不含標題、內文、網址")
+        self.assertEqual(len(self.runs()), 1, "dry-run 不寫執行紀錄")
+
+    def test_invalid_config_refused_without_network_or_alert(self):
+        with open(os.path.join(self.dir, "substack_config.json"), "w", encoding="utf-8") as f:
+            f.write("{壞掉")
+        self.assertEqual(self.go("--dry-run"), IMP.EXIT_REFUSED, self.text)
+        self.assertEqual(self.http.count(), 0)
+        self.assertEqual(self.notifier.calls, 0, "dry-run 不發告警")
+        self.assertFalse(os.path.exists(self.db_path()))
+
+    def test_scheduled_dry_run_reports_schedule_judgement(self):
+        self.clock.set_now("2026-11-20 23:30:00")
+        self.assertEqual(self.go("--scheduled", "--dry-run"), IMP.EXIT_OK, self.text)
+        self.assertIn("deferred", self.out.getvalue())
+        self.assertEqual(DRY_REQUEST_RE.findall(self.out.getvalue()), [])
+        self.clock.set_now("2026-11-20 22:00:00")
+        self.reset_output()
+        self.assertEqual(self.go("--scheduled", "--dry-run"), IMP.EXIT_OK, self.text)
+        self.assertEqual(sorted(DRY_REQUEST_RE.findall(self.out.getvalue())), [KEY_A, KEY_B])
+        self.assertEqual(self.http.count(), 0)
+        self.assertFalse(os.path.exists(self.db_path()))
+
+    def test_dry_run_does_not_take_lock(self):
+        self.populated()
+        handle = open(os.path.join(self.dir, IMP.LOCK_NAME), "w")
+        self.addCleanup(handle.close)
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.assertEqual(self.go("--dry-run"), IMP.EXIT_OK, self.text)
+
+    def test_dry_run_only_with_run_or_scheduled(self):
+        for argv in (["--dry-run", "--backfill", KEY_A], ["--dry-run", "--status"],
+                     ["--dry-run", "--retry-images", "1"]):
+            self.reset_output()
+            self.assertEqual(self.go(*argv), IMP.EXIT_REFUSED, argv)
+        self.assertEqual(self.http.count(), 0)
+
+
+class StatusTest(ReadonlyActionBase):
+    def expected(self):
+        def collect(s):
+            return {"comp": s.completeness_counts(effective=True),
+                    "images": s.image_status_counts(),
+                    "unnotified": s.unnotified_count(),
+                    "articles": len(s.list_articles())}
+        return self._read(collect)
+
+    def test_status_reports_counts_readonly_and_titleless(self):
+        self.populated()
+        self.clock.advance(3600)
+        a_id = self.articles()[0]["id"]
+        self.assertEqual(self.go("--reclassify", "--article-ids", str(a_id)), IMP.EXIT_OK)
+        self.set_authors(F.AUTHOR_A, self.disabled(F.AUTHOR_B))
+        for _ in range(5):                       # 累積到 7 次執行，只列最近 5 次
+            self.clock.advance(3600)
+            self.reset_output()
+            self.go()
+        exp = self.expected()
+        self.reset_output()
+        before = self.snapshot()
+        self.assertEqual(self.go("--status"), IMP.EXIT_OK, self.text)
+        self.assertEqual(self.snapshot(), before, "唯讀：零網路、零通知、庫位元組與 mtime 不變")
+        text = self.out.getvalue()
+        m = ST_ARTICLES_RE.search(text)
+        self.assertIsNotNone(m, text)
+        c = exp["comp"]
+        self.assertEqual(tuple(int(x) for x in m.groups()),
+                         (exp["articles"], c["F"], c["P"], c["N"], 1))
+        m = ST_IMAGES_RE.search(text)
+        i = exp["images"]
+        self.assertEqual(tuple(int(x) for x in m.groups()),
+                         (i["downloaded"], i["pending"], i["missing"], i["abandoned"]))
+        self.assertGreater(i["missing"] + i["abandoned"], 0, "夾具應產生缺圖／放棄的圖片")
+        self.assertEqual(ST_UNNOTIFIED_RE.findall(text), [str(exp["unnotified"])])
+        runs = [int(x) for x in ST_RUN_RE.findall(text)]
+        self.assertEqual(runs, [r["id"] for r in reversed(self.runs())][:5], "最近 5 次、新到舊")
+        # 作者狀態：停用作者與其已存文章仍可見（US5-AS2）
+        lines = text.splitlines()
+        b_line = [l for l in lines if l.startswith("  %s " % KEY_B)]
+        self.assertEqual(len(b_line), 1, text)
+        self.assertIn("設定=停用", b_line[0])
+        self.assertIn("文章=2", b_line[0])
+        a_line = [l for l in lines if l.startswith("  %s " % KEY_A)][0]
+        self.assertIn("設定=啟用", a_line)
+        self.assertIn("文章=3", a_line)
+        self.assertEqual(F.marks_in(self.text), [], "輸出不含標題、內文、網址")
+
+    def test_status_without_db_refuses_and_creates_nothing(self):
+        self.assertEqual(self.go("--status"), IMP.EXIT_REFUSED, self.text)
+        self.assertFalse(os.path.exists(self.db_path()))
+        self.assertEqual(self.http.count(), 0)
+
+    def test_status_does_not_take_lock_or_need_config(self):
+        self.populated()
+        handle = open(os.path.join(self.dir, IMP.LOCK_NAME), "w")
+        self.addCleanup(handle.close)
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.remove(os.path.join(self.dir, "substack_config.json"))
+        calls, requests = self.notifier.calls, self.http.count()
+        self.assertEqual(self.go("--status"), IMP.EXIT_OK, self.text)
+        self.assertIn("設定檔無法讀取", self.out.getvalue())
+        self.assertEqual((self.notifier.calls, self.http.count()), (calls, requests))
 
 
 if __name__ == "__main__":

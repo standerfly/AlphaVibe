@@ -15,7 +15,8 @@
   0 完成（含無新文章）｜1 有作者失敗或牆鐘預算中止｜2 參數／資料目錄／設定檔拒絕｜
   3 忙碌（鎖被占用，未寫庫）｜4 中止（磁碟寫入失敗）｜5 手動轉寫因使用量上限／登入問題中止
 
-動作在各自的任務接上；未實作者一律回 exit 2 並印代碼 `not_implemented`（不假裝成功）。
+所有動作皆已實作（US5 起含 `--backfill`／`--dry-run`／`--status`）；`dispatch` 遇到未知動作
+仍回 exit 2 並印代碼 `not_implemented`（不假裝成功）。
 
 僅標準庫、Python 3.9 相容。
 """
@@ -56,6 +57,7 @@ DEFER_TO_HOUR = 1
 
 SOURCE_SCHEDULE = "schedule"
 SOURCE_MANUAL = "manual"
+SOURCE_BACKFILL = "backfill"
 NO_TITLE = "（無標題）"
 
 COMPLETENESS_LABEL = {"F": "全文", "P": "僅預覽", "N": "非文字"}
@@ -229,6 +231,10 @@ def dispatch(ctx):
         return _do_reclassify(ctx)
     if ctx.action == "reclassify_history":
         return _do_reclassify_history(ctx)
+    if ctx.action == "backfill":
+        return _do_backfill(ctx)
+    if ctx.action == "status":
+        return _do_status(ctx)
     ctx.warn("尚未實作的動作：%s（代碼 %s）" % (ctx.action, NOT_IMPLEMENTED))
     return EXIT_REFUSED
 
@@ -516,7 +522,11 @@ def _poll_author(ctx, state, entry, run_id, source):
         ctx.store.add_poll_log(run_id=run_id, author_key=key, at=at, requested=0,
                                outcome="skipped_interval")
         state.authors_skipped_interval += 1
-        ctx.say("  %s: skipped_interval wait=%d min" % (key, wait))
+        line = "  %s: skipped_interval wait=%d min" % (key, wait)
+        if not ctx.args.scheduled:              # 手動執行：直接告訴 PO 還要等多久（FR-004）
+            line += "（最小間隔 %d 分鐘，還需等待 %d 分鐘）" % (
+                int(ctx.cfg["min_poll_interval_minutes"]), wait)
+        ctx.say(line)
         return
 
     if state.polled_any:
@@ -607,11 +617,15 @@ def _record_author_failure(ctx, state, key, outcome, run_id, started_mono, reque
                                                     consecutive, ctx.data_dir))
 
 
-def _store_items(ctx, state, entry, items, source):
-    """逐篇：去重 → pubDate → 14 天窗 → 分類 → 單篇一交易寫入（文章＋圖片列）。"""
+def _store_items(ctx, state, entry, items, source, ignore_window=False):
+    """逐篇：去重 → pubDate → 14 天窗 → 分類 → 單篇一交易寫入（文章＋圖片列）。
+
+    `ignore_window=True` 只給追補用（research R5）：不套 14 天窗，其餘（去重、沒有發布日就略過、
+    單篇一交易、不覆寫）完全相同。
+    """
     key = entry["key"]
     author = ctx.store.get_author(key) or {}
-    window_from = author.get("window_from")
+    window_from = None if ignore_window else author.get("window_from")
     tally = {"items": len(items), "stored": 0, "duplicate": 0, "conflict": 0, "window": 0,
              "no_pubdate": 0, "invalid": 0, "by_completeness": {"P": 0, "F": 0, "N": 0}}
     for item in items:
@@ -669,6 +683,147 @@ def _image_rows(images, item):
             and all(r["src_url"] != enclosure_url for r in rows)):
         rows.insert(0, {"seq": 0, "src_url": enclosure_url, "alt": None, "caption": None})
     return rows
+
+
+# ---------------------------------------------------------------- US5：追補（FR-008、research R5）
+BACKFILL_HINT = "早於 %s 的文章 feed 已不提供，無法取得（不會改抓其他來源）。"
+
+
+def backfill_target(cfg, key):
+    """回傳 (設定檔裡的作者, 拒絕原因)。不存在或已停用 → 拒絕（已決定事項 #5）。"""
+    for entry in (cfg or {}).get("authors", ()):
+        if entry.get("key") == key:
+            if not entry.get("enabled"):
+                return None, "作者 %s 已停用，不追補（要追補請先 enable）" % key
+            return entry, None
+    return None, "設定檔沒有作者 %s，不追補" % key
+
+
+def _oldest_in_feed(items):
+    """feed 條目中最舊一篇的台北日期；沒有任何可解析的發布日 → None。"""
+    dates = []
+    for item in items or ():
+        published = item.get("published_at")
+        if published is None:
+            continue
+        published = (published.astimezone(TZ8) if published.tzinfo
+                     else published.replace(tzinfo=TZ8))
+        dates.append(published.date().isoformat())
+    return min(dates) if dates else None
+
+
+def _do_backfill(ctx):
+    """`--backfill KEY`：守最小間隔與鎖、不帶 ETag、忽略 14 天窗、去重後存入、逐篇通知。
+
+    作者存在且啟用已在取鎖、開庫之前檢查過（run()）；這裡再查一次是防禦性的。
+    不下載圖片：追補只打該作者的 robots 與 feed（tasks T042 (5)），新存文章的圖片列維持
+    `pending`，由下一次一般執行的圖片階段補下載。
+    """
+    key = ctx.args.backfill
+    entry, refusal = backfill_target(ctx.cfg, key)
+    if refusal:
+        ctx.warn("拒絕執行：%s" % refusal)
+        return EXIT_REFUSED
+    wait = _interval_wait_minutes(ctx, ctx.store.get_author(key))
+    if wait > 0:
+        # 間隔內拒絕：零網路、不寫執行紀錄、不通知（FR-008「追補仍遵守最小輪詢間隔」）
+        ctx.warn("拒絕執行：%s 距上次請求未滿最小間隔 %d 分鐘，還需等待 %d 分鐘"
+                 % (key, int(ctx.cfg["min_poll_interval_minutes"]), wait))
+        return EXIT_REFUSED
+
+    now = ctx.clock.now()
+    run_id = ctx.store.start_run("backfill", started_at=now.isoformat(timespec="seconds"))
+    ctx.say("[%s] substack run#%d trigger=backfill author=%s"
+            % (now.strftime("%Y-%m-%d %H:%M:%S"), run_id, key))
+    state = _RunState()
+    _sync_one_author(ctx, entry, now)
+    started_mono = ctx.clock.monotonic()
+    result, code = "ok", EXIT_OK
+    try:
+        gate = substack_feed.RobotsGate(ctx.store, _fetcher(ctx), ctx.clock)
+        allowed, robots_outcome = gate.allowed(entry["feed_url"], remaining=ctx.remaining())
+        if not allowed:
+            _record_author_failure(ctx, state, key, robots_outcome, run_id, started_mono,
+                                   requested=False)
+        else:
+            fetched = substack_feed.fetch_feed(_fetcher(ctx), entry["feed_url"], etag=None,
+                                               remaining=ctx.remaining())
+            outcome, status = fetched["outcome"], fetched["status"]
+            if outcome != "ok_200":             # 不帶 ETag 不該有 304；一律當失敗處理
+                _record_author_failure(ctx, state, key, outcome, run_id, started_mono,
+                                       requested=True, http_status=status)
+            else:
+                _store_backfill(ctx, state, entry, fetched, run_id, started_mono)
+        if state.budget_exhausted or ctx.remaining() <= 0:
+            state.budget_exhausted = True
+            result, code = "aborted_budget", EXIT_AUTHOR_FAILED
+            ctx.warn("中止：牆鐘預算 %d 秒用完，未發出的通知維持 pending，下次執行補發"
+                     % RUN_BUDGET_SEC)
+        else:
+            counts = ctx.store.image_status_counts()
+            state.images_missing = counts["pending"] + counts["missing"]
+            state.images_abandoned_total = counts["abandoned"]
+            _notify_new(ctx, state)             # 追補文章逐篇通知（PO 決定 B3）＋先前未成功者
+            _notify_summary(ctx, state, "backfill")
+        if result == "ok" and state.authors_failed:
+            result, code = "partial", EXIT_AUTHOR_FAILED
+    except substack_store.DiskFullError:
+        try:
+            ctx.store.finish_run(run_id, result="aborted_disk", **state.counters())
+        except substack_store.DiskFullError:
+            pass
+        _send_alert(ctx, state, format_disk_alert(ctx.data_dir))
+        raise
+    ctx.say("  notify: sent=%d failed=%d (articles=%d summary=%d)"
+            % (state.notify_sent, state.notify_failed, state.notify_articles,
+               state.notify_summary))
+    ctx.store.finish_run(run_id, result=result, **state.counters())
+    end = ctx.clock.now()
+    ctx.say("[%s] done result=%s duration=%ds"
+            % (end.strftime("%Y-%m-%d %H:%M:%S"), result, int((end - now).total_seconds())))
+    return code
+
+
+def _sync_one_author(ctx, entry, now):
+    """追補只同步目標作者：首次或重新啟用一樣記下啟用基準（research R5），不動其他作者。"""
+    key = entry["key"]
+    before = ctx.store.get_author(key)
+    ctx.store.upsert_author(key, entry["name"], entry["feed_url"])
+    if (before is None or not before.get("activated_at")
+            or not before.get("last_seen_enabled")):
+        ctx.store.activate_author(key, now.isoformat(timespec="seconds"), window_from_text(now))
+    else:
+        ctx.store.note_author_enabled(key, True)
+
+
+def _store_backfill(ctx, state, entry, fetched, run_id, started_mono):
+    key = entry["key"]
+    at = ctx.clock.now().isoformat(timespec="seconds")
+    ctx.store.record_feed_request(key, at, fetched["outcome"], http_status=fetched["status"],
+                                  etag=fetched["etag"], success=True)
+    state.authors_polled += 1
+    items = fetched["items"] or []
+    tally = _store_items(ctx, state, entry, items, SOURCE_BACKFILL, ignore_window=True)
+    ctx.store.add_poll_log(run_id=run_id, author_key=key, at=at, requested=1,
+                           http_status=fetched["status"], outcome=fetched["outcome"],
+                           items_in_feed=tally["items"], new_items=tally["stored"],
+                           skipped_window=0, skipped_no_pubdate=tally["no_pubdate"],
+                           duration_ms=_ms_since(ctx, started_mono))
+    oldest = _oldest_in_feed(items)
+    extra = ""
+    for label, value in (("no_pubdate", tally["no_pubdate"]), ("invalid", tally["invalid"])):
+        if value:
+            extra += " %s=%d" % (label, value)
+    ctx.say("backfill %s: feed_items=%d already=%d stored=%d oldest_in_feed=%s%s"
+            % (key, tally["items"], tally["duplicate"] + tally["conflict"], tally["stored"],
+               oldest or "-", extra))
+    if oldest:
+        ctx.say("  提示：" + BACKFILL_HINT % oldest)
+    else:
+        ctx.say("  提示：feed 目前沒有可判斷發布日的文章，無法追補更早的文章（不會改抓其他來源）。")
+    ctx.say("  (P=%d F=%d N=%d) 圖片列維持待下載，下一次一般執行補下載"
+            % (tally["by_completeness"]["P"], tally["by_completeness"]["F"],
+               tally["by_completeness"]["N"]))
 
 
 # ---------------------------------------------------------------- 步驟 5：圖片（FR-014～FR-016）
@@ -898,6 +1053,124 @@ def _do_reclassify_history(ctx):
     return EXIT_AUTHOR_FAILED if missing else EXIT_OK
 
 
+# ---------------------------------------------------------------- US5：--dry-run 與 --status（唯讀）
+def _do_dry_run(ctx):
+    """零網路、不寫庫、不取鎖、不發通知：列出完整流程「會做什麼」（cli.md §1）。
+
+    `ctx.store` 可能是 None（庫還不存在；唯讀承諾＝不建庫），此時每位啟用作者都視為首次。
+    不呼叫 `_sync_authors`，所以 `last_seen_enabled`／`activated_at` 一律不動（research R5）。
+    """
+    now = ctx.clock.now()
+    store = ctx.store
+    ctx.say("[%s] substack dry-run：設定檔 OK（%d 位作者，最小間隔 %d 分鐘，告警策略 %s）；"
+            "不發請求、不寫庫" % (now.strftime("%Y-%m-%d %H:%M:%S"), len(ctx.cfg["authors"]),
+                              int(ctx.cfg["min_poll_interval_minutes"]),
+                              ctx.cfg["alert_policy"]))
+    if store is None:
+        ctx.say("  （%s 尚未建立；真正執行時才會建立）" % substack_store.DB_FILENAME)
+    if ctx.args.scheduled:
+        day = schedule_day(now)
+        trigger = "schedule" if now.hour == SCHEDULE_HOUR else "catchup"
+        if in_defer_window(now):
+            ctx.say("  排程判斷：排程日 %s，啟動於 23:00～00:59 → deferred（延後至 01:00 補跑，"
+                    "不會輪詢任何作者）" % day)
+            return EXIT_OK
+        if store is not None and store.has_actual_scheduled_run(day):
+            ctx.say("  排程判斷：排程日 %s 已執行過 → already_done（不會輪詢任何作者）" % day)
+            return EXIT_OK
+        ctx.say("  排程判斷：排程日 %s → 會執行（trigger=%s）" % (day, trigger))
+    for entry in ctx.cfg["authors"]:
+        key = entry["key"]
+        if not entry.get("enabled"):
+            ctx.say("  %s: 停用（不請求；已存文章保留）" % key)
+            continue
+        author = store.get_author(key) if store is not None else None
+        wait = _interval_wait_minutes(ctx, author)
+        if wait > 0:
+            ctx.say("  %s: 會因間隔跳過（還需等待 %d 分鐘）" % (key, wait))
+            continue
+        fresh = (author is None or not author.get("activated_at")
+                 or not author.get("last_seen_enabled"))
+        if fresh:
+            ctx.say("  %s: 會請求（首次或重新啟用：只收 %s 起發布的文章）"
+                    % (key, window_from_text(now)))
+        else:
+            ctx.say("  %s: 會請求" % key)
+    missing = len(store.images_awaiting_download()) if store is not None else 0
+    ctx.say("  缺圖待補 %d 張（真正執行時於圖片階段補下載）" % missing)
+    return EXIT_OK
+
+
+def _do_status(ctx):
+    """唯讀摘要（cli.md §1）：作者狀態、有效完整度、圖片四種狀態、未通知、最近 5 次執行。
+
+    不取鎖、不需要設定檔（讀得到就順便列出啟用狀態與設定值）；輸出不含標題、內文、網址。
+    """
+    store = ctx.store
+    cfg, cfg_note = None, None
+    try:
+        cfg = substack_config.load_config(ctx.data_dir)
+    except substack_config.ConfigMissing:
+        cfg_note = "設定檔無法讀取（不存在）"
+    except substack_config.ConfigInvalid:
+        cfg_note = "設定檔無法讀取（不合格；可用 substack_config.py validate 查原因）"
+    now = ctx.clock.now()
+    ctx.say("[%s] substack status" % now.strftime("%Y-%m-%d %H:%M:%S"))
+    if cfg is not None:
+        ctx.say("設定：最小間隔 %d 分鐘；告警策略 %s；作者 %d 位"
+                % (int(cfg["min_poll_interval_minutes"]), cfg["alert_policy"],
+                   len(cfg["authors"])))
+    else:
+        ctx.say("設定：%s" % cfg_note)
+    configured = {}
+    order = []
+    for entry in (cfg or {}).get("authors", ()):
+        configured[entry["key"]] = bool(entry.get("enabled"))
+        order.append(entry["key"])
+    rows = {row["author_key"]: row for row in store.author_status_rows()}
+    for key in sorted(rows):
+        if key not in configured:
+            order.append(key)
+    ctx.say("作者：")
+    for key in order:
+        if cfg is None:
+            setting = "未知"
+        elif key in configured:
+            setting = "啟用" if configured[key] else "停用"
+        else:
+            setting = "不在設定檔"
+        row = rows.get(key)
+        if row is None:
+            ctx.say("  %s 設定=%s 文章=0 尚未執行過" % (key, setting))
+            continue
+        ctx.say("  %s 設定=%s 文章=%d 上次結果=%s 上次請求=%s 上次成功=%s 連續失敗=%d"
+                % (key, setting, int(row["articles"] or 0), row["last_outcome"] or "-",
+                   row["last_request_at"] or "-", row["last_success_at"] or "-",
+                   int(row["consecutive_failures"] or 0)))
+    comp = store.completeness_counts(effective=True)
+    total = comp["P"] + comp["F"] + comp["N"]
+    ctx.say("文章（有效完整度）：共 %d 篇｜全文 F=%d／僅預覽 P=%d／非文字 N=%d；被重判過 %d 篇"
+            % (total, comp["F"], comp["P"], comp["N"], comp["reclassified"]))
+    images = store.image_status_counts()
+    ctx.say("圖片：已下載 %d／待下載 %d／缺圖 %d／放棄 %d"
+            % (images["downloaded"], images["pending"], images["missing"],
+               images["abandoned"]))
+    ctx.say("通知：未通知 %d 篇" % store.unnotified_count())
+    ctx.say("最近 5 次執行：")
+    runs = store.recent_runs(5)
+    if not runs:
+        ctx.say("  （尚無）")
+    for run in runs:
+        ctx.say("  run#%d %s trigger=%s day=%s result=%s new=%d polled=%d skipped=%d failed=%d "
+                "images=%d/%d notify=%d/%d"
+                % (run["id"], run["started_at"] or "-", run["trigger"] or "-",
+                   run["schedule_day"] or "-", run["result"] or "running",
+                   run["new_articles"], run["authors_polled"], run["authors_skipped_interval"],
+                   run["authors_failed"], run["images_downloaded"], run["images_missing"],
+                   run["notify_sent"], run["notify_failed"]))
+    return EXIT_OK
+
+
 # ---------------------------------------------------------------- 進入點
 def _config_alert(action, missing, data_dir, notifier, sleep, out, err):
     """設定檔不能用：完整流程（排程或手動）發 `config_invalid` 告警；零請求、不開庫、不取鎖。
@@ -909,6 +1182,33 @@ def _config_alert(action, missing, data_dir, notifier, sleep, out, err):
     ctx = Context(None, action, data_dir, None, None, None, notifier, None, sleep, None,
                   out, err, 0)
     _send_alert(ctx, _RunState(), format_config_alert(missing, data_dir))
+
+
+def _run_dry(args, data_dir, http, notifier, clock, sleep, env, out, err):
+    """完整流程的 `--dry-run`（含 `--scheduled --dry-run`）：驗證設定檔、唯讀開庫（不存在就不開、
+    不建）、不取鎖；設定檔不合格只印原因並 exit 2，**不發告警**（contracts/notifications.md §4）。"""
+    try:
+        cfg = substack_config.load_config(data_dir)
+    except substack_config.ConfigMissing as exc:
+        err.write("拒絕執行：%s\n" % exc)
+        return EXIT_REFUSED
+    except substack_config.ConfigInvalid as exc:
+        err.write("拒絕執行：設定檔不合格\n")
+        for reason in exc.reasons:
+            err.write("  %s\n" % reason)
+        return EXIT_REFUSED
+    store = None
+    try:
+        try:
+            store = substack_store.SubstackStore.open_readonly(data_dir)
+        except FileNotFoundError:
+            store = None
+        ctx = Context(args, "run", data_dir, cfg, store, http, notifier, clock, sleep, env,
+                      out, err, clock.monotonic())
+        return _do_dry_run(ctx)
+    finally:
+        if store is not None:
+            store.close()
 
 
 def run(argv=None, http=None, notifier=None, clock=None, sleep=None, env=None, out=None,
@@ -939,10 +1239,7 @@ def run(argv=None, http=None, notifier=None, clock=None, sleep=None, env=None, o
         return EXIT_REFUSED
 
     if action == "run" and args.dry_run:
-        # 完整流程的 --dry-run 在 T045 才接上。拒絕要發生在取鎖與開庫**之前**，
-        # 免得「還沒實作的動作」順手建出一個空的資料庫（唯讀承諾不能先被破壞）。
-        err.write("尚未實作的動作：dry-run（代碼 %s）\n" % NOT_IMPLEMENTED)
-        return EXIT_REFUSED
+        return _run_dry(args, data_dir, http, notifier, clock, sleep, env, out, err)
 
     cfg = None
     if action in CONFIG_ACTIONS:
@@ -957,6 +1254,13 @@ def run(argv=None, http=None, notifier=None, clock=None, sleep=None, env=None, o
             for reason in exc.reasons:
                 err.write("  %s\n" % reason)
             _config_alert(action, False, data_dir, notifier, sleep, out, err)
+            return EXIT_REFUSED
+
+    if action == "backfill":
+        # 不存在或已停用 → 拒絕：在取鎖、開庫、任何請求之前（已決定事項 #5：零網路、不寫庫）
+        _entry, refusal = backfill_target(cfg, args.backfill)
+        if refusal:
+            err.write("拒絕執行：%s\n" % refusal)
             return EXIT_REFUSED
 
     lock_handle = None
