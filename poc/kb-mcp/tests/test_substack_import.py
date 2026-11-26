@@ -1163,5 +1163,329 @@ class ImageFlowTest(FlowBase):
                 self.assertNotIn(word, text, "%s 不得有保留期限／占用上限處理" % name)
 
 
+# ================================================================ T035（US4）失敗隔離與告警
+# 告警文字逐字照 contracts/notifications.md §3（測試端獨立寫一份，不引用實作常數）
+BLOCKED_TPL = "⚠️ Substack 匯入：%s 被站方擋下（%s），本次已停止該作者、不重試，下次排程再試。"
+FAILED_TPL = "⚠️ Substack 匯入：%s 抓取失敗（%s，連續 %d 次），下次排程再試。"
+CONFIG_TPL = ("⚠️ Substack 匯入：設定檔無法使用（%s），本次未發出任何請求。"
+              "請在對話中請 Claude 檢查設定。")
+DISK_RE = re.compile(r"^⚠️ Substack 匯入：寫入失敗（可能是硬碟空間不足），本次已中止，"
+                     r"已存文章不受影響。剩餘空間 [0-9.]+ GB。$")
+BROKEN_XML = "<rss><channel><item><title>壞掉"
+
+# 其他失敗的觸發方式與原因詞（契約只列五個固定詞；未列者的對應見 substack_import 的 FAILURE_REASON）
+OTHER_FAILURES = (
+    # (outcome, 觸發的 URL 種類, 假回應, 原因詞)
+    ("timeout", "feed", F.timeout(), "逾時"),
+    ("network", "feed", F.network(), "網路錯誤"),
+    ("parse_error", "feed", F.ok(BROKEN_XML), "無法解析"),
+    ("http_500", "feed", F.status(500), "HTTP 500"),
+    ("robots_disallow", "robots", F.ok("User-agent: *\nDisallow: /", content_type="text/plain"),
+     "robots 不允許"),
+    ("robots_unavailable", "robots", F.status(503), "robots 不允許"),
+    ("too_large", "feed", F.too_large(), "無法解析"),
+    ("redirect_refused", "feed", F.redirect("https://zzelsewhere.example.net/feed"), "網路錯誤"),
+)
+
+
+def alerts_of(notifier):
+    return [t for t in notifier.texts if t.startswith("⚠️")]
+
+
+class AlertTestBase(FlowBase):
+    def set_policy(self, policy):
+        cfg = dict(self.cfg)
+        cfg["alert_policy"] = policy
+        self.cfg = F.write_config(self.dir, **cfg)
+
+    def alerts(self):
+        return alerts_of(self.notifier)
+
+    def assertAlert(self, text, first_line):
+        lines = text.split("\n")
+        self.assertEqual(len(lines), 2, text)
+        self.assertEqual(lines[0], first_line)
+        self.assertRegex(lines[1], SPACE_RE, "告警末尾必須是空間現況行")
+        self.assertNotIn(F.TITLE_MARK, text)
+        self.assertNotIn(F.SLUG_MARK, text)
+        self.assertNotIn("http", text)
+
+    def next_run(self, *args):
+        """越過 30 分鐘最小間隔後再跑一次手動執行。"""
+        self.clock.advance(3600)
+        self.reset_output()
+        return self.go(*args)
+
+    def feed_requests(self, url):
+        return self.http.count(url)
+
+
+class BlockedAlertTest(AlertTestBase):
+    """(1)(2)(5)(6)：403／429／挑戰頁不論策略一律立即告警；B 照常；同次不重試。"""
+
+    CASES = (("blocked_403", F.status(403), "403"),
+             ("rate_limited_429", F.status(429), "429"),
+             ("challenge_html", F.challenge(), "非 feed 回應"))
+
+    def test_blocked_alerts_immediately_under_both_policies(self):
+        for policy in ("every_failure", "consecutive_3"):
+            for outcome, action, word in self.CASES:
+                with self.subTest(policy=policy, outcome=outcome):
+                    self.setUp()
+                    self.set_policy(policy)
+                    self.http.route(FEED_A, action)
+                    self.serve_feed(FEED_B, synth_items(F.SECOND_HOST, "b", count=2),
+                                    F.SECOND_HOST)
+                    code = self.go("--scheduled")
+                    self.assertEqual(code, IMP.EXIT_AUTHOR_FAILED, self.text)
+                    self.assertEqual(self.feed_requests(FEED_A), 1, "同次不重試")
+                    self.assertEqual(self.feed_requests(FEED_B), 1)
+                    rows = self.articles()
+                    self.assertFalse([r for r in rows if r["author_key"] == KEY_A],
+                                     "被擋的作者不得寫入")
+                    self.assertEqual(len([r for r in rows if r["author_key"] == KEY_B]), 2,
+                                     "B 照常存入")
+                    alerts = self.alerts()
+                    self.assertEqual(len(alerts), 1, alerts)
+                    self.assertAlert(alerts[0], BLOCKED_TPL % (NAME_A, word))
+                    self.assertEqual(self.author_row(KEY_A)["consecutive_failures"], 1)
+                    self.assertEqual(self.polls(KEY_A)[-1]["outcome"], outcome)
+                    self.assertEqual(self.runs()[-1]["result"], "partial")
+
+    def test_blocked_alerts_again_on_every_occurrence_under_consecutive_3(self):
+        self.set_policy("consecutive_3")
+        self.http.route(FEED_A, F.status(403))
+        self.serve_feed(FEED_B, [], F.SECOND_HOST)
+        for i in range(3):
+            code = self.go() if i == 0 else self.next_run()
+            self.assertEqual(code, IMP.EXIT_AUTHOR_FAILED)
+        self.assertEqual(len(self.alerts()), 3, "403 每次都立即告警，不受連續 3 次策略影響")
+
+    def test_alert_only_run_still_sends_summary_with_space_line(self):
+        """(6) 只有告警、沒有新文章 → 仍發 1 則摘要（含空間行）。"""
+        self.http.route(FEED_A, F.status(429))
+        self.http.route(FEED_B, F.not_modified())
+        code = self.go()
+        self.assertEqual(code, IMP.EXIT_AUTHOR_FAILED)
+        self.assertEqual(self.runs()[-1]["result"], "partial")
+        summaries = [t for t in self.notifier.texts if t.startswith("📚")]
+        self.assertEqual(len(summaries), 1, self.notifier.texts)
+        self.assertIn("新增 0 篇", summaries[0])
+        self.assertTrue(any(SPACE_RE.match(line) for line in summaries[0].split("\n")))
+        self.assertLess(self.notifier.texts.index(self.alerts()[0]),
+                        self.notifier.texts.index(summaries[0]), "告警先於摘要")
+
+
+class OtherFailureAlertTest(AlertTestBase):
+    """(3)(4)：其他失敗依策略；不寫入、不覆蓋既有資料與 etag、連續次數 +1、成功即歸零。"""
+
+    AUTHORS = [dict(F.AUTHOR_A)]
+    ETAG = 'W/"zz-etag-1"'
+
+    def prime(self):
+        """第一次成功：存 2 篇、記 etag、robots 快取；之後跳過 8 天讓 robots 快取全部過期。"""
+        self.http.routes[FEED_A] = [F.ok(F.make_feed(synth_items(F.DEFAULT_HOST, "a", count=2),
+                                                     host=F.DEFAULT_HOST), etag=self.ETAG)]
+        self.assertEqual(self.go(), IMP.EXIT_OK, self.text)
+        self.assertEqual(len(self.articles()), 2)
+        self.notifier.texts[:] = []
+        self.clock.advance(8 * 24 * 3600)
+
+    def fail_with(self, kind, action):
+        if kind == "feed":
+            self.http.routes[FEED_A] = [action]
+        else:
+            self.http.routes[ROBOTS_A] = [action]
+
+    def test_each_other_failure_every_failure_policy(self):
+        for outcome, kind, action, word in OTHER_FAILURES:
+            with self.subTest(outcome=outcome):
+                self.setUp()
+                self.prime()
+                before = [dict(r) for r in self.articles()]
+                feed_before = self.feed_requests(FEED_A)
+                self.fail_with(kind, action)
+                code = self.next_run()
+                self.assertEqual(code, IMP.EXIT_AUTHOR_FAILED, self.text)
+                self.assertLessEqual(self.feed_requests(FEED_A) - feed_before, 1, "同次不重試")
+                self.assertEqual([dict(r) for r in self.articles()], before,
+                                 "既有資料不得被改動")
+                row = self.author_row(KEY_A)
+                self.assertEqual(row["etag"], self.ETAG, "etag 不得被覆蓋")
+                self.assertEqual(row["consecutive_failures"], 1)
+                self.assertEqual(self.polls(KEY_A)[-1]["outcome"], outcome)
+                alerts = self.alerts()
+                self.assertEqual(len(alerts), 1, alerts)
+                self.assertAlert(alerts[0], FAILED_TPL % (NAME_A, word, 1))
+                self.assertEqual(self.runs()[-1]["result"], "partial")
+
+    def test_every_failure_alerts_each_time_with_count(self):
+        self.prime()
+        self.fail_with("feed", F.timeout())
+        for _ in (1, 2, 3):
+            self.assertEqual(self.next_run(), IMP.EXIT_AUTHOR_FAILED)
+        self.assertEqual([a.split("\n")[0] for a in self.alerts()],
+                         [FAILED_TPL % (NAME_A, "逾時", c) for c in (1, 2, 3)])
+
+    def test_consecutive_3_alerts_only_on_third(self):
+        self.set_policy("consecutive_3")
+        self.prime()
+        self.fail_with("feed", F.status(500))
+        counts = []
+        for _ in range(4):
+            self.assertEqual(self.next_run(), IMP.EXIT_AUTHOR_FAILED)
+            counts.append(len(self.alerts()))
+        self.assertEqual(counts, [0, 0, 1, 1], "只在連續第 3 次發，第 4 次不再發")
+        self.assertAlert(self.alerts()[0], FAILED_TPL % (NAME_A, "HTTP 500", 3))
+        self.assertEqual(self.author_row(KEY_A)["consecutive_failures"], 4)
+
+    def test_success_in_between_resets_count(self):
+        self.set_policy("consecutive_3")
+        self.prime()
+        script = [F.timeout(), F.timeout(), F.not_modified(self.ETAG), F.timeout(), F.timeout()]
+        for action in script:
+            self.http.routes[FEED_A] = [action]
+            self.next_run()
+        self.assertEqual(self.alerts(), [], "304 歸零後重新計數，只到 2 不告警")
+        self.assertEqual(self.author_row(KEY_A)["consecutive_failures"], 2)
+        self.http.routes[FEED_A] = [F.timeout()]
+        self.next_run()
+        self.assertEqual(len(self.alerts()), 1)
+        self.assertAlert(self.alerts()[0], FAILED_TPL % (NAME_A, "逾時", 3))
+        self.http.routes[FEED_A] = [F.ok(F.make_feed([], host=F.DEFAULT_HOST))]
+        self.assertEqual(self.next_run(), IMP.EXIT_OK)
+        self.assertEqual(self.author_row(KEY_A)["consecutive_failures"], 0, "200 也歸零")
+
+    def test_skipped_interval_does_not_change_count(self):
+        self.prime()
+        self.fail_with("feed", F.timeout())
+        self.next_run()
+        self.reset_output()
+        self.clock.advance(60)                       # 仍在 30 分鐘間隔內
+        self.assertEqual(self.go(), IMP.EXIT_OK)
+        self.assertEqual(self.author_row(KEY_A)["consecutive_failures"], 1)
+        self.assertEqual(len(self.alerts()), 1, "間隔跳過不告警")
+
+    def test_policy_switch_applies_to_next_failure(self):
+        """(4) consecutive_3 下第 1 次不告警 → 切到 every_failure → 第 2 次立即告警（c=2）。"""
+        self.set_policy("consecutive_3")
+        self.prime()
+        self.fail_with("feed", F.network())
+        self.next_run()
+        self.assertEqual(self.alerts(), [])
+        self.set_policy("every_failure")
+        self.next_run()
+        self.assertEqual([a.split("\n")[0] for a in self.alerts()],
+                         [FAILED_TPL % (NAME_A, "網路錯誤", 2)])
+        self.set_policy("consecutive_3")
+        self.next_run()                              # c=3：新策略下也該告警
+        self.next_run()                              # c=4：consecutive_3 不再告警
+        self.assertEqual([a.split("\n")[0] for a in self.alerts()],
+                         [FAILED_TPL % (NAME_A, "網路錯誤", 2),
+                          FAILED_TPL % (NAME_A, "網路錯誤", 3)])
+
+    def test_suppressed_failure_is_still_partial_without_summary(self):
+        """consecutive_3 壓下的失敗：仍是 partial／exit 1，但沒有告警也沒有新文章 → 不發任何通知。"""
+        self.set_policy("consecutive_3")
+        self.prime()
+        self.fail_with("feed", F.timeout())
+        self.assertEqual(self.next_run(), IMP.EXIT_AUTHOR_FAILED)
+        self.assertEqual(self.runs()[-1]["result"], "partial")
+        self.assertEqual(self.notifier.texts, [])
+
+
+class ConfigAlertTest(ImportTestBase):
+    """(7) 設定檔不存在／格式錯誤 → 零請求、config_invalid 告警、exit 2。"""
+
+    def assertConfigAlert(self, word):
+        alerts = alerts_of(self.notifier)
+        self.assertEqual(len(alerts), 1, self.notifier.texts)
+        lines = alerts[0].split("\n")
+        self.assertEqual(lines[0], CONFIG_TPL % word)
+        self.assertRegex(lines[1], SPACE_RE)
+        self.assertEqual(len(lines), 2)
+
+    def test_missing_config(self):
+        code = self.go("--scheduled")
+        self.assertEqual(code, IMP.EXIT_REFUSED)
+        self.assertEqual(self.http.count(), 0)
+        self.assertConfigAlert("不存在")
+
+    def test_invalid_config(self):
+        F.write_config(self.dir, alert_policy="sometimes")
+        code = self.go("--scheduled")
+        self.assertEqual(code, IMP.EXIT_REFUSED)
+        self.assertEqual(self.http.count(), 0)
+        self.assertConfigAlert("格式錯誤")
+
+    def test_broken_json_config(self):
+        with open(os.path.join(self.dir, "substack_config.json"), "w", encoding="utf-8") as f:
+            f.write("{ not json")
+        code = self.go()
+        self.assertEqual(code, IMP.EXIT_REFUSED)
+        self.assertEqual(self.http.count(), 0)
+        self.assertConfigAlert("格式錯誤")
+
+
+class DiskAlertTest(FlowBase):
+    """(8) 文章交易中磁碟滿 → 立即中止、aborted_disk、exit 4、disk 告警、無半寫入。"""
+
+    AUTHORS = [dict(F.AUTHOR_A)]
+
+    def test_disk_full_mid_article_aborts_cleanly(self):
+        import sqlite3
+        self.serve_feed(FEED_A, synth_items(F.DEFAULT_HOST, "a", count=3, step_days=1),
+                        F.DEFAULT_HOST)
+        original = S.SubstackStore._insert_image_rows
+        calls = {"n": 0}
+
+        def flaky(store, article_id, images):
+            calls["n"] += 1
+            if calls["n"] == 2:                      # 第 2 篇：文章列已 INSERT、圖片列時磁碟滿
+                raise sqlite3.OperationalError("database or disk is full")
+            return original(store, article_id, images)
+
+        with mock.patch.object(S.SubstackStore, "_insert_image_rows", flaky):
+            code = self.go("--scheduled")
+        self.assertEqual(code, IMP.EXIT_DISK, self.text)
+        rows = self.articles()
+        self.assertEqual(len(rows), 1, "先前已提交的 1 篇保留、第 2 篇不得半寫入、第 3 篇不再處理")
+        self.assertEqual(self._read(lambda s: s.conn.execute(
+            "SELECT COUNT(*) FROM article_image WHERE article_id NOT IN "
+            "(SELECT id FROM article)").fetchone()[0]), 0)
+        self.assertEqual(self.runs()[-1]["result"], "aborted_disk")
+        alerts = alerts_of(self.notifier)
+        self.assertEqual(len(alerts), 1, self.notifier.texts)
+        lines = alerts[0].split("\n")
+        self.assertEqual(len(lines), 2)
+        self.assertRegex(lines[0], DISK_RE)
+        self.assertRegex(lines[1], SPACE_RE)
+        self.assertNotIn(F.TITLE_MARK, alerts[0])
+        self.assertFalse([t for t in self.notifier.texts if t.startswith("📰")],
+                         "中止後不發逐篇通知（維持 pending，下次補發）")
+        self.assertEqual(self.http.count(FEED_A), 1)
+
+
+class AlertHelpersTest(unittest.TestCase):
+    """should_alert 與固定文字的單元行為。"""
+
+    def test_should_alert_matrix(self):
+        for outcome in ("blocked_403", "rate_limited_429", "challenge_html"):
+            for policy in ("every_failure", "consecutive_3"):
+                for c in (1, 2, 3, 7):
+                    self.assertTrue(IMP.should_alert(outcome, policy, c))
+        for outcome, _kind, _action, _word in OTHER_FAILURES:
+            for c in (1, 2, 3, 4):
+                self.assertTrue(IMP.should_alert(outcome, "every_failure", c))
+                self.assertEqual(IMP.should_alert(outcome, "consecutive_3", c), c == 3)
+
+    def test_alert_texts_are_fixed_and_titleless(self):
+        self.assertEqual(sorted(IMP.ALERT_TEXTS), ["blocked", "config_invalid", "disk",
+                                                   "fetch_failed"])
+        for text in IMP.ALERT_TEXTS.values():
+            self.assertTrue(text.startswith("⚠️ Substack 匯入："))
+            self.assertNotIn("title", text.lower())
+
+
 if __name__ == "__main__":
     unittest.main()

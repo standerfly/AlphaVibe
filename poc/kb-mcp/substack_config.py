@@ -8,8 +8,8 @@
 * 第一步一律 `article_data_guard.resolve_data_dir()`：指向正式資料目錄要有明確旗標才允許
   （2026-08-22 資產表污染事故教訓）。
 
-目前已實作的子命令：`init`／`show`／`validate`／`add-image-host`／`remove-image-host`（FR-034）；
-`add`／`enable`／`disable`／`set-interval`／`set-alert-policy` 在後續任務加入。
+目前已實作的子命令：`init`／`show`／`validate`／`add-image-host`／`remove-image-host`（FR-034）／
+`set-alert-policy`（FR-032）；`add`／`enable`／`disable`／`set-interval` 在後續任務加入。
 
 僅標準庫、Python 3.9 相容。
 """
@@ -319,6 +319,8 @@ def build_parser():
     add_host.add_argument("host", help="小寫網域名（不含路徑／埠／IP）")
     remove_host = sub.add_parser("remove-image-host", help="移除圖片下載白名單主機")
     remove_host.add_argument("host", help="已在 image_hosts 裡的主機")
+    policy = sub.add_parser("set-alert-policy", help="切換告警策略（FR-032）")
+    policy.add_argument("policy", help="every_failure（每次失敗皆通知）或 consecutive_3（連續 3 次才通知）")
     return parser
 
 
@@ -339,7 +341,8 @@ def main(argv=None, env=None, out=None, err=None):
         err.write("拒絕執行：%s\n" % exc)
         return EXIT_REFUSED
     if not args.command:
-        err.write("請指定子命令：init／show／validate／add-image-host／remove-image-host\n")
+        err.write("請指定子命令：init／show／validate／add-image-host／remove-image-host／"
+                  "set-alert-policy\n")
         return EXIT_REFUSED
     if args.command == "init":
         return _cmd_init(data_dir, out, err)
@@ -349,6 +352,8 @@ def main(argv=None, env=None, out=None, err=None):
         return _cmd_add_image_host(data_dir, args.host, out, err)
     if args.command == "remove-image-host":
         return _cmd_remove_image_host(data_dir, args.host, out, err)
+    if args.command == "set-alert-policy":
+        return _cmd_set_alert_policy(data_dir, args.policy, out, err)
     return _cmd_validate(data_dir, out, err)
 
 
@@ -438,6 +443,22 @@ def _cmd_remove_image_host(data_dir, host, out, err):
     cfg["image_hosts"] = [h for h in hosts if h != host]
     write_config(data_dir, cfg)
     out.write("已移除圖片主機 %s（剩 %d 個）\n" % (host, len(cfg["image_hosts"])))
+    return EXIT_OK
+
+
+def _cmd_set_alert_policy(data_dir, policy, out, err):
+    """403／429／挑戰頁不受策略影響（一律立即告警）；本命令只切換「其他失敗」的告警時機。"""
+    if policy not in ALERT_POLICIES:
+        err.write("拒絕執行：告警策略只能是 %s（收到 %r）\n" % (" 或 ".join(ALERT_POLICIES), policy))
+        return EXIT_REFUSED
+    cfg = _load_for_edit(data_dir, err)
+    if cfg is None:
+        return EXIT_REFUSED
+    previous = cfg.get("alert_policy")
+    cfg["alert_policy"] = policy
+    write_config(data_dir, cfg)
+    out.write("告警策略：%s → %s（下一次執行生效；403／429／挑戰頁不論策略一律立即告警）\n"
+              % (previous, policy))
     return EXIT_OK
 
 

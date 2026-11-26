@@ -154,5 +154,207 @@ class NoLeakTest(unittest.TestCase):
         self.assertGreater(seen, 0)
 
 
+# ================================================================ T039（US4）失敗路徑不外洩
+TOKEN = F.FakeNotifier.FAKE_BOT_TOKEN
+# 故意塞進例外訊息與回應內容的毒字串：標題、slug、假 Bot token
+POISON = "%s https://%s/p/%s-x bot%s" % (F.TITLE_MARK, F.DEFAULT_HOST, F.SLUG_MARK, TOKEN)
+FAIL_FORBIDDEN = MARKS + (TOKEN,)
+
+
+class _PoisonHttp(object):
+    """包住 FakeHttp：feed 網址改丟「訊息含毒字串」的例外；其餘照 FakeHttp 腳本。"""
+
+    def __init__(self, inner, url, exc):
+        self.inner = inner
+        self.url = url
+        self.exc = exc
+
+    def __call__(self, url, headers=None, timeout=None):
+        if url == self.url:
+            self.inner.requests.append({"url": url, "headers": dict(headers or {}),
+                                        "timeout": timeout})
+            raise self.exc
+        return self.inner(url, headers=headers, timeout=timeout)
+
+
+class _RaisingNotifier(object):
+    """通知通道直接丟出含毒字串的例外（比 FakeNotifier 的錯誤清單更兇）。"""
+
+    def __init__(self):
+        self.texts = []
+        self.calls = 0
+
+    def __call__(self, text, *args, **kwargs):
+        self.calls += 1
+        self.texts.append(text)
+        raise RuntimeError("telegram 失敗：%s" % POISON)
+
+
+class FailurePathNoLeakTest(unittest.TestCase):
+    """403、挑戰頁、逾時、解析失敗、磁碟滿、設定檔錯誤、通知失敗各跑一次，四個面皆只出現代碼。"""
+
+    def setUp(self):
+        self.dir = F.temp_data_dir(self)
+        self.clock = F.FakeClock()
+        self.http = F.FakeHttp(self.clock)
+        self.notifier = F.FakeNotifier()
+        self.out, self.err = io.StringIO(), io.StringIO()
+        self.http.route("https://%s/robots.txt" % F.DEFAULT_HOST,
+                        F.ok("", content_type="text/plain"))
+        self.http.route(F.image_url(1), F.image_ok())
+
+    def config(self):
+        F.write_config(self.dir, authors=[dict(F.AUTHOR_A)])
+
+    def serve_good_feed(self):
+        self.http.route(F.AUTHOR_A["feed_url"],
+                        F.ok(F.make_feed(build_items(F.DEFAULT_HOST, "a", SAMPLES[:1]),
+                                         host=F.DEFAULT_HOST)))
+
+    def go(self, http=None, notifier=None):
+        return IMP.run(["--data-dir", self.dir, "--scheduled"],
+                       http=http if http is not None else self.http,
+                       notifier=notifier if notifier is not None else self.notifier,
+                       clock=self.clock, sleep=self.clock.sleep, env={},
+                       out=self.out, err=self.err)
+
+    def text(self):
+        return self.out.getvalue() + self.err.getvalue()
+
+    # ---- 四個面
+    def assert_four_surfaces(self, texts):
+        # 面 1：stdout／stderr
+        console = self.text()
+        for needle in FAIL_FORBIDDEN:
+            self.assertNotIn(needle, console, "stdout／stderr 出現 %s" % needle[:16])
+        R.assert_clean(console, (TOKEN,), MARKS)
+        # 面 2：通知（告警／摘要什麼標記都不得有；逐篇通知只可含標題）
+        for text in texts:
+            allowed_title = text.startswith("📰")
+            for needle in FAIL_FORBIDDEN:
+                if allowed_title and needle == F.TITLE_MARK:
+                    continue
+                self.assertNotIn(needle, text, "通知出現 %s" % needle[:16])
+            self.assertNotIn("http", text)
+            R.assert_clean(text, (TOKEN,), tuple(n for n in MARKS
+                                                 if not (allowed_title and n == F.TITLE_MARK)))
+        # 面 3：資料庫非資料通道欄位
+        db = os.path.join(self.dir, S.DB_FILENAME)
+        if os.path.exists(db):
+            store = S.SubstackStore(self.dir)
+            try:
+                tables = [r[0] for r in store.conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'")]
+                for table in tables:
+                    if table.startswith("sqlite_"):
+                        continue
+                    for row in store.conn.execute("PRAGMA table_info(%s)" % table).fetchall():
+                        name, ctype = row[1], (row[2] or "").upper()
+                        if (table, name) in DATA_CHANNELS or ctype not in ("TEXT", ""):
+                            continue
+                        for (value,) in store.conn.execute(
+                                "SELECT %s FROM %s" % (name, table)):
+                            if value is None:
+                                continue
+                            for needle in FAIL_FORBIDDEN:
+                                self.assertNotIn(needle, str(value),
+                                                 "%s.%s 出現 %s" % (table, name, needle[:16]))
+                # 資料通道也不得出現 token（token 從不是文章內容）
+                for (dump,) in store.conn.execute(
+                        "SELECT group_concat(coalesce(title,'')||coalesce(content_html,''), '') "
+                        "FROM article"):
+                    self.assertNotIn(TOKEN, str(dump or ""))
+            finally:
+                store.close()
+        # 面 4：檔名
+        for root, _dirs, files in os.walk(self.dir):
+            for name in files:
+                path = os.path.join(root, name)
+                for needle in FAIL_FORBIDDEN:
+                    self.assertNotIn(needle, path)
+
+    def alerts(self, notifier=None):
+        return [t for t in (notifier or self.notifier).texts if t.startswith("⚠️")]
+
+    # ---- 七種失敗
+    def test_403_with_poisoned_body(self):
+        self.config()
+        self.http.route(F.AUTHOR_A["feed_url"], F.status(403, body=POISON))
+        self.assertEqual(self.go(), IMP.EXIT_AUTHOR_FAILED, self.text())
+        self.assertIn("blocked_403", self.out.getvalue())
+        self.assertEqual(len(self.alerts()), 1)
+        self.assert_four_surfaces(self.notifier.texts)
+
+    def test_challenge_page_with_poisoned_body(self):
+        self.config()
+        self.http.route(F.AUTHOR_A["feed_url"],
+                        F.ok(F.CHALLENGE_HTML + POISON, content_type="text/html"))
+        self.assertEqual(self.go(), IMP.EXIT_AUTHOR_FAILED, self.text())
+        self.assertIn("challenge_html", self.out.getvalue())
+        self.assertEqual(len(self.alerts()), 1)
+        self.assert_four_surfaces(self.notifier.texts)
+
+    def test_timeout_with_poisoned_exception(self):
+        import socket
+        self.config()
+        http = _PoisonHttp(self.http, F.AUTHOR_A["feed_url"], socket.timeout(POISON))
+        self.assertEqual(self.go(http=http), IMP.EXIT_AUTHOR_FAILED, self.text())
+        self.assertIn("timeout", self.out.getvalue())
+        self.assertEqual(len(self.alerts()), 1)
+        self.assert_four_surfaces(self.notifier.texts)
+
+    def test_parse_failure_with_poisoned_body(self):
+        self.config()
+        self.http.route(F.AUTHOR_A["feed_url"],
+                        F.ok("<rss><channel><title>%s</title><item>" % POISON))
+        self.assertEqual(self.go(), IMP.EXIT_AUTHOR_FAILED, self.text())
+        self.assertIn("parse_error", self.out.getvalue())
+        self.assertEqual(len(self.alerts()), 1)
+        self.assert_four_surfaces(self.notifier.texts)
+
+    def test_disk_full_with_poisoned_exception(self):
+        import sqlite3
+        from unittest import mock
+        self.config()
+        self.serve_good_feed()
+
+        def boom(store, article_id, images):
+            raise sqlite3.OperationalError("database or disk is full: %s" % POISON)
+
+        with mock.patch.object(S.SubstackStore, "_insert_image_rows", boom):
+            self.assertEqual(self.go(), IMP.EXIT_DISK, self.text())
+        self.assertEqual(len(self.alerts()), 1)
+        self.assert_four_surfaces(self.notifier.texts)
+
+    def test_config_error_with_poisoned_file(self):
+        with open(os.path.join(self.dir, "substack_config.json"), "w", encoding="utf-8") as f:
+            f.write("{ %s" % POISON)
+        self.assertEqual(self.go(), IMP.EXIT_REFUSED, self.text())
+        self.assertEqual(self.http.count(), 0)
+        self.assertEqual(len(self.alerts()), 1)
+        self.assert_four_surfaces(self.notifier.texts)
+
+    def test_notify_failure_error_list_and_exception(self):
+        for notifier in (F.FakeNotifier(fail_all=True), _RaisingNotifier()):
+            with self.subTest(notifier=type(notifier).__name__):
+                self.setUp()
+                self.config()
+                self.serve_good_feed()
+                self.assertEqual(self.go(notifier=notifier), IMP.EXIT_OK, self.text())
+                self.assertIn("failed=", self.out.getvalue())
+                self.assertNotIn("failed=0", self.out.getvalue(), "必須真的走到通知失敗")
+                self.assertTrue(any(t.startswith("📰") for t in notifier.texts))
+                self.assert_four_surfaces(notifier.texts)
+
+    def test_notify_failure_on_alert_path(self):
+        """告警本身發送失敗（錯誤含假 token）也不得落地。"""
+        self.config()
+        self.http.route(F.AUTHOR_A["feed_url"], F.status(429, body=POISON))
+        notifier = F.FakeNotifier(fail_all=True)
+        self.assertEqual(self.go(notifier=notifier), IMP.EXIT_AUTHOR_FAILED, self.text())
+        self.assertIn("alert: failed", self.out.getvalue())
+        self.assert_four_surfaces(notifier.texts)
+
+
 if __name__ == "__main__":
     unittest.main()

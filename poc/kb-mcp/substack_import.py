@@ -63,6 +63,30 @@ COMPLETENESS_LABEL = {"F": "全文", "P": "僅預覽", "N": "非文字"}
 NON_TEXT_REMINDER = "⚠️ 此文為非文字、內文未保存，請決定是否要處理。"
 TRIGGER_LABEL = {"schedule": "排程", "catchup": "補跑", "manual": "手動", "backfill": "追補"}
 
+# 告警固定文字（contracts/notifications.md §3；比照 investanchors_import 的 ALERT_TEXTS 慣例）。
+# 佔位只填「設定檔裡的出版名稱／固定原因詞／連續次數／空間數字」，**不嵌入例外原文、回應內容、
+# 標題或網址**（FR-026、FR-032）；每則末尾另附 format_space_line()（FR-028）。
+ALERT_TEXTS = {
+    "blocked": "⚠️ Substack 匯入：{name} 被站方擋下（{reason}），本次已停止該作者、不重試，下次排程再試。",
+    "fetch_failed": "⚠️ Substack 匯入：{name} 抓取失敗（{reason}，連續 {count} 次），下次排程再試。",
+    "disk": "⚠️ Substack 匯入：寫入失敗（可能是硬碟空間不足），本次已中止，已存文章不受影響。{free}",
+    "config_invalid": ("⚠️ Substack 匯入：設定檔無法使用（{reason}），本次未發出任何請求。"
+                       "請在對話中請 Claude 檢查設定。"),
+}
+# 被擋三種：不論告警策略一律立即告警（FR-032）
+BLOCKED_REASON = {"blocked_403": "403", "rate_limited_429": "429", "challenge_html": "非 feed 回應"}
+# 其他失敗的固定原因詞。契約只列「逾時｜網路錯誤｜無法解析｜HTTP {碼}｜robots 不允許」五種；
+# 契約未列的代碼歸到語意最接近的一個（不新增詞、不嵌原文）：
+#   robots_unavailable → robots 不允許（取不到 robots、也沒有 7 天內快取＝未獲允許，保守略過）
+#   too_large          → 無法解析（超過 5MB 上限，本系統拒絕解析）
+#   redirect_refused／error（未分類例外）→ 網路錯誤
+FAILURE_REASON = {"timeout": "逾時", "network": "網路錯誤", "parse_error": "無法解析",
+                  "robots_disallow": "robots 不允許", "robots_unavailable": "robots 不允許",
+                  "too_large": "無法解析", "redirect_refused": "網路錯誤", "error": "網路錯誤"}
+POLICY_EVERY = "every_failure"
+POLICY_CONSECUTIVE = "consecutive_3"
+CONSECUTIVE_THRESHOLD = 3
+
 EXIT_OK = 0
 EXIT_AUTHOR_FAILED = 1
 EXIT_REFUSED = 2
@@ -260,6 +284,59 @@ def format_summary(trigger, counts, space_line, missed_hints=(), unnotified=0):
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------- 告警（FR-005、FR-028、FR-032）
+def should_alert(outcome, policy, consecutive):
+    """這次失敗要不要告警。
+
+    * 403／429／挑戰頁：永遠 True（不論策略）。
+    * `every_failure`：每次 True。
+    * `consecutive_3`：只在「連續第 3 次」那一次 True（tasks T035「只在連續第 3 次發」）；
+      第 4 次以後不再重複發，直到 200／304 歸零後重新計數。
+    * 不認得的策略值（設定檔驗證不該放行）一律當 `every_failure`——寧可多發也不漏發。
+    """
+    if outcome in BLOCKED_REASON:
+        return True
+    if policy == POLICY_CONSECUTIVE:
+        return int(consecutive or 0) == CONSECUTIVE_THRESHOLD
+    return True
+
+
+def failure_reason(outcome):
+    """失敗代碼 → 契約的固定原因詞（`http_<碼>` → `HTTP <碼>`）；只輸出固定字串。"""
+    if outcome in FAILURE_REASON:
+        return FAILURE_REASON[outcome]
+    if str(outcome).startswith("http_") and str(outcome)[5:].isdigit():
+        return "HTTP %s" % str(outcome)[5:]
+    return FAILURE_REASON["error"]
+
+
+def _with_space(text, data_dir):
+    return text + "\n" + substack_store.format_space_line(data_dir)
+
+
+def format_author_alert(display_name, outcome, consecutive, data_dir):
+    if outcome in BLOCKED_REASON:
+        text = ALERT_TEXTS["blocked"].format(name=display_name, reason=BLOCKED_REASON[outcome])
+    else:
+        text = ALERT_TEXTS["fetch_failed"].format(name=display_name,
+                                                  reason=failure_reason(outcome),
+                                                  count=int(consecutive or 0))
+    return _with_space(text, data_dir)
+
+
+def format_disk_alert(data_dir):
+    try:
+        free = "剩餘空間 %.1f GB。" % substack_store.space_status(data_dir)["free_gb"]
+    except Exception:                                   # noqa: BLE001
+        free = "剩餘空間無法取得。"
+    return _with_space(ALERT_TEXTS["disk"].format(free=free), data_dir)
+
+
+def format_config_alert(missing, data_dir):
+    text = ALERT_TEXTS["config_invalid"].format(reason="不存在" if missing else "格式錯誤")
+    return _with_space(text, data_dir)
+
+
 # ---------------------------------------------------------------- US1：完整流程（FR-001～FR-009）
 class _RunState(object):
     """一次執行的計數器。
@@ -290,7 +367,7 @@ class _RunState(object):
         self.budget_exhausted = False        # 整體 20 分鐘預算用完（會讓 result=aborted_budget）
         self.images_deadline_reached = False  # 只有圖片階段的 18 分鐘期限到（result 仍是 ok）
         self.missed_hints = []
-        self.alerts = 0                     # 告警在 US4（T036）接上
+        self.alerts = 0                     # 本次發出的告警則數（有告警就要發摘要，FR-025）
 
     def budget_flag(self):
         """`run.budget_exhausted`：整體預算用完**或**圖片階段期限到（data-model §1.5）。"""
@@ -354,7 +431,13 @@ def _do_run(ctx):
         if result == "ok" and state.authors_failed:
             result, code = "partial", EXIT_AUTHOR_FAILED
     except substack_store.DiskFullError:
-        ctx.store.finish_run(run_id, result="aborted_disk", **state.counters())
+        # 磁碟滿：立即中止（該篇已在自己的交易內回滾，先前提交的文章不受影響，US4-AS4）。
+        # 記 run 本身也可能因空間不足失敗，失敗就算了——不能讓它蓋掉「中止」這件事。
+        try:
+            ctx.store.finish_run(run_id, result="aborted_disk", **state.counters())
+        except substack_store.DiskFullError:
+            pass
+        _send_alert(ctx, state, format_disk_alert(ctx.data_dir))
         raise
     _print_run_counters(ctx, state)
     ctx.store.finish_run(run_id, result=result, **state.counters())        # 步驟 7
@@ -499,7 +582,8 @@ def _record_author_failure(ctx, state, key, outcome, run_id, started_mono, reque
                            http_status=None):
     """單一作者失敗：記代碼、不寫該作者的任何文章、不覆蓋既有資料，繼續下一位（FR-005）。
 
-    告警（FR-032）在 US4／T036 接上；這裡只累計狀態與輸出代碼。
+    連續失敗次數由 store 更新後重讀（同一份數字給 stdout 與告警）；是否告警依 `should_alert`
+    （被擋三種一律立即，其餘看設定檔的 `alert_policy`，每次執行重讀設定，切換在下一次失敗生效）。
     """
     at = ctx.clock.now().isoformat(timespec="seconds")
     ctx.store.record_feed_request(key, at, outcome, http_status=http_status, requested=requested,
@@ -509,9 +593,18 @@ def _record_author_failure(ctx, state, key, outcome, run_id, started_mono, reque
                            duration_ms=_ms_since(ctx, started_mono))
     state.authors_failed += 1
     row = ctx.store.get_author(key) or {}
-    ctx.say("  %s: %s%s（連續 %s 次）"
+    consecutive = int(row.get("consecutive_failures") or 0)
+    ctx.say("  %s: %s%s（連續 %d 次）"
             % (key, outcome, "" if http_status is None else " http=%s" % http_status,
-               row.get("consecutive_failures")))
+               consecutive))
+    policy = (ctx.cfg or {}).get("alert_policy", POLICY_EVERY)
+    if ctx.remaining() <= 0:
+        # 整體 20 分鐘預算已用完＝「停止一切作業」（research R2 (2)）：失敗照記、不發告警；
+        # 主流程接著以 aborted_budget 收尾並在 stderr 說明。
+        return
+    if should_alert(outcome, policy, consecutive):
+        _send_alert(ctx, state, format_author_alert(_display_name(ctx, key), outcome,
+                                                    consecutive, ctx.data_dir))
 
 
 def _store_items(ctx, state, entry, items, source):
@@ -678,6 +771,14 @@ def _send(ctx, state, text):
     return ok
 
 
+def _send_alert(ctx, state, text):
+    """告警：與逐篇通知共用節流與錯誤處理（不記錯誤原文）；只計數，失敗不重試。"""
+    ok = _send(ctx, state, text)
+    state.alerts += 1
+    ctx.say("  alert: %s" % ("sent" if ok else "failed"))
+    return ok
+
+
 def _notify_rows(ctx, state, rows):
     for row in rows:
         if row["id"] in state.notify_attempted:
@@ -798,6 +899,18 @@ def _do_reclassify_history(ctx):
 
 
 # ---------------------------------------------------------------- 進入點
+def _config_alert(action, missing, data_dir, notifier, sleep, out, err):
+    """設定檔不能用：完整流程（排程或手動）發 `config_invalid` 告警；零請求、不開庫、不取鎖。
+
+    `--backfill`／`--retry-images` 是 PO 在對話中當場下的指令，錯誤已印在 stderr，不另發 Telegram。
+    """
+    if action != "run":
+        return
+    ctx = Context(None, action, data_dir, None, None, None, notifier, None, sleep, None,
+                  out, err, 0)
+    _send_alert(ctx, _RunState(), format_config_alert(missing, data_dir))
+
+
 def run(argv=None, http=None, notifier=None, clock=None, sleep=None, env=None, out=None,
         err=None):
     out = sys.stdout if out is None else out
@@ -837,11 +950,13 @@ def run(argv=None, http=None, notifier=None, clock=None, sleep=None, env=None, o
             cfg = substack_config.load_config(data_dir)
         except substack_config.ConfigMissing as exc:
             err.write("拒絕執行：%s\n" % exc)
+            _config_alert(action, True, data_dir, notifier, sleep, out, err)
             return EXIT_REFUSED
         except substack_config.ConfigInvalid as exc:
             err.write("拒絕執行：設定檔不合格\n")
             for reason in exc.reasons:
                 err.write("  %s\n" % reason)
+            _config_alert(action, False, data_dir, notifier, sleep, out, err)
             return EXIT_REFUSED
 
     lock_handle = None

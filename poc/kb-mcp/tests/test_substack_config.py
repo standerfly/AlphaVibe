@@ -435,5 +435,73 @@ class ImageHostCliTest(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(other, C.CONFIG_FILENAME)))
 
 
+class AlertPolicyCliTest(unittest.TestCase):
+    """T037：`set-alert-policy every_failure|consecutive_3`（FR-032：PO 可隨時切換、不得寫死）。"""
+
+    def setUp(self):
+        self.dir = F.temp_data_dir(self)
+        self.path = os.path.join(self.dir, C.CONFIG_FILENAME)
+        out = io.StringIO()
+        self.assertEqual(C.main(["--data-dir", self.dir, "init"], env={}, out=out), 0,
+                         out.getvalue())
+
+    def run_cli(self, *args):
+        out = io.StringIO()
+        code = C.main(["--data-dir", self.dir] + list(args), env={}, out=out)
+        return code, out.getvalue()
+
+    def policy(self):
+        return C.load_config(self.dir)["alert_policy"]
+
+    def backups(self):
+        return sorted(glob.glob(self.path + C.BACKUP_SUFFIX + "*"))
+
+    def test_switch_to_consecutive_3_and_back(self):
+        self.assertEqual(self.policy(), "every_failure", "預設為初期策略")
+        before = read_bytes(self.path)
+        code, text = self.run_cli("set-alert-policy", "consecutive_3")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.policy(), "consecutive_3")
+        self.assertIn("consecutive_3", text)
+        self.assertEqual(len(self.backups()), 1, "寫入要有備份")
+        self.assertEqual(read_bytes(self.backups()[0]), before, "備份必須是寫入前的內容")
+        cfg = C.load_config(self.dir)
+        expected = good()
+        expected["alert_policy"] = "consecutive_3"
+        self.assertEqual(cfg, expected, "只改 alert_policy，其餘欄位不動")
+        code, text = self.run_cli("set-alert-policy", "every_failure")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.policy(), "every_failure")
+        self.assertEqual(len(self.backups()), 2)
+
+    def test_other_values_refused_without_writing(self):
+        before = read_bytes(self.path)
+        for bad in ("consecutive_2", "EVERY_FAILURE", "never", "", "every_failure "):
+            code, text = self.run_cli("set-alert-policy", bad)
+            self.assertEqual(code, 2, "%r 應該被拒絕：%s" % (bad, text))
+            self.assertEqual(read_bytes(self.path), before, "被拒絕時不得寫檔")
+        self.assertEqual(self.backups(), [], "被拒絕時不得產生備份")
+
+    def test_argument_is_required(self):
+        before = read_bytes(self.path)
+        self.assertEqual(self.run_cli("set-alert-policy")[0], 2)
+        self.assertEqual(read_bytes(self.path), before)
+
+    def test_missing_config_is_refused(self):
+        other = F.temp_data_dir(self)
+        out = io.StringIO()
+        code = C.main(["--data-dir", other, "set-alert-policy", "consecutive_3"], env={},
+                      out=out)
+        self.assertEqual(code, 2, out.getvalue())
+        self.assertFalse(os.path.exists(os.path.join(other, C.CONFIG_FILENAME)))
+
+    def test_production_data_dir_refused(self):
+        prod = article_data_guard.PRODUCTION_DATA_DIR
+        out = io.StringIO()
+        code = C.main(["--data-dir", prod, "set-alert-policy", "consecutive_3"], env={},
+                      out=out)
+        self.assertEqual(code, 2, out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
