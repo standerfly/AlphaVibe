@@ -8,8 +8,8 @@
 * 第一步一律 `article_data_guard.resolve_data_dir()`：指向正式資料目錄要有明確旗標才允許
   （2026-08-22 資產表污染事故教訓）。
 
-本包只實作 `init`／`show`／`validate`；`add`／`enable`／`disable`／`set-interval`／
-`set-alert-policy`／`add-image-host`／`remove-image-host` 在後續任務加入。
+目前已實作的子命令：`init`／`show`／`validate`／`add-image-host`／`remove-image-host`（FR-034）；
+`add`／`enable`／`disable`／`set-interval`／`set-alert-policy` 在後續任務加入。
 
 僅標準庫、Python 3.9 相容。
 """
@@ -315,6 +315,10 @@ def build_parser():
     sub.add_parser("init", help="建立初始設定檔（已存在則拒絕）")
     sub.add_parser("show", help="印出設定全文")
     sub.add_parser("validate", help="只檢查合法性")
+    add_host = sub.add_parser("add-image-host", help="新增圖片下載白名單主機（FR-034）")
+    add_host.add_argument("host", help="小寫網域名（不含路徑／埠／IP）")
+    remove_host = sub.add_parser("remove-image-host", help="移除圖片下載白名單主機")
+    remove_host.add_argument("host", help="已在 image_hosts 裡的主機")
     return parser
 
 
@@ -335,12 +339,16 @@ def main(argv=None, env=None, out=None, err=None):
         err.write("拒絕執行：%s\n" % exc)
         return EXIT_REFUSED
     if not args.command:
-        err.write("請指定子命令：init／show／validate\n")
+        err.write("請指定子命令：init／show／validate／add-image-host／remove-image-host\n")
         return EXIT_REFUSED
     if args.command == "init":
         return _cmd_init(data_dir, out, err)
     if args.command == "show":
         return _cmd_show(data_dir, out, err)
+    if args.command == "add-image-host":
+        return _cmd_add_image_host(data_dir, args.host, out, err)
+    if args.command == "remove-image-host":
+        return _cmd_remove_image_host(data_dir, args.host, out, err)
     return _cmd_validate(data_dir, out, err)
 
 
@@ -363,6 +371,73 @@ def _cmd_show(data_dir, out, err):
     except OSError as exc:
         err.write("設定檔讀取失敗：%s\n" % exc.strerror)
         return EXIT_REFUSED
+    return EXIT_OK
+
+
+def _load_for_edit(data_dir, err):
+    """修改類子命令的共用入口：讀不到或不合格就拒絕，**不建檔、不套預設值**。"""
+    try:
+        return load_config(data_dir)
+    except ConfigMissing as exc:
+        err.write("拒絕執行：%s\n" % exc)
+    except ConfigInvalid as exc:
+        err.write("拒絕執行：設定檔不合格\n")
+        for reason in exc.reasons:
+            err.write("  %s\n" % reason)
+    return None
+
+
+def _feed_hosts(cfg):
+    """各作者的 feed 主機：自動允許、不列在 image_hosts，所以也不能被移除。"""
+    from urllib.parse import urlsplit
+    hosts = set()
+    for author in cfg.get("authors") or ():
+        if isinstance(author, dict) and isinstance(author.get("feed_url"), str):
+            host = (urlsplit(author["feed_url"]).hostname or "").lower()
+            if host:
+                hosts.add(host)
+    return hosts
+
+
+def _cmd_add_image_host(data_dir, host, out, err):
+    cfg = _load_for_edit(data_dir, err)
+    if cfg is None:
+        return EXIT_REFUSED
+    if not _is_hostname(host):
+        err.write("拒絕執行：%r 必須是小寫主機名（不得含路徑／埠／IP）\n" % (host,))
+        return EXIT_REFUSED
+    hosts = list(cfg.get("image_hosts") or ())
+    if host in hosts:
+        err.write("拒絕執行：%s 已在 image_hosts 裡\n" % host)
+        return EXIT_REFUSED
+    if host in _feed_hosts(cfg):
+        err.write("拒絕執行：%s 是作者 feed 主機，已自動允許，不需要加入 image_hosts\n" % host)
+        return EXIT_REFUSED
+    if len(hosts) >= MAX_IMAGE_HOSTS:
+        err.write("拒絕執行：image_hosts 最多 %d 個（目前 %d 個）\n"
+                  % (MAX_IMAGE_HOSTS, len(hosts)))
+        return EXIT_REFUSED
+    cfg["image_hosts"] = hosts + [host]
+    write_config(data_dir, cfg)
+    out.write("已新增圖片主機 %s（共 %d 個）\n" % (host, len(cfg["image_hosts"])))
+    return EXIT_OK
+
+
+def _cmd_remove_image_host(data_dir, host, out, err):
+    cfg = _load_for_edit(data_dir, err)
+    if cfg is None:
+        return EXIT_REFUSED
+    hosts = list(cfg.get("image_hosts") or ())
+    if host not in hosts:
+        if host in _feed_hosts(cfg):
+            err.write("拒絕執行：%s 是作者 feed 主機（自動允許項），不在 image_hosts、"
+                      "無法移除；要停止抓它的圖請停用該作者\n" % host)
+        else:
+            err.write("拒絕執行：%s 不在 image_hosts 裡\n" % host)
+        return EXIT_REFUSED
+    cfg["image_hosts"] = [h for h in hosts if h != host]
+    write_config(data_dir, cfg)
+    out.write("已移除圖片主機 %s（剩 %d 個）\n" % (host, len(cfg["image_hosts"])))
     return EXIT_OK
 
 

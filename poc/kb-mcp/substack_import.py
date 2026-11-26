@@ -36,11 +36,14 @@ import notify  # noqa: E402
 import substack_config  # noqa: E402
 import substack_feed  # noqa: E402
 import substack_html  # noqa: E402
+import substack_images  # noqa: E402
 import substack_reclassify  # noqa: E402
 import substack_store  # noqa: E402
 
 LOCK_NAME = ".substack_import.lock"
 RUN_BUDGET_SEC = 1200           # 單次執行牆鐘預算 20 分鐘（research R2）
+# 圖片階段的期限＝預算減這麼多秒（18 分鐘到就中止，留 2 分鐘給通知與摘要，research R2）
+IMAGE_DEADLINE_MARGIN_SEC = 120
 TZ8 = datetime.timezone(datetime.timedelta(hours=8))
 
 WINDOW_DAYS = 14                # 首次／重新啟用只收這麼多天內的文章（FR-008）
@@ -196,6 +199,8 @@ def dispatch(ctx):
     """執行選定的動作。模組層級函式，方便測試替換。"""
     if ctx.action == "run":
         return _do_run(ctx)
+    if ctx.action == "retry_images":
+        return _do_retry_images(ctx)
     if ctx.action == "reclassify":
         return _do_reclassify(ctx)
     if ctx.action == "reclassify_history":
@@ -257,7 +262,14 @@ def format_summary(trigger, counts, space_line, missed_hints=(), unnotified=0):
 
 # ---------------------------------------------------------------- US1：完整流程（FR-001～FR-009）
 class _RunState(object):
-    """一次執行的計數器。圖片計數留給 US3（T031／T032）填，本階段恆為 0。"""
+    """一次執行的計數器。
+
+    圖片三個計數的語意（data-model §1.5、contracts/notifications.md §2）：
+    * `images_downloaded`：本次成功下載的張數（摘要的「本次下載 d 張」）
+    * `images_missing`：本次結束時仍待補的張數（`pending`＋`missing`，摘要的「缺圖待補 m 張」）
+    * `images_abandoned_now`：本次新標為放棄的張數（寫進 `run`）；
+      摘要的「放棄累計 a 張」用 `images_abandoned_total`（庫內 `abandoned` 總數）
+    """
 
     def __init__(self):
         self.authors_polled = 0
@@ -275,9 +287,14 @@ class _RunState(object):
         self.notify_articles = 0
         self.notify_summary = 0
         self.notify_attempted = set()
-        self.budget_exhausted = False
+        self.budget_exhausted = False        # 整體 20 分鐘預算用完（會讓 result=aborted_budget）
+        self.images_deadline_reached = False  # 只有圖片階段的 18 分鐘期限到（result 仍是 ok）
         self.missed_hints = []
         self.alerts = 0                     # 告警在 US4（T036）接上
+
+    def budget_flag(self):
+        """`run.budget_exhausted`：整體預算用完**或**圖片階段期限到（data-model §1.5）。"""
+        return 1 if (self.budget_exhausted or self.images_deadline_reached) else 0
 
     def counters(self):
         return {"authors_polled": self.authors_polled,
@@ -289,7 +306,7 @@ class _RunState(object):
                 "images_abandoned_now": self.images_abandoned_now,
                 "notify_sent": self.notify_sent,
                 "notify_failed": self.notify_failed,
-                "budget_exhausted": 1 if self.budget_exhausted else 0}
+                "budget_exhausted": self.budget_flag()}
 
 
 def _do_run(ctx):
@@ -323,7 +340,8 @@ def _do_run(ctx):
                 state.budget_exhausted = True
                 break
             _poll_author(ctx, state, entry, run_id, source)
-        # 步驟 5（圖片下載）在 US3／T032 接上；本階段只建立 pending 圖片列
+        if not state.budget_exhausted:
+            _download_images(ctx, state)                    # 步驟 5
         if not state.budget_exhausted and ctx.remaining() <= 0:
             state.budget_exhausted = True
         if state.budget_exhausted:
@@ -560,6 +578,88 @@ def _image_rows(images, item):
     return rows
 
 
+# ---------------------------------------------------------------- 步驟 5：圖片（FR-014～FR-016）
+def _image_deadline(ctx):
+    """圖片階段的剩餘秒數：整體剩餘預算再扣 120 秒（留給通知與摘要，research R2）。"""
+    return ctx.remaining() - IMAGE_DEADLINE_MARGIN_SEC
+
+
+def _image_fetcher(ctx, allowed_hosts):
+    return ctx.http if ctx.http is not None else substack_images.fetcher_for(allowed_hosts)
+
+
+def _images_to_fetch(ctx, state):
+    """先本次新文章的圖，再補下載其餘 `pending`／`missing`（contracts/cli.md 步驟 5）。"""
+    rows, seen = [], set()
+    for article_id in state.new_articles:
+        for row in ctx.store.list_images(article_id):
+            if (row["status"] in substack_images.DOWNLOADABLE_STATUSES
+                    and row["fail_count"] < substack_store.MAX_IMAGE_FAILS):
+                rows.append(row)
+                seen.add(row["id"])
+    for row in ctx.store.images_awaiting_download():
+        if row["id"] not in seen:
+            rows.append(row)
+    return rows
+
+
+def _apply_image_stats(ctx, state, stats):
+    """把批次結果併進計數器；缺圖待補與放棄累計一律重新由庫內狀態算，避免兩邊不一致。"""
+    state.images_downloaded += stats.get("downloaded", 0)
+    state.images_abandoned_now += stats.get("abandoned", 0)
+    if stats.get("deadline_reached"):
+        state.images_deadline_reached = True
+    counts = ctx.store.image_status_counts()
+    state.images_missing = counts["pending"] + counts["missing"]
+    state.images_abandoned_total = counts["abandoned"]
+
+
+def _download_images(ctx, state):
+    """圖片下載階段：失敗**不**改變 `run.result` 與退出碼（spec US3-AS2、已決定事項 #1）。"""
+    rows = _images_to_fetch(ctx, state)
+    stats = substack_images._empty_stats()
+    if _image_deadline(ctx) <= 0:
+        stats["deadline_reached"] = True             # 期限已過：零請求、狀態不變
+    elif rows:
+        allowed = substack_config.allowed_image_hosts(ctx.cfg)
+        stats = substack_images.download_batch(
+            ctx.store, rows, fetch=_image_fetcher(ctx, allowed), allowed_hosts=allowed,
+            deadline=lambda: _image_deadline(ctx), sleep=ctx.sleep)
+    _apply_image_stats(ctx, state, stats)
+    if stats["deadline_reached"]:
+        ctx.warn("圖片階段中止：距牆鐘預算不足 %d 秒，未下載的圖維持原狀態，下次執行補下載"
+                 % IMAGE_DEADLINE_MARGIN_SEC)
+    return stats
+
+
+def _do_retry_images(ctx):
+    """`--retry-images`：重設指定圖片的失敗次數後立即試一次（只打圖片主機，不碰 feed）。"""
+    ids, bad = _parse_ids(ctx.args.retry_images)
+    if bad:
+        ctx.warn("--retry-images 只接受整數，無法解析：%s" % "、".join(bad))
+        return EXIT_REFUSED
+    if not ids:
+        ctx.warn("--retry-images 需要至少一個 image_id")
+        return EXIT_REFUSED
+    run_id = ctx.store.start_run("retry_images")
+    state = _RunState()
+    allowed = substack_config.allowed_image_hosts(ctx.cfg)
+    report = substack_images.retry(ctx.store, ids, fetch=_image_fetcher(ctx, allowed),
+                                   allowed_hosts=allowed,
+                                   deadline=lambda: _image_deadline(ctx), sleep=ctx.sleep)
+    _apply_image_stats(ctx, state, report["stats"])
+    ctx.say("retry-images: 接受 %d 張、拒絕 %d 張"
+            % (len(report["accepted"]), len(report["rejected"])))
+    for image_id, reason in report["rejected"]:
+        ctx.warn("  image_id=%s 拒絕：%s" % (image_id, reason))
+    _print_image_counters(ctx, state)
+    code = EXIT_AUTHOR_FAILED if report["rejected"] else EXIT_OK
+    # 被拒絕的 id 比照 --reclassify 的慣例：明列、exit 1，run 記 partial（不靜默略過）
+    ctx.store.finish_run(run_id, result="ok" if code == EXIT_OK else "partial",
+                         **state.counters())
+    return code
+
+
 # ---------------------------------------------------------------- 通知（FR-025、FR-028、FR-035）
 def _send(ctx, state, text):
     """送一則通知。只看錯誤清單是否為空與數量，**不記錄錯誤原文**（含 Bot token，research R4）。"""
@@ -620,13 +720,17 @@ def _notify_summary(ctx, state, trigger):
     state.notify_summary += 1
 
 
+def _print_image_counters(ctx, state):
+    ctx.say("  images: downloaded=%d missing=%d abandoned_now=%d budget_exhausted=%d"
+            % (state.images_downloaded, state.images_missing, state.images_abandoned_now,
+               state.budget_flag()))
+
+
 def _print_run_counters(ctx, state):
     """stdout 只含代號、狀態、計數（FR-026）。"""
     if not state.new_articles:
         ctx.say("  無新文章")
-    ctx.say("  images: downloaded=%d missing=%d abandoned_now=%d budget_exhausted=%d"
-            % (state.images_downloaded, state.images_missing, state.images_abandoned_now,
-               1 if state.budget_exhausted else 0))
+    _print_image_counters(ctx, state)
     ctx.say("  notify: sent=%d failed=%d (articles=%d summary=%d)"
             % (state.notify_sent, state.notify_failed, state.notify_articles,
                state.notify_summary))

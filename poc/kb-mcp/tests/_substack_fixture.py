@@ -249,8 +249,9 @@ class FakeResponse(object):
 
 
 # ---- 腳本化回應（放進 FakeHttp.route 的動作）
-def ok(body, etag=None, content_type="application/rss+xml"):
-    return {"kind": "ok", "body": body, "etag": etag, "content_type": content_type}
+def ok(body, etag=None, content_type="application/rss+xml", headers=None):
+    return {"kind": "ok", "body": body, "etag": etag, "content_type": content_type,
+            "headers": dict(headers or {})}
 
 
 def not_modified(etag=None):
@@ -284,6 +285,29 @@ def redirect(new_url):
 
 def too_large(size=6 * 1024 * 1024):
     return {"kind": "too_large", "size": int(size)}
+
+
+# ---- 圖片下載用（T029／US3）：body 一律是 bytes，Content-Type 預設 image/jpeg
+JPEG_HEAD = b"\xff\xd8\xff\xe0"
+
+
+def image_bytes(size=48):
+    """產生可辨識、長度固定的合成圖片位元組（內容不是真的 JPEG，只要位元組可比對）。"""
+    body = JPEG_HEAD + b"substack-synthetic-image-" * 8
+    if size <= len(body):
+        return body[:size]
+    return body + b"\x00" * (size - len(body))
+
+
+def image_ok(data=None, content_type="image/jpeg", headers=None):
+    """圖片下載的成功回應；`headers` 可加 Content-Length 之類的標頭。"""
+    return ok(image_bytes() if data is None else data, content_type=content_type,
+              headers=headers)
+
+
+def image_url(idx, host=IMAGE_HOST):
+    """與 `img_tag()` 一致的圖片網址（含 IMG_URL_MARK，供外洩掃描使用）。"""
+    return "https://%s/%s-%d.jpg" % (host, IMG_URL_MARK, idx)
 
 
 class FakeHttp(object):
@@ -330,6 +354,7 @@ class FakeHttp(object):
             h = {"Content-Type": action["content_type"]}
             if action.get("etag"):
                 h["ETag"] = action["etag"]
+            h.update(action.get("headers") or {})
             return FakeResponse(200, h, action["body"], url)
         if kind == "not_modified":
             h = {}

@@ -343,5 +343,97 @@ class CliTest(unittest.TestCase):
         self.assertEqual(resolved, prod)
 
 
+# ================================================================ T033：圖片主機白名單（FR-034）
+class ImageHostCliTest(unittest.TestCase):
+    """`add-image-host`／`remove-image-host`：PO 在對話中增修白名單，不編輯程式。"""
+
+    def setUp(self):
+        self.dir = F.temp_data_dir(self)
+        self.path = os.path.join(self.dir, C.CONFIG_FILENAME)
+        out = io.StringIO()
+        self.assertEqual(C.main(["--data-dir", self.dir, "init"], env={}, out=out), 0,
+                         out.getvalue())
+
+    def run_cli(self, *args):
+        out = io.StringIO()
+        code = C.main(["--data-dir", self.dir] + list(args), env={}, out=out)
+        return code, out.getvalue()
+
+    def hosts(self):
+        return C.load_config(self.dir)["image_hosts"]
+
+    def backups(self):
+        return sorted(glob.glob(self.path + C.BACKUP_SUFFIX + "*"))
+
+    def test_add_lowercase_domain_is_accepted_and_backed_up(self):
+        before = read_bytes(self.path)
+        code, text = self.run_cli("add-image-host", "images.example.com")
+        self.assertEqual(code, 0, text)
+        self.assertIn("images.example.com", self.hosts())
+        self.assertEqual(len(self.backups()), 1, "每次寫入都要有備份")
+        self.assertEqual(read_bytes(self.backups()[0]), before, "備份必須是寫入前的內容")
+
+    def test_add_rejects_bad_hosts_without_writing(self):
+        before = read_bytes(self.path)
+        for bad in ("Images.Example.com", "images.example.com/path", "images.example.com:443",
+                    "203.0.113.7", "localhost", "https://images.example.com", "",
+                    "images example.com"):
+            code, text = self.run_cli("add-image-host", bad)
+            self.assertEqual(code, 2, "%r 應該被拒絕：%s" % (bad, text))
+            self.assertEqual(read_bytes(self.path), before, "被拒絕時不得寫檔")
+        self.assertEqual(self.backups(), [], "被拒絕時不得產生備份")
+
+    def test_add_duplicate_is_refused(self):
+        existing = self.hosts()[0]
+        code, text = self.run_cli("add-image-host", existing)
+        self.assertEqual(code, 2, text)
+        self.assertEqual(self.hosts().count(existing), 1)
+
+    def test_add_beyond_twenty_is_refused(self):
+        for i in range(C.MAX_IMAGE_HOSTS - len(self.hosts())):
+            code, text = self.run_cli("add-image-host", "h%d.example.com" % i)
+            self.assertEqual(code, 0, text)
+        self.assertEqual(len(self.hosts()), C.MAX_IMAGE_HOSTS)
+        code, text = self.run_cli("add-image-host", "overflow.example.com")
+        self.assertEqual(code, 2, text)
+        self.assertEqual(len(self.hosts()), C.MAX_IMAGE_HOSTS)
+        self.assertNotIn("overflow.example.com", self.hosts())
+
+    def test_remove_existing_host(self):
+        target = self.hosts()[0]
+        code, text = self.run_cli("remove-image-host", target)
+        self.assertEqual(code, 0, text)
+        self.assertNotIn(target, self.hosts())
+        self.assertEqual(len(self.backups()), 1)
+
+    def test_remove_unknown_host_is_refused(self):
+        before = read_bytes(self.path)
+        code, text = self.run_cli("remove-image-host", "nope.example.com")
+        self.assertEqual(code, 2, text)
+        self.assertEqual(read_bytes(self.path), before)
+
+    def test_author_feed_host_cannot_be_removed(self):
+        """作者 feed 主機是自動允許項、不在 image_hosts，不能被移除（contracts/cli.md §2）。"""
+        feed_host = "unclestocknotes.substack.com"
+        self.assertIn(feed_host, C.allowed_image_hosts(C.load_config(self.dir)))
+        self.assertNotIn(feed_host, self.hosts())
+        before = read_bytes(self.path)
+        code, text = self.run_cli("remove-image-host", feed_host)
+        self.assertEqual(code, 2, text)
+        self.assertIn("feed", text)
+        self.assertEqual(read_bytes(self.path), before)
+
+    def test_host_argument_is_required(self):
+        self.assertEqual(self.run_cli("add-image-host")[0], 2)
+        self.assertEqual(self.run_cli("remove-image-host")[0], 2)
+
+    def test_missing_config_is_refused(self):
+        other = F.temp_data_dir(self)
+        out = io.StringIO()
+        code = C.main(["--data-dir", other, "add-image-host", "a.example.com"], env={}, out=out)
+        self.assertEqual(code, 2, out.getvalue())
+        self.assertFalse(os.path.exists(os.path.join(other, C.CONFIG_FILENAME)))
+
+
 if __name__ == "__main__":
     unittest.main()

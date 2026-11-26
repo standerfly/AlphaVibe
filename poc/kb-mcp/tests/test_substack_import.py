@@ -229,6 +229,10 @@ class FlowBase(ImportTestBase):
         self.cfg = F.write_config(self.dir, **overrides)
         self.http.route(ROBOTS_A, F.ok("", content_type="text/plain"))
         self.http.route(ROBOTS_B, F.ok("", content_type="text/plain"))
+        # 夾具樣本的圖片網址（`img_tag()` 的 1～3 號）預設可下載；要讓某張失敗的測試
+        # 自己覆寫 self.http.routes[F.image_url(n)]（US3／T031 起圖片階段會真的下載）
+        for idx in (1, 2, 3):
+            self.http.route(F.image_url(idx), F.image_ok())
 
     def reset_output(self):
         self.out, self.err = io.StringIO(), io.StringIO()
@@ -394,7 +398,11 @@ class MainFlowTest(FlowBase):
                 self.assertNotIn("conflict", col.lower(), "%s 不得有衝突計數欄位" % table)
 
     def test_article_fields_and_image_rows(self):
-        """(6) source／completeness／classify_reason／content_html 原樣／圖片列 pending 同交易。"""
+        """(6) source／completeness／classify_reason／content_html 原樣／圖片列與文章同交易。
+
+        T031 起圖片階段會接著把 pending 的圖下載完（本測試的圖在 FlowBase 已可下載），
+        所以狀態斷言是 `downloaded`；「圖片列與文章在同一個交易」由 T005 的回滾測試證明。
+        """
         items = synth_items(F.DEFAULT_HOST, "a", count=1)
         self.serve_both(items, [])
         self.assertEqual(self.go("--scheduled"), IMP.EXIT_OK, self.text)
@@ -407,10 +415,12 @@ class MainFlowTest(FlowBase):
         self.assertEqual((row["completeness"], row["classify_reason"]), expect)
         self.assertEqual(row["author_key"], KEY_A)
         images = self.images_of(row["id"])
-        self.assertEqual([i["status"] for i in images], ["pending"])
+        self.assertEqual([i["status"] for i in images], ["downloaded"])
         self.assertEqual([i["seq"] for i in images], [1])
         self.assertEqual(images[0]["caption"], "圖說CAP1")
         self.assertEqual(images[0]["fail_count"], 0)
+        self.assertEqual(images[0]["file_path"],
+                         os.path.join("substack_images", str(row["id"]), "1.jpg"))
 
     def test_manual_run_marks_source_manual(self):
         """(6) 不帶 --scheduled → source='manual'、run.trigger='manual'。"""
@@ -619,7 +629,8 @@ class NotifyTest(FlowBase):
         lines = self.summaries()[0].split("\n")
         self.assertEqual(lines[0],
                          "📚 Substack 匯入（排程）：新增 3 篇（全文 1／僅預覽 1／非文字 1）")
-        self.assertEqual(lines[1], "圖片：本次下載 0 張、缺圖待補 0 張、放棄累計 0 張")
+        # 三篇裡只有 full_no_tail 那篇有一張圖，且 FlowBase 已讓它可下載（T031 起驗實值）
+        self.assertEqual(lines[1], "圖片：本次下載 1 張、缺圖待補 0 張、放棄累計 0 張")
         self.assertRegex(lines[2], SPACE_RE)
         self.assertEqual(len(lines), 3, "沒有漏文提示、沒有未通知成功時只有三行")
 
@@ -674,8 +685,10 @@ class NotifyTest(FlowBase):
         self.go("--reclassify", "--article-ids", str(n_row["id"]))    # 重判不發通知
         joined = "\n".join(self.notifier.texts)
         self.assertEqual(joined.count(IMP.NON_TEXT_REMINDER), 1, "提醒累計只有一次")
-        self.assertTrue(set(self.urls()) <= SITE_URLS,
-                        "N 類匯入全程只打 robots／feed：%s" % sorted(set(self.urls()) - SITE_URLS))
+        allowed = SITE_URLS | {F.image_url(i) for i in (1, 2, 3)}
+        self.assertTrue(set(self.urls()) <= allowed,
+                        "N 類匯入全程只打 robots／feed／白名單圖片：%s"
+                        % sorted(set(self.urls()) - allowed))
 
     def test_non_text_reminder_resent_once_after_failure(self):
         """(7) 通知失敗補發重送同一則（含提醒），成功後累計 1 次。"""
@@ -884,6 +897,270 @@ class BudgetTest(FlowBase):
         self.assertEqual(by_url[FEED_A][0], 30)
         self.assertEqual(by_url[ROBOTS_B][0], 15, "1180 秒耗掉＋作者間隔 5 秒 → 只剩 15 秒")
         self.assertEqual(by_url[FEED_B][0], 15)
+
+
+# ================================================================ T031 US3 圖片階段
+class SlowHttp(object):
+    """包住 FakeHttp：feed 回應之後把注入的時鐘往前推，用來逼出「圖片階段期限已過」。
+
+    不自己記錄請求（仍由內層 FakeHttp 記錄），所以 FlowBase 的 urls()／count() 照常可用。
+    """
+
+    def __init__(self, inner, clock, extra_seconds, match="/feed"):
+        self.inner = inner
+        self.clock = clock
+        self.extra_seconds = float(extra_seconds)
+        self.match = match
+
+    def __call__(self, url, headers=None, timeout=None):
+        resp = self.inner(url, headers=headers, timeout=timeout)
+        if self.match in url:
+            self.clock.advance(self.extra_seconds)
+        return resp
+
+
+IMAGE_DELETE_RE = re.compile(r"os\.remove\(|os\.unlink\(|\.unlink\(|shutil\.rmtree|os\.rmdir")
+
+
+class ImageFlowTest(FlowBase):
+    """US3-AS1～AS3、FR-015／FR-016：圖片下載接進主流程後的整合行為。"""
+
+    AUTHORS = [dict(F.AUTHOR_A)]
+
+    def multi(self, tag="m", published=None, sample="multi_image"):
+        published = published or datetime.datetime(2026, 11, 20, 9, 0, tzinfo=F.TZ8)
+        slug = "%s-%s" % (F.SLUG_MARK, tag)
+        link = "https://%s/p/%s" % (F.DEFAULT_HOST, slug)
+        return F.feed_item(host=F.DEFAULT_HOST, slug=slug, published=published,
+                           title="%s 標題-%s" % (F.TITLE_MARK, tag),
+                           content_html=F.article_samples(link)[sample])
+
+    def serve_items(self, items):
+        self.http.routes[FEED_A] = [F.ok(F.make_feed(items, host=F.DEFAULT_HOST))]
+
+    def fail_image(self, idx, *actions):
+        self.http.routes[F.image_url(idx)] = list(actions)
+
+    def next_scheduled_run(self):
+        """下一個排程日再跑一次（同一排程日重跑會是 already_done、零網路）。"""
+        self.clock.advance(24 * 3600)
+        self.reset_output()
+        return self.go("--scheduled")
+
+    def all_images(self):
+        rows = []
+        for article in self.articles():
+            rows.extend(self.images_of(article["id"]))
+        return rows
+
+    def image_files(self):
+        base = os.path.join(self.dir, "substack_images")
+        out = []
+        for root, _dirs, names in os.walk(base):
+            out.extend(os.path.join(root, n) for n in names)
+        return sorted(out)
+
+    def image_bytes_total(self):
+        return sum(os.path.getsize(p) for p in self.image_files())
+
+    def summaries(self):
+        return [t for t in self.notifier.texts if t.startswith("📚")]
+
+    # ---- (a) 一張失敗不影響文章與其他圖，且執行不算失敗
+    def test_one_failed_image_keeps_article_and_run_ok(self):
+        self.fail_image(2, F.status(500))
+        self.serve_items([self.multi()])
+        code = self.go("--scheduled")
+        self.assertEqual(code, IMP.EXIT_OK, self.text)
+        self.assertEqual(len(self.articles()), 1, "圖片失敗不影響文章存檔（FR-015）")
+        rows = self.all_images()
+        self.assertEqual([r["status"] for r in rows],
+                         ["downloaded", "missing", "downloaded"])
+        self.assertEqual(rows[1]["fail_count"], 1)
+        self.assertEqual(rows[1]["last_error_code"], "http_500")
+        self.assertIn("images: downloaded=2 missing=1 abandoned_now=0", self.text)
+        run = self.runs()[-1]
+        self.assertEqual(run["result"], "ok", "圖片失敗不改變 run.result（spec US3-AS2）")
+        self.assertEqual((run["images_downloaded"], run["images_missing"],
+                          run["images_abandoned_now"]), (2, 1, 0))
+        summary = self.summaries()[0]
+        self.assertIn("圖片：本次下載 2 張、缺圖待補 1 張、放棄累計 0 張", summary)
+        self.assertNotIn(F.IMG_URL_MARK, self.text, "stdout 不得出現圖片網址（FR-026）")
+
+    # ---- (b) 下一次執行補下載缺圖
+    def test_next_run_backfills_missing_image(self):
+        self.fail_image(2, F.status(500), F.image_ok())
+        self.serve_items([self.multi()])
+        self.assertEqual(self.go("--scheduled"), IMP.EXIT_OK, self.text)
+        self.assertEqual([r["status"] for r in self.all_images()],
+                         ["downloaded", "missing", "downloaded"])
+        self.assertEqual(self.next_scheduled_run(), IMP.EXIT_OK, self.text)
+        rows = self.all_images()
+        self.assertEqual([r["status"] for r in rows],
+                         ["downloaded", "downloaded", "downloaded"])
+        self.assertEqual(rows[1]["fail_count"], 0)
+        self.assertTrue(os.path.isfile(os.path.join(self.dir, rows[1]["file_path"])))
+        run = self.runs()[-1]
+        self.assertEqual((run["images_downloaded"], run["images_missing"]), (1, 0))
+
+    # ---- (c)(d) 連續失敗 3 次 → abandoned、之後零請求、摘要回報放棄張數
+    def test_three_failures_abandon_then_no_more_requests(self):
+        self.fail_image(2, F.status(500))
+        self.serve_items([self.multi()])
+        self.assertEqual(self.go("--scheduled"), IMP.EXIT_OK, self.text)
+        self.assertEqual(self.next_scheduled_run(), IMP.EXIT_OK, self.text)
+        self.assertEqual(self.all_images()[1]["fail_count"], 2)
+        self.assertEqual(self.all_images()[1]["status"], "missing")
+
+        # 第三次：同時帶一篇新文章，確認摘要會報「放棄累計」
+        self.serve_items([self.multi(), self.multi(
+            tag="p2", published=datetime.datetime(2026, 11, 19, 9, 0, tzinfo=F.TZ8),
+            sample="preview_short")])
+        self.notifier.texts = []
+        self.assertEqual(self.next_scheduled_run(), IMP.EXIT_OK, self.text)
+        row = self.all_images()[1]
+        self.assertEqual((row["status"], row["fail_count"]), ("abandoned", 3))
+        run = self.runs()[-1]
+        self.assertEqual((run["images_downloaded"], run["images_missing"],
+                          run["images_abandoned_now"]), (0, 0, 1))
+        self.assertIn("圖片：本次下載 0 張、缺圖待補 0 張、放棄累計 1 張", self.summaries()[0])
+        self.assertIn("abandoned_now=1", self.text)
+
+        # 第四次：放棄的圖不再自動重試（零請求）
+        before = self.http.count(F.image_url(2))
+        self.assertEqual(self.next_scheduled_run(), IMP.EXIT_OK, self.text)
+        self.assertEqual(self.http.count(F.image_url(2)), before,
+                         "abandoned 之後排程零請求（SC-008）")
+        self.assertEqual(self.all_images()[1]["fail_count"], 3)
+
+    # ---- (e) PO 可用 --retry-images 要求重新嘗試
+    def test_retry_images_downloads_and_only_touches_image_hosts(self):
+        self.fail_image(2, F.status(500))
+        self.serve_items([self.multi()])
+        self.assertEqual(self.go("--scheduled"), IMP.EXIT_OK, self.text)
+        target = self.all_images()[1]
+        self.fail_image(2, F.image_ok())
+        self.reset_output()
+        feed_before = self.http.count(FEED_A)
+        self.notifier.texts = []
+        code = self.go("--retry-images", str(target["id"]))
+        self.assertEqual(code, IMP.EXIT_OK, self.text)
+        self.assertEqual(self.all_images()[1]["status"], "downloaded")
+        self.assertEqual(self.http.count(FEED_A), feed_before,
+                         "--retry-images 不打 feed（contracts/cli.md）")
+        self.assertEqual(self.http.count(ROBOTS_A), 1)
+        self.assertEqual(self.runs()[-1]["trigger"], "retry_images")
+        self.assertEqual(self.runs()[-1]["images_downloaded"], 1)
+        self.assertEqual(self.notifier.texts, [], "--retry-images 不發通知")
+
+    def test_retry_images_refuses_downloaded_and_unknown_ids(self):
+        self.serve_items([self.multi()])
+        self.assertEqual(self.go("--scheduled"), IMP.EXIT_OK, self.text)
+        done = self.all_images()[0]
+        self.reset_output()
+        code = self.go("--retry-images", "%d,9999" % done["id"])
+        self.assertEqual(code, IMP.EXIT_AUTHOR_FAILED, self.text)
+        self.assertIn("status_downloaded", self.text)
+        self.assertIn("not_found", self.text)
+        self.assertEqual(self.all_images()[0]["status"], "downloaded")
+
+    def test_retry_images_rejects_non_integer_ids(self):
+        self.serve_items([self.multi()])
+        self.go("--scheduled")
+        self.reset_output()
+        self.assertEqual(self.go("--retry-images", "abc"), IMP.EXIT_REFUSED, self.text)
+
+    def test_retry_images_takes_the_lock(self):
+        self.serve_items([self.multi()])
+        self.go("--scheduled")
+        handle = open(os.path.join(self.dir, IMP.LOCK_NAME), "w")
+        self.addCleanup(handle.close)
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.reset_output()
+        self.assertEqual(self.go("--retry-images", "1"), IMP.EXIT_BUSY, self.text)
+        self.assertIn("忙碌", self.text)
+
+    # ---- 圖片階段期限＝預算減 120 秒
+    def test_image_stage_deadline_is_budget_minus_120(self):
+        self.assertEqual(IMP.IMAGE_DEADLINE_MARGIN_SEC, 120)
+        self.serve_items([self.multi()])
+        slow = SlowHttp(self.http, self.clock, IMP.RUN_BUDGET_SEC - 100)
+        code = self.go("--scheduled", http=slow)
+        self.assertEqual(code, IMP.EXIT_OK, self.text)
+        self.assertEqual(self.http.count(F.image_url(1)), 0,
+                         "剩餘 <120 秒 → 圖片階段直接中止（research R2）")
+        rows = self.all_images()
+        self.assertEqual([r["status"] for r in rows], ["pending", "pending", "pending"])
+        self.assertEqual([r["fail_count"] for r in rows], [0, 0, 0], "期限中止不計失敗")
+        self.assertTrue([t for t in self.notifier.texts if t.startswith("📰")],
+                        "期限中止後仍要發逐篇通知")
+        self.assertIn("圖片：本次下載 0 張、缺圖待補 3 張、放棄累計 0 張", self.summaries()[0])
+        run = self.runs()[-1]
+        self.assertEqual(run["result"], "ok")
+        self.assertEqual((run["images_downloaded"], run["images_missing"]), (0, 3))
+        self.assertEqual(run["budget_exhausted"], 1, "圖片階段期限到也算預算用完")
+
+    def test_image_stage_runs_when_budget_is_enough(self):
+        self.serve_items([self.multi()])
+        slow = SlowHttp(self.http, self.clock, 60)
+        self.assertEqual(self.go("--scheduled", http=slow), IMP.EXIT_OK, self.text)
+        self.assertEqual([r["status"] for r in self.all_images()],
+                         ["downloaded"] * 3)
+        self.assertEqual(self.runs()[-1]["budget_exhausted"], 0)
+
+    # ---- 計數與摘要一致
+    def test_counters_match_summary_line(self):
+        self.fail_image(2, F.status(500))
+        self.serve_items([self.multi()])
+        self.assertEqual(self.go("--scheduled"), IMP.EXIT_OK, self.text)
+        run = self.runs()[-1]
+        line = [l for l in self.summaries()[0].split("\n") if l.startswith("圖片：")][0]
+        store = S.SubstackStore(self.dir)
+        try:
+            counts = store.image_status_counts()
+        finally:
+            store.close()
+        self.assertEqual(line, "圖片：本次下載 %d 張、缺圖待補 %d 張、放棄累計 %d 張"
+                         % (run["images_downloaded"], run["images_missing"],
+                            counts["abandoned"]))
+        self.assertEqual(run["images_missing"], counts["pending"] + counts["missing"])
+
+    # ---- FR-016：只增不減、不刪圖、沒有保留期限／占用上限
+    def test_image_files_only_grow_across_runs(self):
+        self.serve_items([self.multi()])
+        self.assertEqual(self.go("--scheduled"), IMP.EXIT_OK, self.text)
+        first_files, first_bytes = self.image_files(), self.image_bytes_total()
+        self.assertTrue(first_files)
+        self.serve_items([self.multi(),
+                          self.multi(tag="second",
+                                     published=datetime.datetime(2026, 11, 19, 9, 0,
+                                                                 tzinfo=F.TZ8))])
+        self.assertEqual(self.next_scheduled_run(), IMP.EXIT_OK, self.text)
+        self.assertTrue(set(first_files) <= set(self.image_files()),
+                        "既有圖檔不得被刪除或改名（FR-016）")
+        self.assertGreaterEqual(self.image_bytes_total(), first_bytes)
+
+    def test_no_image_deletion_or_retention_code(self):
+        """FR-016 靜態：處理圖片的模組不得有刪除／清理已下載圖檔的程式路徑。
+
+        掃描範圍＝`substack_images.py` 與 `substack_import.py`（操作 substack_images/ 的部分）。
+        **白名單例外**：`substack_config.py` 的設定檔備份只保留最新 10 份，刪的是
+        `substack_config.json.bak-*`，與圖片無關，依 T031 明定不列入掃描。
+        """
+        for name in ("substack_images.py", "substack_import.py"):
+            path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                name)
+            with open(path, encoding="utf-8") as f:
+                lines = f.read().splitlines()
+            for idx, line in enumerate(lines):
+                if not IMAGE_DELETE_RE.search(line):
+                    continue
+                window = "\n".join(lines[max(0, idx - 5):idx + 1]).lower()
+                self.assertIn("part", window,
+                              "%s:%d 只允許刪除 .part 暫存檔" % (name, idx + 1))
+            text = "\n".join(lines)
+            for word in ("retention", "max_total", "older_than", "prune_images"):
+                self.assertNotIn(word, text, "%s 不得有保留期限／占用上限處理" % name)
 
 
 if __name__ == "__main__":
