@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.alphavibe.substackimport</string>
+    <!-- Substack 文章抓取與儲存（specs/011-substack-fetch-store，第 1 包）。正式環境跑獨立 worktree
+         AlphaVibe-prod（見 ops/deploy.sh）。只打公開 RSS／公開圖片網址，零模型呼叫、零鑰匙圈（FR-019）。
+         22:00 是每日主排程；01:00 是補跑——配合 011「忙碌不寫庫、補跑判斷」機制（research R2）：
+         22:00 若已成功執行過當天排程，01:00 的這次會判定 already_done 直接跳過；22:00 若因鎖定／逾時
+         而沒跑成，01:00 才補跑一次。
+         安裝此 plist 需要 PO 當下同意（`launchctl bootstrap`），本次（T060）只建立檔案，不執行安裝。
+         之後若要修改這個 plist：先 `launchctl bootout`，確認 `launchctl print` 查不到舊行程（代表真的結束）
+         後才能 `bootstrap`——CLAUDE.md 2026-10-29 教訓：bootout 後立刻 bootstrap 可能撞到還沒關完的舊行程，
+         導致 "Bootstrap failed: 5"、服務停擺。
+         刻意不加 RunAtLoad／KeepAlive：避免安裝當下或開機時立即對 Substack 發出真實請求。 -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/stander/My_project/AlphaVibe-prod/poc/kb-mcp/substack_import.py</string>
+        <string>--data-dir</string>
+        <string>/Users/stander/My_project/AlphaVibe-prod/poc/data</string>
+        <string>--scheduled</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/stander/My_project/AlphaVibe-prod</string>
+    <!-- AlphaVibe-prod/poc/data 是指向正式資料目錄的 symlink，資料目錄防呆以 realpath 判斷，所以必須明確帶
+         ALPHAVIBE_ALLOW_PRODUCTION_WRITE=1。本排程零模型呼叫、零子行程，PATH 維持最小必要集，
+         不需要 claude／node 等額外執行檔所在路徑。 -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>ALPHAVIBE_ALLOW_PRODUCTION_WRITE</key>
+        <string>1</string>
+    </dict>
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Hour</key>
+            <integer>22</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>1</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
+    <key>StandardOutPath</key>
+    <string>/Users/stander/Library/Logs/alphavibe-substack.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/stander/Library/Logs/alphavibe-substack.err.log</string>
+</dict>
+</plist>

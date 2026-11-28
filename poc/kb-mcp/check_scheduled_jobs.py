@@ -55,6 +55,15 @@ INVESTANCHORS_STALE_DAYS = 3
 PIPELINE_STALE_DAYS = 3
 # 連續幾次因訂閱使用量上限而中止就警告（單次撞限是正常的，下次排程會續做）
 PIPELINE_LIMIT_ABORT_WARN_RUNS = 3
+# 011：token 排程間隔檢查（FR-030、research R3）。會消耗 AI agent token 的排程登記表：
+# (launchd Label, 耗時來源代碼)。新增 token 排程時須加進來並指定耗時來源，否則只會回報「無法判斷」。
+DEFAULT_AGENTS_DIR = os.path.expanduser("~/Library/LaunchAgents")
+TOKEN_JOBS = (
+    ("com.alphavibe.transcriptionpipeline", "pipeline_run"),
+)
+# 預估耗時＝最近幾筆已完成執行的最大耗時（保守）；間隔須 ≥ 預估耗時＋緩衝分鐘
+TOKEN_DURATION_RUNS = 10
+TOKEN_GAP_BUFFER_MINUTES = 30
 
 
 def _now():
@@ -447,6 +456,182 @@ def check_transcription_pipeline(data_dir):
     return findings + [("ok", "transcription_pipeline", summary)]
 
 
+def check_substack_import(data_dir):
+    """Substack 匯入（specs/011）：唯讀（mode=ro）檢視 substack.db；內容見 substack_health.py 與
+    contracts/health-output.md §1。庫不存在＝尚未建立（ok，不建檔）。"""
+    import substack_health  # 延後 import：未上線時不需要
+    import substack_store
+    try:
+        store = substack_store.SubstackStore.open_readonly(data_dir)
+    except FileNotFoundError:
+        return [("ok", "substack_import", "尚未建立（找不到 substack.db）")]
+    try:
+        try:
+            return substack_health.import_findings(
+                store, data_dir, now=_now().astimezone(substack_store.TZ8))
+        finally:
+            store.close()
+    except sqlite3.OperationalError:
+        return [("ok", "substack_import", "尚未上線（沒有匯入資料表）")]
+
+
+def _file_age_hours(path):
+    return _hours_since(datetime.datetime.fromtimestamp(os.path.getmtime(path)))
+
+
+def check_substack_backup(data_dir, backup_dir=DEFAULT_BACKUP_DIR):
+    """substack.db 備份與 substack_images 鏡像有沒有照常產生（011；contracts/health-output.md §2）。
+
+    比照 check_articles_backup；鏡像位置＝backup_dir 的上一層 /mirror/substack_images/（與
+    backup_databases.py 的 <dest>/mirror/ 一致），以 .last_sync 的 mtime 判斷。資料目錄沒有
+    substack_images/（尚無任何圖）時備份腳本不會鏡像，因此不要求 .last_sync。唯讀、不建檔。"""
+    data_dir = os.path.abspath(data_dir)
+    if not os.path.exists(os.path.join(data_dir, "substack.db")):
+        return [("ok", "substack_backup", "尚未建立，略過")]
+    findings = []
+    files = glob.glob(os.path.join(backup_dir, "substack-*.db.gz"))
+    db_text = None
+    if not files:
+        findings.append(("warning", "substack_backup",
+                         "substack.db 已存在但找不到任何 substack 備份：%s" % backup_dir))
+    else:
+        newest = max(files, key=os.path.getmtime)
+        hours = _file_age_hours(newest)
+        if hours > BACKUP_STALE_HOURS:
+            findings.append(("warning", "substack_backup",
+                             "substack 最新備份是 %.0f 小時前（%s）" % (hours, os.path.basename(newest))))
+        else:
+            db_text = "資料庫 %.0f 小時前，共 %d 份" % (hours, len(files))
+    mirror_text = "圖片鏡像：尚無圖片目錄，略過"
+    if os.path.isdir(os.path.join(data_dir, "substack_images")):
+        mirror = os.path.join(os.path.dirname(os.path.normpath(backup_dir)), "mirror", "substack_images")
+        marker = os.path.join(mirror, ".last_sync")
+        if not os.path.isfile(marker):
+            findings.append(("warning", "substack_backup",
+                             "substack_images 鏡像尚未同步過（找不到 %s）" % marker))
+        else:
+            hours = _file_age_hours(marker)
+            if hours > BACKUP_STALE_HOURS:
+                findings.append(("warning", "substack_backup",
+                                 "substack_images 鏡像最後同步 %.0f 小時前" % hours))
+            else:
+                count = sum(len([f for f in fs if f != ".last_sync"]) for _r, _d, fs in os.walk(mirror))
+                mirror_text = "圖片鏡像 %.0f 小時前，%d 個檔案" % (hours, count)
+    if findings:
+        return findings
+    return [("ok", "substack_backup", "正常（%s；%s）" % (db_text, mirror_text))]
+
+
+def _pipeline_run_durations(data_dir):
+    """010 轉寫流水線最近 TOKEN_DURATION_RUNS 筆已完成執行的耗時（分鐘，無條件進位）；以唯讀開庫。"""
+    import math
+    import article_store
+    try:
+        store = article_store.ArticleStore.open_readonly(data_dir)
+    except FileNotFoundError:
+        return []
+    try:
+        try:
+            rows = store.conn.execute(
+                "SELECT started_at, finished_at FROM pipeline_run WHERE finished_at IS NOT NULL"
+                " ORDER BY id DESC LIMIT ?", (TOKEN_DURATION_RUNS,)).fetchall()
+        except sqlite3.OperationalError:            # 舊庫沒有 pipeline_run 表
+            return []
+    finally:
+        store.conn.close()
+    out = []
+    for r in rows:
+        start, end = _parse_iso(r["started_at"]), _parse_iso(r["finished_at"])
+        if start is not None and end is not None:
+            out.append(max(0, int(math.ceil((end - start).total_seconds() / 60.0))))
+    return out
+
+
+_TOKEN_DURATION_SOURCES = {"pipeline_run": _pipeline_run_durations}
+
+
+def _calendar_minutes(plist_path):
+    """讀 plist 的 StartCalendarInterval，回傳每日觸發的「當日第幾分鐘」清單；沒有 Hour 者回 None。"""
+    import plistlib
+    with open(plist_path, "rb") as f:
+        data = plistlib.load(f)
+    sci = data.get("StartCalendarInterval")
+    if isinstance(sci, dict):
+        sci = [sci]
+    if not sci:
+        return None
+    out = []
+    for entry in sci:
+        if "Hour" not in entry:
+            return None
+        out.append(int(entry["Hour"]) * 60 + int(entry.get("Minute", 0)))
+    return sorted(set(out))
+
+
+def _hhmm(minute):
+    return "%02d:%02d" % (minute // 60, minute % 60)
+
+
+def check_token_schedule_gaps(data_dir, agents_dir=DEFAULT_AGENTS_DIR):
+    """會消耗 AI agent token 的排程之間間隔是否過短（011 FR-030；contracts/health-output.md §3）。
+
+    只讀已安裝 plist 的 StartCalendarInterval 與耗時紀錄；**從不回 critical、從不修改排程**。
+    「過短」＝相鄰兩次觸發的間隔 < 前者預估耗時（最近 10 筆已完成的最大值）＋30 分；
+    沒有耗時紀錄只報「無耗時紀錄、無法判斷」，不猜。"""
+    job = "token_schedule_gaps"
+    try:
+        findings, triggers, estimates, unknown = [], [], {}, []
+        for label, source in TOKEN_JOBS:
+            path = os.path.join(agents_dir, label + ".plist")
+            if not os.path.isfile(path):
+                continue
+            try:
+                minutes = _calendar_minutes(path)
+            except Exception:                       # plist 壞掉也只回報，不升級
+                findings.append(("ok", job, "%s：排程時刻讀不出來、無法判斷" % label))
+                continue
+            if minutes is None:
+                findings.append(("ok", job, "%s：排程時刻不是每日固定時刻、無法判斷" % label))
+                continue
+            fn = _TOKEN_DURATION_SOURCES.get(source)
+            durations = fn(data_dir) if fn else []
+            if durations:
+                estimates[label] = max(durations)
+            else:
+                unknown.append(label)
+                findings.append(("ok", job, "%s：無耗時紀錄、無法判斷" % label))
+            triggers.extend((m, label) for m in minutes)
+        if not triggers and not findings:
+            return [("ok", job, "未安裝任何會消耗 token 的排程")]
+        triggers.sort()
+        gaps = []
+        warned = False
+        for i, (minute, label) in enumerate(triggers):
+            nxt_minute, nxt_label = triggers[(i + 1) % len(triggers)]
+            gap = 1440 if len(triggers) == 1 else (nxt_minute - minute) % 1440
+            gaps.append((minute, label, gap))
+            est = estimates.get(label)
+            if est is None:
+                continue
+            if gap < est + TOKEN_GAP_BUFFER_MINUTES:
+                warned = True
+                findings.append(("warning", job,
+                                 "提醒：%s %s → %s %s 間隔 %d 分，小於前者預估耗時 %d 分＋%d 分緩衝；"
+                                 "請考慮調整排程（系統不會自動修改）"
+                                 % (label, _hhmm(minute), nxt_label, _hhmm(nxt_minute), gap,
+                                    est, TOKEN_GAP_BUFFER_MINUTES)))
+        judged = [(m, l, g) for m, l, g in gaps if l in estimates]
+        if judged and not warned:
+            parts = ["%s %s 預估耗時 %d 分（最近 %d 次最長），間隔 %d 分"
+                     % (l.replace("com.alphavibe.", ""), _hhmm(m), estimates[l], TOKEN_DURATION_RUNS, g)
+                     for m, l, g in judged]
+            findings.append(("ok", job, "token 排程 %d 個；%s"
+                             % (len(set(l for _m, l in triggers)), "；".join(parts))))
+        return findings
+    except Exception as exc:                        # 本檢查從不回 critical
+        return [("warning", job, "token 排程間隔檢查無法執行（%s）" % type(exc).__name__)]
+
+
 CHECKS = (
     ("market_scan", check_market_scan, True),   # True = 需要 data_dir
     ("statement_import", check_statement_import, True),
@@ -454,6 +639,9 @@ CHECKS = (
     ("transcription_pipeline", check_transcription_pipeline, True),
     ("backup", check_backups, False),
     ("articles_backup", check_articles_backup, True),
+    ("substack_import", check_substack_import, True),          # 011
+    ("substack_backup", check_substack_backup, True),          # 011
+    ("token_schedule_gaps", check_token_schedule_gaps, True),  # 011 FR-030
     ("web_service", check_web_service, False),
 )
 
